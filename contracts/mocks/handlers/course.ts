@@ -102,7 +102,7 @@ function exampleFixes(mode: CourseRunMock["mode"], dates: string[], routable: Ro
   }
   const full = byDate.map((pins, i) => ({ pins, i })).filter((d) => d.pins.length > 0);
   if (full.length < 2) {
-    return { fixes: [], checked: ["closed", "travel", "member", "goal", "cluster", "meal"].map((kind) => ({ kind: kind as CourseRunMock["checked"][number]["kind"], text: "문제 없어요" })) };
+    return { fixes: [], checked: ["closed", "travel", "member", "condition", "goal", "cluster", "meal"].map((kind) => ({ kind: kind as CourseRunMock["checked"][number]["kind"], text: "문제 없어요" })) };
   }
   const [a, b] = full; // 날 맞바꾸기: 앞의 두 날을 통째로
   const swap = [...a.pins.map((p) => ({ pin_id: p.id, from_date: dates[a.i], to_date: dates[b.i] })), ...b.pins.map((p) => ({ pin_id: p.id, from_date: dates[b.i], to_date: dates[a.i] }))];
@@ -133,7 +133,7 @@ function exampleFixes(mode: CourseRunMock["mode"], dates: string[], routable: Ro
       not_fixed_reason: "고치려면 2곳을 옮겨야 하고 다른 날 이동이 늘어서 그대로 둬요",
     });
   }
-  const open = routable.length >= 3 ? ["member", "goal", "cluster"] : ["member", "goal", "cluster", "meal"];
+  const open = routable.length >= 3 ? ["member", "condition", "goal", "cluster"] : ["member", "condition", "goal", "cluster", "meal"];
   return { fixes, checked: open.map((kind) => ({ kind: kind as CourseRunMock["checked"][number]["kind"], text: "문제 없어요" })) };
 }
 

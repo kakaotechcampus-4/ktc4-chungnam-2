@@ -3315,11 +3315,11 @@ components:
         id: { type: string, description: "run 안에서 카드를 가리키는 값(예: fix_1). 반영한 카드를 화면이 표시할 때 쓴다" }
         kind:
           type: string
-          enum: [closed, travel, member, goal, cluster, meal, unassigned]
+          enum: [closed, travel, member, condition, goal, cluster, meal, unassigned]
           description: |
-            문제 종류. closed=쉬는 날에 넣음(영업시간을 아는 장소만, 모르면 checks의 「가게에 확인」), travel=도보 구간·하루 도보·하루 이동 상한을 넘음, member=구성원 조건과 어긋남(우리 조건 요약에서 온 목표),
+            문제 종류. closed=쉬는 날에 넣음(영업시간을 아는 장소만, 모르면 checks의 「가게에 확인」), travel=도보 구간·하루 도보·하루 이동 상한을 넘음, member=요청 때 넣은 구성원 도보 상한(`member_constraints`)을 넘음(`CourseViolation.kind`의 member와 같은 판정), condition=우리 조건 요약에서 온 목표와 어긋남(예: 「걷기 힘들어」 2명인데 도보가 긴 날),
             goal=요청한 목표를 못 지킴, cluster=같은 동네가 두 날로 갈림, meal=식당 없는 날 또는 하루 식당 3곳 이상, unassigned=아직 날짜에 넣지 않은 장소(fill 모드에서 「○일째에 넣기」)
-        strength: { type: string, enum: [hard, soft], description: "hard=실격 수준의 확정 위반(closed, travel) — 의도와 상관없이 늘 알린다. soft=선호(member, goal, cluster, meal, unassigned). 세기는 서버 코드가 정한다" }
+        strength: { type: string, enum: [hard, soft], description: "hard=확정 위반(closed, travel, member) — 의도와 상관없이 늘 알린다. soft=선호(condition, goal, cluster, meal, unassigned). 세기는 서버 코드가 정한다" }
         text: { type: string, description: "문제 문장. 예: 「덕수궁은 둘째 날 (화)에 쉬어요」" }
         moves:
           type: array
@@ -3343,7 +3343,7 @@ components:
       required: [kind, text]
       description: "점검했고 문제가 없는 항목 하나(#1237). 예: 「쉬는 날에 넣은 곳은 없어요」"
       properties:
-        kind: { type: string, enum: [closed, travel, member, goal, cluster, meal], description: "CourseFix.kind와 같은 값(unassigned는 없다)" }
+        kind: { type: string, enum: [closed, travel, member, condition, goal, cluster, meal], description: "CourseFix.kind와 같은 값(unassigned는 없다)" }
         text: { type: string }
 
     CourseCheck:

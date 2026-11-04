@@ -61,7 +61,7 @@ export interface CourseRunMock {
   }[];
   fixes: {
     id: string;
-    kind: "closed" | "travel" | "member" | "goal" | "cluster" | "meal" | "unassigned";
+    kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal" | "unassigned";
     strength: "hard" | "soft";
     text: string;
     moves: { pin_id: string; from_date: string | null; to_date: string }[];
@@ -69,7 +69,7 @@ export interface CourseRunMock {
     remaining_text: string | null;
     not_fixed_reason: string | null;
   }[];
-  checked: { kind: "closed" | "travel" | "member" | "goal" | "cluster" | "meal"; text: string }[];
+  checked: { kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal"; text: string }[];
   violations: { kind: "closed" | "travel" | "member"; text: string }[];
   checks: { pin_id: string; text: string }[];
   excluded: { pin_id: string; reason: "NO_COORDINATES" | "OVER_LIMIT"; text: string }[];

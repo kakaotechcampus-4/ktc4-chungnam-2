@@ -554,7 +554,7 @@ agent_course_runs(
   outcome null('solved'|'solved_with_checks'|'unresolved'|'timeout'),    -- done일 때만
   failure_code null('INTERRUPTED'|'ENGINE_ERROR'),                       -- failed일 때만
   input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
-  snapshot_at, snapshot_version text, -- 요청 때 일정 version(shortlist, #1237 — 핀 id 목록 snapshot_pin_ids를 대신한다). 지금과 다르면 응답의 stale=true
+  snapshot_at, snapshot_version text, -- 구현 전(#1321) — 요청 때 일정 version(shortlist, #1237), 지금 열은 snapshot_pin_ids(핀 id 목록)다. 지금과 다르면 응답의 stale=true
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
   steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)

@@ -1565,7 +1565,7 @@ describe("#1237 AI 코스 — 일정 상태에 따라 plan·fill·review", () =>
     expect(skipped.moves).toEqual([]);
     expect(skipped.not_fixed_reason).toEqual(expect.any(String));
     expect(skipped.resolved_text).toBeNull();
-    expect(done.checked.map((c: { kind: string }) => c.kind)).toEqual(["member", "goal", "cluster"]);
+    expect(done.checked.map((c: { kind: string }) => c.kind)).toEqual(["member", "condition", "goal", "cluster"]);
     expect(done.headline).toContain("고칠 점 3개");
   });
 
