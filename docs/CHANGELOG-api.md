@@ -9,6 +9,20 @@
 - FE: 추천 시작 화면이 readiness를 부를 때 run 생성에 보낼 중심과 같은 값을 보내면 「근처 정예 수」가 실제 추천 범위와 일치한다. 안 보내도 동작한다.
 - 정책: `POST /maps/{mapId}/runs`의 `center`는 **필수가 된다** — 계약 필수화는 FE가 `center`를 보내기 시작한 뒤에 별도 PR로 한다(그때까지 선택). 중심이 없는 호출(readiness·미리 돌려 보기·AI 조언)에서만 기존 핀 기반 로직이 남는다. 교체 전 로직 보존: 태그 `legacy/recommend-pin-anchor`.
 
+## 2026-11-04, 「핑고 AI 조언」이 AI 추천·AI 코스를 엮는다 — `AgentAction.type`에 `open_pin`·`open_course`, `AgentDiagnosis`에 `schedule` (#1356)
+
+- 결정 #1356 「엔진은 도구로, 실행은 버튼으로」(`docs/agent-v2.md` 6.10)
+  - 조언이 AI 코스 엔진으로 미확정 핀을 확정 일정에 끼워 보고(모델 도구 `try_in_schedule`), 사람이 넣은 일정을 코스 점검과 같은 판정으로 본다.
+  - 실제 AI 추천과 AI 코스는 사람이 누르는 버튼으로 넘긴다.
+- `AgentAction.type`(그리고 `AgentTried.action_type`)에 두 값을 더했다. **enum 값 추가 — FE는 모르는 type을 지금처럼 「바뀌었어요」로 처리하고 있어 깨지지 않는다.**
+  - `open_pin`: 지도 탭에서 `params.pin_ids[0]` 핀 카드를 연다. 확정은 사람이 한다. 카테고리 공백 제안에 나온다.
+  - `open_course`: AI 코스 짜기를 시작한다 — 확정 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/courses`(크레딧 1, 게스트·잔액 부족은 그 API의 오류 그대로). 일정 점검 제안에만 나온다.
+- `AgentDiagnosis`에 `schedule`(일정 점검): 확정 일정에 쉬는 날 방문이나 이동 과다가 있을 때. 코드 유형이고 `category`는 null이다. 버튼은 `open_course` 하나다.
+- 카테고리 공백은 지도에 그 카테고리 핀이 있으면 모델 진단이 된다. 응답 모양은 같고, 작업 기록에 조사 줄(「AI 코스 엔진으로 핀 2개를 일정에 끼워 봤어요」)이 붙는다.
+- data-model: `agent_suggestions.diagnosis`에 `'schedule'`
+- 목 서버: 시나리오 `agent-linked`(카테고리 공백 + `open_pin`), `agent-schedule`(일정 점검 + `open_course`)
+- FE 구현 이슈 #1359, 서버 #1357, 지시문 #1358
+
 ## 2026-11-04, 「핑고 AI 조언」 막힌 곳 후속 관찰과 충돌 선언 — `AgentSuggestion.attempt`·`tried`, `AgentState.tracking` (#1345)
 
 - 결정 #1345: 수락한 제안을 막힌 곳 하나로 보고 풀렸는지 서버가 매 관찰마다 본다. 그대로면 이미 해 본 것과 다른 방법(다음 방법), 그래도 그대로면 해 본 것을 남기는 충돌 선언이다(`docs/agent-v2.md` 6.9).

@@ -5031,10 +5031,10 @@ export interface components {
             map_id: string;
         };
         /**
-         * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리 (docs/agent-v2.md 6절)
+         * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리, schedule=확정 일정에 쉬는 날 방문·이동 과다가 있음(#1356) (docs/agent-v2.md 6절, 6.10)
          * @enum {string}
          */
-        AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap";
+        AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap" | "schedule";
         /**
          * @description 서버가 렌더한 문장 한 줄(#717). 에이전트의 말과 구성원이 쓴 글을 한 문자열에 섞지 않고 조각으로 나눠 내린다.
          *     FE는 조각을 차례로 이어 그리되, quote는 구성원 의견(인용 모양), pin은 핀 이름 모양으로 따로 그린다. 조각 text의 합은 300자 이하.
@@ -5062,18 +5062,19 @@ export interface components {
          * @description 버튼 하나. 사람이 원래 하던 동작으로만 이어진다(확정, 삭제, 반응 변경, 근거 줄 빼기는 없다). FE가 하는 일은 docs/agent-v2.md 16.3 표.
          *     open_recommend → AI 추천 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/runs`. show_pins → 지도 탭 필터. search_place → 장소 검색 시트.
          *     open_route → 리스트 탭 동선. widen_radius → 기존 반경 넓히기. open_evidence → 근거 확인 화면.
+         *     open_pin(#1356) → 지도 탭에서 params.pin_ids[0] 핀 카드를 연다(확정은 사람이 한다). open_course(#1356) → AI 코스 짜기를 시작한다 — 확정 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/courses`(크레딧 1, 게스트·잔액 부족은 그 API의 오류 그대로).
          */
         AgentAction: {
             /** @description accept 요청의 action_index */
             index: number;
             /** @enum {string} */
-            type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence";
-            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기" */
+            type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence" | "open_pin" | "open_course";
+            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기", "이 핀 보기", "AI 코스로 고칠 안 받기" */
             label: string;
             /** @description type마다 쓰는 것만 채운다 */
             params: {
                 category?: components["schemas"]["Category"];
-                /** @description show_pins: 보여 줄 핀 */
+                /** @description show_pins: 보여 줄 핀. open_pin: 열 핀 하나 */
                 pin_ids?: string[];
                 /** @description show_pins: 내가 아직 반응하지 않은 핀만 */
                 unseen_only?: boolean;
@@ -5138,7 +5139,7 @@ export interface components {
         /** @description 막힌 곳에서 이미 해 본 것 하나(#1345) — 수락한 제안의 버튼. 누가 눌렀는지와 추천 결과(비공개 run)는 싣지 않는다 */
         AgentTried: {
             /** @enum {string} */
-            action_type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence";
+            action_type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence" | "open_pin" | "open_course";
             /** @description 그때 버튼 문구(서버 렌더). 예: "음식점 추천 받기" */
             label: string;
             /** Format: date-time */

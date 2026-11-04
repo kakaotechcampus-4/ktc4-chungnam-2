@@ -1,6 +1,7 @@
 # 계획 보조 에이전트 모드 v2 구현 명세
 
 - 상태: 설계 확정 (2026-10-02), 마지막 개정 (2026-11-04, 아래 기록). 수치는 초기값이며 운영 기록을 보고 조정한다.
+- 2026-11-04 개정(#1356): AI 추천·AI 코스와 엮기(6.10) — 엔진은 도구로, 실행은 버튼으로. 코스 엔진으로 미확정 핀을 확정 일정에 끼워 보는 모델 도구 `try_in_schedule`, 카테고리 공백의 모델 진단(후보 핀이 있을 때), 일정 점검 유형(`schedule`, 코스 점검과 같은 판정), 새 행동 `open_pin`·`open_course`. 구현 #1357(agent), #1358(llm), #1359(FE).
 - 2026-11-04 개정(#1345): 후속 관찰과 충돌 선언(6.9) — 수락한 제안을 막힌 곳 하나로 보고 풀렸는지 매 관찰마다 코드가 본다. 그대로면 이미 해 본 것과 다른 방법(진단을 다시 부름), 그래도 그대로면 해 본 것을 남기는 충돌 선언(가드레일 10)이다. 신호 순위는 코드 그대로이고 후속 신호를 먼저 본다(7절). 계약(api-spec `attempt`·`tried`·`tracking`, data-model 세 칸)은 같은 PR, 구현은 #1346(agent), #1347(llm), #1348(FE).
 - 2026-11-04 개정(#1317, #1318, #1319): 지도 제안의 버튼에서 「핀 보기」를 뺐다 — 누른 사람이 할 일이 생기지 않는다. 결정이 막힌 사람에게 필요한 것은 새 후보라, 정체·갈림은 「추천 받기」나 「장소 검색」 하나, 카테고리 공백은 버튼 하나다(6절 표, 6.2, 6.3, 6.5, 11.2). 반응 공백의 「미확인 핀 보기」는 남는다. 갈림은 충돌 종류와 상관없이 미리 돌려 본다(6.7). 우리 데이터가 「모름」인 줄은 모두(많아야 2줄) 웹 확인을 동시에 부른다(6.8, 도구 기록 w1·w2). 21.1에 diagnose-v7 열.
 - 2026-11-04 개정(#1310): 같은 도구·같은 인자 호출은 llm이 다시 실행하지 않고 DUPLICATE와 처음 call_id를 돌려준다(10절, 21.3). 21.1에 diagnose-v6 열 — e29 후퇴가 돌아왔다.
@@ -81,7 +82,7 @@
 
 1. agent 모듈은 다른 모듈의 테이블에 쓰지 않는다. 다른 모듈 데이터는 `<module>/api.py`로만 읽는다(#113). 다른 모듈의 `models.py`, `service.py` import 금지.
 2. **스냅샷, 도구 결과, 모델 입력에 비공개 데이터를 넣지 않는다.** 비공개 데이터는 run, 후보(candidates), run의 근거 줄(evidence_lines), 제외 목록(exclusions)이다. v1 핀은 항상 public이고 visibility로 분기하지 않는다(#273). 비공개 AI 후보는 핀이 아니라 후보 행이다. run 존재 여부는 정체 전제 판정(6.2)에만 bool로 쓰고, 모델 입력과 문구에는 넣지 않는다. 예외는 추천 막힘 조언 하나로, 그 run의 요청자에게 그 run의 데이터만 쓴다.
-3. 모델이 쓴 숫자와 인용을 그대로 화면에 내지 않는다. 검증을 통과한 claim의 값으로 서버가 렌더한다(11절). **예외는 웹 요약 하나다**(6.8, #1152 결정 3): 문장 내용은 대조하지 못하고 출처가 그 호출의 검색 결과에 있는지만 본다. 그래서 「AI 웹 요약 · 확인되지 않음」을 붙이고, 결론·권유를 쓰지 않는다.
+3. 모델이 쓴 숫자와 인용을 그대로 화면에 내지 않는다. 검증을 통과한 claim의 값으로 서버가 렌더한다(11절). **예외는 웹 요약 하나다**(6.8, #1152 결정 3): 문장 내용은 대조하지 못하고 출처가 그 호출의 검색 결과에 있는지만 본다. 그래서 「AI 웹 요약 (확인 안 됨)」을 붙이고, 결론·권유를 쓰지 않는다.
 4. 행동 목록에 확정, 삭제, 반응 변경, 근거 줄 빼기는 없다. 버튼은 사람이 원래 하던 동작으로만 이어진다(16절). 조건을 완화하는 것은 사람이다(가드레일 4). 에이전트는 "이 조건 때문에 몇 곳이 빠졌다"까지만 말한다.
 5. 알러지 같은 안전 조건은 서비스가 판단하지 않는다(#425, 가드레일 8). 에이전트도 알러지 사유를 조건으로 해석하거나 구체화를 요청하지 않고, 가게에 직접 확인하라는 고정 안내만 낸다(8절).
 6. 모델 호출 중에는 DB 세션을 열어두지 않는다(12.6).
@@ -212,9 +213,10 @@ SAFETY_WORDS = ("알러지", "알레르기")   # 초안. 이 낱말이 든 글�
 | stall | 반대 후 정체 | 모델 진단 | open_recommend, search_place 중 하나 |
 | split | 의견 갈림 | 모델 진단 | open_recommend, search_place 중 하나 |
 | no_reaction | 반응 공백 | 템플릿 | show_pins |
-| category_gap | 카테고리 공백 | 템플릿 | open_recommend 또는 search_place(하나) |
+| category_gap | 카테고리 공백 | 후보 핀이 있으면 모델 진단, 없으면 템플릿(#1356) | open_pin, open_recommend, search_place 중 하나 |
+| schedule | 일정 점검 | 템플릿(#1356, 6.10) | open_course |
 
-「핀 보기」(show_pins)는 반응 공백에만 쓴다(#1317). 정체·갈림·카테고리 공백에서 핀을 다시 보게 하는 버튼은 카테고리 필터만 걸 뿐 누른 사람이 할 일이 생기지 않았다. 결정이 막힌 사람에게 필요한 것은 새 후보라 「추천 받기」나 「장소 검색」으로 잇는다. 반응 공백은 아직 보지 않은 핀을 보는 것이 할 일이라 그대로 둔다.
+「핀 보기」(show_pins, 필터)는 반응 공백에만 쓴다(#1317). 핀 하나를 여는 「이 핀 보기」(open_pin)는 다른 행동이다(6.10). 정체·갈림·카테고리 공백에서 핀을 다시 보게 하는 버튼은 카테고리 필터만 걸 뿐 누른 사람이 할 일이 생기지 않았다. 결정이 막힌 사람에게 필요한 것은 새 후보라 「추천 받기」나 「장소 검색」으로 잇는다. 반응 공백은 아직 보지 않은 핀을 보는 것이 할 일이라 그대로 둔다.
 
 ```python
 @dataclass(frozen=True)
@@ -484,7 +486,7 @@ def reason_text_inputs(reactions) -> list[dict]:
 
 | status | 언제 | 화면(그 「모름」 줄 아래) |
 | --- | --- | --- |
-| found | 검증을 통과한 문장이 1개 이상 | 「AI 웹 요약 · 확인되지 않음」 + 문장 + 문장마다 출처 이름 링크(새 탭) |
+| found | 검증을 통과한 문장이 1개 이상 | 「AI 웹 요약 (확인 안 됨)」 + 문장 + 문장마다 출처 이름 링크(새 탭) |
 | not_found | 모델이 그 가게 글을 찾지 못함 | 「웹에서도 찾지 못했어요」 |
 | paused | 서비스 일일 예산을 넘음(19절) | 「오늘은 웹 확인을 쉬고 있어요. 내일 다시 찾아볼게요」 |
 | failed | 호출 실패·시간 초과·스키마 실패·검증 뒤 문장 없음 | 아무것도 없다(응답에 `web`이 없다) |
@@ -534,6 +536,7 @@ def reason_text_inputs(reactions) -> list[dict]:
 | stall(C) | a 뒤 C에 새 핀(new_pin — 「지도에 올리기」나 검색), 또는 C 핀 확정(confirmed) | 아래 공통 조건 |
 | split(P) | P 확정(confirmed), P 삭제(pin_removed), P의 갈림 신호가 사라짐(split_gone), a 뒤 같은 카테고리 다른 핀 확정(confirmed) | 아래 공통 조건 |
 | category_gap(C) | C 핀 확정(confirmed) | 아래 공통 조건 |
+| schedule(#1356, 6.10) | 그 문제(종류와 날짜, 핀)가 점검에서 사라짐(problem_gone — 사람이 일정을 고침) | 아래 공통 조건 |
 
 - 공통 조건: a 뒤 `FOLLOWUP_MIN_WAIT`(초안 30분)가 지났고, **활동 기준**(a 뒤 다른 카테고리에서 `STALL_ACTIVE_MEMBERS`(2)명이 움직임, 6.2와 같은 상수와 「행동」 정의) 또는 **시간 기준**(a + 기준 시간 6.1)이 걸렸고, 위 풀림이 아니다.
 - 최소 대기는 추천을 받고 결과를 보고 올릴지 정할 시간이다. 그 사이의 다른 활동은 세지 않는다.
@@ -560,6 +563,79 @@ def reason_text_inputs(reactions) -> list[dict]:
 
 **측정(21절 추가 지표).** 수락한 막힌 곳 중 풀린 비율과 풀린 이유, 다음 방법까지 간 비율, 충돌 선언 수. `agent_suggestions`의 사슬과 `followup`에서 센다.
 
+### 6.10 AI 추천·AI 코스와 엮기 (#1356)
+
+**왜.** 「핑고 AI 조언」, 「AI 추천」, 「AI 코스 짜기」가 따로 돌았다.
+- 조언은 추천 엔진만 미리 찾기(6.7)로 썼고, 코스 쪽은 몰랐다.
+- 그래서 확정 리스트에 카페가 없으면 지도에 이미 찍힌 카페 핀이 일정에 잘 맞는지 보지 않고 「카페 추천 받기」만 냈다.
+- 사람이 넣은 일정에 쉬는 날 방문이 있어도 알리지 않았다.
+
+**원칙: 엔진은 도구로, 실행은 버튼으로**(결정 #1356, 2026-11-04).
+- AI 추천과 AI 코스를 관찰 중에 통째로 돌리지 않는다. 둘 다 모델과 크레딧을 쓰고, 결과는 요청자에게만 보인다(가드레일 1, 2절 2번).
+- 대신 두 기능의 코드 엔진(모델 없음, 크레딧 없음, 즉시)을 진단의 도구로 쓴다.
+- 실제 AI 기능은 사람이 누르는 버튼으로 넘긴다.
+
+| 엔진 | 조언에서의 자리 | 넘기는 버튼 |
+| --- | --- | --- |
+| 추천 필터(`recommend.api.preview_filter`) | 미리 찾기 p1(6.7, 코드가 진단 전에 부름) | 「{카테고리} 추천 받기」(open_recommend) |
+| 코스 끼워 보기(`agent.course` 일정 입력, `core.best_position`·`day_travel`, `places.api.get_week_open_status`) | 모델 도구 `try_in_schedule`(10절) | 「이 핀 보기」(open_pin) — 확정은 사람이 한다 |
+| 코스 점검(`agent.course.review.find_problems`) | 일정 점검 탐지(아래, 코드) | 「AI 코스로 고칠 안 받기」(open_course) |
+
+**`try_in_schedule(pin_ids)`**(모델 도구, 많아야 5개 핀, 도구 상한에 센다)
+- 확정 일정에 아직 확정하지 않은 그 핀을 끼워 본다. 사람이 넣은 일정은 바꾸지 않는다.
+- 핀마다 돌려주는 것
+  - `day`: 넣으면 이동 증가가 가장 작은 날의 별칭(d1 …). 끼울 자리는 그날 안에서 `best_position`
+  - `added_minutes`: 늘어나는 이동 분
+  - `open`: 그날 영업 — open, closed, unknown. 영업 판정은 `places.api.get_week_open_status` 한 곳이다(#747)
+  - `fills_gap`: 확정 리스트에 없는 카테고리를 채우는지
+- 일정에 날짜가 하나도 없으면 `day`는 null이고, 확정 장소 중 가장 가까운 곳까지의 `nearest_minutes`를 준다.
+- 실시간 핀(좌표 없음, #382)은 `no_coords`다. 장소 이름은 돌려주지 않는다(모델은 핀 ref로 가리킨다).
+- 이동 시간은 코스와 같은 계산이다. 조언이 따로 거리 함수를 두지 않는다(CLAUDE.md 「한 곳이어야 하는 것」 동네 묶기·거리).
+
+**카테고리 공백(6.5)이 모델 진단이 된다 — 후보 핀이 있을 때.**
+- 확정 리스트에 C가 없고 지도에 C의 미확정 핀이 있으면 모델 진단이다.
+  - 진단 입력: 후보 핀(pin_id, ♥·🚫 수, 많아야 `TOOL_RESULT_MAX_ITEMS`), p1(C가 추천 대상일 때)
+  - 도구: get_reasons, try_in_schedule, get_readiness
+  - 버튼 하나: open_pin(그 핀), open_recommend, search_place 중
+- 후보 핀이 없으면 지금처럼 코드 템플릿(6.5)이다.
+- 모델의 몫은 사유 글과 끼워 본 결과를 견주어 어느 쪽으로 넘길지 고르고 문장을 쓰는 일이다. 사유 글은 코드가 읽지 못한다.
+  - 예: 일정에 가장 잘 맞는 핀의 ♥ 사유가 「분위기」뿐이고, 다른 핀은 ♥ 3이지만 이동이 15분 는다.
+- 걸러야 하는 것은 코드가 거른다(아래 행동 검사).
+
+**의견 갈림(6.3)에 `try_in_schedule`을 더한다.** 갈린 핀이 일정에 어떻게 맞는지를 판단 재료로 쓸 수 있다(「이 핀은 2일차 동선에 넣으면 이동이 4분 늘어요」). 버튼은 그대로다(#1317).
+
+**일정 점검(`schedule`, 새 코드 유형).**
+- 탐지: 확정 일정에 날짜를 넣은 장소가 있고, `find_problems`의 하드 문제 중 closed(쉬는 날 방문)나 travel(이동 과다)이 1개 이상일 때다. member(구성원 도보 상한)는 코스 요청에만 있는 값이라 보지 않는다. 판정은 AI 코스 점검과 같은 함수다.
+- 템플릿
+  - 제목: 「일정에 다시 볼 곳이 있어요」
+  - 확인된 것(문제마다 한 줄, 많아야 2줄): 「{d}일차에 쉬는 날인 곳이 있어요 · {핀}」, 「{d}일차 이동이 길어요」
+  - 버튼: 「AI 코스로 고칠 안 받기」(open_course) 하나
+- 문제가 없으면 내지 않는다 — 크레딧 1을 쓰는 버튼을 헛되이 권하지 않는다(6.7의 0곳 원칙과 같다).
+- fingerprint는 (schedule, 문제 종류와 날짜, 핀)이고, evidence_hash는 일정과 그 장소들의 영업 판정이다. 사람이 일정을 고치면 무효화(superseded)되거나 풀린다.
+- 순위: weights에 `schedule: 2`를 더하고, urgent_dday를 category_gap과 schedule에 건다.
+
+**행동 검사(11.2 6단계에 더함, 코드).**
+- open_pin
+  - 이 지도의 미확정 핀이다.
+  - 🚫가 하나라도 달린 핀이면 뺀다(가드레일 9: 한 명이라도 반대하면 권하지 않는다).
+  - 이번 관찰 도구 기록에 그 핀의 try_in_schedule 결과가 있어야 한다.
+  - 그 결과가 closed나 no_coords면 뺀다.
+- open_course: 코드 유형(일정 점검)에만 있다. 모델 진단의 허용 행동이 아니다.
+- 문장은 사실만 쓴다. 이동 분, 영업, ♥ 수는 claim 슬롯(tool_result, count)이다. 「확정하세요」, 「여기로 정하세요」는 금지 표현(11.2)이다.
+
+**지키는 것.** 에이전트는 아무것도 실행하지 않는다. 확정과 일정 변경은 사람이 한다. 코스·추천 결과(비공개)는 읽지 않는다. 확정 탭의 일정(날짜와 순서)은 구성원 모두가 보는 공개 데이터라 도구 입력이 된다.
+
+**모델 호출.** 새 호출 종류는 없다(agent_diagnose). 진단 대상이 정체·갈림에 카테고리 공백(후보 핀이 있을 때)까지로 늘고, 지도 하루 상한(구성원 수 × 4)에 센다. 지시문은 diagnose-v9다(#1347 후속 관찰 v8 다음).
+
+**평가.** 평가셋에 다음 케이스를 더한다(#1358). 결과는 21.1.
+- 카테고리 공백 + 잘 맞는 핀
+- 잘 맞는 핀에 🚫
+- 모두 휴무
+- 일정이 빈 지도
+- 실시간 핀만
+- 갈림 + 일정
+- 지시문
+
 ## 7. 우선순위
 
 정책 사전 검사(12.3)를 통과한 신호가 2개 이상이면 **코드 규칙**이 순위를 정한다(2026-10-16 개정, #582). 1순위 신호 하나만 다음 단계로 간다. 나머지는 버리고, 다음 관찰에서 다시 탐지된다.
@@ -578,7 +654,7 @@ features = {
 }
 
 # core.fallback_order(signals, policy) -> final_order
-#   1. 출발이 urgent_dday일 이내면 category_gap을 맨 앞으로
+#   1. 출발이 urgent_dday일 이내면 category_gap과 schedule(#1356)을 맨 앞으로
 #   2. 나머지는 weights 내림차순
 #   3. 같은 weight 안에서는 recent_dismissals가 0인 신호 먼저, 그다음 affected_members 내림차순, 그다음 elapsed_ratio 내림차순
 #   4. always_first가 있으면 맨 앞으로, 1순위가 never_first면 아닌 첫 신호를 앞으로
@@ -589,13 +665,14 @@ features = {
 # backend/agent/priority_policy.yaml (version 2, 2026-10-16 PM 승인. 변경은 PR + PM 승인)
 version: 2
 rules:
-  urgent_dday: 3       # 출발이 이 일수 이내면 확정 리스트 공백(category_gap)을 맨 앞으로
+  urgent_dday: 3       # 출발이 이 일수 이내면 확정 리스트 공백(category_gap)과 일정 점검(schedule, #1356)을 맨 앞으로
   never_first: []      # 1순위가 될 수 없는 diagnosis
   always_first: []     # 있으면 항상 1순위인 diagnosis
 weights:               # 기본 정렬 기준
   stall: 3
   split: 3
   category_gap: 2
+  schedule: 2          # #1356 일정 점검(6.10). urgent_dday는 category_gap과 schedule에 건다
   no_reaction: 1
 ```
 
@@ -767,13 +844,15 @@ advise-v4 프롬프트의 「종류 고르기」는 순서가 정해진 절차�
 | simulate_filter | `(run_id, change{radius_factor?, disable_line_ids?})` → {before, after, gained}. before와 after는 {result_count, funnel, passed_count}. passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을 고르기 전), gained는 after − before를 코드가 계산(#587) | recommend.api, 실제 필터 함수 재사용 |
 | get_shortlist | `(map_id)` → [{pin_id, category, visit_order}] | shortlist.api |
 | get_route | `(map_id)` → [{region_label, ordered_pin_ids, total_distance_m}] 또는 null | shortlist.api |
+| try_in_schedule | `(pin_ids ≤ 5)` → [{pin_id, day 또는 null, added_minutes 또는 null, nearest_minutes 또는 null, open(open·closed·unknown), fills_gap}] 또는 핀마다 `no_coords`. 장소 이름 없음(6.10, #1356) | agent.course(일정 입력·끼울 자리·이동), places.api `get_week_open_status` |
 
 진단 전에 코드가 부르는 것(모델이 고르지 않고 도구 상한에 세지 않는다): split의 compare_reasons(6.3), 미리 돌려 보기 `recommend.api.preview_filter`(6.7, 도구 기록에 `p1`). 진단 뒤 저장 전에 코드가 부르는 것: 웹 확인 `llm.api.web_check`(6.8, 「모름」 줄마다, 도구 기록에 `w1`, `w2`).
 
 유형별 허용 도구:
 
 - stall: get_map_overview, get_reasons, structure_reasons, get_readiness
-- split: get_reaction_matrix, get_reasons, structure_reasons, compare_reasons, get_place_facts
+- split: get_reaction_matrix, get_reasons, structure_reasons, compare_reasons, get_place_facts, try_in_schedule(#1356)
+- category_gap(후보 핀이 있을 때, #1356): get_reasons, try_in_schedule, get_readiness
 - 요약: 도구를 모델이 고르지 않는다. 코드가 get_reasons, structure_reasons, compare_reasons를 차례로 부르고 칸을 나눈다(8절).
 - 추천 막힘 조언: 모델 도구가 없다(#749). agent가 recommend.api(get_recent_runs, get_run_funnel, get_run_evidence, simulate_filter)를 직접 부른다(9.1). 위 표의 "추천 막힘 전용" 네 줄은 그 함수의 설명으로 읽는다.
 
@@ -862,7 +941,7 @@ class DiagnosisOutput(BaseModel):
 | 3. claim 대조 | count는 스냅샷에서 같은 지표를 다시 계산해 비교. quote는 공백 정규화 후 해당 reaction 원문에 포함되는지. ref는 이 지도의 공개 데이터에 존재하는지. tool_result는 이번 관찰 도구 로그의 call_id와 path 값이 같은지 | 실패한 claim 제거 |
 | 4. 구조 대조 | 요약의 요청 문장이 가리키는 reaction이 vague_fixable 칸에 있는지(not_filtered 사유에 구체화 요청을 붙이지 않았는지) | 해당 문장 제거 |
 | 5. 문장 | basis에 제거된 claim이 있는 문장. 슬롯 밖 숫자(정규식 `\d`). 구성원 표시 이름 포함. 금지 표현(FORBIDDEN_PHRASES). 슬롯 밖에서 사유 원문을 옮겨 쓴 문장(입력 사유와 공백을 뺀 연속 8글자 이상 일치, 초안) | 문장 제거 |
-| 6. 행동 | 유형별 허용 목록에 있는지. open_recommend의 category가 `categories.recommendable()`인지. 미리 돌려 본 passed_count가 0이면 open_recommend를 뺀다(6.7). basis가 유효한지. open_evidence는 진단의 허용 목록에 없다. 조언에서 본인 줄에만 붙이는 것은 코드다(9.1, 위 문단) | 행동 제거 |
+| 6. 행동 | 유형별 허용 목록에 있는지. open_recommend의 category가 `categories.recommendable()`인지. 미리 돌려 본 passed_count가 0이면 open_recommend를 뺀다(6.7). basis가 유효한지. open_evidence는 진단의 허용 목록에 없다. open_pin은 미확정·🚫 없음·이번 관찰의 try_in_schedule 결과가 있고 closed·no_coords가 아닐 때만 남는다(6.10). open_course는 일정 점검 템플릿에만 있다. 조언에서 본인 줄에만 붙이는 것은 코드다(9.1, 위 문단) | 행동 제거 |
 | 7. 성립 판정 | 유형의 필수 claim이 남았는지(split: 해당 핀 like와 against count). 문장이나 행동이 하나 이상 남았는지 | 침묵 (invalid_claims) |
 
 ```python
@@ -1126,7 +1205,7 @@ seq 비교로 하지 않는 이유는 seq에 커밋 순서 구멍이 생길 수 
 - 만료: 관찰 시작 시 `expires_at < now`인 활성 제안을 expired로 바꾸고 agent.resolved를 낸다.
 - 무효화: 신호가 사라졌거나 evidence_hash가 바뀐 활성 제안은 superseded로 바꾼다. 신호가 남아 있으면 같은 관찰에서 새 제안이 나올 수 있다.
 - 모드를 끄면 활성 제안을 superseded로 바꾼다. 다시 켜면 `next_check_at = now`로 두어 다음 tick에 관찰한다.
-- `decided_within_24h`: 하루 한 번 정리 때, 생성 후 24시간이 지난 제안에 대해 확정이 생겼는지 계산해 채운다(#613). category_gap과 stall은 그 카테고리의 핀, split은 그 핀, no_reaction은 제안이 가리킨 핀 중 하나가 제안 시각부터 24시간 안에 확정됐으면 참이다. **판정은 정리 시점까지 남아 있는 확정 항목 기준이다.** 24시간 안에 확정했다가 정리 전에 리스트에서 빼면 거짓으로 남는다. 확정 이력을 따로 두지 않아서이고, 결정을 도왔는지 대략 보는 지표라 이 오차는 받아들였다(2026-10-19). 삭제된 핀은 분류를 읽지 못해(`pins.api.list_reaction_matrix`는 살아 있는 공개 핀만) category_gap과 stall에서 세지 않는다. 확정 핀을 지우면 확정 항목도 지워져(#235) 드물어서 같은 오차로 받아들인다(#613).
+- `decided_within_24h`: 하루 한 번 정리 때, 생성 후 24시간이 지난 제안에 대해 확정이 생겼는지 계산해 채운다(#613). category_gap과 stall은 그 카테고리의 핀, split은 그 핀 또는 같은 카테고리의 다른 핀(6.9 표와 같다, #1345 — 갈린 핀을 두고 다른 곳으로 정한 것도 풀린 것이다), no_reaction은 제안이 가리킨 핀 중 하나가 제안 시각부터 24시간 안에 확정됐으면 참이다. 「확정」 판정은 `core.episode_state`와 같은 함수다(6.9, 측정과 실시간 판정이 한 규칙). schedule(6.10)은 확정 지표가 아니라 null로 둔다 — 풀렸는지는 6.9의 problem_gone으로 본다. **판정은 정리 시점까지 남아 있는 확정 항목 기준이다.** 24시간 안에 확정했다가 정리 전에 리스트에서 빼면 거짓으로 남는다. 확정 이력을 따로 두지 않아서이고, 결정을 도왔는지 대략 보는 지표라 이 오차는 받아들였다(2026-10-19). 삭제된 핀은 분류를 읽지 못해(`pins.api.list_reaction_matrix`는 살아 있는 공개 핀만) category_gap과 stall에서 세지 않는다. 확정 핀을 지우면 확정 항목도 지워져(#235) 드물어서 같은 오차로 받아들인다(#613).
 - 보존: 하루 한 번 `agent_runs`의 30일 초과분을 지운다.
 - 지도 정리: 삭제한 지 30일이 지난 지도를 지우는 작업(`python -m maps.purge`, #431)이 모듈마다 `purge_map_data`를 부른다. agent도 `agent.api.purge_map_data`를 열어 agent_* 8개 테이블의 그 지도 행을 지운다(8번째는 `agent_map_status`, #1168).
 - 탈퇴: 반응과 근거 줄은 탈퇴 때 실제로 지운다(#155). agent 테이블에는 사유 원문이 없으므로(2절 13번) 반응이 지워지면 인용도 렌더되지 않는다. `agent.api.delete_by_user(db, *, user_id, map_ids)`(#513)는 그 사람의 열람 기록을 지우고, 안전장치로 map_ids 지도의 요약을 지우고 agent_runs의 tool_calls와 verification을 비운다. 탈퇴 흐름이 `maps.api.lock_member_maps`로 잡은 지도 목록을 넘긴다(#512). 요약은 다음 관찰에서 다시 만든다.
@@ -1189,7 +1268,7 @@ CREATE TABLE agent_suggestions (
   id                  uuid PRIMARY KEY,
   map_id              text NOT NULL,
   run_id              uuid NULL REFERENCES agent_runs(id) ON DELETE SET NULL,
-  diagnosis           text NOT NULL,      -- stall | split | no_reaction | category_gap
+  diagnosis           text NOT NULL,      -- stall | split | no_reaction | category_gap | schedule(#1356)
   category            text NULL,
   pin_id              uuid NULL,
   fingerprint         text NOT NULL,
@@ -1316,7 +1395,7 @@ agent.resolved에는 resolved_by를 싣지 않는다. 수락한 사람을 화면
     - 확인된 것: is_guess=false 문장
     - 유형별 분석: split이면 충돌 지점. 축마다 "♥ 쪽 / 🚫 쪽"과 same_axis, different_axes 표시
     - AI 조언: is_guess=true 문장. "추정" 표시를 붙인다
-    - 우리 데이터(6.6): 고정 문구 줄, 많아야 2줄. `web`이 있는 「모름」 줄 아래에 웹 요약(6.8): found면 「AI 웹 요약 · 확인되지 않음」 + 문장 + 문장마다 출처 링크(새 탭, `rel="noopener noreferrer"`), not_found·paused면 서버의 `notice` 한 줄
+    - 우리 데이터(6.6): 고정 문구 줄, 많아야 2줄. `web`이 있는 「모름」 줄 아래에 웹 요약(6.8): found면 「AI 웹 요약 (확인 안 됨)」 + 문장 + 문장마다 출처 링크(새 탭, `rel="noopener noreferrer"`), not_found·paused면 서버의 `notice` 한 줄
     - 행동 버튼(actions의 label)과 닫기
     - 「핑고가 한 일 보기」(11.3): steps가 있으면 접어 둔 토글. 펼치면 한 줄씩(단계 · 누가 칩 · 문장). AI 코스의 작업 기록 줄과 같은 모양이다
     - 제안이 없으면 "지금은 따로 드릴 제안이 없어요"와 그 아래 `observation.notice`(서버 문구, 있을 때만, 21.3)

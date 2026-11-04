@@ -1,15 +1,18 @@
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useOutletContext } from 'react-router'
 
 import { useAiStore } from './aiStore'
 import { ApiError } from '@/api'
 import { invalidateCredits } from '@/features/credits/queries'
 import { pinKeys } from '@/features/map/queries'
 import type { Pin } from '@/features/map/model'
+import type { ShellContext } from '@/features/shell/shellContext'
 import { showToast } from '@/features/shell/toast'
 
 import {
   confirmRegions,
   createRun,
+  type Center,
   executeRun,
   fetchEvidence,
   fetchReadiness,
@@ -35,9 +38,19 @@ export function useRunHistoryQuery(mapId: string) {
   return useQuery({ queryKey: recommendKeys.history(mapId), queryFn: () => fetchRunHistory(mapId), refetchOnMount: 'always' })
 }
 
-/** 카테고리별 추천 가능 여부(5-4). 의견이 바뀌면 달라지니 탭을 열 때마다 다시 본다. */
+/** 지금 보고 있는 지도 가운데(#1331). 지도 셸 밖(단위 테스트)에서는 null — 서버가 예전처럼 핀들을 기준으로 센다. */
+function useMapCenter() {
+  const getCenter = useOutletContext<ShellContext | null>()?.getCenter
+  return () => getCenter?.() ?? null
+}
+
+/**
+ * 카테고리별 추천 가능 여부(5-4). 의견이 바뀌면 달라지니 탭을 열 때마다 다시 본다.
+ * 「근처 정예 수」는 받는 순간의 지도 가운데 기준이다 — 탭을 연 채 지도를 옮기면 다음에 다시 받을 때까지 그대로다.
+ */
 export function useReadinessQuery(mapId: string) {
-  return useQuery({ queryKey: recommendKeys.readiness(mapId), queryFn: () => fetchReadiness(mapId), refetchOnMount: 'always' })
+  const center = useMapCenter()
+  return useQuery({ queryKey: recommendKeys.readiness(mapId), queryFn: () => fetchReadiness(mapId, center()), refetchOnMount: 'always' })
 }
 
 /** 서버가 아직 같은 키의 첫 요청을 처리 중이다(409 REQUEST_IN_PROGRESS) — 진행 표시를 두고 같은 키로 다시 묻는다(#811). */
@@ -49,12 +62,15 @@ const inProgress = (err: unknown) => err instanceof ApiError && err.code === 'RE
 /**
  * 「추천받기」 — 사유 정리와 첫 검색을 한 번에 하고 결과로 간다(#845). 근거 확인 화면을 거치지 않는다.
  * 시도마다 키를 하나 만든다: 처리 중이라 다시 묻는 것(retry)은 같은 변수 = 같은 키다.
+ * 후보는 누른 순간 보고 있던 지도 가운데 주변에서 찾는다(#1331).
  */
 export function useCreateRunMutation(mapId: string) {
   const setRun = useAiStore((s) => s.setRun)
   const queryClient = useQueryClient()
+  const center = useMapCenter()
   const mutation = useMutation({
-    mutationFn: ({ category, key }: { category: RecommendCategory; key: string }) => createRun(mapId, category, key),
+    mutationFn: ({ category, key, at }: { category: RecommendCategory; key: string; at: Center | null }) =>
+      createRun(mapId, category, key, at),
     retry: (count, err) => inProgress(err) && count < IN_PROGRESS_TRIES,
     retryDelay: IN_PROGRESS_WAIT_MS,
     onSuccess: (run) => {
@@ -64,7 +80,8 @@ export function useCreateRunMutation(mapId: string) {
     },
   })
   const start = (category: RecommendCategory, opts?: { onError?: (err: Error) => void }) =>
-    mutation.mutate({ category, key: crypto.randomUUID() }, opts)
+    // 중심은 누른 순간 한 번 읽는다 — 처리 중이라 다시 묻는 것(retry)은 같은 키·같은 중심이어야 한다(멱등 동일성, #1331).
+    mutation.mutate({ category, key: crypto.randomUUID(), at: center() }, opts)
   return { ...mutation, start }
 }
 

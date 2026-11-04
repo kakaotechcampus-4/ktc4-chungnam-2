@@ -32,7 +32,7 @@ export function useMarkReadMutation() {
     mutationFn: (ids?: string[]) => markNotificationsRead(ids),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: notificationKeys.list, exact: true }),
     // 알림을 누르면 화면을 옮기므로 부르는 쪽이 사라져 있을 수 있다 — 실패 알림은 여기서 한다.
-    onError: () => showToast('알림을 읽음으로 바꾸지 못했어요'),
+    onError: () => showToast('읽음 처리하지 못했어요'),
   })
 }
 

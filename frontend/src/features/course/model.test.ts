@@ -39,11 +39,11 @@ describe('course model', () => {
     expect(understandBody('둘째 날은 실내 위주로 이해했어요')).toBe('둘째 날은 실내 위주로 이해했어요')
   })
 
-  it('목표 상태: 지킴 / 못 지킴 / 확인할 수 없어요', () => {
+  it('목표 상태: 지킴 / 못 지킴 / 알 수 없음', () => {
     const g = (met: boolean | null) => goalState({ id: 'a', kind: 'day_indoor', label: 'x', met }).label
     expect(g(true)).toBe('지킴')
     expect(g(false)).toBe('못 지킴')
-    expect(g(null)).toBe('확인할 수 없어요')
+    expect(g(null)).toBe('알 수 없음')
   })
 
   it('날짜 제목은 몇째 날과 요일만, 시간은 없다', () => {

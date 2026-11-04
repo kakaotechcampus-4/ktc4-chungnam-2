@@ -145,7 +145,7 @@ export const placeKey = (row: ImportRow): string | undefined => rowPlace(row)?.p
 
 /** docs/errors.md 문구. */
 export function linkErrorMessage(code: string | undefined): string {
-  if (code === 'LINK_NOT_SUPPORTED') return '구글맵·카카오맵 링크만 붙일 수 있어요'
+  if (code === 'LINK_NOT_SUPPORTED') return '구글맵, 카카오맵 링크만 붙일 수 있어요'
   return '링크에서 장소를 찾지 못했어요'
 }
 

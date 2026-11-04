@@ -69,7 +69,7 @@ describe('장소 후기(#953)', () => {
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
     await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
-    expect(await within(await screen.findByRole('dialog')).findByText(`후기를 작성하면 ${before.review_reward} 크레딧이 충전돼요`)).toBeInTheDocument()
+    expect(await within(await screen.findByRole('dialog')).findByText(`후기를 쓰면 ${before.review_reward} 크레딧을 드려요`)).toBeInTheDocument()
     await writeReview(user, '5점', '아침에 가기 좋아요')
     await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
     // 받는 양은 서버가 정한다 — 화면은 credited 를 보이지 않을 뿐 잔액은 늘었다.

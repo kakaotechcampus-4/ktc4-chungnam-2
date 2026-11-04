@@ -59,7 +59,7 @@ describe('지도에 올린 AI 핀 상세(#1032, 가드레일 5)', () => {
     const evidence = screen.getByRole('region', { name: 'AI 추천 근거' })
     expect(within(evidence).getByText(pin.reason!)).toBeInTheDocument()
     expect(within(evidence).getByText(new RegExp(`${pin.checks![0].label}`))).toBeInTheDocument()
-    expect(within(evidence).getByText(/명 조건 충족/)).toBeInTheDocument()
+    expect(within(evidence).getByText(/명이 조건에 맞아요/)).toBeInTheDocument()
     expect(within(evidence).getByText(/출처/)).toBeInTheDocument()
   })
 

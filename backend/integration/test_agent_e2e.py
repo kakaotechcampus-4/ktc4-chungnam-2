@@ -345,8 +345,12 @@ def _text(line) -> str:
 
 
 def _later(hours: float) -> datetime:
-    """관찰 시각. 반대 뒤 기준 시간(이벤트가 적으면 3시간 × D-day 계수 1.0, 명세 6.1)을 넘기려고 앞으로 당긴다."""
-    return datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=hours)
+    """관찰 시각. 반대 뒤 기준 시간(이벤트가 적으면 3시간 × D-day 계수 1.0, 명세 6.1)을 넘기려고 앞으로 당긴다.
+
+    KST 자정 전 한 시간에 걸리면 한 시간 더 민다. 뒤따르는 관찰(+10분)이 자정을 넘으면 현황 칸의 dday가 바뀌어
+    「칸이 그대로면 문단을 다시 부르지 않는다」를 보는 단언이 저녁 8시 무렵 CI에서만 깨진다."""
+    t = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=hours)
+    return t + timedelta(hours=1) if kst_date(t) != kst_date(t + timedelta(hours=1)) else t
 
 
 def _stall_map(e2e, *, against):
@@ -438,13 +442,88 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     assert ("agent.resolved", {"suggestion_id": sug["id"], "status": "accepted",
                                "resolved_action_type": "open_recommend"}) in e2e.events(map_id)
 
-    # 다음 관찰: 상황은 그대로지만 사람이 이미 판단한 제안이라 다시 내지 않는다(12.3 중복). 모델도 다시 부르지 않는다
+    # 다음 관찰: 같은 신호는 사람이 이미 판단한 제안이라 다시 내지 않는다(12.3 중복). 그 막힌 곳은 수락 뒤로 지켜보는 중이다(6.9,
+    # #1346) — 이 테스트의 수락은 실제 시각이고 관찰은 4시간 뒤라 기준 시간이 지나 「그대로」로 보고 다음 방법을 낸다. 이미 해 본
+    # 「추천 받기」는 검증이 뺀다. 다음 방법의 전체 흐름은 test_accepted_stall_is_watched_then_next_method_then_declaration
     e2e.tick(now + timedelta(minutes=10))
     last = e2e.runs(map_id)[-1]
-    assert last.outcome == "blocked" and [b_["reason"] for b_ in last.blocked] == ["duplicate"]
-    assert len(diagnosis_requests(e2e.model)) == 3
+    assert last.outcome == "suggested" and [b_["reason"] for b_ in last.blocked] == ["duplicate"]
+    assert len(diagnosis_requests(e2e.model)) == 6
     assert len(e2e.runs(map_id, trigger="status")) == 1   # 칸이 그대로라 현황 문단도 다시 부르지 않는다
-    assert b.get(f"/maps/{map_id}/agent").json()["active_suggestion"] is None
+    nxt = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (nxt["attempt"], [t["action_type"] for t in nxt["tried"]]) == (1, ["open_recommend"])
+    assert all(x["type"] != "open_recommend" for x in nxt["actions"])
+
+
+# ---------------------------------------------------------------- 수락 뒤 지켜보기: 다음 방법 → 충돌 선언(#1346, 6.9)
+
+def followup_brain(our_pins):
+    """첫 제안은 stall_brain 그대로. 다음 방법(attempt 1)이면 해 본 것을 사실로만 말하고, 남은 허용 행동만 고른다. 숫자는 코드 호출
+    기록 f1을 가리킨다(diagnose-v8이 쓰려는 모양, #1347)."""
+    first = stall_brain(our_pins)
+
+    def brain(turn):
+        inp = turn.input
+        if inp.get("attempt") != 1 or not set(inp.get("against_pin_ids") or ()) & our_pins:
+            return first(turn)
+        claims = [ToolClaim(id="c1", kind="tool_result", call_id="f1", path="new_pins", value=0)]
+        advice = [
+            AdviceLine(text="추천 받기를 해 봤지만 새 후보가 지도에 오르지 않았어요", basis=["c1"], is_guess=False),
+            AdviceLine(text="직접 찾아서 올려 보면 좋겠어요", basis=["c1"], is_guess=True),
+        ]
+        actions = [Action(type=t, category=inp["category"], pin_ids=None, basis=["c1"]) for t in inp["allowed_actions"]]
+        return _answer(DiagnosisOutput(decision="suggest", diagnosis="stall", signal_id=inp["signal_id"], claims=claims,
+                                       advice=advice, actions=actions))
+    return brain
+
+
+def test_accepted_stall_is_watched_then_next_method_then_declaration(e2e):
+    """수락 → 활동 → 후속(다음 방법) → 수락 → 충돌 선언. 지켜보는 동안 모델은 부르지 않고, 다음 방법은 진단을 해 본 것과 함께 한 번,
+    충돌 선언은 코드다. 누가 눌렀는지와 추천 결과는 어디에도 없다."""
+    (a, b, c), map_id, pins = _stall_map(e2e, against=[(1, 0, SPICY, ["food_spicy"]), (2, 1, WAITING, None)])
+    e2e.model.brains[DiagnosisOutput] = followup_brain(set(pins))
+
+    e2e.tick(_later(4))
+    first = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (first["attempt"], first["tried"]) == (0, [])
+    assert c.post(f"/agent/suggestions/{first['id']}/accept", json={"action_index": 0}).status_code == 200
+    [watching] = b.get(f"/maps/{map_id}/agent").json()["tracking"]
+    assert (watching["status"], watching["text"]) == ("watching", "음식점 · 추천 받기 뒤로 지켜보는 중")
+    assert [t["label"] for t in watching["tried"]] == ["음식점 추천 받기"]
+    assert len(diagnosis_requests(e2e.model)) == 3
+
+    # 활동: 다른 카테고리에서 두 사람이 핀을 찍었다. 음식점에는 새 핀이 없다 → 그대로 → 다음 방법
+    e2e.pin(b, map_id, "seongsu-cafe-a")
+    e2e.pin(c, map_id, "seongsu-cafe-b")
+    e2e.tick(_later(8))
+    second = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (second["attempt"], [t["action_type"] for t in second["tried"]]) == (1, ["open_recommend"])
+    assert [(x["type"], x["label"]) for x in second["actions"]] == [("search_place", "음식점 검색")]
+    assert [_text(line) for line in second["advice"]][0] == "추천 받기를 해 봤지만 새 후보가 지도에 오르지 않았어요"
+    assert [st["stage"] for st in second["steps"]][:2] == ["감지", "후속 확인"]
+    assert len(diagnosis_requests(e2e.model)) == 4   # 다음 방법은 진단 한 번(도구 없이 답함)
+    assert b.get(f"/maps/{map_id}/agent").json()["tracking"] == []   # 지금 제안인 막힌 곳은 줄에 없다
+
+    # 다음 방법도 수락 → 그대로 → 충돌 선언(코드). 버튼이 없고 해 본 것이 남는다
+    assert a.post(f"/agent/suggestions/{second['id']}/accept", json={"action_index": 0}).status_code == 200
+    e2e.tick(_later(12))
+    third = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (third["attempt"], third["actions"]) == (2, [])
+    assert [t["action_type"] for t in third["tried"]] == ["open_recommend", "search_place"]
+    texts = [_text(line) for line in third["advice"]]
+    assert texts[:2] == ["음식점 추천 받기를 해 봤어요", "음식점 검색을 해 봤어요"]
+    assert texts[-1] == core.DECLARE_CLOSING
+    assert not any(core._squash(p) in core._squash("".join(texts)) for p in core.DECLARE_FORBIDDEN)
+    assert len(diagnosis_requests(e2e.model)) == 4   # 충돌 선언은 모델을 부르지 않는다
+    declared_run = e2e.runs(map_id)[-1]
+    assert (declared_run.outcome, declared_run.used_model) == ("suggested", False)
+
+    events = e2e.events(map_id)
+    suggested = [p for t, p in events if t == "agent.suggested"]
+    assert [p["attempt"] for p in suggested] == [0, 1, 2]
+    dumped = json.dumps([third, suggested, [p for t, p in events if t == "agent.resolved"]], ensure_ascii=False)
+    for leak in (SPICY, WAITING, *e2e.user_ids, "resolved_by"):
+        assert leak not in dumped
 
 
 # ---------------------------------------------------------------- 같은 특징을 반대로 원한 갈림(#1317)
