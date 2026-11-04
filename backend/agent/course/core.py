@@ -169,6 +169,18 @@ def course_transit_legs(trip: Trip, course: Course) -> int:
     return sum(day_transit_legs(trip, day) for day in course)
 
 
+def clusters(trip: Trip) -> list[list[Place]]:
+    """같은 동네 묶음(3km 단일 연결). 점검이 부른다(review.py)."""
+    return _clusters(trip)
+
+
+def moved_count(home: Course, course: Course) -> int:
+    """사람이 정한 일정(home)에서 다른 날로 옮겨진 장소 수. home이 비어 있으면(일정을 점검하는 중이 아니면) 0."""
+    if not home:
+        return 0
+    return sum(p not in home[i] for i, day in enumerate(course) for p in day)
+
+
 # ---- 초안 배치 (명세 14.4) ----
 
 def _clusters(trip: Trip) -> list[list[Place]]:
