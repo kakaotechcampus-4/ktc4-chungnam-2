@@ -1169,7 +1169,8 @@ def diagnosis_input(
     넣는 것은 모델이 그것을 알려고 도구를 한 번 더 부르지 않게 하려는 것이다(#534). 두 유형 모두 미리 돌려 본 결과(preview,
     6.7 — stall {passed_count}, split의 different_axes {passed_count, with_keys_count, with_labels}, 없으면 None)를 넣는다.
     같은 값이 도구 기록 p1에 있어 모델이 ToolClaim으로 가리킨다. 다음 방법(attempt 1, 6.9)이면 attempt, attempts(해 본 것의 행동과
-    버튼 문구), allowed_actions(허용 행동에서 해 본 것과 0곳인 추천 받기를 뺀 것)를 더한다 — 첫 제안의 입력은 그대로다. run 결과는 없다."""
+    버튼 문구), allowed_actions(허용 행동에서 해 본 것과 0곳인 추천 받기를 뺀 것), followup_check(f1과 같은 값 — 수락 뒤 지난 분, 그 뒤
+    그 카테고리 새 핀 수)를 더한다 — 첫 제안의 입력은 그대로다. run 결과는 없다."""
     f = top.features
     out: dict[str, Any] = {
         "signal_id": top.id, "diagnosis": top.diagnosis, "category": top.category,
@@ -1194,6 +1195,7 @@ def diagnosis_input(
         out["attempt"] = top.features["attempt"]
         out["attempts"] = [{"action": t["action_type"], "label": t["label"]} for t in top.features.get("tried") or ()]
         out["allowed_actions"] = list(allowed_actions(top, preview))
+        out["followup_check"] = followup_check_result(top)   # 도구 기록 f1과 같은 값 — 모델이 ToolClaim(call_id="f1")으로 쓴다(#1347)
     return out
 
 

@@ -290,6 +290,7 @@ def test_diagnosis_input_carries_attempts_and_allowed_actions_but_no_run():
     assert inp["attempt"] == 1
     assert inp["attempts"] == [{"action": "open_recommend", "label": "open_recommend"}]
     assert inp["allowed_actions"] == ["search_place"]
+    assert inp["followup_check"] == core.followup_check_result(sig)   # f1과 같은 값(#1347)
     dumped = json.dumps(inp, ensure_ascii=False, default=str)
     for leak in ("run", "resolved_by", "last_run_at", "funnel"):
         assert leak not in dumped
@@ -298,7 +299,7 @@ def test_diagnosis_input_carries_attempts_and_allowed_actions_but_no_run():
 def test_first_suggestion_input_is_unchanged():
     [sig] = core.detect_stall(stall_snap(), A + TH, TH)
     inp = core.diagnosis_input(replace(sig, id="s1"), stall_snap())
-    assert not {"attempt", "attempts", "allowed_actions"} & set(inp)
+    assert not {"attempt", "attempts", "allowed_actions", "followup_check"} & set(inp)
 
 
 # ---------------------------------------------------------------- 충돌 선언 템플릿

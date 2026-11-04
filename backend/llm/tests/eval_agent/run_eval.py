@@ -18,6 +18,9 @@
   결과 파일(request_errors[].broken)에만 남긴다. 운영 로그에는 남기지 않는다(#390, client는 클래스 이름만). 반복 판정은 client의
   read_json_repeat 하나다 — 반복이면 client가 첫 객체를 받으므로(#767 3번 b) 그 호출은 실패로 세지 않고 「반복 받음」으로 센다.
 - 낫표 겹침(#767 1번): 렌더된 text 조각(인용 조각 밖)에 「 또는 」가 남은 줄을 센다. quote 조각은 화면이 인용 모양으로 그린다.
+- 다음 방법(#1347, 명세 6.9): 후속 케이스(case.followup)에서 해 본 행동을 원문에서 다시 고른 수와 검증 뒤 남은 수(0이어야 한다),
+  f1 claim이 남은 수, 추천 결과를 짐작하거나 입력과 다른 사실을 쓴 문구(expect.result_guess_phrases — 남는 곳이 있는데 「찾지 못했」 등 — 결정 지시처럼 케이스 문구로, 원문 슬롯 밖과 렌더 text
+  조각)를 센다.
 """
 
 import argparse
@@ -132,7 +135,7 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     expect = case["expect"]
     key = expect["target"]
     inp = world.diagnosis_input(key)
-    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS[inp["diagnosis"]], preview=world.preview(key))
+    tools = world.tools(key, DIAGNOSIS_TOOLS[inp["diagnosis"]])   # 코드 기록 p1, f1을 미리 넣는다
     _local.requests = []
     started = time.monotonic()
     reply = service.agent_diagnose(inp, tool_runner=tools.run, planner=service.real_diagnosis_planner)
@@ -149,11 +152,13 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     preview = inp.get("preview")
     row["preview"] = preview   # 미리 돌려 본 수(6.7, #1180). 없으면 None
     row["conflict_type"] = (inp.get("comparison") or {}).get("conflict_type")   # split만(#1319 지표)
+    guesses = expect.get("result_guess_phrases", [])
+    row["tried"] = [a["action"] for a in inp.get("attempts") or ()]   # 다음 방법(6.9)이면 해 본 행동
     if isinstance(out, AgentCallFailed):
         return row | {"decision": None, "outcome": core.failed_outcome(out.reason), "failure": out.detail,
                       "decision_match": False, "button_match": False, "kept_actions": [],
                       "raw_echo": [], "shown_echo": [], "quoted_echo": [], "p1_claimed": False,
-                      "raw_open_recommend": False, "raw_actions": []}
+                      "raw_open_recommend": False, "raw_actions": [], "f1_claimed": False, "raw_guess": [], "shown_guess": []}
     verified = fx.verify(world, key, out, tools)
     raw_text = " ".join(a.text for a in out.advice)
     row |= {
@@ -161,14 +166,17 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
         "outcome": verified.outcome,
         "verification": verified.record,
         "raw_actions": [a.type for a in out.actions],
+        "raw_action_basis": [a.basis for a in out.actions],   # 행동 탈락(basis)의 원인을 보려고(#1347)
         "raw_advice": [{"text": a.text, "is_guess": a.is_guess, "basis": a.basis} for a in out.advice],
         "raw_claims": [c.model_dump() for c in out.claims],
         "raw_forbidden": [w for w in FORBIDDEN_RAW if w in raw_text.replace(" ", "")],
         "raw_echo": fx.decision_echoes((fx.outside_slots(a.text) for a in out.advice), phrases),
+        "raw_guess": fx.decision_echoes((fx.outside_slots(a.text) for a in out.advice), guesses),
         "raw_open_recommend": "open_recommend" in [a.type for a in out.actions],
     }
     kept_ids = set((verified.record.get("claims") or {}).get("kept", []))
     row["p1_claimed"] = any(c.kind == "tool_result" and c.call_id == "p1" and c.id in kept_ids for c in out.claims)
+    row["f1_claimed"] = any(c.kind == "tool_result" and c.call_id == "f1" and c.id in kept_ids for c in out.claims)
     expected_silent = expect["decision"] == "silent"
     row["decision_match"] = (out.decision != "suggest") if expected_silent else (out.decision == "suggest")
     draft = verified.draft
@@ -184,6 +192,7 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     shown = [x["segments"] for x in row.get("rendered", []) if x["segments"]]
     row["shown_echo"] = fx.decision_echoes((fx.segment_texts(seg) for seg in shown), phrases)
     row["quoted_echo"] = fx.decision_echoes((fx.segment_texts(seg, "quote") for seg in shown), phrases)
+    row["shown_guess"] = fx.decision_echoes((fx.segment_texts(seg) for seg in shown), guesses)
     if expected_silent:
         row["button_match"] = row["decision_match"]
     else:
@@ -230,6 +239,7 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                   f"| 원문에 결정 지시 표현 | {sum(bool(r.get('raw_forbidden')) for r in diag)} |",
                   *_echo_rows(diag),
                   *_preview_rows(diag),
+                  *_followup_rows(diag),
                   f"| 도구 호출 수(평균, 최대) | {_avg([len(r['tools']) for r in diag]):.1f}, {max(len(r['tools']) for r in diag)} |",
                   f"| 모델 요청 수(평균) | {_avg([r['requests'] for r in diag]):.1f} |",
                   f"| 입력 토큰(평균, 캐시) | {_avg([r['in'] for r in diag]):.0f} ({_avg([r['cached'] for r in diag]):.0f}) |",
@@ -305,7 +315,8 @@ def _preview_rows(rows: list[dict[str, Any]]) -> list[str]:
     빼므로 남은 것은 0이어야 하고, 모델이 원문에서 고른 횟수는 지시문을 따랐는지 본다."""
     with_preview = [r for r in rows if r.get("preview") and r.get("decision") == "suggest"]
     zero = [r for r in with_preview if r["preview"]["passed_count"] == 0]
-    some = [r for r in with_preview if r["preview"]["passed_count"] > 0]
+    # 추천 받기를 이미 해 본 다음 방법(6.9)은 수를 쓰지 않는 것이 맞아 분모에서 뺀다(#1347)
+    some = [r for r in with_preview if r["preview"]["passed_count"] > 0 and "open_recommend" not in r.get("tried", [])]
     return [f"| 미리 돌려 본 수를 p1 claim으로 씀(남는 곳 있음, suggest 중) | {_pct(sum(r['p1_claimed'] for r in some), len(some))} |",
             f"| 0곳인데 모델이 추천 받기를 고름(원문) | {_pct(sum(r['raw_open_recommend'] for r in zero), len(zero))} |",
             f"| 0곳인데 추천 받기가 남음(검증 뒤, 0이어야 한다) | {sum('open_recommend' in r['kept_actions'] for r in zero)} |",
@@ -322,6 +333,19 @@ def _button_rows(rows: list[dict[str, Any]]) -> list[str]:
     first = sum(r["kept_actions"][:1] == ["open_recommend"] for r in axis)
     return [f"| 핀 보기를 고름 — 원문/검증 뒤(0이어야 한다) | {shown}/{kept} |",
             f"| same_axis·unclear(남는 곳 있음, suggest 중) 첫 버튼이 추천 받기 | {_pct(first, len(axis))} |"]
+
+
+def _followup_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """다음 방법(6.9, #1347) 지표 줄. 분모는 후속 케이스의 호출(해 본 행동이 입력에 있었던 것)이다. 해 본 행동은 검증(11.2 6단계)이
+    빼므로 검증 뒤 남은 수는 0이어야 하고, 원문에서 고른 수는 지시문을 따랐는지 본다."""
+    follow = [r for r in rows if r.get("tried")]
+    sug = [r for r in follow if r.get("decision") == "suggest"]
+    again_raw = sum(any(a in r["tried"] for a in r.get("raw_actions", [])) for r in follow)
+    again_kept = sum(any(a in r["tried"] for a in r["kept_actions"]) for r in follow)
+    return [f"| 다음 방법: 해 본 행동을 고름 — 원문/검증 뒤(검증 뒤는 0이어야 한다) | {again_raw}/{again_kept} (호출 {len(follow)}) |",
+            f"| 다음 방법: f1 claim이 남음(suggest 중) | {_pct(sum(r['f1_claimed'] for r in sug), len(sug))} |",
+            f"| 다음 방법: 결과 짐작·입력과 다른 말(케이스 문구) — 원문 슬롯 밖 | {_pct(sum(bool(r['raw_guess']) for r in follow), len(follow))} |",
+            f"| 다음 방법: 결과 짐작·입력과 다른 말(케이스 문구) — 렌더 text 조각 | {_pct(sum(bool(r['shown_guess']) for r in follow), len(follow))} |"]
 
 
 def _echo_cases(by_case: Mapping[str, list[dict[str, Any]]]) -> list[str]:

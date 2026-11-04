@@ -16,6 +16,10 @@ same_axis·unclear는 절충 키 없이 passed_count만이다. preview 없는 �
 기대 버튼은 「추천 받기」와 「장소 검색」뿐이다(#1317 — 모델 유형의 「핀 보기」를 뺐다). 남는 곳이 있으면 추천 받기,
 0곳이면 장소 검색이다.
 
+후속 케이스(#1347, 명세 6.9)는 case.followup에 첫 제안을 어느 버튼으로 수락했는지 적는다(e30~e33: 정체 후속, 갈림 후속,
+후속 + 0곳, 후속 + 지시문). 후속 신호가 운영과 같은 core.detect_followups로 잡히는지, 진단 입력에 해 본 것(attempts)과 남은
+행동(allowed_actions), f1과 같은 값(followup_check)이 들어가는지, 기대 버튼에 해 본 행동이 없는지 본다.
+
 지시문 케이스(#717)는 expect.decision_phrases에 결정 지시 기대 문구를 적는다. 그 문구가 사유 글에서 나왔는지, #717에서 더한
 표현이 금지어 목록(core.FORBIDDEN_PHRASES)을 지나가는지, 문구 판정이 인용 조각과 text 조각을 가르는지 본다.
 """
@@ -36,7 +40,7 @@ def test_cases_cover_both_model_types_and_silence():
     expects = [c["expect"] for c in CASES]
     targets = [e["target"] for e in expects if e["target"]]
 
-    assert len(CASES) == 29 and len({c["id"] for c in CASES}) == 29
+    assert len(CASES) == 33 and len({c["id"] for c in CASES}) == 33
     assert sum(t.startswith("stall") for t in targets) >= 7 and sum(t.startswith("split") for t in targets) >= 7
     assert sum(e["decision"] == "silent" for e in expects) >= 3
     assert sum(e["priority_source"] == "rules" for e in expects) >= 7
@@ -50,7 +54,7 @@ def test_case_state_matches_expectation(case):
     passed, blocked = world.passed()
 
     assert sorted(fx.signal_key(s) for s in passed) == sorted(expect["signals"])
-    assert blocked == []
+    assert [b.reason for b in blocked] == expect.get("blocked", [])   # 후속 갈림은 원래 신호가 duplicate로 막힌다(12.3)
     assert ("single" if len(passed) == 1 else "rules") == expect["priority_source"]
     if expect["priority_top"]:
         assert set(expect["priority_top"]) <= {fx.signal_key(s) for s in passed}
@@ -205,9 +209,17 @@ def test_preview_cases_cover_zero_some_and_compromise():
     assert {c["preview"]["passed_count"] > 0 for c in axis} == {True, False}   # same_axis·unclear 0곳 하나, 몇 곳 하나 이상
     assert all("with_keys_count" not in c["preview"] for c in axis)
     assert all(c["expect"]["decision"] == "suggest" for c in PREVIEW_CASES)
-    for c in PREVIEW_CASES:   # 남는 곳이 있으면 「추천 받기」, 0곳이면 「장소 검색」만
-        expected = ["open_recommend"] if c["preview"]["passed_count"] > 0 else ["search_place"]
+    for c in PREVIEW_CASES:   # 남는 곳이 있으면 「추천 받기」, 0곳이면 「장소 검색」만. 후속은 해 본 행동을 빼고 남은 것(6.9)
+        expected = [a for a in _expected_order(c) if a not in _tried(c)][:1]
         assert c["expect"]["actions"] == expected, c["id"]
+
+
+def _expected_order(case):
+    return ["open_recommend", "search_place"] if case["preview"]["passed_count"] > 0 else ["search_place"]
+
+
+def _tried(case):
+    return {case["followup"]["action"]} if case.get("followup") else set()
 
 
 @pytest.mark.parametrize("case", PREVIEW_CASES, ids=[c["id"] for c in PREVIEW_CASES])
@@ -248,14 +260,14 @@ def test_zero_places_leave_no_recommend_button_and_counts_stay_in_slots(case):
     world = fx.build(case)
     key = case["expect"]["target"]
     inp = world.diagnosis_input(key)
-    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS[inp["diagnosis"]], preview=world.preview(key))
+    tools = world.tools(key, DIAGNOSIS_TOOLS[inp["diagnosis"]])
     n = case["preview"]["passed_count"]
 
     slotted = fx.verify(world, key, _preview_out(case, inp, ["open_recommend"], "지금 조건으로 찾으면 맞는 곳이 {c1.value}곳 있어요"), tools)
     digits = fx.verify(world, key, _preview_out(case, inp, ["open_recommend"], f"지금 조건으로 찾으면 맞는 곳이 {n}곳 있어요"), tools)
 
     kept = [a["type"] for a in slotted.draft.actions] if slotted.draft else []
-    assert ("open_recommend" in kept) == (n > 0)
+    assert ("open_recommend" in kept) == (n > 0 and "open_recommend" not in _tried(case))   # 후속은 해 본 행동도 빠진다
     assert slotted.draft is not None and slotted.draft.advice   # 문장은 남는다
     assert digits.record["lines"]["removed"] == [{"index": 0, "reason": "digit"}]
 
@@ -293,3 +305,78 @@ def test_a_different_axes_split_without_a_preview_still_expects_recommend():
     assert inp["comparison"]["conflict_type"] == "different_axes"
     assert case["expect"]["actions"] == ["open_recommend"]
     assert [a["type"] for a in fx.verify(world, key, out, tools).draft.actions] == ["open_recommend"]
+
+
+# ---------------------------------------------------------------- 후속 케이스 (#1347, 명세 6.9)
+
+FOLLOWUP_CASES = [c for c in CASES if c.get("followup")]
+
+
+def test_followup_cases_cover_stall_split_zero_and_injection():
+    shapes = {c["id"][:3]: (c["expect"]["target"].split(":")[0], c["preview"]["passed_count"] > 0,
+                            bool(c["expect"].get("decision_phrases"))) for c in FOLLOWUP_CASES}
+    assert set(shapes) == {"e30", "e31", "e32", "e33"}
+    assert shapes["e30"] == ("stall", True, False) and shapes["e31"][0] == "split"
+    assert shapes["e32"] == ("stall", False, False) and shapes["e33"][2]
+    assert {c["followup"]["action"] for c in FOLLOWUP_CASES} == {"open_recommend", "search_place"}   # 두 방향 다
+    assert all(c["expect"].get("result_guess_phrases") for c in FOLLOWUP_CASES)
+
+
+@pytest.mark.parametrize("case", FOLLOWUP_CASES, ids=[c["id"] for c in FOLLOWUP_CASES])
+def test_followup_input_carries_what_was_tried_and_the_f1_record(case):
+    """후속 신호는 운영과 같은 detect_followups가 만든다(attempt 1). 진단 입력에 해 본 것, 남은 행동, f1과 같은 값이 있고
+    기대 버튼은 남은 행동 안이며 해 본 행동이 아니다. run 결과와 누가 눌렀는지는 없다."""
+    world = fx.build(case)
+    key = case["expect"]["target"]
+    top = world.find(key)
+    inp = world.diagnosis_input(key)
+    tools = world.tools(key, DIAGNOSIS_TOOLS[inp["diagnosis"]])
+    f = case["followup"]
+
+    assert core.is_followup(top) and inp["attempt"] == 1
+    assert inp["attempts"] == [{"action": f["action"], "label": f["label"]}]
+    assert f["action"] not in inp["allowed_actions"]
+    assert set(case["expect"]["actions"]) <= set(inp["allowed_actions"])
+    assert f["action"] not in case["expect"]["actions"]
+    assert inp["followup_check"] == tools.results["f1"] == core.followup_check_result(top)
+    dumped = json.dumps(inp, ensure_ascii=False, default=str)
+    assert "resolved_by" not in dumped and "last_run_at" not in dumped and "funnel" not in dumped
+
+
+def test_a_stall_followup_had_no_new_pins_and_the_split_one_had_one():
+    """정체는 새 핀이 오르면 풀리므로 후속이면 new_pins가 0이다. 갈림은 새 핀으로 풀리지 않아 e31은 검색으로 오른 1개가 있다 —
+    지시문이 「새 핀이 없었다」를 f1 값과 상관없이 쓰지 않는지 보려는 케이스다."""
+    by = {c["id"][:3]: fx.build(c) for c in FOLLOWUP_CASES}
+    news = {k: w.followup_check(w.case["expect"]["target"])["new_pins"] for k, w in by.items()}
+    assert news == {"e30": 0, "e31": 1, "e32": 0, "e33": 0}
+
+
+def _followup_out(inp, action, claims, text="{c1.value}"):
+    return DiagnosisOutput.model_validate({
+        "decision": "suggest", "diagnosis": inp["diagnosis"], "signal_id": inp["signal_id"], "claims": claims,
+        "advice": [{"text": text, "basis": ["c1"], "is_guess": False}],
+        "actions": [{"type": action, "category": None, "pin_ids": None, "basis": [c["id"] for c in claims]}],
+    })
+
+
+@pytest.mark.parametrize("case", FOLLOWUP_CASES, ids=[c["id"] for c in FOLLOWUP_CASES])
+def test_tried_action_is_dropped_and_f1_claims_are_checked(case):
+    """모델이 해 본 행동을 다시 골라도 검증이 뺀다(11.2 6단계, allowed_actions). f1 claim은 기록 값과 같아야 남는다."""
+    world = fx.build(case)
+    key = case["expect"]["target"]
+    inp = world.diagnosis_input(key)
+    tools = world.tools(key, DIAGNOSIS_TOOLS[inp["diagnosis"]])
+    new_pins = inp["followup_check"]["new_pins"]
+    claims = [{"id": "c1", "kind": "tool_result", "call_id": "f1", "path": "new_pins", "value": new_pins}]
+    if inp["diagnosis"] == "split":
+        claims += [{"id": f"c{i}", "kind": "count", "subject": "pin", "subject_id": inp["pin_id"], "metric": m,
+                    "value": inp["counts"][m]} for i, m in ((2, "like"), (3, "against"))]
+    wrong = [dict(claims[0], value=new_pins + 1)] + claims[1:]
+
+    again = fx.verify(world, key, _followup_out(inp, case["followup"]["action"], claims), tools)
+    other = fx.verify(world, key, _followup_out(inp, case["expect"]["actions"][0], claims), tools)
+    guessed = fx.verify(world, key, _followup_out(inp, case["expect"]["actions"][0], wrong), tools)
+
+    assert {"index": 0, "reason": "type"} in again.record["actions"]["removed"]
+    assert [a["type"] for a in other.draft.actions] == case["expect"]["actions"]
+    assert {"id": "c1", "reason": "tool_mismatch"} in guessed.record["claims"]["removed"]
