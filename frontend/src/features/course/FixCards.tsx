@@ -29,8 +29,8 @@ export default function FixCards({ mapId, run, names, onRetry }: { mapId: string
   async function applyRest() {
     setBulk({ pending: true, error: null })
     try {
-      await applyFix(queryClient, mapId, restMoves)
-      for (const f of rest) mark(run.id, f.id)
+      // false 면 run 이 stale 로 바뀌어 캐시에 들어갔다 — 버튼이 사라지고 카드가 「다시 점검」으로 바뀐다.
+      if (await applyFix(queryClient, mapId, run.id, restMoves)) for (const f of rest) mark(run.id, f.id)
       setBulk({ pending: false, error: null })
     } catch (error) {
       setBulk({ pending: false, error })
