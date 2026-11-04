@@ -16,6 +16,26 @@ import { checkedOf, dayOrdinal, fixesOf, hasMoves, isFill, sortFixes, staleFixTe
 export default function FixCards({ mapId, run, names, onRetry }: { mapId: string; run: CourseRunDto; names: Map<string, string>; onRetry: () => void }) {
   const fixes = sortFixes(fixesOf(run))
   const checked = checkedOf(run)
+  const queryClient = useQueryClient()
+  const applied = useAppliedFixStore((s) => s.applied[run.id])
+  const mark = useAppliedFixStore((s) => s.mark)
+  const [bulk, setBulk] = useState<{ pending: boolean; error: unknown }>({ pending: false, error: null })
+  // 「남은 곳 한 번에 넣기」(#1393) — 아직 반영하지 않은 미배정 카드들의 moves 를 모아 한 번에 저장한다. 미배정 장소는 카드끼리 겹치지 않아 그대로 넣어도 같은 결과다.
+  // 카드를 하나라도 반영했거나 run 이 stale 이면 카드와 같은 잠금 규칙(#1377)으로 버튼을 없애고, 카드의 「다시 점검」이 그 자리를 맡는다.
+  const rest = fixes.filter((f) => f.kind === 'unassigned' && hasMoves(f) && !(applied?.includes(f.id) ?? false))
+  const restMoves = rest.flatMap((f) => f.moves)
+  const bulkStale = bulk.error instanceof ApiError && bulk.error.code === 'SHORTLIST_STALE'
+  const locked = run.stale || (applied?.length ?? 0) > 0 || bulkStale
+  async function applyRest() {
+    setBulk({ pending: true, error: null })
+    try {
+      await applyFix(queryClient, mapId, restMoves)
+      for (const f of rest) mark(run.id, f.id)
+      setBulk({ pending: false, error: null })
+    } catch (error) {
+      setBulk({ pending: false, error })
+    }
+  }
   // 날짜 → 「첫째 날」. 지도의 날짜 순서는 run.days 와 같다.
   const dayName = (date: string | null) => {
     if (!date) return '미배정'
@@ -24,11 +44,24 @@ export default function FixCards({ mapId, run, names, onRetry }: { mapId: string
   }
   return (
     <div className="space-y-3">
+      {rest.length > 1 && !locked && (
+        <div className="space-y-2">
+          <button type="button" onClick={() => void applyRest()} disabled={bulk.pending} className="btn-primary btn-md w-full">
+            {bulk.pending ? '넣는 중…' : `남은 ${restMoves.length}곳 한 번에 넣기`}
+          </button>
+          {bulk.error != null && <ErrorText message="일정에 반영하지 못했어요" error={bulk.error} />}
+        </div>
+      )}
+      {bulkStale && (
+        <p role="alert" className="break-keep text-body text-warn-text">
+          {staleFixText}
+        </p>
+      )}
       {fixes.length > 0 && (
         <ul aria-label="고칠 점" className="space-y-2">
           {fixes.map((fix) => (
             <li key={fix.id}>
-              <FixCard mapId={mapId} runId={run.id} runStale={run.stale} fix={fix} names={names} dayName={dayName} onRetry={onRetry} />
+              <FixCard mapId={mapId} runId={run.id} runStale={run.stale || bulkStale} fix={fix} names={names} dayName={dayName} onRetry={onRetry} />
             </li>
           ))}
         </ul>

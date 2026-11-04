@@ -1,13 +1,14 @@
 import { useState } from 'react'
 
-import { PingoMark } from '@/ui/Pingo'
+import Pingo from '@/ui/Pingo'
 
 import AgentSheet from './AgentSheet'
 import { useAgentQuery } from './queries'
 
 /**
- * 「핑고 AI 조언」 버튼(agent-v2 16.1). 마킹 탭 지도 왼쪽 아래 — 오른쪽 지도 버튼 묶음과 같은 높이로 시트 윗변을 따라 오르내린다.
- * 새 제안을 아직 안 봤으면 파란 점(할 일은 파랑). 모드가 꺼져 있어도 버튼은 보이고 점만 숨긴다. 요약 갱신에는 점을 켜지 않는다.
+ * 「핑고 AI 조언」 버튼(agent-v2 16.1). 조언은 지도 단위라 지도가 떠 있는 네 탭 모두의 지도 왼쪽 아래에 있다(#1162) —
+ * 오른쪽 지도 버튼 묶음과 같은 높이로 시트 윗변을 따라 오르내린다. 안내자 핑고가 손을 흔들며 말을 거는 모양(말풍선)이다.
+ * 새 제안을 아직 안 봤으면 말풍선에 귤색 점(새 소식, #1223). 모드가 꺼져 있어도 버튼은 보이고 점만 숨긴다. 요약 갱신에는 점을 켜지 않는다.
  */
 export default function AgentButton({
   mapId,
@@ -35,13 +36,20 @@ export default function AgentButton({
         tabIndex={fading ? -1 : 0}
         onClick={() => setOpen(true)}
         aria-label={dot ? '핑고 AI 조언, 새 제안 있음' : '핑고 AI 조언'}
-        className={`absolute left-4 ${docked ? 'bottom-4' : 'bottom-[calc(100%+12px)]'} press flex h-11 items-center gap-1.5 rounded-xl bg-white pl-2 pr-3 text-sm font-bold text-brand-600 shadow-float transition-opacity ${
+        className={`absolute left-4 ${docked ? 'bottom-4' : 'bottom-[calc(100%+12px)]'} press flex h-11 items-center gap-2 transition-opacity ${
           fading ? 'pointer-events-none opacity-0 duration-150' : `${docked ? 'pointer-events-auto ' : ''}opacity-100 delay-800 duration-300`
         }`}
       >
-        <PingoMark size={24} />
-        핑고 AI 조언
-        {dot && <span aria-hidden="true" className="absolute -right-1 -top-1 size-3 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />}
+        {/* 지도 위에 맨몸으로 서서 그림자로 띄운다. */}
+        <span className="drop-shadow-md">
+          <Pingo size={40} mood="wave" />
+        </span>
+        <span className="relative flex h-9 items-center rounded-xl bg-white px-3 text-sm font-bold text-brand-600 shadow-float">
+          {/* 말풍선 꼬리 — 핑고 쪽을 가리킨다. */}
+          <span aria-hidden="true" className="absolute -left-1 top-1/2 size-2.5 -translate-y-1/2 rotate-45 bg-white" />
+          핑고 AI 조언
+          {dot && <span aria-hidden="true" className="absolute -right-1 -top-1 size-3 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />}
+        </span>
       </button>
       {open && <AgentSheet mapId={mapId} onClose={() => setOpen(false)} />}
     </>

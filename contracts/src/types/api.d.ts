@@ -508,7 +508,7 @@ export interface paths {
                 };
                 403: components["responses"]["GuestNotAllowed"];
                 409: components["responses"]["MapLimit"];
-                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락. 또는 TRIP_TOO_LONG — 시작일·종료일을 포함한 기간이 MapList.trip_max_days(지금 90일)를 넘음, detail: { limit } (#1371) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -657,7 +657,7 @@ export interface paths {
                 };
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
-                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락. 또는 TRIP_TOO_LONG — 날짜(start_date·end_date)를 바꾸는 요청에서 합친 기간이 MapList.trip_max_days(지금 90일)를 넘음, detail: { limit }. 제목·지역만 고치는 요청은 기간을 검사하지 않는다(이미 90일을 넘는 지도의 제목 수정은 허용) (#1371) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -4127,6 +4127,10 @@ export interface components {
             can_publish?: boolean;
             /** @description map: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465). pin: 핀 메모·분류 수정(pin.edit), 그 핀을 찍은 사람만 true이고 AI 추천·확정 핀은 false (#466) */
             can_edit?: boolean;
+            /** @description map 전용: 초대 링크 목록 보기·끄기(invite.revoke), 방장만 true (#467, #1154). 선택 필드 — 구버전 서버는 보내지 않는다 */
+            can_manage_invites?: boolean;
+            /** @description map 전용: 방장 직접 넘기기(owner.transfer), 방장만 true (#468, #1154). 선택 필드 — 구버전 서버는 보내지 않는다 */
+            can_transfer_owner?: boolean;
         };
         User: {
             id: string;
@@ -4283,6 +4287,8 @@ export interface components {
             items: components["schemas"]["Map"][];
             /** @description 만들거나 참여할 수 있는 지도 수 상한(만든 지도와 참여한 지도 합산, 삭제한 지도와 나간 지도는 세지 않음, #369). 화면은 이 값으로 "n / limit"을 그리고, items 수가 limit이면 「새 지도」를 막는다. 409 MAP_LIMIT의 detail.limit과 같은 값이다 */
             limit: number;
+            /** @description 여행 기간 상한 일수(시작일·종료일 포함, 지금 90, #1371). 화면은 이 값으로 날짜 칸의 고를 수 있는 끝을 막는다. 422 TRIP_TOO_LONG의 detail.limit과 같은 값이다. 선택 필드 — 구버전 서버는 보내지 않는다(없으면 화면이 막지 않고 서버 검사에 맡긴다) */
+            trip_max_days?: number;
         };
         MapCreateRequest: {
             /** @description 여행 제목 (#22) */
