@@ -3,6 +3,7 @@ import { Search } from 'lucide-react'
 
 import AgainstMark from '@/ui/AgainstMark'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
+import { PIN_PATH } from '@/ui/pinPath'
 import { PINGO_MARK } from '@/ui/pingoMark'
 
 import { usePhaseLoop } from './usePhaseLoop'
@@ -59,9 +60,7 @@ function PingoAt({ x, y, w, mood }: { x: number; y: number; w: number; mood: Pin
   )
 }
 
-const PIN_PATH = 'M12 2C7.6 2 4 5.6 4 10c0 6 8 20 8 20s8-14 8-20c0-4.4-3.6-8-8-8z'
-
-/** 지도 핀(pinMarker 와 같은 물방울). 일반은 빨강 실선 + 진한 점, 확정은 골드 + 순서 번호. */
+/** 지도 핀(pinMarker 와 같은 모양). 일반은 빨강 실선 + 진한 점, 확정은 골드 + 순서 번호. */
 function ScenePin({ confirmed = false, n }: { confirmed?: boolean; n?: number }) {
   return (
     <svg viewBox="0 0 24 32" width="24" height="32" className="drop-shadow-[0_1px_2px_rgba(20,22,31,0.3)]">
