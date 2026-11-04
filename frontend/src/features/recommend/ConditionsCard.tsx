@@ -49,11 +49,11 @@ export default function ConditionsCard({
       >
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-bold text-ink-900">
-            이 조건으로 찾았어요 · {noApplied ? '적용된 사유 조건이 없어요' : `조건 ${count}개`}
+            {noApplied ? '조건 없이 찾았어요' : `조건 ${count}개로 찾았어요`}
           </span>
           {/* 글은 꼭 필요한 한 줄만 — 고친 게 있을 때(2026-10-31). */}
           {changed > 0 && (
-            <span className="mt-1 block text-xs font-bold text-[var(--warn-text)]">고친 조건 {changed}개 · 다시 추천 때 반영</span>
+            <span className="mt-1 block text-xs font-bold text-[var(--warn-text)]">고친 조건 {changed}개는 다시 추천할 때 반영돼요</span>
           )}
         </span>
         <ChevronDown

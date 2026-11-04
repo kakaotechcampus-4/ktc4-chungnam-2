@@ -49,10 +49,10 @@ export function AiFulfillment({ evidence, members }: { evidence: AiEvidence; mem
       <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
         {f && (
           <>
-            <Users size={14} aria-hidden="true" /> {f.total}명 중 {f.satisfied}명 조건 충족
+            <Users size={14} aria-hidden="true" /> {f.total}명 중 {f.satisfied}명이 조건에 맞아요
           </>
         )}
-        <span className="ml-auto font-normal text-ink-600">출처 · {sourceLabel(evidence)}</span>
+        <span className="ml-auto font-normal text-ink-600">출처: {sourceLabel(evidence)}</span>
       </p>
       {f && <p className="text-xs text-ink-600">{fulfillmentLine(evidence, members)}</p>}
       <MemberConditions evidence={evidence} members={members} />

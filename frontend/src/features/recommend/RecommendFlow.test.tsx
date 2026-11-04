@@ -73,7 +73,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     const { run, result } = await doneRun()
     renderWithClient(<Card run={run} result={result} />)
 
-    const toggle = screen.getByRole('button', { name: /이 조건으로 찾았어요/ })
+    const toggle = screen.getByRole('button', { name: /조건 .*찾았어요/ })
     expect(toggle).toHaveTextContent(/조건 \d+개/)
     await userEvent.click(toggle)
 
@@ -81,8 +81,8 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     await userEvent.click(await screen.findByRole('button', { name: '매운맛 전문 빼기' }))
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '빼기' }))
 
-    expect(await screen.findByText('고친 조건 1개 · 다시 추천 때 반영')).toBeInTheDocument()
-    const removed = screen.getByRole('heading', { name: '뺀 조건 · 다시 추천 때 반영' }).parentElement!
+    expect(await screen.findByText('고친 조건 1개는 다시 추천할 때 반영돼요')).toBeInTheDocument()
+    const removed = screen.getByRole('heading', { name: '뺀 조건' }).parentElement!
     expect(within(removed).getByRole('button', { name: '매운맛 전문 다시 넣기' })).toBeInTheDocument()
   })
 
@@ -128,7 +128,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     for (let n = 0; n < 10; n++) last = await retryRun(run.id)
     renderWithClient(<Card run={last} result={await fetchResult(run.id)} />)
 
-    await userEvent.click(screen.getByRole('button', { name: /이 조건으로 찾았어요/ }))
+    await userEvent.click(screen.getByRole('button', { name: /조건 .*찾았어요/ }))
     expect(await screen.findByRole('button', { name: '매운맛 전문 빼기' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '조건 더하기' })).toBeInTheDocument()
   })

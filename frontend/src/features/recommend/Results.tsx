@@ -53,7 +53,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
         <div className="min-w-0 flex-1">
           <AiHeader
             title={count ? `${run.category} 대안 ${count}곳을 찾았어요` : '이번엔 새로 찾은 곳이 없어요'}
-            sub="나에게만 보여요 · 올린 곳만 모두에게 보여요"
+            sub="지도에 올린 곳만 구성원 모두에게 보여요"
             mood={count ? 'happy' : 'sorry'}
           />
         </div>
@@ -72,6 +72,8 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
 
 /** 결과를 이미 보여 준 실행. 후보 상세에서 목록으로 돌아올 때는 다시 나타나지 않게 한다(#595). */
 const shownRuns = new Set<string>()
+
+const quoted = (labels: string[]) => labels.map((l) => `‘${l}’`).join(', ')
 
 /**
  * 결과 목록(Figma 'AI 결과 탭'). 카드마다 이유·조건별 체크·구성원 충족·출처가 붙는다(가드레일 5).
@@ -110,7 +112,7 @@ export function ResultsBody({
       {conditions}
       <button type="button" onClick={onHow} className="press flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
-          조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
+          {removed}곳을 거르고 {result.candidates.length}곳을 추천했어요
         </span>
         <span className="font-bold text-brand-600">어떻게 골랐나요 ›</span>
       </button>
@@ -121,8 +123,8 @@ export function ResultsBody({
       {missing.length > 0 && (
         <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
           {hasExcluded(result.funnel)
-            ? `이미 보여 드린 곳을 빼면, 반경 안에 ‘${missing.join('·')}’에 맞는 곳이 더 없어요. 반경을 넓혀 볼까요?`
-            : `반경 안에서 ‘${missing.join('·')}’에 맞는 곳을 찾지 못해 다른 곳을 골랐어요. 반경을 넓혀 볼까요?`}
+            ? `이미 보여 드린 곳을 빼면 반경 안에 ${quoted(missing)}에 맞는 곳이 더 없어요. 반경을 넓혀 볼까요?`
+            : `반경 안에 ${quoted(missing)}에 맞는 곳이 없어서 다른 곳을 골랐어요. 반경을 넓혀 볼까요?`}
         </Notice>
       )}
       <div className="space-y-3">
@@ -137,7 +139,7 @@ export function ResultsBody({
         )}
         {noneFound && (
           <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
-            이번엔 새로 찾은 곳이 없어요. 조건을 고치거나 반경을 넓혀 다시 찾아볼 수 있어요
+            조건을 고치거나 반경을 넓혀 보세요
           </Notice>
         )}
         {/* 후보가 적으면 서버가 링크를 준다(#798). 기준 숫자는 서버가 정한다 — 화면은 링크가 있는지만 본다. */}
@@ -218,7 +220,7 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
 function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto; c: CandidateDto }) {
   const publish = usePublishMutation(mapId, run)
   if (c.visibility === 'published') {
-    return <span className="tag tag-good">✓ 지도에 올렸어요 · 모두에게 보여요</span>
+    return <span className="tag tag-good">지도에 올렸어요. 이제 모두에게 보여요</span>
   }
   if (!c.permissions.can_publish) return null
   return (
@@ -229,7 +231,7 @@ function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto;
         publish.mutate(c.id, {
           onSuccess: () => {
             const name = c.place_name ?? '이 장소'
-            showToast(`${name}${josa(name, '을', '를')} 지도에 올렸어요. 이제 모든 구성원이 봐요`)
+            showToast(`${name}${josa(name, '을', '를')} 지도에 올렸어요`)
           },
           onError: (err) =>
             showToast(err instanceof ApiError && err.code === 'PIN_DUPLICATE' ? '이미 지도에 있는 장소예요' : '지도에 올리지 못했어요'),
@@ -252,9 +254,8 @@ export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; coun
       <section className="text-body text-ink-600">
         <h4 className="mb-1 text-sm font-bold text-ink-900">순위는 이렇게 정했어요</h4>
         <ul className="list-inside list-disc space-y-0.5">
-          <li>가능하면 맞춰 달라는 조건에 맞는 개수로 점수를 매겼어요</li>
+          <li>있으면 좋은 조건을 많이 맞출수록 앞에 뒀어요</li>
           <li>지역마다 1위를 먼저 뽑고 남은 자리를 채웠어요</li>
-          <li>조건은 코드가 거르고, 순위도 규칙대로 계산했어요</li>
         </ul>
       </section>
     </div>
@@ -318,7 +319,7 @@ export function NoResults({
         )}
       </div>
       <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-link text-sm">
-        직접 찍기 — 검색창에서 찾아보기
+        검색해서 직접 찍기
       </button>
     </div>
   )
@@ -342,16 +343,16 @@ function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendR
               <div className="flex gap-2">
                 <dt className="text-ink-500">넓혀요</dt>
                 <dd className="font-semibold text-ink-900">
-                  핀 주변 기본 반경 (도보 {now}분 → {now + 5}분)
+                  핀 주변 기본 반경을 도보 {now}분에서 {now + 5}분으로
                 </dd>
               </div>
               <div className="flex gap-2">
                 <dt className="text-ink-500">그대로예요</dt>
-                <dd className="font-semibold text-ink-900">사람이 직접 정한 반경 조건</dd>
+                <dd className="font-semibold text-ink-900">구성원이 직접 정한 반경 조건</dd>
               </div>
             </dl>
           }
-          body="사람이 직접 정한 반경은 넓히지 않아요. 더 멀리 찾고 싶으면 그 사유를 고쳐 주세요."
+          body="직접 정한 반경을 넓히려면 그 사유를 고쳐 주세요."
           note="꼭 지켜야 하는 조건도 그대로 적용돼요."
           ok={widen.isPending ? '다시 찾는 중…' : '넓혀서 다시 찾기'}
           pending={widen.isPending}
@@ -373,7 +374,7 @@ export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) 
     <div className="space-y-3">
       <div className="rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm">
         <p className="font-bold text-brand-700">남긴 의견과 근거는 그대로 있어요</p>
-        <p className="text-xs text-ink-600">이번 시도는 다시 추천 횟수에서 빠지지 않아요</p>
+        <p className="text-xs text-ink-600">이번 실패는 다시 추천 횟수로 세지 않아요</p>
       </div>
       <button
         type="button"
