@@ -515,9 +515,12 @@ IDEMPOTENCY_RETENTION = timedelta(hours=24)   # run이 연결된 행의 보관 �
 ReservationDecision = Literal["conflict", "reuse", "in_progress", "takeover"]
 
 
-def idempotency_request_hash(map_id: str, category: str, execute: bool = False) -> str:
-    """요청 동일성 = (지도, category, execute — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
-    return hashlib.sha256(f"{map_id}{category}{int(bool(execute))}".encode()).hexdigest()
+def idempotency_request_hash(map_id: str, category: str, execute: bool = False, center: tuple[float, float] | None = None) -> str:
+    """요청 동일성 = (지도, category, execute, center — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
+    value = f"{map_id}\x1f{category}\x1f{int(bool(execute))}"
+    if center is not None:
+        value += f"\x1f{center[0]:.17g}\x1f{center[1]:.17g}"
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def reservation_decision(
