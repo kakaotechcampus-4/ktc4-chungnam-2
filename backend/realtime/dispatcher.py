@@ -163,10 +163,12 @@ class Dispatcher:
                 except Exception as exc:  # noqa: BLE001
                     self.error_count += 1
                     logger.warning("dispatcher tick failed: %s", type(exc).__name__)
-                    retry_interval = min(retry_interval * 2, MAX_RETRY_INTERVAL)
+                    # backlog 직후라 간격이 0이어도 실패 백오프는 POLL_INTERVAL부터 시작한다(0×2=0 방지, #1200).
+                    retry_interval = min(max(retry_interval, POLL_INTERVAL) * 2, MAX_RETRY_INTERVAL)
                 else:
                     self.last_success_at = time.monotonic()
                     retry_interval = 0 if backlog else POLL_INTERVAL   # 남은 행은 텀 없이 이어서
+                    await asyncio.sleep(0)   # 텀이 0이어도 SSE 전송 task들이 큐를 비울 차례를 준다
         finally:
             # 같은 프로세스에서 lifespan이 다시 돌 수 있다(테스트의 여러 TestClient 등).
             self._started = False

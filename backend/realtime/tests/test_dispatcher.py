@@ -309,11 +309,11 @@ async def test_slow_subscriber_is_closed_at_queue_limit_and_others_unaffected(mo
         d._deliver([row])
         while not fast.queue.empty():   # 빠른 소비자는 바로 비운다
             fast.queue.get_nowait()
-    assert slow.queue.qsize() <= 3          # 메모리가 상한 안에서 멈춘다
+    # 4번째 행에서 넘쳐 evict: 쌓인 3행은 버려지고 CLOSED 하나만 남는다. 이후 행은 더 받지 않는다.
     assert slow not in d._subscribers["map1"]
     assert fast in d._subscribers["map1"]
     items = [slow.queue.get_nowait() for _ in range(slow.queue.qsize())]
-    assert items[-1] is CLOSED              # 스트림이 끝나 클라이언트가 재연결한다
+    assert items == [CLOSED]                # 스트림이 끝나 클라이언트가 재연결한다
 
     d._deliver(_rows(1, start=11))
     assert fast.queue.qsize() == 1          # 다른 구독은 계속 받는다
@@ -359,14 +359,36 @@ def test_tick_returns_rows_without_touching_state(monkeypatch):
     assert d._last_seen == 0 and sub_calls == []   # worker thread에서는 전달·상태 변경 없음
 
 
+def _fake_clock(monkeypatch, d):
+    """폴링 텀과 스레드 조회를 가짜로 바꾼다 — 대기 시간을 기다리지 않고 요청된 timeout만 기록한다."""
+    import realtime.dispatcher as module
+
+    waits = []
+
+    async def fake_wait_for(aw, timeout):
+        waits.append(timeout)
+        aw.close()
+        if d._stop.is_set():
+            return True
+        raise asyncio.TimeoutError
+
+    async def fake_to_thread(func, *a):
+        return func(*a)
+
+    monkeypatch.setattr(module.asyncio, "wait_for", fake_wait_for)
+    monkeypatch.setattr(module.asyncio, "to_thread", fake_to_thread)
+    return waits
+
+
 @pytest.mark.asyncio
 async def test_backlog_over_row_limit_is_delivered_in_order_without_loss(monkeypatch):
     import realtime.dispatcher as module
 
     monkeypatch.setattr(module, "TICK_ROW_LIMIT", 4)
-    monkeypatch.setattr(module, "POLL_INTERVAL", 0.3)   # 첫 텀 0.3초 뒤 3번을 텀 없이 이어 돌아야 0.6초 안에 끝난다
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0.3)
     monkeypatch.setattr(module, "SUBSCRIBER_QUEUE_MAX", 100)
     d = Dispatcher()
+    waits = _fake_clock(monkeypatch, d)
     sub = d.subscribe("map1", channel="public", user_id="u1")
     table = _rows(10)
     ticks = []
@@ -374,21 +396,46 @@ async def test_backlog_over_row_limit_is_delivered_in_order_without_loss(monkeyp
     def tick():
         rows = [r for r in table if r.seq > d._last_seen][:4]
         ticks.append(len(rows))
+        if len(ticks) == 3:
+            d.request_stop()
         return rows
 
     monkeypatch.setattr(d, "_tick", tick)
-    task = asyncio.create_task(d.run_forever())
-    try:
-        for _ in range(120):   # 최대 0.6초
-            if sub.queue.qsize() == 10:
-                break
-            await asyncio.sleep(0.005)
-    finally:
-        d.request_stop()
-        await asyncio.wait_for(task, 1)
+    await d.run_forever()
     got = [sub.queue.get_nowait().seq for _ in range(sub.queue.qsize())]
     assert got == list(range(1, 11))
-    assert ticks[:3] == [4, 4, 2]
+    assert ticks == [4, 4, 2]
+    assert waits == [0.3, 0, 0]   # 첫 텀 뒤 backlog가 남은 동안은 텀 없이 이어 돈다
+
+
+@pytest.mark.asyncio
+async def test_failure_backoff_starts_from_poll_interval_after_backlog(monkeypatch):
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "TICK_ROW_LIMIT", 2)
+    monkeypatch.setattr(module, "POLL_INTERVAL", 1.0)
+    monkeypatch.setattr(module, "MAX_RETRY_INTERVAL", 8.0)
+    d = Dispatcher()
+    waits = _fake_clock(monkeypatch, d)
+    # backlog 처리(간격 0) → 실패 4번 → 성공(backlog 없음) → 성공 후 정지
+    script = ["backlog", "fail", "fail", "fail", "fail", "ok", "stop"]
+    calls = []
+
+    def tick():
+        step = script[len(calls)]
+        calls.append(step)
+        if step == "fail":
+            raise RuntimeError("db down")
+        if step == "stop":
+            d.request_stop()
+            return []
+        return _rows(2) if step == "backlog" else []
+
+    monkeypatch.setattr(d, "_tick", tick)
+    await d.run_forever()
+    # 각 tick 앞의 대기: 처음 POLL, backlog 뒤 0, 첫 실패 뒤 POLL×2부터 지수로 MAX까지, 성공하면 POLL로 복귀
+    assert waits == [1.0, 0, 2.0, 4.0, 8.0, 8.0, 1.0]
+    assert d.error_count == 4
 
 
 @pytest.mark.asyncio
