@@ -2,11 +2,64 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-04, `CourseRun`에 일정 기준 모드와 고칠 점 카드 추가, stale는 일정 version 기준으로 (#1237)
+
+- 결정(#1237, 2026-11-04): AI 코스 버튼은 하나이고 확정 리스트의 일정 상태에 따라 하는 일이 다르다. 서버가 요청 때 정하고 응답의 `mode`로 알려 준다 — `plan`(날짜에 넣은 장소 없음, 짜기) · `fill`(일부만 넣음, 남은 곳 채우기) · `review`(다 넣음, 점검과 최소 수정). 사람이 날짜에 넣은 장소는 AI가 바꾸지 않고, 일정은 사람이 카드마다 「반영」을 누를 때만 바뀐다.
+- `CourseRun`에 필수 칸 4개를 더했다: `mode`, `headline`(결과 화면 머리 문구, 모드별 서버 템플릿, 진행 중·failed는 null), `fixes[]`(고칠 점 카드), `checked[]`(점검했고 문제 없는 항목 — 「괜찮아요」). `plan`은 `fixes`·`checked`가 빈 배열이다. 새 스키마는 `CourseFix`, `CourseMove`, `CourseChecked`다.
+- `CourseFix`: `id`, `kind`(`closed`·`travel`·`member`·`condition`·`goal`·`cluster`·`meal`·`unassigned` — `member`는 요청 때 넣은 구성원 도보 상한 위반으로 기존 `CourseViolation.kind`와 같고 hard, `condition`은 우리 조건 요약에서 온 목표와 어긋남으로 soft), `strength`(`hard`·`soft`), `text`(문제 문장), `moves[]`(`{pin_id, from_date, to_date}` — 날 맞바꾸기는 두 날의 모든 장소, 1곳 옮기기는 1개, 2곳 맞바꾸기는 2개, `from_date` null은 아직 날짜에 안 넣은 장소), `resolved_text`(풀리는 것), `remaining_text`(남는 것), `not_fixed_reason`(고치지 않은 이유). 고치지 않기로 한 카드는 `moves`가 비고 `not_fixed_reason`만 있다. 반영은 서버 API가 아니다 — FE가 `GET /maps/{mapId}/shortlist/schedule`로 지금 일정을 읽어 `moves`대로 옮기고 같은 응답의 `version`과 함께 `PUT`으로 저장한다. 그동안 일정이 바뀌어 409 `SHORTLIST_STALE`이 오면 「일정이 바뀌었어요」 + 「다시 점검」이다. 날 맞바꾸기에서 첫날·마지막 날을 빼지 않는다(도착·출발 데이터가 없다).
+- `CourseRun.stale`: 요청 때 저장한 일정 `version`과 지금 `version`이 다르면 true다(이전에는 확정 핀 집합만 비교). 장소를 더하거나 빼도, 날짜나 순서를 옮겨도, 여행 기간이 바뀌어도 true다. 화면 문구는 「일정이 바뀌었어요」(기존 「확정 리스트가 바뀌었어요」). `POST /maps/{mapId}/courses` 요약에도 모드를 적었다.
+- 요청·에러 코드는 그대로다. 크레딧은 모드와 상관없이 코스 1번에 1이다.
+- FE: `CourseRun`의 새 칸은 필수라 목 서버가 모든 run에 싣는다. 목 서버는 확정 리스트의 일정 상태로 모드를 정하고(`contracts/mocks/handlers/course.ts`), review는 날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1 카드를 예시로 낸다. 카드를 반영해 일정 PUT을 하면 목 서버의 코스는 stale이 된다.
+- 구현 이슈: 서버 backend/agent/course #1321, 화면 frontend #1322. 서버 구현 전에는 실서버 응답에 `mode`, `headline`, `fixes`, `checked`가 모두 없을 수 있다(계약 테스트 `KNOWN_COURSE_DRIFT`에 #1321로 적었고 구현 PR이 지운다) — FE가 먼저 붙으면 `mode`가 없을 때 plan으로, `fixes`·`checked`가 없을 때 빈 배열로 그린다.
+
+## 2026-11-04, 「핑고 AI 조언」 작업 기록(`AgentSuggestion.steps`)과 살펴본 상태(`AgentState.observation`) (#1297)
+
+- `AgentSuggestion`에 선택 필드 `steps: WorkStep[]`를 더했다. 이 제안을 만들 때 핑고가 거친 단계(감지 → 순위 → 조사 → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인, 있는 것만)다. 문장은 서버 고정 문구와 숫자뿐이고 사유 글·핀 이름·URL은 없다. `agent.suggested` 페이로드에도 같은 값이 실린다. 정본 설명은 `docs/agent-v2.md` 11.3.
+- AI 코스의 작업 기록과 같은 모양이라 스키마를 `WorkStep`으로 옮기고 `CourseStep`은 그것을 가리킨다. **`CourseStep` 이름과 모양은 그대로라 코스 화면은 바꿀 것이 없다.** `role` enum도 그대로다(조언의 단계는 계산·결정·지휘·검증 중 하나).
+- `AgentState`에 선택 필드 `observation: AgentObservation {checked_at, notice}`를 더했다. `checked_at`은 마지막 관찰 시각(관찰 전이면 null), `notice`는 지금 제안이 없을 때 그 이유를 말하는 서버 고정 문구다(진단 실패, 검증에서 걸러짐, 그날 진단 횟수를 다 씀, 여행이 끝남). 제안이 있거나 모드가 꺼져 있으면 null, 낼 제안이 없었을 뿐이어도 null이다. 이벤트로 갱신하지 않고 시트를 열 때 받는다. #1072의 「장애를 따로 보여 주지 않는다」 결정을 바꿨다(`docs/agent-v2.md` 21.3).
+- 둘 다 상위 호환이다 — 서버 구현 전에는 필드가 없고, FE는 없거나 빈 목록이면 자리를 두지 않는다. 테이블 변경은 없다(렌더 때 `agent_runs`와 `agent_cursors`에서 읽는다).
+- 목 서버: 시드 제안(카테고리 공백)에 감지·순위·재확인 세 줄, 지도 `map_1`에 `observation`(시드는 제안이 있어 notice가 null). `store.agentObservation[mapId].notice`를 넣고 제안을 닫으면 문구가 실린다.
+- FE 할 일(구현 이슈): 제안 카드 아래 「핑고가 한 일 보기」 토글(코스 `WorkLog`의 줄을 공용으로), 「핑고가 n분 전에 지도를 살펴봤어요」, 제안이 없을 때 notice 한 줄, 추천 막힘 조언 500이면 「조언을 불러오지 못했어요」.
+- 서버 구현은 backend/agent 이슈.
+
+## 2026-11-03, AI 코스 작업 기록 단계와 목표 설명을 지금 서버에 맞춤 (#1131, #1243)
+
+- `CourseStep.stage` 설명을 서버가 실제로 내는 값으로 바꿨다: 찾기·옮겨 보기·비교·결정·가정을 더하고 질문·답을 뺐다(#1131에서 되묻기를 없앴다). 값은 자유 문자열 그대로라 응답 모양은 바뀌지 않는다. 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243).
+- `CourseStep.role`의 결정 설명을 「사람의 답 또는 기본값」에서 「코드가 고르거나 가정을 세움」으로 바꿨다.
+- `CourseRun.goals` 설명에 지도 근거 목표를 적었다: 요청이 없어도 우리 조건 요약과 야경 라벨로 목표가 생기고, label 끝에 「(지도에서 세운 목표)」가 붙는다(#1131). 「요청이 없으면 빈 배열」은 틀린 설명이었다.
+- 목 서버의 코스 작업 기록을 실서버 흐름(찾기 → 옮겨 보기 → 결정 → 짜기 → 비교 → 끝 → 가정 → 결과, 14줄)으로 바꿨다. 진행 중 조회의 줄 수(2개, 5개)는 그대로다.
+
+## 2026-11-03, `EvidenceLine.filters_candidates` 추가 — 후보를 빼는 줄과 순위만 바꾸는 줄 구분 (#1260)
+
+- 근거 줄(`EvidenceLine`, 이 필드는 `applied_evidence` 스냅샷에도 같은 모양으로 실린다)에 선택 필드 `filters_candidates: boolean | null`을 더했다. 상위 호환이다 — 없으면 FE는 기존 칸 구분을 쓴다.
+- 값: `true` = 확인된 값이 방향과 다르면 후보에서 뺀다(붐비는 대형, 접근성 필요 조건). `false` = 후보는 두고 순위만 바꾼다(취향 조건, #1253). `enforced=false`인 줄은 `null`. 서버가 `evidence_line_use`의 effect(`filter`/`score`)를 그대로 내려 준다.
+- FE 사용: 「꼭 지켜야 하는 조건」 칸은 `filters_candidates=true`인 줄, 「피하고 싶어요 — 순위를 낮춰요」 칸은 `badge=required`·`wants=false`·`filters_candidates=false`인 줄(줄 이름은 「{fact_label} 줄이기」). 정본 이슈 #1260.
+- 서버 구현은 backend/recommend 후속 작업, 목 서버는 줄을 만드는 곳이 모두 `enforced=false`라 값이 필요 없어 그대로다.
+
+## 2026-11-03, 취향 반대 사유는 후보를 빼지 않고 순위만 낮춘다 (#1253)
+
+- 요청·응답 모양과 enum은 바뀌지 않았다. **동작이 바뀐다**: 🚫 사유가 매운맛·기름진 메뉴·음식 종류 같은 취향 조건(soft 키)을 피하는 것이어도 그 후보를 목록에서 빼지 않고, 같은 사유를 낸 사람마다 3점씩 순위를 낮춘다(한 사람은 한 번). 라벨이 모름이면 감점도 없다.
+- 후보를 계속 빼는 것은 붐비는 대형(카페·관광지, hard)과 **접근성 필요 조건**(`accessible`, 휠체어·유모차로 갈 수 없다고 확인된 곳 — 칩과 직접 쓴 글 모두)이다. 모름은 통과하고 「확인 필요」가 붙는다. 알러지·재료는 그대로 화면 안내만 한다.
+- `EvidenceLine.enforced`·`not_enforced_reason` 값의 의미는 그대로다. 취향 반대 줄도 `enforced=true`(순위에 쓰임)로 나온다. 깔때기의 「실격」 수는 이 줄들 때문에 줄지 않고 통과 수가 늘어난다.
+- FE 영향: 「꼭 지켜야 하는 조건」 칸에 오른 취향 반대 줄의 문구(「매운맛 전문 제외」 등)가 실제 동작(순위만 낮춤)과 어긋난다. 문구·칸 구분 정정은 FE 후속 이슈로 다룬다.
+- 정책 문서: `docs/constraints.md`(PR #1257), `최종기획안.md`(이 변경). 구현: PR #1258.
+
+## 2026-11-03, `GET /places/search` — 좌표가 있으면 30km 안만 돌려준다 (#1251)
+
+- 사용자 결정(2026-11-03): 「현재 지도 기준」은 요청 `lat`·`lng` 중심 30km 고정이다. 줌·화면 영역 파라미터는 추가하지 않는다(요청 모양 변화 없음).
+- 응답 동작이 바뀐다: `lat`·`lng`가 있으면 **30km 밖의 자체 DB 장소와 카카오 결과는 나오지 않는다.** 순서는 ① 30km 안 우리 DB 장소 ② 30km 안 우리 DB에 없는 곳(`pinnable=false`). 이전에는 30km 밖 자체 DB 장소가 뒤에 이어졌다. 좌표가 없으면 이전과 같다.
+- 목 서버(`contracts/mocks/handlers/places.ts`)는 30km 밖을 거르지 않고 정렬만 가까운 순으로 한다(시드 장소가 지역을 넘나드는 FE 테스트가 있어서). 서버 구현은 #1251(backend/places, PR #1256).
+- FE 영향: 줌 아웃한 화면의 먼 장소가 검색에 안 나온다(범위는 지도 중심 기준 30km). 요청·응답 타입은 그대로다.
+
 ## 2026-11-03, `POST /maps` 응답 403·422와 `created_by` 반복 쿼리 명시 (#1197)
 
 - `POST /maps`에 **403 `GUEST_NOT_ALLOWED`**(게스트는 지도를 만들 수 없다 — 서버가 이미 그렇게 응답한다)와 **422**(제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락)를 응답 표에 더했다. 동작은 그대로이고 명세가 빠뜨린 것을 적었다. `PATCH /maps/{mapId}`의 422와 같은 문장이다.
 - `GET /maps/{mapId}/pins`의 `created_by`는 반복해서 보낸다(`?created_by=a&created_by=b`)고 `style: form`, `explode: true`로 명시했다(OpenAPI 기본값과 같아 동작 변화 없음, 목 서버가 지원하는 방식이다).
 - 옛 문서 PR #81(403 응답 커버리지)의 나머지는 **더하지 않는다**: 핀 생성·반응·확정 리스트 넣기/빼기는 모든 구성원이 가진 액션이라 구성원에게 403이 나올 수 없고(비구성원은 404), 명세 머리말도 엔드포인트 고유의 에러만 적는다.
+
+## 2026-11-03, `servers` 설명의 옛 배포 표기 정정 (#1227)
+
+- `servers[0].description`의 「배포 시 Cloud Run URL로 교체」를 「배포 시 운영 도메인으로 교체」로 고쳤다(배포가 AWS 서버 1대의 Docker Compose로 바뀌었다, `deploy_rules.md`). 설명 문장만 바뀌었고 계약·동작은 그대로다. `servers`는 생성 타입에 나오지 않아 `api.d.ts`는 바뀌지 않는다.
 
 ## 2026-11-03, 확정 장소 날짜별 일정 (#1172)
 

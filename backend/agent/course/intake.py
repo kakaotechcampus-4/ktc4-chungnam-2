@@ -7,12 +7,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from agent.course.constants import MIN_PLACES
-from agent.course.core import MemberConstraint, Place, Trip
+from agent.course.core import MemberConstraint, Place, Trip, day_alias
 
 EXCLUDED_NO_COORDINATES = "NO_COORDINATES"
 EXCLUDED_MESSAGE = "좌표를 알 수 없어 동선에서 빠졌어요"
@@ -28,6 +28,7 @@ class PinInput:
     lat: Optional[float] = None
     lng: Optional[float] = None
     labels: frozenset[str] = frozenset()
+    scheduled_date: Optional[date] = None     # 사람이 확정 탭 일정에서 이 장소를 넣은 날(#1237). 없으면 미배정
 
     @property
     def routable(self) -> bool:
@@ -42,10 +43,25 @@ class Excluded:
     message: str = EXCLUDED_MESSAGE
 
 
+MODE_PLAN = "plan"        # 날짜에 넣은 장소 없음 — 처음부터 짠다
+MODE_FILL = "fill"        # 일부만 넣음 — 넣은 곳은 고정하고 미배정만 나눈다
+MODE_REVIEW = "review"    # 모두 넣음 — 고정뿐이라 나눌 것이 없다(점검은 다음 PR)
+
+
 @dataclass(frozen=True)
 class TripBuild:
     trip: Optional[Trip]               # 코스를 짤 장소가 MIN_PLACES보다 적으면 None
     excluded: tuple[Excluded, ...]
+    locks: Mapping[str, str] = field(default_factory=dict)    # 사람이 날짜에 넣은 장소 별칭 → 날짜 별칭. AI는 옮기지 못한다
+
+    @property
+    def mode(self) -> Optional[str]:
+        """코스를 시작할 때의 일정 상태(#1237). 좌표를 아는 확정 장소(= trip의 장소) 기준이다. trip이 없으면 None."""
+        if self.trip is None:
+            return None
+        if not self.locks:
+            return MODE_PLAN
+        return MODE_REVIEW if len(self.locks) == len(self.trip.places) else MODE_FILL
 
     @property
     def too_few(self) -> bool:
@@ -67,4 +83,9 @@ def build_trip(
         Place(f"p{i + 1}", p.pin_id, p.place_id, p.name, p.category, p.lat, p.lng, p.labels)
         for i, p in enumerate(routable)
     )
-    return TripBuild(Trip(places, tuple(days), tuple(member_constraints), unknown_hours), excluded)  # type: ignore[arg-type]
+    day_index = {d: i for i, d in enumerate(days)}      # 코스가 다루는 기간 밖 날짜(COURSE_DAYS_MAX 너머)에 넣은 장소는 고정하지 못한다
+    locks = {
+        f"p{i + 1}": day_alias(day_index[p.scheduled_date])
+        for i, p in enumerate(routable) if p.scheduled_date in day_index
+    }
+    return TripBuild(Trip(places, tuple(days), tuple(member_constraints), unknown_hours), excluded, locks)  # type: ignore[arg-type]

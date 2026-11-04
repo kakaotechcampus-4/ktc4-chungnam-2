@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Sear
 import AgentButton from '@/features/agent/AgentButton'
 import { useMeQuery } from '@/features/auth/queries'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
+import { MIN_LEVEL } from '@/features/map/camera'
 import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
 import { useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
@@ -28,7 +29,7 @@ import { useRouteStore } from '@/features/shortlist/routeStore'
 import { routeDay } from '@/features/shortlist/schedule'
 import { useTripSchedule } from '@/features/shortlist/useTripSchedule'
 import { useCourseMapStore } from '@/features/course/courseMapStore'
-import { useRecentSearches } from '@/features/search/recentSearches'
+import { useRecentSearches } from '@/features/search/recentSearchStore'
 import RecentSearches from '@/features/search/RecentSearches'
 import { useSearchStore } from '@/features/search/searchStore'
 import { PANEL_W, RAIL_W, SIDE_PANEL_W, TAB_BAR_H } from '@/features/shell/layout'
@@ -110,6 +111,7 @@ export default function MapLayout() {
   const searchMarkers = useMemo(
     () =>
       (found ?? []).map((r, i) => ({
+        id: r.place_id,
         n: i + 1,
         name: r.place_name,
         category: r.category,
@@ -222,9 +224,11 @@ export default function MapLayout() {
   }, [selectedPinId, allPins, mapReady])
 
   // 결과가 오면 결과 전체가, 하나를 고르면 그 장소가 보이게 지도를 옮긴다.
+  // 근처 찾기는 누른 자리 둘레(100m)라 결과가 이미 화면 안이기 쉽다. 그래도 결과에 맞춰 가장 가까운 축척까지 확대한다(#1174).
+  const tapSearch = search.source?.kind === 'tap'
   useEffect(() => {
-    if (found?.length) controller.current?.fitPins(found)
-  }, [found])
+    if (found?.length) controller.current?.fitPins(found, tapSearch ? { force: true, closest: MIN_LEVEL } : undefined)
+  }, [found, tapSearch])
   useEffect(() => {
     const r = found?.find((f) => f.place_id === search.selectedId)
     if (r) controller.current?.focusPin(r.lat, r.lng)
@@ -364,6 +368,8 @@ export default function MapLayout() {
     <>
       <MapCanvas
         pins={pins}
+        // 핀이 없으면 지도 만들 때 고른 지역에서 시작한다(없으면 서울).
+        startCenter={mapInfo?.regionCenter}
         selectedPinId={selectedPinId}
         memberCount={memberCount}
         results={searchMarkers}
@@ -376,6 +382,11 @@ export default function MapLayout() {
           useSearchStore.getState().select(null)
           // 코스 탭은 코스 탭 안에서 연다 — 확정 탭으로 넘어가면 코스 선이 사라진다(#1127 리뷰).
           navigate(`/maps/${mapId}${onCourseTab ? '/course' : onShortlistTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)
+        }}
+        onResultGroup={(ids) => {
+          useSearchStore.getState().showGroup(ids)
+          // 접힌 패널에선 묶인 곳 목록을 볼 곳이 없다(넓은 화면).
+          setPanelOpen(true)
         }}
         onReady={onMapReady}
         onMovingChange={onMovingChange}
@@ -537,13 +548,15 @@ export default function MapLayout() {
             style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
             className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 items-end border-t border-ink-100 bg-white"
           >
-            {TABS.map((tab) =>
-              tab.Icon ? (
-                <TabLink key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} icon={<tab.Icon size={24} />} />
-              ) : (
-                <AiTabLink key={tab.path} to={`/maps/${mapId}${tab.path}`} label={tab.label} />
-              ),
-            )}
+            {TABS.map((tab) => (
+              <TabLink
+                key={tab.path}
+                to={`/maps/${mapId}${tab.path}`}
+                end={tab.end}
+                label={tab.label}
+                icon={tab.Icon ? <tab.Icon size={24} /> : <PingoMark size={28} />}
+              />
+            ))}
           </nav>
         )}
       </div>
@@ -594,7 +607,10 @@ const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | nul
   { path: '/course', label: 'AI 코스', Icon: Route },
 ]
 
-/** 비활성 ink-500(흰 바탕 대비 약 5:1). */
+/**
+ * 하단 탭 칸 하나 — 아이콘 + 11/500 라벨, 비활성 ink-500(흰 바탕 대비 약 5:1). AI 추천도 같은 모양이다(핑고 얼굴).
+ * 3칸일 때 가운데에 두던 AI 원(48px, 떠 있음)은 4칸이 되며 둘째 칸에서 왼쪽으로 치우쳐 보여 뺐다(2026-11-03).
+ */
 function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
   return (
     <NavLink
@@ -604,33 +620,9 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
         `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
       }
     >
-      {icon}
+      {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 네 칸 높이를 맞춘다(세로 탭 줄과 같다). */}
+      <span className="flex size-7 items-center justify-center">{icon}</span>
       {label}
-    </NavLink>
-  )
-}
-
-/** 하단 탭의 AI. 늘 채운 파랑이면 화면마다 채움 덩어리가 하나 더 생겨서, 비활성은 흰 원 + 파란 핑고 얼굴, 활성만 파랑 채움 + 흰 얼굴(#299). */
-function AiTabLink({ to, label }: { to: string; label: string }) {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
-      }
-    >
-      {({ isActive }) => (
-        <>
-          <span
-            className={`flex size-12 items-center justify-center rounded-full shadow-float ${
-              isActive ? 'bg-brand-600' : 'border-2 border-brand-300 bg-white'
-            }`}
-          >
-            <PingoMark size={30} tone={isActive ? 'white' : 'blue'} />
-          </span>
-          {label}
-        </>
-      )}
     </NavLink>
   )
 }

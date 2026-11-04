@@ -3,8 +3,8 @@
 
 from sqlalchemy import select
 
-from agent import api
-from agent.models import AgentReasonSummary, AgentRun, AgentSuggestionView
+from agent import api, core
+from agent.models import AgentReasonSummary, AgentRun, AgentSuggestion, AgentSuggestionView
 from agent.tests import rows
 
 REASON_TEXT = "너무 매워서 못 먹어요"
@@ -76,3 +76,18 @@ def test_no_maps_still_deletes_views(db_session):
     result = api.delete_by_user(db_session, user_id="leaver", map_ids=[])
 
     assert result == {"agent_suggestion_views": 3, "agent_reason_summaries": 0, "agent_runs": 0}
+
+
+def test_steps_lose_tool_and_verify_lines_after_withdrawal(db_session):
+    """작업 기록(11.3, #1297)은 렌더 때 run에서 만든다 — 탈퇴로 비운 기록에서는 조사 줄이 빠지고 글이 나갈 길이 없다."""
+    mine, _, _ = _seed(db_session)
+    sug = db_session.execute(select(AgentSuggestion).where(AgentSuggestion.run_id == mine.id)).scalar_one()
+    before = [s.stage for s in core.render_steps(db_session.get(AgentRun, mine.id), sug)]
+
+    api.delete_by_user(db_session, user_id="leaver", map_ids=["mine"])
+    db_session.expire_all()
+    after = core.render_steps(db_session.get(AgentRun, mine.id), sug)
+
+    assert before == ["조사", "재확인"]
+    assert [s.stage for s in after] == ["재확인"]
+    assert REASON_TEXT not in repr([s.model_dump() for s in after])

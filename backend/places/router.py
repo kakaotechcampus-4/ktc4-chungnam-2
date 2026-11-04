@@ -68,6 +68,8 @@ def search_places(
         if exc.code == "PLACES_UNAVAILABLE" and own:
             return own_results   # 카카오가 죽어도 자체 DB 결과는 낸다
         raise
+    if near is not None:
+        results = [r for r in results if geo.haversine_distance_m(*near, r.lat, r.lng) <= api.repository.REGION_RADIUS_M]
     _fill_pinnable(results, db)
     results = _drop_same_places(_own_db_first(results), own)
     return (own_results + results)[:limit]

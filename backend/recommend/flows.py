@@ -50,7 +50,7 @@ from authz.core import Principal, Resource, can
 from authz.guard import require
 from authz.ports import MembershipGateway
 from authz.schemas import Permissions
-from common import categories
+from common import categories, geo
 from common.errors import AppError
 from common.events import Event, record_event
 from credits import api as credits_api
@@ -190,10 +190,10 @@ def _curated_nearby(
     default_region = _default_circle_and_anchors(db, map_id=map_id, category=category) if readiness["answered_count"] else None
     if default_region is None:
         return {}
-    circle, _anchors = default_region
+    circle, anchors = default_region
     pool_radius_m = round(circle.radius_m * core.pool_radius_factor(core.radius_walk_mins(category)[0], category))
     count = place_search.count_curated(
-        category=category, circles=[Circle(anchor_lat=circle.anchor_lat, anchor_lng=circle.anchor_lng, radius_m=pool_radius_m)],
+        category=category, circles=[Circle(anchor_lat=lat, anchor_lng=lng, radius_m=pool_radius_m) for lat, lng in anchors],
     )
     if count:
         return {"curated_nearby": count}
@@ -288,13 +288,9 @@ def _assembled_reaction_lines(raw_reactions: list[dict], planned_groups: list[li
 def _default_circle_and_anchors(
     db: Session, *, map_id: str, category: str,
 ) -> tuple[Circle, list[tuple[float, float]]] | None:
-    """지역(regions) 기본값 — places가 없어 실제 검색 범위를 스스로 정할 방법이 이것뿐이다:
-    그 카테고리 핀들의 중심 좌표 + 고정 반경. 실제 반경 사유(circle_anchor_pin_id 등)가
-    구조화되는 순간(모델 확정 이후) 이 기본값은 "사람이 명시하지 않았을 때만" 쓰여야 한다
-    (핀마다의 원으로 바꾸는 일은 #274). anchor 좌표 목록도 함께 돌려준다 — #112(선호 순위
-    3단계)의 "그 무리의 기준 핀들까지 거리 평균" 계산에 그대로 쓰인다(regions.anchor_points에
-    저장, #112). 좌표 있는 핀이 없으면 None — create_run은 NOT_READY, readiness는 curated_nearby를 내지 않는다."""
-    coordinates = pins_api.get_category_pin_coordinates(db, map_id=map_id, category=category)
+    """같은 카테고리 핀 좌표와 기본 반경을 읽는다. 반환 중심은 지역 묶음을 만들기 위한 대표값이고,
+    실제 후보 조회는 각 핀을 중심으로 한다(#1252). 좌표가 없으면 None이다."""
+    coordinates = sorted(pins_api.get_category_pin_coordinates(db, map_id=map_id, category=category), key=lambda row: row[0])
     if not coordinates:
         return None
     anchors = [(lat, lng) for _, lat, lng in coordinates]
@@ -308,7 +304,7 @@ def _default_circle_and_anchors(
 
 def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: list[tuple[float, float]]) -> dict:
     return {
-        "signature": core.region_signature([circle]),
+        "signature": core.region_signature([Circle(lat, lng, circle.radius_m) for lat, lng in anchor_points] or [circle]),
         "label": label,
         "center_lat": circle.anchor_lat,
         "center_lng": circle.anchor_lng,
@@ -317,6 +313,17 @@ def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: 
         "confirmed": confirmed,
         "confirmed_at": datetime.now(timezone.utc) if confirmed else None,
     }
+
+
+def _clustered_regions(circle: Circle, anchors: Sequence[tuple[float, float]]) -> list[tuple[Circle, list[tuple[float, float]]]]:
+    """기본 반경 두 배 이내로 이어진 핀마다 한 지역을 만든다."""
+    points = [geo.Point(str(i), lat, lng) for i, (lat, lng) in enumerate(anchors)]
+    groups = geo.cluster_points(points, circle.radius_m * 2)
+    return [
+        (Circle(sum(p.lat for p in group) / len(group), sum(p.lng for p in group) / len(group), circle.radius_m),
+         [(p.lat, p.lng) for p in group])
+        for group in groups
+    ]
 
 
 def create_run(
@@ -419,10 +426,12 @@ def _create_run(
     if default_region is None:
         raise AppError("NOT_READY")
     circle, anchors = default_region
-    service.create_regions(
-        db, run_id=run.id,
-        regions_data=[_region_data(circle, label=DEFAULT_REGION_LABEL, confirmed=True, anchor_points=anchors)],
-    )
+    groups = _clustered_regions(circle, anchors)
+    service.create_regions(db, run_id=run.id, regions_data=[
+        _region_data(group_circle, label=DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
+                     confirmed=True, anchor_points=group_anchors)
+        for i, (group_circle, group_anchors) in enumerate(groups)
+    ])
 
     return run
 
@@ -436,7 +445,8 @@ def _evidence_response(
         id=str(line.id), author_id=line.author_id, author_display_name=author_names.get(line.author_id),
         text=line.text, badge=line.badge,
         fact_key=line.fact_key, fact_label=constraints.FACT_LABELS.get(line.fact_key) if line.fact_key else None,
-        wants=line.wants, enforced=use.enforced, not_enforced_reason=use.not_enforced_reason, is_active=line.is_active,
+        wants=line.wants, enforced=use.enforced, not_enforced_reason=use.not_enforced_reason,
+        filters_candidates=use.filters_candidates, is_active=line.is_active,
         permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
     )
 
@@ -551,8 +561,8 @@ def _region_response(region) -> schemas.Region:
 
 
 def confirm_regions(db: Session, *, run_id: str, accept_union: bool) -> list[schemas.Region]:
-    """POST /runs/{runId}/regions/confirm (5-6-1). v1은 항상 단일 기본값 원이라(아래
-    _run_pipeline 참고) 실제로 REGION_CONFLICT가 나는 경로가 없다 — 겹침 판정 로직 자체는
+    """POST /runs/{runId}/regions/confirm (5-6-1). 기본 지역 무리는 자동 확정한다.
+    실제로 REGION_CONFLICT가 나는 경로가 없다 — 겹침 판정 로직 자체는
     core.circles_all_overlap/region_signature 단위 테스트로 커버한다(#274)."""
     run = service.get_run_or_404(db, run_id)
     regions = service.list_regions(db, run_id)
@@ -579,11 +589,10 @@ def _hard_fact_keys_from(used_lines: Sequence[EvidenceLineRow]) -> list[str]:
 
 
 def _soft_requirements_from(used_lines: Sequence[EvidenceLineRow]) -> list[tuple[str, bool]]:
-    """#231 — 쓰이는 줄 중 soft 키 + `required`인 사유를 (fact_key, wants)로 켠다. 사람이 직접 밝힌 사유라 카테고리 기본 키에
-    없어도 적용한다(선호 사유와 같다 — 아래 soft_keys가 그 키의 체크를 붙인다)."""
+    """접근성 원함의 required 사유만 실격 조건으로 모은다."""
     return sorted({
         (line.fact_key, line.wants) for line in used_lines
-        if line.badge == "required" and line.fact_key in constraints.SOFT_FACT_KEYS
+        if line.badge == "required" and line.fact_key in constraints.NEED_FILTER_SOFT_KEYS and line.wants is True
     })
 
 
@@ -693,6 +702,7 @@ class _Filtered:
     avoided_authors: dict[str, frozenset[str]]
     labels_by_place: dict[str, list]      # 반경·영업 단계를 지난 곳의 place_facts 라벨
     checks_by_place: dict[str, list[Check]]
+    regions_by_place: dict[str, _PipelineRegion]
     passed: list[PlaceStub]               # 실격 조건까지 통과한 곳, 풀 순서
     removed: dict[str, int]               # 단계 키(pool, radius, closed, disqualify) → 이 단계에서 빠진 수
 
@@ -705,13 +715,23 @@ def _filter_places(
     """5-6 실격 필터의 앞 세 단계(반경 → 영업 종료 → 실격 조건). run을 받지 않는다 — 실행과 미리 돌려 보기(#1180)가 같은 거르기를
     부르게 입력(지도, 카테고리, 지역, 활성 근거 줄)만 받는다. 줄은 author_id, badge, fact_key, wants 칸이 있으면 된다
     (EvidenceLineRow, _DraftLine). DB에 쓰지 않는다."""
-    circles = [Circle(anchor_lat=r.center_lat, anchor_lng=r.center_lng, radius_m=r.radius_m) for r in regions]
-
-    # 풀은 넓히기 상한의 원으로 가져오고 「반경 밖 제거」는 지금 반경으로 센다(#792). 다음 단계(영업 여부, 라벨)는 반경 안만 읽는다.
-    pool_circles = [Circle(anchor_lat=r.center_lat, anchor_lng=r.center_lng, radius_m=r.pool_radius_m) for r in regions]
-    pool = place_search.search_nearby(category=category, circles=pool_circles)
-
-    within_radius = [p for p in pool if core.is_within_any_region(p.lat, p.lng, circles)]
+    # 상한 풀과 현재 반경을 각각 DB에서 판정해 깔때기의 넓히면 들어오는 장소 수를 유지한다.
+    # 각 지역별 핀 원의 합집합이며 겹치는 후보는 첫 지역에 배정한다.
+    pool_by_id: dict[str, PlaceStub] = {}
+    within_by_id: dict[str, PlaceStub] = {}
+    regions_by_place: dict[str, _PipelineRegion] = {}
+    for region in regions:
+        anchors = region.anchor_points or ((region.center_lat, region.center_lng),)
+        pool_circles = [Circle(lat, lng, region.pool_radius_m) for lat, lng in anchors]
+        circles = [Circle(lat, lng, region.radius_m) for lat, lng in anchors]
+        for place in place_search.search_nearby(category=category, circles=pool_circles):
+            pool_by_id.setdefault(place.place_id, place)
+        for place in place_search.search_nearby(category=category, circles=circles):
+            if place.place_id not in within_by_id:
+                within_by_id[place.place_id] = place
+                regions_by_place[place.place_id] = region
+    pool = list(pool_by_id.values())
+    within_radius = list(within_by_id.values())
     within_radius = _within_trip_sido(db, map_id, regions, within_radius, place_search)
     removed_radius = len(pool) - len(within_radius)
 
@@ -732,10 +752,11 @@ def _filter_places(
     active_hard_keys = _hard_fact_keys_from(used_lines)
     soft_requirements = _soft_requirements_from(used_lines)
     preferred_authors: dict[str, set[str]] = {}
-    avoided_authors: dict[str, set[str]] = {}  # preferred + wants=false — 점수에서 반대 구성원(#231)
+    avoided_authors: dict[str, set[str]] = {}  # soft + wants=false — 점수에서 반대 구성원
     for line in used_lines:
         # wants=None(방향을 모름)인 선호는 쓰이는 줄이 아니라 지지·반대 어디에도 세지 않는다 — 효과 없음(constraints.md 표, #237).
-        if line.badge == "preferred":
+        if (line.badge in ("preferred", "required") and line.fact_key in constraints.SOFT_FACT_KEYS
+                and (line.fact_key, line.wants) not in soft_requirements):
             by_direction = preferred_authors if line.wants else avoided_authors
             by_direction.setdefault(line.fact_key, set()).add(line.author_id)
     # 선호 라벨 체크는 이 카테고리에 적용되는 키 + 사람이 직접 원한 키만 붙인다 — 50여 개를 전부 붙이면
@@ -766,9 +787,7 @@ def _filter_places(
             checks.append(core.build_check(fact_key, "pass", known=known, value=value, passes=bool(value)))
         checks_by_place[place.place_id] = checks
 
-    pass_flags = core.apply_disqualifier_filters(
-        [checks_by_place[p.place_id] for p in within_radius], soft_requirements,
-    )
+    pass_flags = core.apply_disqualifier_filters([checks_by_place[p.place_id] for p in within_radius], soft_requirements)
     after_disqualify = [p for p, ok in zip(within_radius, pass_flags) if ok]
     return _Filtered(
         active_lines=active_lines, used_lines=used_lines, hard_keys=active_hard_keys,
@@ -776,7 +795,7 @@ def _filter_places(
         preferred_authors={key: frozenset(authors) for key, authors in preferred_authors.items()},
         avoided_authors={key: frozenset(authors) for key, authors in avoided_authors.items()},
         labels_by_place={p.place_id: facts_by_place.get(p.place_id, []) for p in within_radius},
-        checks_by_place=checks_by_place, passed=after_disqualify,
+        checks_by_place=checks_by_place, regions_by_place=regions_by_place, passed=after_disqualify,
         removed={"pool": 0, "radius": removed_radius, "closed": removed_open,
                  "disqualify": len(within_radius) - len(after_disqualify)},
     )
@@ -792,7 +811,6 @@ def _run_pipeline(
     (recommend/CLAUDE.md "넘지 말 것" — 순서가 funnel 표의 의미를 결정한다). 앞 세 단계는 _filter_places(미리 돌려 보기와 같은
     함수, #1180)이고 여기서는 중복 제외와 순위를 잇는다. 지역과 활성 근거 줄은 인자로 받는다(_pipeline_inputs, #585) — 이 함수는
     DB에 쓰지 않아 시뮬레이션이 입력만 바꿔 그대로 다시 돌린다."""
-    region_id = regions[0].id if regions else None
     # `off_season`은 실행(_search_and_store)이 한 번 계산해 넘긴다 — 파이프라인과 스냅샷이 같은 판정을 쓰게(#847). 안 넘기는
     # 호출(시뮬레이션)은 여기서 읽는다.
     if off_season is None:
@@ -828,7 +846,7 @@ def _run_pipeline(
 
     # ③-b — #99 이후 모델이 아니라 코드가 점수를 매기고 상위 3곳을 고른다(recommend/core.py,
     # 이슈 #112). ♥ 받은 핀들의 라벨로 "선호 기준"을 만들고, 그 기준으로 통과 후보 각각에
-    # 점수를 매긴 뒤, 점수 → 동네 배분 → 거리 평균 순으로 상위 3곳만 남긴다.
+    # 점수를 매긴 뒤, 점수 → 충족 조건 수(#1288) → 동네 배분 → 거리 평균 순으로 상위 3곳만 남긴다.
     liked_pins = pins_api.list_liked_pins(
         db, map_id=run.map_id, category=run.category, requested_by=run.requested_by,
     )
@@ -846,7 +864,7 @@ def _run_pipeline(
     ], run.category)
     criteria = core.build_preference_criteria(
         hearted_places,
-        disqualifying_fact_keys=[*active_hard_keys, *{fact_key for fact_key, _wants in soft_requirements}],
+        disqualifying_fact_keys=[*active_hard_keys, *{key for key, _ in soft_requirements}],
         preferred_authors=preferred_authors_frozen,
     )
     # #216 — 점수 계산은 전체 soft 체크를 쓰지만 저장·응답에는 사람이 원하지 않은 soft 체크(known 포함)를 싣지 않는다.
@@ -861,16 +879,27 @@ def _run_pipeline(
             line.fact_key: line.wants for line in active_lines
             if line.badge == badge and line.fact_key in constraints.SOFT_FACT_KEYS and line.wants is not None
         })
-    required_soft_keys = {fact_key for fact_key, _wants in soft_requirements}   # 🚫 사유로 낸 soft 키는 실격 조건이다
+    required_soft_keys = {line.fact_key for line in used_lines
+                          if line.badge == "required" and line.fact_key in constraints.SOFT_FACT_KEYS}
     weights = core.preference_weights(hearted_places, criteria, preferred_authors_frozen, avoided_authors_frozen)
-    region_label = regions[0].label if regions else ""
-    anchor_points_by_region = {region_label: list(regions[0].anchor_points)} if regions else {}
+    anchor_points_by_region = {region.label: list(region.anchor_points) for region in regions}
     scores = core.score_candidates(
         {p.place_id: checks_by_place[p.place_id] for p in after_exclusions}, hearted_places, criteria,
         preferred_authors_frozen, avoided_authors_frozen,
     )
+    # 충족 집계는 선택 전에 통과 후보 전체에 한 번 만든다(#1288). 같은 점수면 met이 많은 곳이 먼저고, 뽑힌 카드에도 이 값을 그대로 싣는다.
+    fulfillment_by_place = {
+        p.place_id: core.build_member_fulfillment(
+            checks_by_place[p.place_id], hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
+            written_line_ids,
+        )
+        for p in after_exclusions
+    }
     scored = [
-        core.ScoredCandidate(place_id=p.place_id, score=scores[p.place_id], region_label=region_label, lat=p.lat, lng=p.lng)
+        core.ScoredCandidate(
+            place_id=p.place_id, score=scores[p.place_id], region_label=filtered.regions_by_place[p.place_id].label,
+            lat=p.lat, lng=p.lng, met_conditions=core.met_condition_count(fulfillment_by_place[p.place_id]),
+        )
         for p in after_exclusions
     ]
     top_place_ids = core.select_top_candidates(scored, anchor_points_by_region, limit=3) if scored else []
@@ -881,12 +910,8 @@ def _run_pipeline(
     for index, place_id in enumerate(top_place_ids):
         place = places_by_id[place_id]
         checks = checks_by_place[place_id]
-        fulfillment = core.build_member_fulfillment(
-            checks, hearted_places, criteria, preferred_authors_frozen, disqualifier_conditions,
-            written_line_ids,
-        )
         candidates_data.append({
-            "place_id": place_id, "region_id": region_id, "lat": place.lat, "lng": place.lng,
+            "place_id": place_id, "region_id": filtered.regions_by_place[place_id].id, "lat": place.lat, "lng": place.lng,
             "rank": index + 1,
             "checks": [
                 check.model_dump()
@@ -895,7 +920,7 @@ def _run_pipeline(
                     required_soft_keys=required_soft_keys, weights=weights,
                 )
             ],
-            "member_fulfillment": fulfillment,
+            "member_fulfillment": fulfillment_by_place[place_id],
             "reason": core.build_reason(checks, criteria),
             "place_source": dict(place.source) if place.source else None,
         })
@@ -1017,8 +1042,9 @@ def widen_run(
     next_walk_min = core.next_default_radius_walk_min(run.default_radius_walk_min, run.category)  # 409 WIDEN_LIMIT
     radius_m = core.radius_m_for_walk_min(next_walk_min)
     for region in regions:
-        widened = Circle(anchor_lat=region.center_lat, anchor_lng=region.center_lng, radius_m=radius_m)
-        service.update_region_radius(db, region, radius_m=radius_m, signature=core.region_signature([widened]))
+        anchors = region.anchor_points or [[region.center_lat, region.center_lng]]
+        widened = [Circle(lat, lng, radius_m) for lat, lng in anchors]
+        service.update_region_radius(db, region, radius_m=radius_m, signature=core.region_signature(widened))
     service.set_default_radius_walk_min(db, run, next_walk_min)
 
     service.set_run_status(db, run, "executing")
@@ -1135,11 +1161,13 @@ def preview_filter(
         raise AppError("NOT_READY")
     circle, anchors = default_region
     pool_factor = core.pool_radius_factor(core.radius_walk_mins(category)[0], category)   # 새 run의 기본 반경과 같다
-    region = _PipelineRegion(
-        id=None, label=DEFAULT_REGION_LABEL, center_lat=circle.anchor_lat, center_lng=circle.anchor_lng,
-        radius_m=circle.radius_m, pool_radius_m=round(circle.radius_m * pool_factor),
-        anchor_points=tuple(tuple(point) for point in anchors),
-    )
+    groups = _clustered_regions(circle, anchors)
+    regions = [
+        _PipelineRegion(id=None, label=DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
+                        center_lat=c.anchor_lat, center_lng=c.anchor_lng, radius_m=c.radius_m,
+                        pool_radius_m=round(c.radius_m * pool_factor), anchor_points=tuple(group_anchors))
+        for i, (c, group_anchors) in enumerate(groups)
+    ]
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
     planned = [_planned_group(r, text_lines) for r in raw_reactions if r["reason_text"] is not None]
     lines = [
@@ -1147,7 +1175,7 @@ def preview_filter(
         for line in _assembled_reaction_lines(raw_reactions, planned, category)
     ]
     filtered = _filter_places(
-        db, map_id=map_id, category=category, regions=[region], active_lines=lines,
+        db, map_id=map_id, category=category, regions=regions, active_lines=lines,
         place_search=place_search, place_facts=place_facts, off_season=_out_of_season_keys(db, map_id),
     )
     keys = list(dict.fromkeys(with_keys))
@@ -1202,6 +1230,7 @@ def _applied_evidence_responses(db: Session, run: RecommendRun, principal: Princ
             text=entry["text"], badge=entry["badge"], fact_key=entry["fact_key"],
             fact_label=constraints.FACT_LABELS.get(entry["fact_key"]) if entry["fact_key"] else None,
             wants=entry["wants"], enforced=entry["enforced"], not_enforced_reason=entry["not_enforced_reason"],
+            filters_candidates=entry.get("filters_candidates"),   # 이 값이 생기기 전 스냅샷은 null
             is_active=entry["is_active"], permissions=Permissions(can_disable=can(principal, "evidence.disable", resource)),
         ))
     return responses

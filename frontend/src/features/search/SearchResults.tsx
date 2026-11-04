@@ -9,12 +9,14 @@ import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import EmptyState from '@/ui/EmptyState'
+import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
+import TextArea from '@/ui/TextArea'
 
 import { livePinRequest, pinErrorMessage, searchPinRequest, toSearchResult, type SearchResultView } from './model'
-import { searchErrorMessage, useSourcePlacesQuery } from './queries'
+import { searchErrorMessage, useExternalSearchQuery, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
 import { suggestQuery } from './typo'
 
@@ -48,7 +50,7 @@ export function SearchResultsHeader({ count }: { count: number | null }) {
 
 /** 검색 결과 목록·장소 상세(Figma 4절). 결과 0개는 0개로 보여준다(가드레일 2). */
 export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] }) {
-  const { source, near, selectedId, select, submit, close } = useSearchStore()
+  const { source, near, selectedId, group, select, showGroup, submit, close } = useSearchStore()
   const search = useSourcePlacesQuery(source, near)
   const create = useCreatePinMutation(mapId)
   const { selectPin } = usePinSelection()
@@ -56,6 +58,8 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   const link = search.data?.link
   const query = source?.kind === 'name' ? source.query : null
   const selected = results.find((r) => r.id === selectedId)
+  // 지도에서 겹쳐 묶인 「N곳」 핀을 눌렀으면 그곳들만 보인다(#1174). 번호는 전체 결과의 번호 그대로다.
+  const listed = results.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => !group || group.includes(r.id))
 
   function pinIt(r: SearchResultView) {
     const req = searchPinRequest(r.dto)
@@ -161,28 +165,13 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (results.length === 0) {
     // 흔한 말의 오타(「중곡집」)면 고친 말로 다시 찾게 한다. 아니면 검색어를 지우고 바로 다시 입력하게(#351).
     const fixed = query ? suggestQuery(query) : null
-    return (
-      <EmptyState mood="sorry"
-        title="찾는 장소가 없어요"
-        action={
-          fixed ? (
-            <button type="button" onClick={() => submit(fixed, near)} className="btn-primary btn-md">
-              「{fixed}」 찾아보기
-            </button>
-          ) : (
-            <SearchAgainButton onClose={close} label="검색어 지우고 다시 찾기" />
-          )
-        }
-      >
-        {fixed ? `혹시 「${fixed}」${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
-      </EmptyState>
-    )
+    return <NoResults query={query} fixed={fixed} onRetry={() => fixed && submit(fixed, near)} onClose={close} />
   }
 
   if (selected) {
     return (
       <div className="space-y-3">
-        <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => select(null)} />
+        <PanelBackLink label={group ? `이 자리의 장소 ${listed.length}곳` : `검색 결과 ${results.length}곳`} onBack={() => select(null)} />
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
@@ -209,34 +198,69 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   }
 
   return (
-    <ol className="space-y-2">
-      {results.map((r, i) => (
-        <li
-          key={r.id}
-          className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
-        >
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
-            {i + 1}
-          </span>
-          <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
-            <p className="truncate font-bold text-ink-900">{r.name}</p>
-            <p className="truncate text-xs text-ink-500">{r.meta}</p>
-            {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
-          </button>
-          {r.canLeaveLive && !r.alreadyPinned ? (
-            <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
-              핀 남기기
+    <div className="space-y-3">
+      {group && <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => showGroup(null)} />}
+      <ol className="space-y-2">
+        {listed.map(({ r, n }) => (
+          <li
+            key={r.id}
+            className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
+          >
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
+              {n}
+            </span>
+            <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
+              <p className="truncate font-bold text-ink-900">{r.name}</p>
+              <p className="truncate text-xs text-ink-500">{r.meta}</p>
+              {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
             </button>
-          ) : (
-            <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
-          )}
-        </li>
-      ))}
-    </ol>
+            {r.canLeaveLive && !r.alreadyPinned ? (
+              <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
+                핀 남기기
+              </button>
+            ) : (
+              <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
   )
 }
 
 /** 검색창을 비우고 다시 입력하게 한다(#351). */
+/**
+ * 이름 검색 0곳. 다음 행동은 검색어를 지우고 바로 다시 입력하기(#351)이고,
+ * 그 아래 친 검색어 그대로 카카오맵에서 찾는 출구를 둔다(#905, 새 창). 링크를 못 받으면 출구만 숨긴다.
+ */
+function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; fixed: string | null; onRetry: () => void; onClose: () => void }) {
+  return (
+    <EmptyState
+      mood="sorry"
+      title="찾는 장소가 없어요"
+      action={
+        <div className="flex flex-col items-center gap-2">
+          {fixed ? (
+            <button type="button" onClick={onRetry} className="btn-primary btn-md">
+              「{fixed}」 찾아보기
+            </button>
+          ) : (
+            <SearchAgainButton onClose={onClose} label="검색어 지우고 다시 찾기" />
+          )}
+          {query && <KakaoMapExit query={query} />}
+        </div>
+      }
+    >
+      {fixed ? `혹시 「${fixed}」${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
+    </EmptyState>
+  )
+}
+
+function KakaoMapExit({ query }: { query: string }) {
+  const { data } = useExternalSearchQuery(query)
+  return data ? <ExternalSearchLink search={data} className="btn-link text-sm" /> : null
+}
+
 function SearchAgainButton({ onClose, label }: { onClose: () => void; label: string }) {
   return (
     <button
@@ -291,18 +315,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
       <label className="block text-body font-bold text-ink-900" htmlFor="live-pin-memo">
         한마디 남기기 (선택)
       </label>
-      <textarea
-        id="live-pin-memo"
-        value={memo}
-        maxLength={MEMO_MAX}
-        onChange={(e) => setMemo(e.target.value)}
-        placeholder="예: 여기 곱창 맛있대"
-        rows={2}
-        className="field w-full resize-none py-3"
-      />
-      <p className="text-right text-label text-ink-500">
-        {memo.length}/{MEMO_MAX}
-      </p>
+      <TextArea id="live-pin-memo" value={memo} onChange={setMemo} maxLength={MEMO_MAX} placeholder="예: 여기 곱창 맛있대" rows={2} clearLabel="한마디 지우기" />
       <button
         type="button"
         onClick={() => onSubmit({ memo: memo.trim(), name: name.trim() || undefined, category: category ?? undefined })}

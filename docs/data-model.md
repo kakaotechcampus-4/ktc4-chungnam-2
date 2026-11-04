@@ -1,7 +1,7 @@
 # 데이터 모델
 
 작성 기준: `최종기획안.md`(2·5·9절) + `docs/architecture.md`
-DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). 실시간 보조: Redis(세션/멱등키, SSE 재전송 버퍼).
+DB: PostgreSQL 17 + PostGIS(직선거리, 13절 참고). Redis는 쓰지 않는다 — 세션은 무상태 서명 쿠키, 멱등키는 `idempotency_keys` 표, SSE 재전송은 `event_log` 표가 맡는다(`docs/tech-stack.md`).
 
 이 문서는 테이블 단위 스키마다. 각 모듈은 자신이 소유한 테이블만 쓰기 접근하고, 다른 모듈 테이블은 해당 모듈의 함수/API를 통해서만 읽는다(`architecture.md` 1절).
 
@@ -391,7 +391,7 @@ regions(
                                          -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
                                          -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
                                          -- 별도 마이그레이션으로 되돌린다.
-  anchor_points jsonb default '[]',     -- #112: 원을 만든 기준 핀 좌표 [[lat, lng], ...]. 상위 3곳 동점 처리의 거리 평균에 쓴다
+  anchor_points jsonb default '[]',     -- #1252: 이 무리의 같은 카테고리 핀 좌표 [[lat, lng], ...]. 각 핀의 원 조회와 거리 평균에 쓴다
   confirmed boolean, confirmed_at
 )
 
@@ -554,7 +554,7 @@ agent_course_runs(
   outcome null('solved'|'solved_with_checks'|'unresolved'|'timeout'),    -- done일 때만
   failure_code null('INTERRUPTED'|'ENGINE_ERROR'),                       -- failed일 때만
   input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
-  snapshot_at, snapshot_pin_ids jsonb,-- 요청 때 확정 리스트의 핀 id. 지금과 다르면 응답의 stale=true
+  snapshot_at, snapshot_version text, -- 구현 전(#1321) — 요청 때 일정 version(shortlist, #1237), 지금 열은 snapshot_pin_ids(핀 id 목록)다. 지금과 다르면 응답의 stale=true
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
   steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)
@@ -592,7 +592,7 @@ llm_calls(
   input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,   -- 입력은 캐시 몫과 캐시 쓰기 할증 포함, 출력은 추론 토큰 포함
   web_searches int default 0,         -- 그 호출 안의 웹 검색 횟수(응답의 web_search_call 수, #1216). 웹 확인 밖은 0
   cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다. 웹 검색 요금(web_searches × LLM_PRICE_WEB_SEARCH_KRW)을 더한다
-  outcome('ok'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,
+  outcome('ok'|'ok_repeated_json'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,   -- ok_repeated_json: 같은 JSON 객체가 두 번 온 응답의 첫 객체를 받음(ok=true, #767). 토큰은 0으로 남는다(SDK가 검증 실패에 usage를 붙이지 않는다)
   elapsed_ms, created_at
 )
 index ix_llm_calls_created (created_at)

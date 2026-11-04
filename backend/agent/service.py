@@ -13,6 +13,8 @@
 - 추천 막힘 조언(#587, 명세 9절, 13절): run당 1행에 지금 결과 상태의 조언(`insert_run_advice` — ON CONFLICT (run_id) DO UPDATE ... WHERE state_key IS DISTINCT, #1103), 읽기(`get_run_advice`)
 - 지도 현황 문단(#1168, 명세 8.2, 13절): 덮어쓰기(`upsert_map_status`), 읽기(`get_map_status`). 다시 만들지 판단하는 칸의
   해시는 `load_history`가 함께 읽는다
+- 작업 기록과 살펴본 상태(#1297, 명세 11.3, 21.3): 제안의 관찰 행(`get_run`), 마지막 관찰 시각(`last_observed_at`),
+  가장 최근 지도 관찰 행(`latest_observation`)
 
 제안 상태를 바꾸는 함수는 (id, shadow) 목록을 돌려준다. agent.resolved는 shadow가 아닌 것만 낸다(호출부).
 
@@ -586,3 +588,23 @@ def upsert_map_status(
 
 def get_map_status(db: Session, map_id: str) -> AgentMapStatus | None:
     return db.get(AgentMapStatus, map_id)
+
+
+# ---------------------------------------------------------------- 작업 기록과 살펴본 상태 (#1297, 명세 11.3, 21.3)
+
+def get_run(db: Session, run_id: uuid.UUID | None) -> AgentRun | None:
+    """제안을 만든 관찰 행(작업 기록의 입력). 30일 정리로 지워졌으면 None."""
+    return db.get(AgentRun, run_id) if run_id is not None else None
+
+
+def last_observed_at(db: Session, map_id: str) -> datetime | None:
+    """그 지도의 마지막 관찰 시각(agent_cursors.last_observed_at). 관찰한 적이 없으면 None."""
+    return db.scalar(select(AgentCursor.last_observed_at).where(AgentCursor.map_id == map_id))
+
+
+def latest_observation(db: Session, map_id: str) -> AgentRun | None:
+    """trigger가 activity·time인 가장 최근 관찰 행 — 살펴본 상태의 안내 문구(core.observation_notice)가 본다."""
+    return db.scalars(
+        select(AgentRun).where(AgentRun.map_id == map_id, AgentRun.trigger.in_(core.OBSERVATION_TRIGGERS))
+        .order_by(AgentRun.started_at.desc(), AgentRun.finished_at.desc().nulls_last()).limit(1)
+    ).first()

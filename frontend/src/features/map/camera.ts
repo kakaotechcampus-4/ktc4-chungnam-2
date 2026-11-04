@@ -77,3 +77,17 @@ export function zoomSteps(from: number, to: number): number[] {
   }
   return steps
 }
+
+/**
+ * 화면에서 서로 `dist` px 안에 있는 점끼리 묶는다(#1174). 묶음은 목록 순서대로, 묶음 안도 들어온 순서다.
+ * 점마다 앞에서 만든 묶음의 첫 점과만 잰다 — 검색 결과는 몇 곳뿐이라 이 정도로 충분하다.
+ */
+export function groupNear(points: Px[], dist: number): number[][] {
+  const groups: number[][] = []
+  points.forEach((p, i) => {
+    const g = groups.find((g) => Math.hypot(points[g[0]].x - p.x, points[g[0]].y - p.y) < dist)
+    if (g) g.push(i)
+    else groups.push([i])
+  })
+  return groups
+}
