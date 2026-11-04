@@ -203,6 +203,7 @@ describe('AI 코스 짜기 시트', () => {
     )
     const user = userEvent.setup({ delay: null })
     renderSheet()
+    await user.type(await screen.findByRole('textbox'), '둘째 날은 실내 위주로')
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     await confirmCourse(user)
     expect(await screen.findByText('코스를 만들지 못했어요')).toBeInTheDocument()
@@ -210,6 +211,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByText('이미 짜고 있는 코스를 보여 드려요')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '다시 짜기' }))
     expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeInTheDocument() // 진입으로 돌아감
+    expect(screen.getByRole('textbox')).toHaveValue('둘째 날은 실내 위주로') // 쓴 요청이 남는다
   })
 
   it('최근 코스가 없으면 링크가 없고, 있으면 결과를 바로 연다(stale 이면 「다시 짜기」)', async () => {
