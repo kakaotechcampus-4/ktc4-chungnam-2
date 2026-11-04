@@ -52,7 +52,7 @@ def test_export_masks_member_text_and_keeps_agent_words(world, factory, tmp_path
     with factory() as db:
         counts = label_sample.export(db, out, per_type=10, seed=0)
 
-    assert counts == {"stall": 0, "split": 1, "no_reaction": 1, "category_gap": 1}
+    assert counts == {"stall": 0, "split": 1, "no_reaction": 1, "category_gap": 1, "schedule": 0}
     raw = out.read_text(encoding="utf-8-sig")
     for secret in (AGAINST_TEXT, AGAINST_TEXT[:8], LIKE_TEXT, LIVE_QUERY, world.prefix):
         assert secret not in raw

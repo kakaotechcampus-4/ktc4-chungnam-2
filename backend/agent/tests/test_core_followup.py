@@ -255,7 +255,7 @@ def test_model_action_check_rejects_a_tried_action():
 
 def test_followup_signals_are_ranked_first():
     policy = core.PriorityPolicy(version=1, urgent_dday=3, never_first=(), always_first=("category_gap",),
-                                 weights={"stall": 3, "split": 4, "no_reaction": 1, "category_gap": 2})
+                                 weights={"stall": 3, "split": 4, "no_reaction": 1, "category_gap": 2, "schedule": 2})
     gap = core.make_signal("category_gap", category="카페", evidence=[], features={"dday": 30})
     split = core.make_signal("split", category="음식점", evidence=[], features={"affected_members": 3})
     follow = replace(_followup(), id="s3")

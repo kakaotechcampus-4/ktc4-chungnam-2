@@ -449,7 +449,9 @@ def delete_old_runs(db: Session, now: datetime) -> int:
 
 
 def _undecided(created_before: datetime):
-    return (AgentSuggestion.decided_within_24h.is_(None), AgentSuggestion.created_at < created_before)
+    """채울 제안 — 일정 점검(schedule)은 확정으로 풀리지 않아 null로 둔다(core.DECIDED_DIAGNOSES, #1356)."""
+    return (AgentSuggestion.decided_within_24h.is_(None), AgentSuggestion.created_at < created_before,
+            AgentSuggestion.diagnosis.in_(core.DECIDED_DIAGNOSES))
 
 
 def list_undecided_map_ids(db: Session, *, created_before: datetime) -> list[str]:
