@@ -2524,7 +2524,12 @@ export interface paths {
         /** 카테고리별 추천 버튼 활성화 판정 (5-4). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145) */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 지도 중심 앵커로 계산하려면 `center_lat`·`center_lng`를 **함께** 보낸다(#1331). 있으면 근처 정예 수(`curated_nearby`)를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다(중심이 없는 호출용). 하나만 보내거나 위도 33~39·경도 124~132 밖이면 422 VALIDATION_ERROR */
+                    center_lat?: number;
+                    /** @description center_lat과 함께 보낸다 */
+                    center_lng?: number;
+                };
                 header?: never;
                 path: {
                     mapId: components["parameters"]["MapId"];
@@ -2542,6 +2547,15 @@ export interface paths {
                         "application/json": {
                             [key: string]: components["schemas"]["Readiness"];
                         };
+                    };
+                };
+                /** @description 검증 실패 (VALIDATION_ERROR) — `center_lat`·`center_lng` 중 하나만 보냈거나 범위 밖 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
                     };
                 };
             };

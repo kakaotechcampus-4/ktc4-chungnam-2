@@ -65,8 +65,15 @@ function appliedFlags(runId: string) {
 }
 
 export const recommendHandlers = [
-  http.get("*/maps/:mapId/recommend/readiness", ({ params }) => {
+  http.get("*/maps/:mapId/recommend/readiness", ({ params, request }) => {
     const mapId = params.mapId as string;
+    // #1331 — center_lat·center_lng는 함께, 범위 안(위도 33~39·경도 124~132). 목 서버는 값을 계산에 쓰지 않는다.
+    const q = new URL(request.url).searchParams;
+    const lat = q.get("center_lat");
+    const lng = q.get("center_lng");
+    if ((lat === null) !== (lng === null) || (lat !== null && lng !== null && !(Number(lat) >= 33 && Number(lat) <= 39 && Number(lng) >= 124 && Number(lng) <= 132))) {
+      return apiError(422, "VALIDATION_ERROR", "추천을 받을 수 없는 위치예요");
+    }
     const result: Record<string, Record<string, unknown>> = {};
     for (const category of RECOMMEND_CATEGORIES) {
       const answered = opinionPinCount(mapId, category);
