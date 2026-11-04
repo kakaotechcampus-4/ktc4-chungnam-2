@@ -447,6 +447,71 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     assert b.get(f"/maps/{map_id}/agent").json()["active_suggestion"] is None
 
 
+# ---------------------------------------------------------------- 같은 특징을 반대로 원한 갈림(#1317)
+
+CALM = "분위기가 차분해서 좋아요"
+DULL = "너무 차분하기만 해서 심심했어요"
+
+
+def split_brain(pin_id):
+    """의견 갈림을 진단하는 모델(diagnose-v7이 쓰려는 모양). 미리 센 수(p1)를 쓰고 「추천 받기」와 「장소 검색」을 고른다. 옛 버릇대로
+    「핀 보기」도 하나 섞는다 — 검증이 빼야 한다. 그 핀이 아닌 신호에는 침묵한다."""
+    def brain(turn):
+        inp = turn.input
+        if inp["diagnosis"] != "split" or inp.get("pin_id") != pin_id:
+            return _silent(inp)
+        claims = [
+            CountClaim(id="c1", kind="count", subject="pin", subject_id=pin_id, metric="like", value=inp["counts"]["like"]),
+            CountClaim(id="c2", kind="count", subject="pin", subject_id=pin_id, metric="against",
+                       value=inp["counts"]["against"]),
+            ToolClaim(id="c3", kind="tool_result", call_id="p1", path="passed_count", value=inp["preview"]["passed_count"]),
+        ]
+        advice = [
+            AdviceLine(text="♥ {c1.value}명, 🚫 {c2.value}명으로 갈렸어요", basis=["c1", "c2"], is_guess=False),
+            AdviceLine(text="두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {c3.value}곳 있어요", basis=["c3"],
+                       is_guess=False),
+        ]
+        actions = [
+            Action(type="show_pins", category=None, pin_ids=[pin_id], basis=["c1", "c2"]),
+            Action(type="open_recommend", category="음식점", pin_ids=None, basis=["c1", "c2", "c3"]),
+            Action(type="search_place", category="음식점", pin_ids=None, basis=["c1", "c2"]),
+        ]
+        return _answer(DiagnosisOutput(decision="suggest", diagnosis="split", signal_id=inp["signal_id"], claims=claims,
+                                       advice=advice, actions=actions))
+    return brain
+
+
+def test_same_axis_split_is_previewed_and_points_to_recommend_not_pins(e2e, monkeypatch):
+    """같은 특징(조용함)을 ♥ 쪽은 원하고 🚫 쪽은 피한 갈림. 코드가 미리 세서 모델에 수를 주고, 검증이 「핀 보기」를 빼고, 화면에는
+    추천 받기(남는 곳이 있을 때)와 장소 검색이 남는다(#1317)."""
+    monkeypatch.setitem(KEYWORDS, "심심", ("quiet", False))   # 🚫 글을 먼저 본다 — 「차분」도 들어 있다
+    monkeypatch.setitem(KEYWORDS, "차분", ("quiet", True))
+    a, b, c = e2e.users(a="가온", b="나래", c="다솜")
+    map_id = e2e.shared_map(a, b, c)
+    pin = e2e.pin(a, map_id, "seongsu-kalguksu")
+    e2e.react(a, pin, "like", CALM)
+    e2e.react(b, pin, "like")
+    e2e.react(c, pin, "against", DULL)
+    e2e.model.brains[DiagnosisOutput] = split_brain(pin)
+
+    e2e.tick(_later(4))
+
+    run = e2e.runs(map_id)[-1]
+    assert (run.outcome, run.used_model) == ("suggested", True)
+    [preview] = [t for t in run.tool_calls if t["call_id"] == "p1"]
+    assert (preview["name"], preview["args"]) == ("preview_filter", {"category": "음식점", "with_keys": []})   # ♥ 쪽 키 없이
+    passed = preview["result"]["passed_count"]
+    assert run.verification["actions"]["removed"][0] == {"index": 0, "reason": "type"}   # 「핀 보기」는 허용 버튼이 아니다
+
+    sug = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (sug["diagnosis"], sug["analysis"]["conflict_type"]) == ("split", "same_axis")
+    assert _text(sug["advice"][1]) == f"두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {passed}곳 있어요"
+    expected = ([("open_recommend", "음식점 추천 받기")] if passed else []) + [("search_place", "음식점 검색")]
+    assert [(x["type"], x["label"]) for x in sug["actions"]] == expected
+    assert [st["text"] for st in sug["steps"] if st["stage"] == "미리 찾기"] == [f"지금 조건으로 미리 찾아봤어요 · {passed}곳 남아요"]
+    assert CALM not in json.dumps(run.tool_calls, ensure_ascii=False) and DULL not in json.dumps(sug, ensure_ascii=False)
+
+
 # ---------------------------------------------------------------- 장애와 조작된 입력
 
 def test_model_outage_leaves_no_suggestion_and_the_rest_keeps_working(e2e):
