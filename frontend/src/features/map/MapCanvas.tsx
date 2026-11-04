@@ -79,8 +79,8 @@ const DIM_WORLD: LatLngTuple[] = [
   [25, 115],
 ]
 
-/** AI 추천 탭의 지도 그림 — 여행 지역 경계와 그 밖 어둡게, 지도 가운데 반경 원. */
-export type RecommendArea = { boundary: RegionBoundary | null; radiusM: number }
+/** AI 추천 탭의 지도 그림 — 여행 지역 경계와 그 밖 어둡게, 지도 가운데 반경 원(`radiusM` 이 null 이면 원 없음). */
+export type RecommendArea = { boundary: RegionBoundary | null; radiusM: number | null }
 
 /** 올리기 전 AI 후보(#843) — 요청한 사람의 화면에만 핑고 핀으로 그린다. */
 export type CandidateMarker = { id: string; rank: number; name: string; lat: number; lng: number; selected: boolean; onClick: () => void }

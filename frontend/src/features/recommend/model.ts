@@ -122,12 +122,28 @@ export const RECOMMEND_RADIUS_M = 3000
 export const recommendAreaNote = () => `지도 가운데 반경 ${RECOMMEND_RADIUS_M / 1000}km 안에서 찾아요`
 
 /**
- * docs/errors.md — run 시작·실행 실패 문구. 사용자 결정(2026-11-04, #1385)으로 실패는 한 줄이다.
- * 넓히기 상한(`WIDEN_LIMIT`)만 따로 말한다 — 넓히기 버튼이 하는 일이라 다른 길(조건 고치기·직접 찍기)을 알려야 한다.
+ * 서버가 같은 요청을 아직 처리 중이다(409 `REQUEST_IN_PROGRESS`) — 기다려도 안 끝나 멈췄을 때. 실패가 아니다:
+ * 서버가 그 뒤에 추천을 끝내고 크레딧을 쓸 수 있다(#1386 리뷰).
+ */
+const IN_PROGRESS_MESSAGE = '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
+const inProgress = (err: unknown) => err instanceof ApiError && err.code === 'REQUEST_IN_PROGRESS'
+
+/**
+ * docs/errors.md — 「○○ 추천받기」(run 시작) 실패 문구. 사용자 결정(2026-11-04, #1385)으로 실패는 한 줄이다.
+ * 처리 중만 따로 말한다.
  */
 export function runErrorMessage(err: unknown): string {
+  return inProgress(err) ? IN_PROGRESS_MESSAGE : '추천 장소를 찾지 못했어요'
+}
+
+/**
+ * 다시 추천·반경 넓히기·다시 시도 실패 문구(토스트). 이전 결과가 화면에 남아 있어 「찾지 못했어요」가 결과 옆에 서면 어색하다 —
+ * 예전 문구로 남긴다(#1386 리뷰, 사용자 결정 2026-11-05). 크레딧을 쓰지 않는 실행이라 크레딧 안내는 없다.
+ * 넓히기 상한(`WIDEN_LIMIT`)은 넓히기 버튼이 하는 일이라 다른 길(조건 고치기·직접 찍기)을 알린다.
+ */
+export function rerunErrorMessage(err: unknown): string {
   if (err instanceof ApiError && err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
-  return '추천 장소를 찾지 못했어요'
+  return inProgress(err) ? IN_PROGRESS_MESSAGE : '추천을 끝내지 못했어요. 잠시 뒤 다시 눌러 주세요'
 }
 
 export type FunnelRow = RecommendResultDto['funnel'][number]

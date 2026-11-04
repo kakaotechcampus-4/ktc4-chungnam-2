@@ -133,7 +133,8 @@ export default function MapLayout() {
   // 올린 후보는 이미 핀으로 떠 있어서 빼고, 좌표가 없는 후보도 뺀다. 결과는 추천 탭과 같은 캐시를 본다.
   const onRecommendTab = useMatch('/maps/:mapId/recommend') !== null
   // AI 추천은 보이는 지도 가운데 반경 안에서 찾는다(#1385) — 그 탭에서만 여행 지역 경계·그 밖 어둡게·반경 원을 그린다.
-  const regionBoundary = useRegionBoundary(mapInfo?.region?.label)
+  // 경계 파일도 그 탭에서만 받는다(시·도 하나에 수십 KB). 한 번 받으면 캐시에 남는다.
+  const regionBoundary = useRegionBoundary(onRecommendTab ? mapInfo?.region?.label : undefined)
   const run = useAiStore((s) => s.runs[mapId])
   const result = useResultQuery(run?.status === 'done' ? run : undefined).data
   const candidateFocus = useAiStore((s) => s.focus)
@@ -390,7 +391,8 @@ export default function MapLayout() {
         results={searchMarkers}
         candidates={candidates}
         route={routeDrawings}
-        recommendArea={onRecommendTab ? { boundary: regionBoundary, radiusM: RECOMMEND_RADIUS_M } : null}
+        // 원은 준비 화면(run 없음)에만 그린다. 결과의 다시 추천·넓히기는 run을 만들 때의 가운데에서 찾아서, 지도를 따라가는 원은 그 범위와 어긋난다.
+        recommendArea={onRecommendTab ? { boundary: regionBoundary, radiusM: run ? null : RECOMMEND_RADIUS_M } : null}
         // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 확정된 장소」로 돌아온다).
         onSelect={(pinId) => {
           setPanelOpen(true)
