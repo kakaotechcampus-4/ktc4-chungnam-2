@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { useState, type ReactNode } from 'react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Outlet, Route, Routes } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { START_PARAM } from '@/features/agent/actions'
+
+import { useSheetStore } from '@/features/shell/sheetStore'
 
 import { useAiStore } from './aiStore'
 import { createRun, fetchResult, retryRun } from './api'
@@ -51,21 +53,56 @@ async function doneRun() {
 }
 
 describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', () => {
-  it('근거 확인 없이 execute 로 시작하고, 시도마다 Idempotency-Key 를 싣는다', async () => {
+  it('근거 확인 없이 execute 로 시작하고, 시도마다 Idempotency-Key 와 보고 있는 지도 가운데를 싣는다(#1331)', async () => {
+    const center = { lat: 37.5665, lng: 126.978 }
     const sent: { body: unknown; key: string | null }[] = []
+    const readinessQuery: string[] = []
     server.events.on('request:start', async ({ request }) => {
-      if (request.method === 'POST' && new URL(request.url).pathname === `/maps/${MAP}/runs`) {
+      const url = new URL(request.url)
+      if (request.method === 'POST' && url.pathname === `/maps/${MAP}/runs`) {
         sent.push({ body: await request.clone().json(), key: request.headers.get('Idempotency-Key') })
       }
+      if (url.pathname === `/maps/${MAP}/recommend/readiness`) readinessQuery.push(url.search)
     })
-    renderWithClient(<ReadinessBody mapId={MAP} />)
+    // 지도 셸(MapLayout)이 Outlet 으로 getCenter 를 내린다.
+    renderWithClient(
+      <Routes>
+        <Route element={<Outlet context={{ getCenter: () => center }} />}>
+          <Route path="*" element={<ReadinessBody mapId={MAP} />} />
+        </Route>
+      </Routes>,
+    )
     await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
     await confirmCredit()
 
     await waitFor(() => expect(useAiStore.getState().runs[MAP]?.status).toBe('done'))
+    expect(readinessQuery[0]).toBe(`?center_lat=${center.lat}&center_lng=${center.lng}`)
     expect(sent).toHaveLength(1)
-    expect(sent[0].body).toEqual({ category: '음식점', execute: true })
+    expect(sent[0].body).toEqual({ category: '음식점', execute: true, center })
     expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/)
+    server.events.removeAllListeners()
+  })
+
+  it('지도를 끌어 옮기고 멈추면 「근처 정예 수」를 새 가운데로 다시 센다(#1331)', async () => {
+    let center = { lat: 37.5665, lng: 126.978 }
+    const queries: string[] = []
+    server.events.on('request:start', ({ request }) => {
+      const url = new URL(request.url)
+      if (url.pathname === `/maps/${MAP}/recommend/readiness`) queries.push(url.search)
+    })
+    renderWithClient(
+      <Routes>
+        <Route element={<Outlet context={{ getCenter: () => center }} />}>
+          <Route path="*" element={<ReadinessBody mapId={MAP} />} />
+        </Route>
+      </Routes>,
+    )
+    await screen.findByRole('button', { name: '음식점 추천받기' })
+
+    center = { lat: 35.1, lng: 129.04 }
+    act(() => useSheetStore.getState().setMapMoving(true)) // 끌기 시작과 멈춤은 따로 오는 이벤트다
+    act(() => useSheetStore.getState().setMapMoving(false))
+    await waitFor(() => expect(queries.at(-1)).toBe('?center_lat=35.1&center_lng=129.04'))
     server.events.removeAllListeners()
   })
 

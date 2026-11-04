@@ -21,6 +21,11 @@
 **우리 데이터 확인(6.6, #1168)**: 진단이 검증을 통과한 정체·갈림 제안에 (pin_id, fact_key)를 붙인다(core.fact_targets — 갈림은
 충돌 분석, 정체는 🚫 사유의 ②). 모델을 부르지 않는다. 라벨 값은 렌더(_render) 때 places에서 다시 읽는다.
 
+**후속 관찰과 충돌 선언(6.9, #1346)**: 수락한 제안을 막힌 곳 하나로 보고 관찰마다 core.detect_followups가 풀렸는지 본다(모델 없음).
+그대로면 후속 신호가 1순위로 가서(followup_first) 다음 방법(attempt 1 — 모델 유형은 같은 진단을 해 본 것과 함께, 카테고리 공백은
+템플릿)이나 충돌 선언(attempt 2, 코드 템플릿)이 된다. 숫자는 코드 호출 기록 f1에 남긴다. 풀렸으면 저장 트랜잭션에서 followup을
+resolved로 쓴다. 저장 직전에도 잠근 사본으로 다시 보고, 풀렸으면 stale로 버린다.
+
 **지도 현황 문단(8.2, #1168)**: 관찰 끝(요약 다음)에서 `update_status`가 칸(core.status_cells)을 계산해, 마지막으로 만들려 한 칸과
 다를 때만 모델(Gateway.status)을 부른다. 별도 트랜잭션, 별도 agent_runs 행(trigger=status)이다. 모델을 부르지만 지도 하루
 상한에는 세지 않는다(service.MODEL_RUN_TRIGGERS에 없다 — 비용은 서비스 일일 예산, 19절). 검증(core.verify_status)에서 떨어지면
@@ -368,8 +373,10 @@ def observe_map(
     # 3. 탐지와 활성 제안 무효화 판단 (순수)
     trace.stage = "detect"
     th = core.time_threshold(snap.action_times, snap.map.start_date, snap.today)
-    signals = core.detect_all(snap, now, th)
-    superseding = core.find_superseded(hist.active, signals)
+    followups = core.detect_followups(snap, hist, now, th)   # 6.9 — 지켜보는 막힌 곳이 풀렸나, 그대로인가
+    signals = core.detect_all(snap, now, th, followups.signals)
+    resolved = dict(followups.resolved)   # 제안 id → 풀린 이유
+    superseding = core.find_superseded(hist.active, signals, resolved)
 
     # 4. 정책 사전 검사 (순수)
     passed, blocked = core.check_policy(signals, hist, snap, now, superseding=superseding)
@@ -381,7 +388,7 @@ def observe_map(
     # 6. 초안 — 코드 유형은 템플릿, 모델 유형은 진단과 검증(세션 없음, 도구만 짧게 읽는다)
     trace.stage = "draft"
     step = _draft(map_id, top, snap, names, now, session_factory, gateway, trace) if top is not None else _Step(None)
-    chosen = top if step.draft is not None else None
+    chosen = (step.signal or top) if step.draft is not None else None   # 다음 방법이 남지 않으면 충돌 선언 신호로 바뀐다
     draft = step.draft
     outcome, detail = _planned_outcome(signals, top, step)
     usages = [step.usage] if step.usage is not None else []
@@ -393,13 +400,17 @@ def observe_map(
             return lease_lost(db, snap)
         if not maps_api.lock_map_if_alive(db, map_id):   # 지도 행 잠금 + 삭제 확인(#435, #512)
             return None                                   # 관찰 중 지도가 삭제됐다. 아무것도 쓰지 않는다
-        if chosen is not None and not _still_there(db, chosen, map_id, now, th):
-            chosen, draft, outcome = None, None, "stale"
+        if chosen is not None:
+            there, gone = _still_there(db, chosen, hist, map_id, now, th)
+            resolved |= gone
+            if not there:
+                chosen, draft, outcome = None, None, "stale"
         mode_off = chosen is not None and not core.settings_view(service.get_settings(db, map_id)).enabled
         if mode_off:   # 관찰 중 모드가 꺼졌다. change_settings도 지도 행을 잠가서 둘은 줄을 선다
             blocked.append(core.Blocked(chosen.id, "mode_off"))
             chosen, draft, outcome = None, None, "blocked"
         _announce_resolved(db, map_id, service.supersede(db, superseding, now), "superseded")
+        service.set_followup(db, {sid: core.followup_record("resolved", now, why) for sid, why in resolved.items()})
         blocked_rows = [asdict(b) for b in blocked]
         run_id = service.insert_run(db, **run_fields(
             snap, outcome, signals=[core.signal_record(s) for s in signals], blocked=blocked_rows,
@@ -419,6 +430,9 @@ def observe_map(
                 service.set_run_outcome(db, run_id, outcome, blocked=blocked_rows)
             else:
                 new_expires_at = now + SUGGESTION_TTL
+                if core.is_followup(chosen):   # 앞 제안의 막힌 곳은 이 제안으로 이어진다(6.9 6번)
+                    service.set_followup(db, {chosen.features["followup_of"]: core.followup_record("followed_up", now)},
+                                         only_status=("watching",))
                 if not shadow:
                     _announce_suggested(db, map_id, inserted)
         service.advance_cursor(
@@ -455,6 +469,7 @@ class _Step:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     verification: dict[str, Any] | None = None
     usage: AgentUsage | None = None   # 진단 호출의 사용량(#564). 코드 유형은 None
+    signal: core.Signal | None = None   # 초안이 다른 신호의 것일 때(다음 방법이 남지 않아 충돌 선언으로 바뀜, 6.9)
 
 
 def _draft(
@@ -463,18 +478,31 @@ def _draft(
 ) -> _Step:
     """제안 초안(12.4 6단계). 코드 유형은 템플릿. 모델 유형은 진단을 부른다 — split은 충돌 종류(compare_reasons, 코드)를
     먼저 계산해 입력에 넣고, 미리 돌려 보기(6.7, recommend.api.preview_filter)도 모델 전에 코드가 해서 입력과 도구 기록 p1에 넣는다. 실패(AgentCallFailed)와 검증 실패는 재요청하지 않고 침묵한다(2절 10번). 예외는 그대로
-    올리고, 진단을 부른 뒤면 trace에 모델 사용이 남는다(#677)."""
-    if top.diagnosis in CODE_TYPES:
+    올리고, 진단을 부른 뒤면 trace에 모델 사용이 남는다(#677).
+
+    후속 신호(6.9)는 먼저 코드 호출 기록 f1(후속 확인)을 남긴다. 충돌 선언은 미리 돌려 본 수와 함께 코드 템플릿, 카테고리 공백의
+    다음 방법도 템플릿이다. 모델 유형의 다음 방법은 미리 돌려 본 뒤 남은 행동(해 본 것과 0곳인 추천 받기를 뺀 것)이 없으면 모델을
+    부르지 않고 충돌 선언으로 바꾼다(_Step.signal)."""
+    followup = core.is_followup(top)
+    if top.diagnosis in CODE_TYPES and not followup:
         return _Step(core.render_template(top))
     ctx = tools.ToolContext(
-        map_id=map_id, snap=snap, allowed=llm_api.DIAGNOSIS_TOOLS[top.diagnosis], session_factory=session_factory,
+        map_id=map_id, snap=snap, allowed=llm_api.DIAGNOSIS_TOOLS.get(top.diagnosis, ()), session_factory=session_factory,
         structure=gateway.structure, now=now,
     )
     # 사용량 기록(#870): 진단 왕복과 그 안의 ②(사전 비교, 도구, 우리 데이터 확인의 정체 사유)가 한 trace다. 서버 호출이라 user_id가
     # 없고, agent_runs 행은 아직 없어 run_id도 없다
     with llm_api.usage_context("agent_diagnose", map_id=map_id):
+        if followup:
+            tools.record_followup_check(ctx, top.features["followup_of"], core.followup_check_result(top))
+            if core.is_declaration(top) or top.diagnosis in CODE_TYPES:
+                preview = tools.preview(ctx, category=top.category) if core.is_declaration(top) else None
+                return _Step(core.render_followup_template(top, preview), tool_calls=ctx.calls)
         comparison = _comparison(ctx, top)
         preview = _preview(ctx, top, comparison)
+        if followup and not core.allowed_actions(top, preview):
+            declared = core.as_declaration(top)
+            return _Step(core.render_followup_template(declared, preview), tool_calls=ctx.calls, signal=declared)
         reply = _call_model(trace, ctx.calls, lambda: gateway.diagnose(
             core.diagnosis_input(top, snap, comparison, preview), tool_runner=ctx.run,
         ))
@@ -627,11 +655,30 @@ def _announce_suggested(db: Session, map_id: str, suggestion_id) -> None:
         record_event(db, core.suggested_event(map_id, rendered))
 
 
-def _still_there(db: Session, draft: core.Signal, map_id: str, now: datetime, th: timedelta) -> bool:
+def _tried(db: Session, row: SuggestionRow) -> list:
+    """이 제안의 막힌 곳에서 해 본 것(6.9) — 사슬(followup_of)의 수락한 버튼. 첫 제안이면 빈 목록."""
+    if row.followup_of is None:
+        return []
+    past = service.list_past(db, row.map_id)
+    me = next((h for h in past if h.id == str(row.id)), None)
+    return core.tried_view(core.chain_of(past, me)) if me is not None else []
+
+
+def _still_there(
+    db: Session, draft: core.Signal, hist: core.History, map_id: str, now: datetime, th: timedelta,
+) -> tuple[bool, dict[str, str]]:
     """상태 재확인(12.8) — 저장 트랜잭션 안에서 다시 읽은 사본으로 같은 탐지기를 돌린다. 기준 시간은 관찰 때 값을
-    그대로 쓴다(재확인 사이에 기준이 움직여 신호가 깜빡이지 않게)."""
+    그대로 쓴다(재확인 사이에 기준이 움직여 신호가 깜빡이지 않게). (아직 있나, 풀린 막힌 곳 {앞 제안 id: 이유}).
+    후속 신호(6.9)는 탐지기가 아니라 앞 제안의 episode_state로 본다 — 그대로(stuck)일 때만 있고, 풀렸으면 resolved를 쓰게 돌려준다."""
     fresh = snapshot.build(db, map_id, now)
-    return fresh is not None and core.recheck(draft, fresh, now, th)
+    if fresh is None:
+        return False, {}
+    if not core.is_followup(draft):
+        return core.recheck(draft, fresh, now, th), {}
+    target = core.followup_target(draft, hist)
+    state = core.episode_state(target, fresh, now, th) if target is not None else core.EpisodeState("waiting")
+    gone = {target.id: state.reason} if state.status == "resolved" else {}
+    return state.status == "stuck", gone
 
 
 # ---------------------------------------------------------------- 우리 조건 요약 (8절, 12.4 8단계)
@@ -752,7 +799,7 @@ def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
         fact_values=_fact_values(db, pins) if facts else {},
         source_name=llm_api.source_name,
     )
-    return core.render_suggestion(row, refs, service.get_run(db, row.run_id))
+    return core.render_suggestion(row, refs, service.get_run(db, row.run_id), tried=_tried(db, row))
 
 
 def _pins(db: Session, map_id: str, pin_ids: set[str]) -> dict[str, tuple[str | None, str | None]]:
@@ -795,7 +842,8 @@ def _reaction_texts(db: Session, map_id: str, category: str | None) -> dict[str,
 def get_state(db: Session, *, map_id: str, user_id: str, now: datetime) -> AgentState:
     """GET /maps/{mapId}/agent. 지금 제안은 shadow가 아니고 만료 전인 활성 제안을 렌더한 것. 모드가 꺼져 있으면 null.
     요약은 만들어진 카테고리만(8절). 현황 문단은 저장된 것(8.2) — 시트를 열 때 모델을 부르지 않는다. 살펴본 상태(21.3)는
-    커서의 마지막 관찰 시각과, 보여 줄 제안이 없을 때만 가장 최근 지도 관찰 행을 읽는다."""
+    커서의 마지막 관찰 시각과, 보여 줄 제안이 없을 때만 가장 최근 지도 관찰 행을 읽는다. 지켜보는 막힌 곳(6.9)은 모드가 켜져
+    있을 때만 이력에서 고른다(core.tracking)."""
     settings = core.settings_view(service.get_settings(db, map_id))
     row = service.active_suggestion(db, map_id, now) if settings.enabled else None
     active = _render(db, row) if row is not None else None
@@ -803,7 +851,8 @@ def get_state(db: Session, *, map_id: str, user_id: str, now: datetime) -> Agent
     return core.agent_state(settings, active, viewed=viewed, summaries=_summaries(db, map_id),
                             status=core.status_view(service.get_map_status(db, map_id)),
                             checked_at=service.last_observed_at(db, map_id),
-                            latest_observation=service.latest_observation(db, map_id) if active is None else None)
+                            latest_observation=service.latest_observation(db, map_id) if active is None else None,
+                            tracked=core.tracking(service.list_past(db, map_id), now) if settings.enabled else ())
 
 
 def change_settings(db: Session, *, map_id: str, enabled: bool, user_id: str, now: datetime) -> AgentSettings:
@@ -822,6 +871,7 @@ def change_settings(db: Session, *, map_id: str, enabled: bool, user_id: str, no
         service.wake_cursor(db, map_id, now)
     else:
         _announce_resolved(db, map_id, service.supersede_active(db, map_id, now), "superseded")
+        service.stop_watching(db, map_id)   # 모드를 끄면 지켜보던 막힌 곳도 끝난다(6.9)
     record_event(db, core.settings_changed_event(map_id, enabled, user_id))
     return AgentSettings(enabled=enabled, updated_by=user_id, updated_at=now)
 
@@ -833,12 +883,14 @@ def view(db: Session, *, row: SuggestionRow, user_id: str, now: datetime) -> Non
 
 def accept(db: Session, *, row: SuggestionRow, action_index: int, user_id: str, now: datetime) -> AgentAcceptResponse:
     """POST /agent/suggestions/{id}/accept. 버튼 범위 밖이면 422, 이미 처리됐거나 만료 시각이 지났으면 409.
-    서버는 그 버튼의 동작을 실행하지 않고 설명(AgentAction)만 돌려준다(16.3)."""
+    서버는 그 버튼의 동작을 실행하지 않고 설명(AgentAction)만 돌려준다(16.3). 후속 대상이면 그때부터 막힌 곳을 지켜본다
+    (followup={watching, at: now}, 6.9)."""
     action = core.action_at(row.actions, action_index)
     if action is None:
         raise AppError("VALIDATION_ERROR", detail={"action_index": action_index, "actions": len(row.actions)})
     resolved = service.resolve_suggestion(
         db, row.id, status="accepted", user_id=user_id, now=now, action={"index": action.index, "type": action.type},
+        followup=core.watch_on_accept(row.diagnosis, row.attempt or 0, now),
     )
     if not resolved:
         raise AppError("SUGGESTION_RESOLVED")

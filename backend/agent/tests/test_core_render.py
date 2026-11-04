@@ -229,8 +229,8 @@ def test_rendered_suggestion_has_no_server_internal_values():
                                       resolved_by="u1"), core.RenderRefs(pin_names={}))
 
     dumped = out.model_dump(mode="json")
-    assert set(dumped) == {"id", "diagnosis", "category", "title", "analysis", "advice", "actions", "facts", "steps", "created_at",
-                           "expires_at"}
+    assert set(dumped) == {"id", "diagnosis", "category", "title", "analysis", "advice", "actions", "facts", "steps", "attempt",
+                           "tried", "created_at", "expires_at"}
     assert "{c" not in json.dumps(dumped, ensure_ascii=False)
 
 

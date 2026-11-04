@@ -496,7 +496,8 @@ agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 
 
 agent_suggestions(                    -- 바텀시트의 지도 제안
   id uuid, map_id, run_id null references agent_runs on delete set null,
-  diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
+  diagnosis('stall'|'split'|'no_reaction'|'category_gap'|'schedule'),   -- schedule: 일정 점검(#1356)
+  category null, pin_id null,
   fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
   title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id, 인용 범위, 범위의 다이제스트만. 원문 없음, #717). 렌더는 응답 때 조각으로
   status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
@@ -509,7 +510,7 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   attempt smallint not null default 0,   -- 막힌 곳 한 살이의 몇 번째 제안(#1345, agent-v2 6.9). 0 첫 제안, 1 다음 방법, 2 충돌 선언
   followup_of uuid null references agent_suggestions on delete set null,   -- attempt ≥ 1이면 수락한 앞 제안. 해 본 것(tried)은 이 사슬의 resolved_action으로 렌더한다
   followup jsonb null                    -- 수락한 제안을 지켜본 결과(#1345). {status: watching|resolved|declared|followed_up, at, reason?}
-                                         -- reason(resolved일 때): new_pin|confirmed|pin_removed|split_gone. 코드 값만, 구성원 글 없음. 관찰이 쓴다
+                                         -- reason(resolved일 때): new_pin|confirmed|pin_removed|split_gone|problem_gone(#1356 일정 점검). 코드 값만, 구성원 글 없음. 관찰이 쓴다
 )
   unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
   index(map_id, fingerprint)
