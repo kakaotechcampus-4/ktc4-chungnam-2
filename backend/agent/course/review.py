@@ -197,6 +197,8 @@ def review(
     problems = find_problems(trip, course, hours, goals)
     fixes = tuple(propose(trip, course, hours, goals, p, problems, movable) for p in problems)
     found = {p.kind for p in problems}
+    if core.meal_less_days(trip, course):       # 식당이 모자라 못 채우는 날도 「식당 없는 날은 없어요」라고 하지 않는다 — 작업 기록의 식사 줄과 같은 core.meal_less_days 기준(#1392)
+        found.add("meal")
     base = ReviewResult(problems, fixes, tuple(k for k in _applicable_kinds(trip, goals) if k not in found))
     return rejudge(base, order=order, worth=worth)
 
