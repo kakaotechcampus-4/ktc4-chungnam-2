@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { act, renderHook } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { courseKeys } from '@/features/course/queries'
 import { shortlistKeys } from '@/features/shortlist/queries'
 
 import { pinKeys } from './queries'
@@ -136,5 +137,25 @@ describe('실시간 연결 점검(#832, docs/events.md 전달 보장 8번)', () 
     const { invalidated } = setup()
     act(() => latest().emit('pin.created', { id: 'pin_9', created_by: 'u_me' }))
     expect(invalidated()).toContain(JSON.stringify(pinKeys.list(MAP)))
+  })
+})
+
+describe('shortlist.changed 뒤 AI 코스 재조회(#1322)', () => {
+  it('열려 있는 최근 코스와 run 상세를 다시 받는다 — 일정이 바뀌면 stale 이 되어 「반영」을 막는다', async () => {
+    const { client, invalidated } = setup()
+    const fetched = { latest: 0, run: 0 }
+    const observe = (queryKey: readonly unknown[], name: keyof typeof fetched) =>
+      new QueryObserver(client, { queryKey, queryFn: async () => ({ n: ++fetched[name] }) }).subscribe(() => {})
+    const stops = [observe(courseKeys.latest(MAP), 'latest'), observe(courseKeys.run('run_1'), 'run')]
+    // 시계가 가짜라 waitFor 의 폴링이 돌지 않는다 — 비동기 작업만 흘려보낸다.
+    const settle = () => act(async () => void (await vi.advanceTimersByTimeAsync(10)))
+    await settle()
+    expect(fetched).toEqual({ latest: 1, run: 1 })
+
+    act(() => latest().emit('shortlist.changed', { item: {}, action: 'reordered' }))
+    await settle()
+    expect(fetched).toEqual({ latest: 2, run: 2 })
+    expect(invalidated()).toContain(JSON.stringify(courseKeys.latest(MAP)))
+    stops.forEach((stop) => stop())
   })
 })
