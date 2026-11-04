@@ -36,7 +36,7 @@ export default function FeedbackSheet({ mapId, onClose }: { mapId?: string; onCl
   return (
     <ModalSheet label="의견 보내기" onClose={onClose}>
       <SheetTitle>의견 보내기</SheetTitle>
-      <p className="mb-4 mt-1 text-sm text-ink-500">불편했던 점이나 바라는 점을 알려 주세요. 답장은 드리지 않지만 모두 읽어요.</p>
+      <p className="mb-4 mt-1 text-sm text-ink-500">불편했던 점이나 바라는 점을 알려 주세요. 답장은 못 드리지만 모두 읽어요.</p>
 
       <div role="group" aria-label="분류" className="mb-3 flex gap-2">
         {FEEDBACK_CATEGORIES.map((c) => (

@@ -16,6 +16,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from dataclasses import replace
+
 from agent.course import core, direct, goals as goals_mod, review as review_mod, worklog
 from agent.course.constants import REQUEST_TEXT_MAX_CHARS
 from agent.course.deps import DirectDecider, GoalSetter, ModelTurnFailed
@@ -109,12 +111,32 @@ def run_course(
         emit(new)
 
     state = initial_state(trip, start_hours(trip, gateway), build.schedule, goals, build.locks)
+    mode = build.mode or "plan"
+    judge = None
+    if mode == "review":       # 다 넣은 일정은 코드가 점검과 안을 먼저 만들고, 그 결과를 지휘 턴 입력에 실어 모델이 선호 문제를 판단하게 한다(#1321 PR C)
+        assert build.schedule is not None
+        judge = review_mod.judge_input(review_mod.review(trip, build.schedule, state.hours, state.goals))
     result = direct.run_direct(state, decide=decider, hours=gateway, unmatched_count=len(unmatched),
-                              on_step=on_direct_step)
-    checked = None
-    if build.schedule is not None:        # 다 넣은 일정 — 사람이 정한 그대로 점검한다. 일정과 locks는 바꾸지 않고 안은 제안일 뿐이다
-        checked = review_mod.review(trip, build.schedule, result.state.hours, result.state.goals)
-        found = worklog.review_records(trip, result.state.goals, checked)
+                              on_step=on_direct_step, review_input=judge.payload if judge else None)
+    reviewed = None
+    unassigned: tuple[str, ...] = ()
+    if mode == "review":       # 다 넣은 일정 — 사람이 정한 그대로(그날 순서까지) 점검한다. 일정과 locks는 바꾸지 않고 안은 제안일 뿐이다
+        assert build.schedule is not None
+        hours = result.state.hours
+        violations = core.find_violations(trip, build.schedule, hours)
+        result = replace(
+            result, course=build.schedule, violations=violations,
+            goal_results=goals_mod.evaluate_all(trip, build.schedule, result.state.goals),
+            outcome=core.outcome(violations, timed_out=False, checks=len(core.find_checks(trip, build.schedule, hours))),
+        )
+        order, worth = review_mod.hooks_of(judge, result.judgment) if judge and result.judgment else (None, None)    # 판단이 없으면 코드 기본(입력 순서, 모두 고침)
+        reviewed = review_mod.review(trip, build.schedule, hours, result.state.goals, order=order, worth=worth)
+    elif mode == "fill":       # 남은 곳을 채운 안을 점검한다. AI가 둔 미배정 장소는 자기 카드가 있어 ②③으로 따로 옮기지 않는다
+        unassigned = tuple(p.alias for p in trip.places if p.alias not in build.locks)
+        reviewed = review_mod.review(trip, result.course, result.state.hours, result.state.goals, movable=set(build.locks))
+    if reviewed is not None:
+        known = {g.id: g for g in (*state.goals, *result.state.goals)}       # 판단 줄은 점검 때의 문제를 말한다 — 그 뒤에 바뀐 목표도 이름을 붙일 수 있게
+        found = worklog.review_records(trip, tuple(known.values()), reviewed, judge=judge, decision=result.judgment, asked=result.asked_model)
         records.extend(found)
         emit(found)
     closing = narrator.closing(result)
@@ -123,8 +145,8 @@ def run_course(
     model, prompt_version = _usage_meta(setter, decider)
     tokens = [m.tokens for m in (setter, decider) if m is not None]
     return Computation(
-        view=build_view(trip, build.excluded, goals, unmatched, result, records),
+        view=build_view(trip, build.excluded, goals, unmatched, result, records, mode=mode, reviewed=reviewed, unassigned=unassigned),
         model_turns=result.model_turns,
         tokens_in=sum(t[0] for t in tokens), tokens_out=sum(t[1] for t in tokens),
-        model=model, prompt_version=prompt_version, review=checked,
+        model=model, prompt_version=prompt_version, review=reviewed,
     )

@@ -41,10 +41,10 @@ export default function ShortlistExport({ mapId }: { mapId: string }) {
     <div className="mt-4 flex flex-wrap items-center gap-x-4 border-t border-ink-200 pt-3">
       <span className="text-xs font-bold text-ink-600">내보내기</span>
       <button type="button" disabled={busy} onClick={() => void copy()} className="btn-link text-sm">
-        글자로 복사
+        텍스트로 복사
       </button>
       <button type="button" disabled={busy} onClick={() => void download('txt')} className="btn-link text-sm">
-        메모장 파일(.txt)
+        텍스트 파일(.txt)
       </button>
       <button type="button" disabled={busy} onClick={() => void download('csv')} className="btn-link text-sm">
         엑셀 파일(.csv)

@@ -43,7 +43,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   if (viewing) {
     return (
       <div className="space-y-3">
-        {viewing.redirected && <Notice>이미 짜는 중인 코스가 있어서 그걸 보여 드려요</Notice>}
+        {viewing.redirected && <Notice>이미 짜고 있는 코스를 보여 드려요</Notice>}
         <CourseRun mapId={mapId} runId={viewing.runId} names={names} points={points} onRetry={() => close(mapId)} onClose={() => close(mapId)} />
       </div>
     )
@@ -53,7 +53,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
 }
 
 /** 코스는 위치를 아는 확정 장소가 2곳부터다 — 안내 화면 제목과 버튼 아래 이유가 같은 말이다. */
-const NOT_ENOUGH = '확정된 장소가 2곳부터 코스를 짤 수 있어요'
+const NOT_ENOUGH = '확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요'
 
 /** 위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다(예전에는 칩을 누르면 토스트로 알렸다). */
 function NotEnough({ mapId }: { mapId: string }) {
@@ -66,7 +66,7 @@ function NotEnough({ mapId }: { mapId: string }) {
         </Link>
       }
     >
-      마킹된 장소에서 「확정 리스트에 넣기」를 누르면 확정된 장소에 모여요
+      마킹된 장소에서 확정 리스트에 넣어 주세요
     </EmptyState>
   )
 }
@@ -118,7 +118,7 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
       )}
       <div className="space-y-1.5">
         <label htmlFor="course-request" className="text-sm font-bold text-ink-900">
-          요청 한 줄 <span className="font-normal text-ink-500">(선택)</span>
+          요청 사항 <span className="font-normal text-ink-500">(선택)</span>
         </label>
         <TextField id="course-request" value={text} onChange={setText} maxLength={REQUEST_MAX} placeholder="둘째 날은 실내 위주로" clearLabel="요청 지우기" />
       </div>

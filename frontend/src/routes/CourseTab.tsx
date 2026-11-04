@@ -38,7 +38,7 @@ export default function CourseTab() {
       header={
         <>
           <SheetTitle>AI 코스 짜기</SheetTitle>
-          <p className="mt-1 break-keep text-xs text-ink-500">확정된 장소를 날짜별로 나눠 순서를 짜 줘요. 지도와 확정 리스트는 바뀌지 않고, 결과는 나한테만 보여요</p>
+          <p className="mt-1 break-keep text-xs text-ink-500">확정된 장소를 날짜별로 나눠 순서를 짜 줘요. 결과는 나에게만 보여요</p>
           <CourseMapLegend mapId={mapId} />
         </>
       }
