@@ -52,7 +52,7 @@ export function useTrashPinMutation(mapId: string) {
       void queryClient.invalidateQueries({ queryKey: pinKeys.trash(mapId) })
       void queryClient.invalidateQueries({ queryKey: ['shortlist', mapId] })
       void queryClient.invalidateQueries({ queryKey: ['recommend', mapId] })
-      showToast(pin.kind === '확정' ? '확정 리스트에서도 빠졌어요' : '휴지통으로 옮겼어요', {
+      showToast(pin.kind === '확정' ? '확정 리스트에서도 빠졌어요' : '삭제했어요', {
         label: '되돌리기',
         onClick: () => void restoreInto(queryClient, mapId, pin.id).catch((err: unknown) => showToast(restorePinErrorMessage(err))),
       })
@@ -61,12 +61,12 @@ export function useTrashPinMutation(mapId: string) {
   })
 }
 
-/** 핀 휴지통(#864). 지도 정보의 「핀 휴지통」을 열거나 삭제 확인 창이 보관 일수를 적을 때만 받는다. */
+/** 삭제한 핀 목록(#864). 지도 정보의 「삭제한 핀」을 열거나 삭제 확인 창이 보관 일수를 적을 때만 받는다. */
 export function usePinTrashQuery(mapId: string, enabled = true) {
   return useQuery({ queryKey: pinKeys.trash(mapId), queryFn: () => fetchPinTrash(mapId), enabled })
 }
 
-/** 휴지통 화면의 「되살리기」. 실패는 부르는 쪽이 그 줄에 적는다. */
+/** 「삭제한 핀」 화면의 「되돌리기」. 실패는 부르는 쪽이 그 줄에 적는다. */
 export function useRestorePinMutation(mapId: string) {
   const queryClient = useQueryClient()
   return useMutation({ mutationFn: (pinId: string) => restoreInto(queryClient, mapId, pinId) })

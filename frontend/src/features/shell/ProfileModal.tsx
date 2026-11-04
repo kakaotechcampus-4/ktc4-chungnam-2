@@ -142,9 +142,9 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
         ))}
       </ul>
 
-      {/* 지운 핀 되살리기(#864). 내가 되살릴 수 있는 핀만 보이고 비어 있을 수 있다. 조용한 글자 버튼이다(지도 휴지통 입구와 같다). */}
+      {/* 삭제한 핀 되돌리기(#864). 내가 되돌릴 수 있는 핀만 보이고 비어 있을 수 있다. 조용한 글자 버튼이다(지도 휴지통 입구와 같다). */}
       <button type="button" onClick={() => onConfirm('trash')} className="btn-text mt-4 w-full text-center text-body">
-        핀 휴지통
+        삭제한 핀
       </button>
 
       {map.data && (

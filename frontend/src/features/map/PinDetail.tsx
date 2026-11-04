@@ -311,7 +311,7 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
       {asking && (
         <ConfirmDialog
           title="이 핀을 삭제할까요?"
-          body={days ? `휴지통으로 옮겨요. ${days}일 안에 되돌릴 수 있어요` : '휴지통으로 옮겨요. 휴지통에서 되돌릴 수 있어요'}
+          body={days ? `삭제해요. ${days}일 안에 되돌릴 수 있어요` : '삭제해요. 지도 정보의 「삭제한 핀」에서 되돌릴 수 있어요'}
           ok="삭제"
           pending={del.isPending}
           onCancel={() => setAsking(false)}

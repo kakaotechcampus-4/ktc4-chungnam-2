@@ -74,6 +74,8 @@ export function attachTrashDrag(el: HTMLElement, getPin: () => Pin, ghost: () =>
   }
 
   const onDown = (e: PointerEvent) => {
+    // 모바일은 길게 누르거나 끈 뒤 click 이 오지 않을 때가 많다 — 지난번 놓기의 막기가 다음 탭을 먹지 않게 새로 누를 때 푼다.
+    swallowClick = false
     if (e.button !== 0 || store().drag) return
     const touch = e.pointerType !== 'mouse'
     start = { x: e.clientX, y: e.clientY, id: e.pointerId, touch }

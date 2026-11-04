@@ -156,7 +156,7 @@ export type TrashedPin = components['schemas']['TrashedPin']
 
 /** 되살리기 실패 문구. 휴지통에 있는 동안 같은 장소로 새 핀이 생겼으면 409 PIN_DUPLICATE 다(api-spec /pins/{pinId}/restore). */
 export function restorePinErrorMessage(err: unknown): string {
-  return err instanceof ApiError && err.code === 'PIN_DUPLICATE' ? '이미 지도에 같은 장소가 있어요' : '핀을 되살리지 못했어요'
+  return err instanceof ApiError && err.code === 'PIN_DUPLICATE' ? '이미 지도에 같은 장소가 있어요' : '핀을 되돌리지 못했어요'
 }
 
 export type ReactionDto = components['schemas']['Reaction']

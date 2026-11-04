@@ -88,12 +88,21 @@ describe('핀 끌기(#1012)', () => {
     fire(el, 'pointerup', 10, 10, 'touch')
     el.click()
     expect(clicked).toHaveBeenCalledTimes(1) // 집었다 놓으면 상세가 열리지 않는다
+
+    // 집었다 놓은 뒤 click 이 오지 않아도(모바일에서 흔하다) 다음 짧은 탭은 상세를 연다.
+    fire(el, 'pointerdown', 10, 10, 'touch')
+    vi.advanceTimersByTime(400)
+    fire(el, 'pointerup', 10, 10, 'touch')
+    fire(el, 'pointerdown', 10, 10, 'touch')
+    fire(el, 'pointerup', 10, 10, 'touch')
+    el.click()
+    expect(clicked).toHaveBeenCalledTimes(2)
     detach()
     vi.useRealTimers()
   })
 })
 
-describe('휴지통으로 옮기기와 되살리기(목 서버)', () => {
+describe('삭제와 되돌리기(목 서버)', () => {
   beforeAll(() => {
     server.listen({ onUnhandledRequest: 'error' })
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }))
@@ -121,7 +130,7 @@ describe('휴지통으로 옮기기와 되살리기(목 서버)', () => {
           </button>
         ))}
         <button type="button" onClick={() => setSheet(true)}>
-          핀 휴지통
+          삭제한 핀
         </button>
         {sheet && <PinTrashSheet mapId={MAP} onClose={() => {}} />}
       </>
@@ -150,7 +159,7 @@ describe('휴지통으로 옮기기와 되살리기(목 서버)', () => {
     expect(await within(list()).findByText('흑돼지식당')).toBeInTheDocument()
   }, 15_000)
 
-  it('휴지통 화면에서 되살리고, 같은 장소에 새 핀이 있으면 「이미 지도에 같은 장소가 있어요」', async () => {
+  it('「삭제한 핀」에서 되돌리고, 같은 장소에 새 핀이 있으면 「이미 지도에 같은 장소가 있어요」', async () => {
     const body = { source: 'search', place_id: 'kakao:mock-5', place_name: '제주 흑돼지 거리', lat: 33.5131, lng: 126.5296, category: '음식점' } as const
     const first = await createPin(MAP, body)
     await deletePin(first.id)
@@ -158,16 +167,16 @@ describe('휴지통으로 옮기기와 되살리기(목 서버)', () => {
     renderHarness()
 
     await userEvent.click(await screen.findByRole('button', { name: '우진해장국 지우기' }))
-    await waitFor(() => expect(useToastStore.getState().toast?.message).toBe('휴지통으로 옮겼어요'))
-    await userEvent.click(screen.getByRole('button', { name: '핀 휴지통' }))
+    await waitFor(() => expect(useToastStore.getState().toast?.message).toBe('삭제했어요'))
+    await userEvent.click(screen.getByRole('button', { name: '삭제한 핀' }))
 
     const row = (await screen.findByText('우진해장국', { selector: 'p' })).closest('li')!
-    await userEvent.click(within(row).getByRole('button', { name: '되살리기' }))
-    await waitFor(() => expect(useToastStore.getState().toast?.message).toBe('우진해장국을 되살렸어요'))
+    await userEvent.click(within(row).getByRole('button', { name: '되돌리기' }))
+    await waitFor(() => expect(useToastStore.getState().toast?.message).toBe('우진해장국을 되돌렸어요'))
     await waitFor(() => expect(within(list({ hidden: true })).getByText('우진해장국')).toBeInTheDocument())
 
     const dupRow = (await screen.findByText('제주 흑돼지 거리', { selector: 'p' })).closest('li')!
-    await userEvent.click(within(dupRow).getByRole('button', { name: '되살리기' }))
+    await userEvent.click(within(dupRow).getByRole('button', { name: '되돌리기' }))
     expect(await within(dupRow).findByText('이미 지도에 같은 장소가 있어요')).toBeInTheDocument()
   }, 15_000)
 })

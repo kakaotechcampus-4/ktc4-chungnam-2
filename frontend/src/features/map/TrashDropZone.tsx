@@ -68,7 +68,7 @@ export default function TrashDropZone({ mapId, placement }: { mapId: string; pla
           }`}
         >
           <TrashCan open={open} />
-          {drag.over ? '놓으면 휴지통으로' : '휴지통'}
+          {drag.over ? '놓으면 삭제' : '삭제하기'}
         </div>
       </div>
       {createPortal(<Ghost drag={drag} />, document.body)}
