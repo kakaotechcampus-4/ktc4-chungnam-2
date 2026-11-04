@@ -175,6 +175,10 @@ describe('AI 코스 짜기 시트', () => {
     expect(await screen.findByText(`카카오로 로그인하면 ${detail.initial_credits} 크레딧을 드려요`)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /카카오로 계정 만들기/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
+
+    // 버튼이 없어도 요청 칸에서 Enter 를 누르면 제출된다 — 크레딧 확인 창을 띄우지 않는다.
+    await userEvent.type(screen.getByLabelText(/요청 한 줄/), '덜 걷게{Enter}')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   it('422 는 장소 부족 안내', async () => {

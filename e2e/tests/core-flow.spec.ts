@@ -34,6 +34,8 @@ test('방장이 반대한 곳을 빼고 추천받아 지도에 올리면 구성�
   await test.step('방장이 음식점 추천을 받는다', async () => {
     await owner.getByRole('link', { name: 'AI 추천' }).click()
     await owner.getByRole('button', { name: '음식점 추천받기' }).click()
+    // 크레딧을 쓰기 전에 확인 창을 거친다(#1363).
+    await owner.getByRole('alertdialog').getByRole('button', { name: '추천받기' }).click()
     await expect(owner.getByText(/음식점 대안 \d곳을 찾았어요/)).toBeVisible({ timeout: 30_000 })
     await expect(owner.getByText('나에게만 보여요', { exact: false })).toBeVisible()
 

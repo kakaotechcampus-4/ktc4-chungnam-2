@@ -7,6 +7,7 @@ import ErrorText from '@/ErrorText'
 import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
+import { useCreditsQuery } from '@/features/credits/queries'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
@@ -82,6 +83,8 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
   const known = createErrorMessage(create.error)
   // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧). 확인해야 요청한다.
   const [asking, setAsking] = useState(false)
+  // 게스트는 버튼 자리가 카카오 안내라 묻지 않는다 — 요청 칸에서 Enter 를 눌러도 확인 창을 띄우지 않는다.
+  const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
 
   function submit() {
     create.mutate(text, {
@@ -108,7 +111,7 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (!create.isPending) setAsking(true)
+        if (!create.isPending && !guest) setAsking(true)
       }}
       className="space-y-4"
     >

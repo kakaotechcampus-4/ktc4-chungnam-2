@@ -4,7 +4,7 @@ import { balanceText, type CreditFeature } from './model'
 import { useCreditsQuery } from './queries'
 
 /**
- * 크레딧을 쓰는 AI 실행(「추천받기」·「코스 짜기」) 전에 묻는 창. 쓸 크레딧과 남은 크레딧을 보인다(2026-11-05).
+ * 크레딧을 쓰는 AI 실행(「추천받기」·「코스 짜기」) 전에 묻는 창. 쓸 크레딧과 남은 크레딧을 보인다(#1363).
  * 숫자는 GET /credits/me 응답 그대로다(#733). 잔액이 모자란지는 여기서 판단하지 않는다 — 판정은 서버(402)이고 안내는 CreditGate 가 한다.
  * 잔액을 못 받아도 막지 않는다.
  */
