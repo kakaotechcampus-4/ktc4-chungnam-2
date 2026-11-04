@@ -8,6 +8,10 @@
 - 미리 돌려 보기(6.7, #1180)는 recommend를 부르지 않고 케이스의 preview(정해 둔 수)를 쓴다. 무엇을 돌릴지(stall 전부, split은
   비교가 있으면 전부, 절충 키는 different_axes만 — #1317)와 절충 키, 진단 입력 칸은 운영과 같은 core.preview_target, compromise_keys, diagnosis_input이다. 결과는 도구
   기록 p1에 넣는다(운영의 tools.preview와 같은 모양). 케이스에 preview가 없으면 ② 실패처럼 null이다.
+- 후속 케이스(6.9, #1347)는 case.followup {h, action, label}에 target 신호의 첫 제안을 h시간 전에 그 버튼으로 수락했다고 적는다.
+  이력에 그 제안(followup.status=watching, fingerprint는 target 신호 그대로)을 넣고, 후속 신호는 운영과 같은 core.detect_followups가
+  만든다. case.runs {카테고리: h}는 그 카테고리의 마지막 run(추천 받기를 눌렀다)이다. 후속 확인의 결과는 도구 기록 f1에 넣는다
+  (운영의 tools.record_followup_check와 같은 모양, core.followup_check_result).
 - 사유 글은 지어낸 예시다. 실제 사용자 글을 넣지 않는다.
 
 평가 도구라 agent의 core와 snapshot(api.py가 아닌 모듈)을 직접 가져온다. 운영 코드는 이 파일을 가져오지 않는다.
@@ -15,7 +19,7 @@
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -83,7 +87,8 @@ class World:
         return core.time_threshold(self.snap.action_times, self.snap.map.start_date, self.snap.today)
 
     def signals(self) -> list[core.Signal]:
-        return core.detect_all(self.snap, NOW, self.th)
+        followups = core.detect_followups(self.snap, self.history, NOW, self.th)
+        return core.detect_all(self.snap, NOW, self.th, followups.signals)
 
     def passed(self) -> tuple[list[core.Signal], list[core.Blocked]]:
         signals = self.signals()
@@ -131,6 +136,15 @@ class World:
         comparison = self.comparison(top.pin_id) if top.diagnosis == "split" else None
         return core.diagnosis_input(top, self.snap, comparison, self.preview(key))
 
+    def followup_check(self, key: str) -> dict[str, int] | None:
+        """후속 신호면 도구 기록 f1의 결과(core.followup_check_result), 아니면 None."""
+        top = self.find(key)
+        return core.followup_check_result(top) if core.is_followup(top) else None
+
+    def tools(self, key: str, allowed: tuple[str, ...]) -> "FixtureTools":
+        """진단 한 번의 도구 창구 — 운영처럼 모델 전에 코드 기록 p1(미리 돌려 보기)과 f1(후속 확인)을 넣어 둔다."""
+        return FixtureTools(self, allowed, preview=self.preview(key), followup_check=self.followup_check(key))
+
 
 def build(case: Mapping[str, Any]) -> World:
     n = case.get("members", 3)
@@ -165,13 +179,29 @@ def build(case: Mapping[str, Any]) -> World:
         today=TODAY, members=members, pins=tuple(pins), reactions=tuple(reactions), reasons=tuple(reasons),
         shortlist=shortlist, last_run_at={}, actions=derive_actions(tuple(pins), tuple(reactions), shortlist),
     )
-    dismissed = tuple(
+    past = [
         core.PastSuggestion(id=f"old{i}", diagnosis=d["diagnosis"], category=d.get("category"), fingerprint=f"fp-old-{i}",
                             status="dismissed", created_at=_ago(d["h"] + 1), resolved_at=_ago(d["h"]))
         for i, d in enumerate(case.get("dismissals", []))
-    )
+    ]
+    if case.get("followup"):
+        past.append(_accepted(case, World(case=dict(case), snap=snap, names=names, lines=lines, facts=facts)))
+        snap = replace(snap, last_run_at={c: _ago(h) for c, h in (case.get("runs") or {}).items()})
     return World(case=dict(case), snap=snap, names=names, lines=lines, facts=facts,
-                 history=core.History(suggestions=tuple(sorted(dismissed, key=lambda s: s.created_at, reverse=True))))
+                 history=core.History(suggestions=tuple(sorted(past, key=lambda s: s.created_at, reverse=True))))
+
+
+def _accepted(case: Mapping[str, Any], before: World) -> core.PastSuggestion:
+    """후속 케이스의 첫 제안(6.9) — target 신호를 h시간 전에 그 버튼으로 수락했고 지켜보는 중이다. fingerprint는 run이 생기기 전
+    지도에서 찾은 target 신호 그대로라, 같은 신호가 다시 잡혀도 duplicate로 막힌다(12.3)."""
+    f = case["followup"]
+    sig = next(s for s in before.signals() if signal_key(s) == case["expect"]["target"])
+    at = _ago(f["h"])
+    return core.PastSuggestion(
+        id="prev1", diagnosis=sig.diagnosis, category=sig.category, fingerprint=sig.fingerprint, status="accepted",
+        created_at=at - timedelta(minutes=10), resolved_at=at, pin_id=sig.pin_id, resolved_action_type=f["action"],
+        resolved_action_label=f["label"], followup=core.followup_record("watching", at),
+    )
 
 
 # ---------------------------------------------------------------- 도구 (agent/tools.py와 같은 결과 모양)
@@ -182,16 +212,20 @@ NOT_FOUND = {"error": "NOT_FOUND"}
 @dataclass
 class FixtureTools:
     """진단 한 번의 도구 창구. llm.agent_diagnose의 tool_runner로 넘긴다. results는 검증(tool_result claim)에 쓴다.
-    preview가 있으면 운영처럼 모델 전에 p1로 넣어 둔다(calls에는 남기지 않는다 — 모델이 고른 도구만 센다)."""
+    preview가 있으면 운영처럼 모델 전에 p1로, followup_check가 있으면 f1로 넣어 둔다(calls에는 남기지 않는다 — 모델이 고른
+    도구만 센다)."""
     world: World
     allowed: tuple[str, ...]
     calls: list[dict[str, Any]] = field(default_factory=list)
     results: dict[str, Any] = field(default_factory=dict)
     preview: dict[str, Any] | None = None
+    followup_check: dict[str, int] | None = None
 
     def __post_init__(self):
         if self.preview is not None:
             self.results[PREVIEW_CALL_ID] = self.preview
+        if self.followup_check is not None:
+            self.results[core.FOLLOWUP_CALL_ID] = self.followup_check
 
     def run(self, call_id: str, name: str, args: Mapping[str, Any]) -> Any:
         fn = getattr(self, f"_{name}", None) if name in self.allowed else None
