@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-04, `GET /maps/{mapId}/recommend/readiness` — 선택 쿼리 `center_lat`·`center_lng` 추가 (#1331)
+
+- 지도 중심 앵커 추천이 기존 핀 기반 위치 기준을 **run 생성에서 대체**한다(#1331, 사용자 결정 2026-11-04). 이 요청에는 상위 호환 선택 쿼리를 더했다: `center_lat`·`center_lng`(함께, 위도 33~39·경도 124~132). 있으면 `curated_nearby`를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다.
+- 하나만 보내거나 범위 밖이면 422 `VALIDATION_ERROR`. 응답 모양은 그대로다. `ready`·`answered_count`(의견 핀 수)는 위치와 무관하다.
+- FE: 추천 시작 화면이 readiness를 부를 때 run 생성에 보낼 중심과 같은 값을 보내면 「근처 정예 수」가 실제 추천 범위와 일치한다. 안 보내도 동작한다.
+- 정책: `POST /maps/{mapId}/runs`의 `center`는 **필수가 된다** — 계약 필수화는 FE가 `center`를 보내기 시작한 뒤에 별도 PR로 한다(그때까지 선택). 중심이 없는 호출(readiness·미리 돌려 보기·AI 조언)에서만 기존 핀 기반 로직이 남는다. 교체 전 로직 보존: 태그 `legacy/recommend-pin-anchor`.
+
 ## 2026-11-04, 「핑고 AI 조언」 버튼에서 「핀 보기」 빼기, 웹 확인은 「모름」 줄마다 (#1317)
 
 - 스키마는 그대로다(`AgentAction.type` enum도 그대로). 서버가 내리는 값만 바뀐다.

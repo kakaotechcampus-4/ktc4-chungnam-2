@@ -1117,7 +1117,10 @@ paths:
     get:
       tags: [recommend]
       summary: 카테고리별 추천 버튼 활성화 판정 (5-4). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145)
-      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      parameters:
+        - { $ref: "#/components/parameters/MapId" }
+        - { name: center_lat, in: query, required: false, schema: { type: number, minimum: 33, maximum: 39 }, description: "지도 중심 앵커로 계산하려면 `center_lat`·`center_lng`를 **함께** 보낸다(#1331). 있으면 근처 정예 수(`curated_nearby`)를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다(중심이 없는 호출용). 하나만 보내거나 위도 33~39·경도 124~132 밖이면 422 VALIDATION_ERROR" }
+        - { name: center_lng, in: query, required: false, schema: { type: number, minimum: 124, maximum: 132 }, description: "center_lat과 함께 보낸다" }
       responses:
         "200":
           description: OK
@@ -1127,6 +1130,7 @@ paths:
                 type: object
                 propertyNames: { $ref: "#/components/schemas/RecommendCategory" }
                 additionalProperties: { $ref: "#/components/schemas/Readiness" }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — `center_lat`·`center_lng` 중 하나만 보냈거나 범위 밖", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /maps/{mapId}/runs:
     get:
