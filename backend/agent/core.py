@@ -911,6 +911,7 @@ def render_template(sig: Signal) -> Draft:
 # 「추천 받기가 눌렸다」는 agent.resolved로 모두에게 나간 공개 사실이고, 누가 눌렀는지(resolved_by)는 쓰지 않는다(2절 2번).
 
 FOLLOWUP_REASONS = ("new_pin", "confirmed", "pin_removed", "split_gone", "problem_gone")   # followup.reason(resolved). 코드 값만
+PREVIEW_CALL_ID = "p1"   # 미리 돌려 보기의 도구 기록 번호(6.7). llm이 매기는 t1, t2 …와 겹치지 않는다. 버튼 근거 채우기(11.2 6단계)도 본다
 FOLLOWUP_CALL_ID = "f1"   # 후속 확인의 코드 호출 기록 번호. 모델이 고르지 않아 도구 상한에 세지 않는다(p1과 같은 취급)
 ACTION_SHORT = {   # 해 본 것을 짧게 부르는 이름(작업 기록, 지켜보는 줄). 카테고리 이름은 따로 붙는다
     "open_recommend": "추천 받기", "search_place": "장소 검색", "show_pins": "핀 보기", "open_route": "동선 보기",
@@ -1168,7 +1169,8 @@ def declare_draft(sig: Signal, preview: Mapping[str, Any] | None = None) -> Draf
     lines = [_tried_line(t["label"]) for t in sig.features.get("tried") or () if t.get("label")]
     passed = _int((preview or {}).get("passed_count"))
     if passed is not None:
-        claims.append(ToolClaim(id="c1", kind="tool_result", call_id="p1", path="passed_count", value=passed).model_dump())
+        claims.append(ToolClaim(id="c1", kind="tool_result", call_id=PREVIEW_CALL_ID, path="passed_count",
+                                value=passed).model_dump())
         lines.append({"slot_text": DECLARE_PREVIEW, "is_guess": False})
     lines.append({"slot_text": DECLARE_CLOSING, "is_guess": False})
     return Draft(title=DECLARE_TITLE.format(c=subject_of(sig.diagnosis, sig.category)), claims=claims, advice=_clean(lines),
@@ -1693,19 +1695,18 @@ def _open_pin_problem(
 
 
 def _model_action(
-    action: Any, top: Signal, kept: Mapping[str, Any], preview: Mapping[str, Any] | None = None, *,
+    action: Any, top: Signal, preview: Mapping[str, Any] | None = None, *,
     snap: Snapshot | None = None, fits: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[tuple[str, str, dict[str, Any]] | None, str | None]:
     """행동 하나(11.2 6단계) → ((type, label, params), None) 또는 (None, 이유). 버튼 이름은 코드가 정한다. 미리 돌려 본
     passed_count가 0이면 open_recommend를 뺀다(6.7) — 0곳인 추천을 권해 크레딧을 쓰게 하지 않는다. 미리 돌려 보지 못했으면(② 실패
     등, preview=None) 이 검사를 하지 않는다. split과 카테고리 공백의 버튼은 그 신호의 카테고리만 가리킨다 — 다른 카테고리면 뺀다.
-    open_pin은 _open_pin_problem을 통과해야 한다(fits는 이번 관찰의 try_in_schedule 결과, 핀 id → 그 핀의 결과)."""
+    open_pin은 _open_pin_problem을 통과해야 한다(fits는 이번 관찰의 try_in_schedule 결과, 핀 id → 그 핀의 결과). basis는 여기서
+    보지 않는다 — 남는 버튼의 근거는 _button_basis가 보고 채운다(#1380)."""
     if action.type not in allowed_actions(top):   # 다음 방법(6.9)이면 이미 해 본 행동도 여기서 빠진다
         return None, "type"
     if action.type == "open_recommend" and preview is not None and preview.get("passed_count") == 0:
         return None, "preview_empty"
-    if not action.basis or any(b not in kept for b in action.basis):
-        return None, "basis"
     if action.type == "open_pin":
         if snap is None:
             return None, "pin"
@@ -1718,6 +1719,64 @@ def _model_action(
         return None, "category"
     label = {"open_recommend": f"{c} 추천 받기", "search_place": f"{c} 검색"}[action.type]
     return (action.type, label, {"category": c}), None
+
+
+def _button_evidence(
+    spec: tuple[str, str, Mapping[str, Any]], top: Signal, tool_results: Mapping[str, Any],
+    calls: Sequence[Mapping[str, Any]],
+) -> tuple[str, str, Any] | None:
+    """버튼의 필수 근거(#1380, 11.2 6단계) — 이번 관찰 기록에서 (call_id, path, value). 없으면 None(버튼을 뺀다).
+    open_recommend: p1(passed_count ≥ 1), p1이 없으면 그 카테고리의 get_readiness(ready). search_place: get_readiness, 없으면
+    p1(passed_count = 0). open_pin: 그 핀의 try_in_schedule 결과(나중 호출이 앞을 덮는다 — schedule_fits_of와 같다).
+    p1은 신호의 카테고리로만 돌린다(preview_target). 버튼을 남길지는 여기서 정하지 않는다 — _model_action이 이미 정했다."""
+    type_, _label, params = spec
+    if type_ == "open_pin":
+        pin_id = params["pin_ids"][0]
+        for call in reversed(calls):
+            result = tool_results.get(call.get("call_id"))
+            if call.get("name") != TRY_IN_SCHEDULE or not isinstance(result, Mapping):
+                continue
+            rows = result.get("pins") or ()
+            at = next((i for i, row in enumerate(rows) if isinstance(row, Mapping) and row.get("pin_id") == pin_id), None)
+            if at is not None:
+                return call["call_id"], f"pins.{at}.pin_id", pin_id
+        return None
+    category = params.get("category")
+    preview = tool_results.get(PREVIEW_CALL_ID) if category == top.category else None
+    passed = preview.get("passed_count") if isinstance(preview, Mapping) else None
+    p1 = (PREVIEW_CALL_ID, "passed_count", passed) if type(passed) is int else None
+    readiness = None
+    for call in reversed(calls):
+        result = tool_results.get(call.get("call_id"))
+        if (call.get("name") == "get_readiness" and isinstance(result, Mapping) and result.get("category") == category
+                and isinstance(result.get("ready"), bool)):
+            readiness = (call["call_id"], "ready", result["ready"])
+            break
+    if type_ == "open_recommend":
+        return p1 if p1 is not None and p1[2] >= 1 else readiness
+    return readiness or (p1 if p1 is not None and p1[2] == 0 else None)
+
+
+def _button_basis(
+    action: Any, spec: tuple[str, str, Mapping[str, Any]], top: Signal, kept: dict[str, Any],
+    tool_results: Mapping[str, Any], calls: Sequence[Mapping[str, Any]], taken: set[str],
+) -> str | None:
+    """버튼의 근거(#1380). 모델이 적은 basis가 모두 남은 claim이면 그대로 → "model". 비었거나 claims에 없는 id면 이번 관찰
+    기록에서 필수 근거를 tool_result claim으로 만들어 kept에 넣는다 → "filled"(같은 call_id·path의 claim이 이미 남아 있으면 그것을
+    쓴다). 기록에 근거가 없으면 None — 버튼을 뺀다. 새 id는 모델이 쓴 어느 id(제거된 것 포함, taken)와도 겹치지 않는다. 화면 문장은
+    바뀌지 않는다 — 문장의 basis는 5단계 그대로다."""
+    if action.basis and all(b in kept for b in action.basis):
+        return "model"
+    found = _button_evidence(spec, top, tool_results, calls)
+    if found is None:
+        return None
+    call_id, path, value = found
+    if not any(isinstance(c, ToolClaim) and c.call_id == call_id and c.path == path for c in kept.values()):
+        numbers = [int(t[1:]) for t in taken if _CLAIM_ID.fullmatch(t)]
+        cid = f"c{max(numbers, default=0) + 1}"
+        taken.add(cid)
+        kept[cid] = ToolClaim(id=cid, kind="tool_result", call_id=call_id, path=path, value=value)
+    return "filled"
 
 
 def _stored_claim(claim: Any, snap: Snapshot) -> dict[str, Any]:
@@ -1735,18 +1794,20 @@ def verify_diagnosis(
     out: DiagnosisOutput, top: Signal, snap: Snapshot, tool_results: Mapping[str, Any], *,
     member_names: Iterable[str] = (), comparison: Mapping[str, Any] | None = None,
     preview: Mapping[str, Any] | None = None, fits: Mapping[str, Mapping[str, Any]] | None = None,
+    calls: Sequence[Mapping[str, Any]] = (),
 ) -> Verified:
     """모델 진단 출력 검증(11.2). 스키마(1단계)는 llm이 이미 봤다 — 여기 오는 것은 DiagnosisOutput이다.
 
     1 decision이 silent·unknown이면 그대로 침묵 2 signal_id와 diagnosis가 1순위 신호와 같은가 3 claim 대조(실패한
     claim 제거) 4 구조 대조(요약 전용이라 진단은 건너뛴다) 5 문장(제거된 claim을 가리킴, 슬롯 밖 숫자, 구성원 이름이나
     별칭, 금지 표현, 슬롯 밖 사유 원문 옮겨 쓰기) 6 행동(유형별 허용, 미리 돌려 본 수가 0이면 open_recommend 제거, 추천 대상
-    카테고리, basis) 7 성립(split은 그 핀의
+    카테고리, 버튼 근거 — 비었거나 없는 id면 기록에서 채우고 기록에도 없으면 제거, #1380) 7 성립(split은 그 핀의
     like·against count, 문장이나 행동이 하나 이상). 2단계나 7단계에서 실패하면 invalid_claims로 침묵한다.
 
     tool_results: 이번 관찰의 도구 결과(call_id → 모델에 준 결과 그대로, 미리 돌려 보기 p1 포함). member_names: 구성원 표시
     이름(두 글자 이상만 본다 — 한 글자 이름은 보통 낱말과 겹친다). preview: 미리 돌려 본 결과(6.7), 돌리지 않았으면 None. fits: 이번
-    관찰의 try_in_schedule 결과(schedule_fits_of, 6.10) — open_pin 검사가 본다."""
+    관찰의 try_in_schedule 결과(schedule_fits_of, 6.10) — open_pin 검사가 본다. calls: 이번 관찰의 도구 기록(call_id, name) — 버튼
+    근거를 채울 때 get_readiness와 try_in_schedule 호출을 찾는다(값은 tool_results에서)."""
     record: dict[str, Any] = {"decision": out.decision}
     if out.decision != "suggest":
         return Verified(out.decision, None, record)
@@ -1769,14 +1830,21 @@ def verify_diagnosis(
             removed_lines.append({"index": i, "reason": reason})
     record["lines"] = {"kept": len(advice), "removed": removed_lines}
 
-    specs, removed_actions = [], []
+    specs, removed_actions, filled = [], [], 0
+    taken = {c.id for c in out.claims}
     for i, action in enumerate(out.actions):
-        spec, reason = _model_action(action, top, kept, preview, snap=snap, fits=fits)
+        spec, reason = _model_action(action, top, preview, snap=snap, fits=fits)
+        if reason is None and spec not in specs:
+            basis = _button_basis(action, spec, top, kept, tool_results, calls, taken)
+            if basis is None:
+                reason = "basis"
+            else:
+                specs.append(spec)
+                filled += basis == "filled"
         if reason is not None:
             removed_actions.append({"index": i, "reason": reason})
-        elif spec not in specs:
-            specs.append(spec)
     record["actions"] = {"kept": len(specs), "removed": removed_actions}
+    record["basis_filled"] = filled
 
     required = top.diagnosis != "split" or all(
         any(isinstance(c, CountClaim) and c.subject == "pin" and c.subject_id == top.pin_id and c.metric == m

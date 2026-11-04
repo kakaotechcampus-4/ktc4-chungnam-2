@@ -378,7 +378,7 @@ def comparison(ctx: ToolContext, *, pin_id: str | None = None, category: str | N
     return core.compare_reasons(_structured(ctx, rows[:TOOL_RESULT_MAX_ITEMS]))
 
 
-PREVIEW_CALL_ID = "p1"   # 미리 돌려 보기의 도구 기록 번호(6.7). llm이 매기는 t1, t2 …와 겹치지 않는다
+PREVIEW_CALL_ID = core.PREVIEW_CALL_ID   # 미리 돌려 보기의 도구 기록 번호(6.7)
 
 
 def preview(ctx: ToolContext, *, category: str | None, with_keys: Sequence[str] = ()) -> dict[str, Any] | None:
