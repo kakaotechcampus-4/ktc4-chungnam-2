@@ -22,7 +22,8 @@ from agent.course.ports import OpeningHoursGateway
 from agent.course.schemas import MoveDay, ReorderDay
 from agent.course.state import State
 from agent.course.tools import ToolResult, _fail
-from llm.schemas import CourseDirectFinish, CourseDirectTurn, CourseLockCall, CourseOptimize
+from llm.api import CourseReviewDecision, verify_course_review
+from llm.schemas import CourseDirectFinish, CourseDirectTurn, CourseLockCall, CourseOptimize, CourseReviewCall
 
 Decide = Callable[[dict[str, Any]], CourseDirectTurn]
 OnStep = Callable[["DirectStep", "DirectState"], None]
@@ -66,6 +67,8 @@ class DirectState:
     optimize_calls: int = 0
     checks: tuple[dict, ...] = ()          # check_goals 결과(코드가 첫 단계에서 부른다)
     resolved: frozenset[str] = frozenset()  # 코드가 이미 푼 것(목표 id, "split:d2") — 같은 것을 두 번 풀지 않는다
+    review_input: Optional[Mapping[str, Any]] = None        # 다 넣은 일정의 점검 입력(review.judge_input().payload, 별칭만). 없으면 review 도구를 쓸 수 없다
+    judgment: Optional[CourseReviewDecision] = None         # 모델이 낸 점검 판단 중 입력과 맞는 것(llm이 검증). 한 번만 받는다
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,12 @@ class DirectResult:
     state: State
     model_turns: int
     checks: tuple[dict, ...] = ()
+    judgment: Optional[CourseReviewDecision] = None
+
+    @property
+    def asked_model(self) -> bool:
+        """모델 턴을 한 번이라도 불렀다(실패해 코드가 이어받은 턴 포함)."""
+        return any(s.by == "model" or s.substituted_for for s in self.steps)
 
     @property
     def guarded(self) -> int:
@@ -128,6 +137,7 @@ def direct_input(ds: DirectState, last: Optional[ToolResult], turn: int, unmatch
         "locks": [{"place": p, "day": d} for p, d in sorted(state.locks.items())],
         "checks": [{"place": v.places[0], "day": v.day} for v in core.find_checks(state.trip, state.course, state.hours)],
         "last_result": last.as_input() if last else None,
+        **({"review": ds.review_input} if ds.review_input is not None and ds.judgment is None else {}),     # 판단을 받은 뒤에는 다시 묻지 않는다
         "budget": {"turns_left": DIRECT_MAX_TURNS - turn + 1},
     }
 
@@ -388,10 +398,19 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "mode
         if core.hard_score(chosen.violations)[0] > least:
             return ds, _fail(tool, "WORSENS_HARD", "확정 위반이 더 적은 후보가 있다 — 그 후보를 고른다")
         return ds, ToolResult(tool, ok=True, data={"candidate_id": chosen.candidate_id, **_comparison(state, ds.candidates, chosen.candidate_id)})
-    if tool == "review":
-        # llm이 지휘 도구에 review(점검 판단)를 더했다(#1326). 연결은 따로 한다(order·worth 훅) — 그 전에 모델이 불러도 턴을 이어 간다.
-        # llm.schemas.CourseReviewCall을 import하지 않는다(이 변경이 먼저 머지된다). 다 넣은 일정을 점검하는 run에서만 쓸 수 있는 도구다.
-        return ds, _fail(tool, "NOT_REVIEW_MODE", "지금 run에서는 점검 도구를 쓸 수 없다 — optimize나 finish를 부른다")
+    if isinstance(call, CourseReviewCall):
+        # 점검 판단(#1326, #1321 PR C). 입력에 review가 있는 턴(다 넣은 일정)에서만 받는다. 입력과 맞는지는 llm이 검증하고(재요청 없음),
+        # 버려진 자리는 코드 기본(입력 순서, 모두 고침)이 잇는다 — 그래서 모델이 무엇을 내도 하드 문제의 카드는 그대로 나온다.
+        if ds.review_input is None:
+            return ds, _fail(tool, "NOT_REVIEW_MODE", "지금 run에서는 점검 도구를 쓸 수 없다 — optimize나 finish를 부른다")
+        if ds.judgment is not None:
+            return ds, _fail(tool, "ALREADY_REVIEWED", "점검 판단은 이미 받았다 — optimize나 finish를 부른다")
+        decision = verify_course_review(ds.review_input, call)
+        return replace(ds, judgment=decision), ToolResult(tool, ok=True, data={
+            "order": list(decision.order),
+            "worth": {a: list(v) for a, v in decision.worth.items()},
+            "picks": {a: list(v) for a, v in decision.picks.items()},
+        })
     raise TypeError(f"실행할 수 없는 도구 {type(call).__name__}")
 
 
@@ -422,10 +441,11 @@ def _reference(before: DirectState, after: DirectState, call, result: ToolResult
 
 def run_direct(
     state: State, *, decide: Optional[Decide], hours: OpeningHoursGateway, unmatched_count: int = 0,
-    on_step: Optional[OnStep] = None,
+    on_step: Optional[OnStep] = None, review_input: Optional[Mapping[str, Any]] = None,
 ) -> DirectResult:
-    """on_step(step, ds)는 단계가 하나 생길 때마다(순서대로, 그 단계가 반영된 상태와 함께) 부른다 — 진행 중 저장용."""
-    ds = DirectState(state)
+    """on_step(step, ds)는 단계가 하나 생길 때마다(순서대로, 그 단계가 반영된 상태와 함께) 부른다 — 진행 중 저장용.
+    review_input은 다 넣은 일정(review 모드)의 점검 입력이다. 있으면 모델 입력에 `review`로 실리고 모델은 review 도구로 판단을 낸다(모델 턴 수 그대로)."""
+    ds = DirectState(state, review_input=review_input)
     steps: list[DirectStep] = []
 
     def emit(step: DirectStep) -> None:
@@ -511,5 +531,5 @@ def run_direct(
         chosen=chosen, course=chosen.course, violations=chosen.violations, soft=core.soft_scores(trip, chosen.course),
         goal_results=goals_mod.evaluate_all(trip, chosen.course, ds.state.goals), steps=tuple(steps),
         candidates=ds.candidates, state=ds.state,
-        model_turns=sum(s.by == "model" for s in steps), checks=ds.checks,
+        model_turns=sum(s.by == "model" for s in steps), checks=ds.checks, judgment=ds.judgment,
     )

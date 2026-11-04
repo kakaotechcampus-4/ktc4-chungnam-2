@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Collection, Mapping, Optional, Sequence
+from typing import Any, Callable, Collection, Mapping, Optional, Sequence
 
 from agent.course import core, goals as goals_mod
 from agent.course.constants import MEALS_PER_DAY_MAX
@@ -195,16 +195,75 @@ def review(
     하드 문제는 늘 먼저, 그 안에서도 늘 안(또는 「크게 바꿔야 해요」)이 나온다 — worth 훅은 하드 문제의 안을 지우지 못한다.
     movable이 있으면 ②③은 그 장소만 옮긴다(① 날 맞바꾸기는 날 전체라 늘 가능). 남은 곳 채우기(fill)가 AI가 둔 미배정 장소를 따로 옮기지 않게 한다."""
     problems = find_problems(trip, course, hours, goals)
-    hard = [p for p in problems if p.strength == "hard"]
-    soft = [p for p in problems if p.strength == "soft"]
-    if order is not None:
-        ranked = list(order(soft))
-        soft = ranked + [p for p in soft if p not in ranked]       # 훅이 빠뜨린 문제도 남는다
-    fixes = []
-    for p in (*hard, *soft):
-        fix = propose(trip, course, hours, goals, p, problems, movable)
-        reason = worth(p, fix) if worth is not None and fix.step is not None and p.strength == "soft" else None
-        fixes.append(Fix(p, None, (), (), reason, fix.attempts) if reason else fix)
+    fixes = tuple(propose(trip, course, hours, goals, p, problems, movable) for p in problems)
     found = {p.kind for p in problems}
-    checked = tuple(k for k in _applicable_kinds(trip, goals) if k not in found)
-    return ReviewResult(tuple((*hard, *soft)), tuple(fixes), checked)
+    base = ReviewResult(problems, fixes, tuple(k for k in _applicable_kinds(trip, goals) if k not in found))
+    return rejudge(base, order=order, worth=worth)
+
+
+def rejudge(
+    base: ReviewResult, *, order: Optional[Callable[[Sequence[Problem]], Sequence[Problem]]] = None,
+    worth: Optional[Callable[[Problem, Fix], Optional[str]]] = None,
+) -> ReviewResult:
+    """훅 없이 만든 점검(base)에 모델의 몫을 입힌다 — 안은 다시 찾지 않고 순서와 「고치지 않기」만 바꾼다. 하드 문제는 늘 앞이고 안이 그대로다."""
+    hard = [f for f in base.fixes if f.problem.strength == "hard"]
+    soft = [f for f in base.fixes if f.problem.strength == "soft"]
+    if order is not None:
+        by_problem = {f.problem: f for f in soft}
+        ranked = [by_problem[p] for p in dict.fromkeys(order([f.problem for f in soft])) if p in by_problem]
+        soft = ranked + [f for f in soft if f not in ranked]       # 훅이 빠뜨린 문제도 남는다
+    fixes = []
+    for fix in (*hard, *soft):
+        reason = worth(fix.problem, fix) if worth is not None and fix.step is not None and fix.problem.strength == "soft" else None
+        fixes.append(Fix(fix.problem, None, (), (), reason, fix.attempts) if reason else fix)
+    return ReviewResult(tuple(f.problem for f in fixes), tuple(fixes), base.checked)
+
+
+# ---------------------------------------------------------------- 모델에 넘기는 입력 (별칭만)
+
+def leftover(fix: Fix) -> tuple[Problem, ...]:
+    """안을 따라도 그대로 남는 문제 — 옮기는 날에 걸린 것만(그 카드를 반영하고도 그 날에 남는 문제). 다른 날의 문제는 자기 카드가 있다.
+    카드의 「그대로예요」 문장과 모델 입력의 remaining이 같은 규칙을 쓴다."""
+    touched = {core.day_alias(i) for m in fix.moves for i in (m.from_day, m.to_day)}
+    moved = {m.place for m in fix.moves}
+    return tuple(p for p in fix.remaining if p.day in touched or moved & set(p.places))
+
+
+@dataclass(frozen=True)
+class JudgeInput:
+    """모델이 판단할 점검 입력. payload는 지휘 턴 입력의 `review`(별칭만 — 이름·좌표·id·사용자 글 없음), aliases는 별칭 → 문제."""
+    payload: Mapping[str, Any]
+    aliases: Mapping[str, Problem]
+
+    def alias_of(self, problem: Problem) -> Optional[str]:
+        return next((a for a, p in self.aliases.items() if p == problem), None)
+
+
+def judge_input(result: ReviewResult) -> Optional[JudgeInput]:
+    """훅 없이 만든 점검 → 모델 입력. 안이 있는 선호 문제가 없으면 모델이 판단할 것이 없어 None이다.
+    안은 문제당 하나(no=1)다 — 여럿이 되면 options만 늘리면 된다(llm이 picks로 받는다)."""
+    aliases = {f"q{i + 1}": p for i, p in enumerate(result.problems)}
+    alias = {p.key: a for a, p in aliases.items()}          # 안을 따른 뒤의 문제는 장소 목록이 달라질 수 있어 key로 맞춘다(남는 문제의 key는 점검 때 있던 것이다)
+    rows = []
+    for fix in result.fixes:
+        options = []
+        if fix.step is not None:
+            left = {p.key for p in fix.remaining}
+            solved = [alias[p.key] for p in result.problems if p.key not in left]
+            options = [{"no": 1, "moved": fix.moved, "solves": solved, "remaining": [alias[p.key] for p in leftover(fix)]}]
+        rows.append({"alias": alias[fix.problem.key], "kind": fix.problem.kind, "strength": fix.problem.strength, "options": options})
+    if not any(r["strength"] == "soft" and r["options"] for r in rows):
+        return None
+    return JudgeInput({"problems": rows}, aliases)
+
+
+def hooks_of(judge: JudgeInput, decision: Any) -> tuple[Callable, Callable]:
+    """llm.api.CourseReviewDecision(order, worth) → rejudge의 order·worth 훅. 별칭에 없는 문제는 코드 기본이다."""
+    def order(soft: Sequence[Problem]) -> list[Problem]:
+        return [judge.aliases[a] for a in decision.order if a in judge.aliases]
+
+    def worth(problem: Problem, fix: Fix) -> Optional[str]:
+        verdict = decision.worth.get(judge.alias_of(problem) or "")
+        return verdict[1] if verdict and verdict[0] == "keep" else None
+
+    return order, worth
