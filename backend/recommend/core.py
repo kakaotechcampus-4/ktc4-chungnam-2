@@ -862,10 +862,10 @@ def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]
     ]
     parts: list[str] = []
     if disqualifier_labels:
-        parts.append("실격 조건 통과: " + ", ".join(disqualifier_labels))
+        parts.append("통과한 실격 조건: " + ", ".join(disqualifier_labels))
     if preference_labels:
-        parts.append("선호 충족: " + ", ".join(preference_labels))
-    return " · ".join(parts) if parts else "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
+        parts.append("맞는 선호: " + ", ".join(preference_labels))
+    return ". ".join(parts) if parts else "반경 안에서 실격 조건에 걸리지 않은 곳이에요"
 
 
 def select_top_candidates(
