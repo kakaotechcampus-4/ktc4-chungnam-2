@@ -31,8 +31,12 @@ const base = {
   days: days.map((date) => ({ date, slots: [], legs: [] })), snapshot_at: '2026-11-04T00:00:00Z', stale: false, created_at: '2026-11-04T00:00:00Z', finished_at: '2026-11-04T00:00:00Z',
 }
 
-function open(run: Record<string, unknown>) {
-  server.use(http.get('*/maps/:mapId/courses/latest', () => HttpResponse.json({ ...base, ...run })))
+function open(run: Record<string, unknown>, fresh: Record<string, unknown> = {}) {
+  server.use(
+    http.get('*/maps/:mapId/courses/latest', () => HttpResponse.json({ ...base, ...run })),
+    // 「반영」은 저장 직전에 run 을 다시 받는다. fresh 로 그때의 서버 값(stale 등)을 바꾼다.
+    http.get('*/course-runs/:runId', () => HttpResponse.json({ ...base, ...run, ...fresh })),
+  )
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
@@ -102,6 +106,25 @@ describe('AI 코스 — 모드별 결과(#1322)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('일정이 바뀌었어요')
     expect(screen.getByRole('button', { name: '다시 점검' })).toBeInTheDocument()
     expect(screen.queryByText('반영했어요')).not.toBeInTheDocument()
+  })
+})
+
+describe('연결이 끊긴 동안 일정이 바뀌었으면(#1322)', () => {
+  it('화면의 run 이 stale 이 아니어도 「반영」 직전에 다시 받은 run 이 stale 이면 저장하지 않고 「다시 점검」으로 바꾼다', async () => {
+    const user = userEvent.setup({ delay: null })
+    open(
+      {
+        mode: 'review', headline: '고칠 점 1개',
+        fixes: [{ id: 'fix_1', kind: 'closed', strength: 'hard', text: '쉬어요', moves: [{ pin_id: 'pin_1', from_date: null, to_date: days[1] }], resolved_text: null, remaining_text: null, not_fixed_reason: null }],
+        checked: [],
+      },
+      { stale: true },
+    )
+    await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
+    await user.click(await screen.findByRole('button', { name: '둘째 날에 넣기' }))
+    expect(await screen.findByRole('button', { name: '다시 점검' })).toBeInTheDocument()
+    expect(screen.queryByText('반영했어요')).not.toBeInTheDocument()
+    expect((await schedule()).items.find((i) => i.pin.id === 'pin_1')?.scheduled_date ?? null).toBeNull()
   })
 })
 

@@ -83,8 +83,8 @@ function FixCard({
   async function apply() {
     setState({ pending: true, error: null })
     try {
-      await applyFix(queryClient, mapId, fix.moves)
-      mark(runId, fix.id)
+      // false 면 run 이 stale 로 바뀌어 캐시에 들어갔다 — 카드가 「다시 점검」으로 바뀐다.
+      if (await applyFix(queryClient, mapId, runId, fix.moves)) mark(runId, fix.id)
       setState({ pending: false, error: null })
     } catch (error) {
       setState({ pending: false, error })
@@ -102,8 +102,10 @@ function FixCard({
             {fix.moves.map((m) => (
               <li key={m.pin_id} className="flex flex-wrap items-center gap-x-1">
                 <span className="font-semibold text-ink-900">{names.get(m.pin_id) ?? '이 장소'}</span>:<span>{dayName(m.from_date)}</span>
+                <span className="sr-only">에서</span>
                 <ArrowRight size={12} aria-hidden="true" />
                 <span>{dayName(m.to_date)}</span>
+                <span className="sr-only">로</span>
               </li>
             ))}
           </ul>
