@@ -50,9 +50,9 @@ export function useUnconfirm(mapId: string) {
   const items = useShortlistQuery(mapId).data
   const unconfirm = (pin: { id: string; place_name?: string | null }, { undo = true } = {}) => {
     // 줄은 다시 받을 때까지 남아 있어 두 번 누를 수 있다. 두 번째가 404로 실패 토스트를 띄우고 첫 번째의 「되돌리기」를 지웠다.
-    if (remove.isPending) return
     const item = items?.find((i) => i.pin.id === pin.id)
     if (!item) return showToast('확정 리스트를 불러오는 중이에요. 잠시 뒤에 다시 눌러 주세요')
+    if (remove.isPending && remove.variables === item.id) return
     const name = pin.place_name ?? '이 장소'
     remove.mutate(item.id, {
       onSuccess: () =>

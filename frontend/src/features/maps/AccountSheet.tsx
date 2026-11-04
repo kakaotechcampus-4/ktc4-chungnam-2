@@ -78,6 +78,8 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
         throw err
       },
     )
+    // 클립보드 쓰기가 먼저 거절되면 아래 Blob 약속을 아무도 받지 않는다 — 처리되지 않은 거절로 남지 않게.
+    url.catch(() => {})
     // Safari 는 누른 그 순간에 클립보드에 쓰기 시작해야 한다 — 링크를 받은 뒤 쓰면 늘 거절했다.
     // 그래서 아직 오지 않은 링크(Promise)를 담은 ClipboardItem 을 바로 넘긴다. 없는 브라우저는 받은 뒤 글자로 쓴다.
     const copied =

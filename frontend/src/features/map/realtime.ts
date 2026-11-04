@@ -134,8 +134,12 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       }
       // 내 의견 이벤트가 HTTP 응답보다 먼저 오면, 집계(내 것 포함)만 덮고 my_reaction 은 옛것이라
       // 뒤이은 응답 처리(withMyReaction)가 한 번 더 더한다. 내 것이면 my_reaction 의 종류도 맞춰 상쇄되게 한다.
-      const mine = (p: Pin): Pick<Pin, 'my_reaction'> =>
-        user_id === myUserId ? { my_reaction: type ? ({ ...p.my_reaction, type } as Pin['my_reaction']) : null } : {}
+      // 종류가 바뀌었으면(다른 기기에서 고침) 사유는 이벤트에 없어 모른다 — 옛 사유를 새 종류에 붙이지 않는다.
+      const mine = (p: Pin): Pick<Pin, 'my_reaction'> => {
+        if (user_id !== myUserId) return {}
+        if (!type) return { my_reaction: null }
+        return { my_reaction: p.my_reaction?.type === type ? p.my_reaction : { pin_id, user_id, type } }
+      }
       update((pins) => pins.map((p) => (p.id === pin_id ? { ...p, reaction_summary, ...mine(p) } : p)))
       // 열려 있는 핀 상세의 의견 목록 — 키가 페이로드의 핀이라 표에 두지 않는다.
       void queryClient.invalidateQueries({ queryKey: pinKeys.reactions(pin_id) })
