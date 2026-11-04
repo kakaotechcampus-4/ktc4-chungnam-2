@@ -575,7 +575,8 @@ def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_sessi
 def test_create_run_raises_not_ready_when_readiness_fails(db_session):
     _make_members(db_session, user_ids=["user_1", "user_2"])  # required = 1, 아무도 반응 안 함
     with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER,
+                         center=(35.1, 129.0))
     assert exc_info.value.code == "NOT_READY"
 
 
@@ -793,6 +794,20 @@ def test_spicy_chip_penalizes(db_session, monkeypatch):
     assert funnel["실격 조건 제거"] == 0
 
 
+def test_spicy_chip_tie_ranks_confirmed_false_before_unknown_even_when_unknown_is_closer(db_session, monkeypatch):
+    """#1288 재현 — 🚫 「매워요」만 있을 때 매운맛 모름과 확인된 거짓은 둘 다 0점이다. 모름을 🚫 핀에 더 가깝게 놓아도
+    조건 1/1 충족인 확인된 거짓이 먼저 뽑히고, 카드의 충족 집계는 순서를 정한 그 값이다."""
+    ranked, funnel = _run_from_reactions(
+        db_session, monkeypatch, category="음식점", reactions=[("user_1", None, ["food_spicy"])],
+        facts_by_place={"unknown": {}, "mild": {"spicy_focused": False}},
+    )
+    assert ranked == ["mild", "unknown"]
+    assert funnel["실격 조건 제거"] == 0
+    cards = {c.place_id: c for c in db_session.execute(select(Candidate)).scalars()}
+    assert [c["status"] for c in cards["mild"].member_fulfillment["by_member"][0]["conditions"]] == ["met"]
+    assert [c["status"] for c in cards["unknown"].member_fulfillment["by_member"][0]["conditions"]] == ["needs_check"]
+
+
 def test_written_wanted_parking_affects_score(db_session, monkeypatch):
     """주차 soft 사유는 주차 안 되는 곳을 제거하지 않고 감점한다."""
     from llm.schemas import EvidenceLine
@@ -877,15 +892,32 @@ def test_readiness_counts_a_live_pin_with_an_opinion(db_session):
     }
 
 
-def test_create_run_with_only_live_pins_has_no_anchor_so_not_ready(db_session):
-    """live 핀만 있으면 기준 원을 만들 좌표가 없다 — 준비 판정은 통과해도 run 생성은 409 NOT_READY(스펙 갭, 루트 보고)."""
+@pytest.mark.no_center_shim
+def test_create_run_without_center_is_a_validation_error_1331(db_session):
+    """지도 중심이 앵커다(#1331) — center 없는 run 생성은 422다. 준비 판정을 통과한 지도여도, 핀에서 지역을 만들어 주지 않는다."""
     _make_members(db_session, user_ids=["user_1"])
-    live_pin = _make_live_pin(db_session)
-    _react(db_session, live_pin, user_id="user_1", type="like")
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="like")
+    db_session.commit()
 
     with pytest.raises(AppError) as exc_info:
         flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
-    assert exc_info.value.code == "NOT_READY"
+    assert exc_info.value.code == "VALIDATION_ERROR"
+    assert db_session.query(RecommendRun).count() == 0
+
+
+def test_create_run_with_only_live_pins_works_with_a_center_1331(db_session, monkeypatch):
+    """live 핀(좌표 없음)만 있어도 지도 중심이 앵커라 run을 만들 수 있다 — 핀 좌표는 시작 조건(의견 핀 1곳)에만 쓰인다."""
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    _make_members(db_session, user_ids=["user_1"])
+    live_pin = _make_live_pin(db_session)
+    _react(db_session, live_pin, user_id="user_1", type="like")
+    db_session.commit()
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER,
+                           center=(35.1, 129.0))
+    assert (run.origin_lat, run.origin_lng) == (35.1, 129.0)
+    assert [(r.center_lat, r.center_lng) for r in service.list_regions(db_session, str(run.id))] == [(35.1, 129.0)]
 
 
 def test_create_run_passes_after_the_old_attempt_limit(db_session):
@@ -1439,6 +1471,19 @@ def test_default_anchor_order_is_stable_when_pin_query_order_changes(monkeypatch
     coordinates.reverse()
     second = flows._default_circle_and_anchors(None, map_id="map_1", category="음식점")
     assert first == second
+
+
+def test_pipeline_balances_two_regions_and_stores_each_candidate_region(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    region_a = _make_region(db_session, run, center_lat=35.0, radius_m=500, label="A")
+    region_b = _make_region(db_session, run, center_lat=35.1, radius_m=500, label="B")
+    places = [PlaceStub("a1", 35.0, 129.0), PlaceStub("a2", 35.0002, 129.0),
+              PlaceStub("a3", 35.0003, 129.0), PlaceStub("b1", 35.1001, 129.0)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_CirclePlaceSearch(places),
+                      place_facts=_FakePlaceFacts())
+    candidates = sorted(service.list_candidates(db_session, str(run.id)), key=lambda c: c.rank)
+    assert [c.place_id for c in candidates] == ["a1", "b1", "a2"]
+    assert [c.region_id for c in candidates] == [region_a.id, region_b.id, region_a.id]
 
 
 class _RecordingPlaceFacts(_FakePlaceFacts):
@@ -2823,3 +2868,50 @@ def test_concurrent_executes_on_one_run_leave_a_single_candidate_set(test_engine
         verify.execute(delete(RecommendRun).where(RecommendRun.id == run_id))
         verify.commit()
         verify.close()
+
+
+def test_map_center_run_keeps_center_when_widened_and_retried(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810", lat=35.2, lng=129.3)
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "\ubd80\uc0b0")
+    monkeypatch.setattr(flows, "_clustered_regions", lambda *a: pytest.fail("center was clustered"))
+    run = flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.1, 129.0))
+    region, = service.list_regions(db_session, str(run.id))
+    db_session.flush()
+    db_session.expire(run, ["origin_lat", "origin_lng"])
+    assert (run.origin_lat, run.origin_lng) == (35.1, 129.0)
+    assert region.anchor_points == [[35.1, 129.0]]
+    assert region.label == "\ubcf4\ub358 \uacf3 \uc8fc\ubcc0"
+    original_radius = region.radius_m
+    monkeypatch.setattr(flows, "_search_and_store", lambda db, run, **kw: run)
+    flows.widen_run(db_session, run_id=str(run.id), place_search=None, place_facts=None)
+    assert region.radius_m > original_radius
+    flows.retry_run(db_session, run_id=str(run.id), place_search=None, place_facts=None)
+    assert region.anchor_points == [[35.1, 129.0]]
+    assert (region.center_lat, region.center_lng) == (35.1, 129.0)
+
+
+def test_center_without_sido_is_rejected(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810")
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: None)
+    with pytest.raises(AppError) as exc:
+        flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.1, 129.0))
+    assert exc.value.code == "VALIDATION_ERROR"
+
+
+def test_center_run_funnel_and_widen_advice_use_center(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810", lat=35.2, lng=129.3)
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    run = flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.0, 129.0))
+    search, facts = _CirclePlaceSearch(POOL_PLACES), _RecordingPlaceFacts()
+    advice = flows.simulate_filter(db_session, run_id=str(run.id), radius_factor=20 / 15, disable_line_ids=[], place_search=search, place_facts=facts)
+    assert (advice["before"]["passed_count"], advice["after"]["passed_count"]) == (1, 2)
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["\ubc18\uacbd \ubc16 \uc81c\uac70"] == 1
+    flows.widen_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+    assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}

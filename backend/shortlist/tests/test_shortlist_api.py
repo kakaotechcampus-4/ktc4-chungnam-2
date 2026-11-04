@@ -40,7 +40,8 @@ def _events(db_session, *, map_id="map_1", type=None):
     query = select(EventLog).where(EventLog.map_id == map_id)
     if type is not None:
         query = query.where(EventLog.type == type)
-    return db_session.execute(query).scalars().all()
+    # 발행 순서대로 읽는다 — 호출하는 쪽이 [before:]로 자르거나 [-1]을 본다(#1294).
+    return db_session.execute(query.order_by(EventLog.seq)).scalars().all()
 
 
 def _deny_membership():

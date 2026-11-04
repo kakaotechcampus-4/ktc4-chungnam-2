@@ -30,7 +30,9 @@ FEATURES = (
 )
 # 무엇을 불렀는지 — client의 호출 함수
 CALLS = ("plan_evidence", "agent_diagnose", "agent_status", "agent_web_check", "course_goals", "course_direct", "course_turn")
-OUTCOMES = ("ok", "refusal", "empty", "timeout", "invalid_schema", "call_failed")
+OUTCOMES = ("ok", "ok_repeated_json", "refusal", "empty", "timeout", "invalid_schema", "call_failed")
+# 결과를 받은 호출(ok=true). ok_repeated_json은 같은 JSON 객체 두 번에서 첫 객체를 받은 호출이다(#767 3번 b, client.REPEATED_JSON_OUTCOME)
+OK_OUTCOMES = ("ok", "ok_repeated_json")
 
 
 class LlmCall(Base):

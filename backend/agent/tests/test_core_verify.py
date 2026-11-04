@@ -230,12 +230,12 @@ def test_one_letter_name_is_not_matched():
 # ---------------------------------------------------------------- 6단계: 행동
 
 @pytest.mark.parametrize("action, reason", [
-    ({"type": "search_place", "category": "음식점", "pin_ids": None, "basis": ["c1"]}, "type"),   # split에 없음
+    ({"type": "show_pins", "category": None, "pin_ids": ["p1"], "basis": ["c4"]}, "type"),   # 모델 유형에 없음(#1317)
+    ({"type": "search_place", "category": "카페", "pin_ids": None, "basis": ["c1"]}, "category"),   # split은 그 핀의 카테고리만
     ({"type": "open_evidence", "category": None, "pin_ids": None, "basis": ["c1"]}, "type"),
     ({"type": "open_recommend", "category": "숙소", "pin_ids": None, "basis": ["c1"]}, "category"),
     ({"type": "open_recommend", "category": "음식점", "pin_ids": None, "basis": []}, "basis"),
     ({"type": "open_recommend", "category": "음식점", "pin_ids": None, "basis": ["c9"]}, "basis"),
-    ({"type": "show_pins", "category": None, "pin_ids": ["p1", "p_gone"], "basis": ["c4"]}, "pin"),
 ])
 def test_disallowed_action_is_removed(action, reason):
     v = _verify(_out(actions=[GOOD_ACTIONS[0], action]))
@@ -244,12 +244,12 @@ def test_disallowed_action_is_removed(action, reason):
     assert v.record["actions"]["kept"] == 1
 
 
-def test_show_pins_label_and_duplicates():
-    actions = [{"type": "show_pins", "category": None, "pin_ids": ["p1", "p1"], "basis": ["c4"]}] * 2
+def test_duplicate_actions_collapse_and_labels_come_from_code():
+    actions = [{"type": "search_place", "category": None, "pin_ids": None, "basis": ["c1"]}] * 2
 
     v = _verify(_out(actions=actions))
 
-    assert v.draft.actions == [{"index": 0, "type": "show_pins", "label": "핀 보기", "params": {"pin_ids": ["p1"]}}]
+    assert v.draft.actions == [{"index": 0, "type": "search_place", "label": "음식점 검색", "params": {"category": "음식점"}}]
 
 
 # ---------------------------------------------------------------- 7단계: 성립

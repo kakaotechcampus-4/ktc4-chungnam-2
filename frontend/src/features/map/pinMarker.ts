@@ -33,7 +33,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
   const el = document.createElement('button')
   el.type = 'button'
   // 장소 이름은 setAttribute 로만 넣는다 — innerHTML 로 들어가면 이름이 마크업으로 해석된다.
-  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'} · ${kindLabel(pin.kind)} 핀`)
+  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'}, ${kindLabel(pin.kind)} 핀`)
   el.style.cssText =
     'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `
@@ -71,7 +71,7 @@ export function createSearchMarkerElement(
 ): HTMLElement {
   const el = document.createElement('button')
   el.type = 'button'
-  el.setAttribute('aria-label', [`검색 결과 ${r.n}번`, r.name, r.category].filter(Boolean).join(' · '))
+  el.setAttribute('aria-label', [`검색 결과 ${r.n}번`, r.name, r.category].filter(Boolean).join(', '))
   if (r.selected) el.setAttribute('aria-current', 'true')
   el.style.cssText =
     'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
@@ -83,6 +83,31 @@ export function createSearchMarkerElement(
       <g transform="translate(9.5 9.5) scale(0.5417)" style="fill:none;stroke:#fff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round">
         ${CATEGORY_ICON[r.category ?? '기타']}
       </g>
+    </svg>`
+  el.addEventListener('click', onClick)
+  return el
+}
+
+/**
+ * 화면에서 겹친 검색 결과 여러 곳(#1174). 검색 핀과 같은 빨간 원에 아이콘 대신 곳 수(숫자만, 두 자리까지 원 안에 든다)를 적고,
+ * 뒤에 원 하나를 비껴 깔아 여러 곳이 포개진 것으로 읽힌다. 누르면 시트에 그곳들만 보인다.
+ * 카카오맵은 20m 축척보다 더 확대하지 못해서, 같은 건물 가게들은 확대로 떼어 낼 수 없다.
+ * 이름은 setAttribute 로만 넣는다(마크업으로 해석되지 않게).
+ */
+export function createSearchGroupMarkerElement(names: string[], onClick: () => void): HTMLElement {
+  const el = document.createElement('button')
+  el.type = 'button'
+  el.setAttribute('aria-label', `검색 결과 ${names.length}곳이 모여 있어요 · ${names.join(', ')}`)
+  el.style.cssText =
+    'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
+  el.innerHTML = `
+    <svg viewBox="0 0 32 38" width="32" height="38" aria-hidden="true" overflow="visible"
+         style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))">
+      <circle cx="20" cy="12" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
+      <path d="M11 26L16 36.5L21 26Z" stroke-linejoin="round" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
+      <circle cx="16" cy="16" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
+      <text x="16" y="16" text-anchor="middle" dominant-baseline="central"
+            style="fill:#fff;font:700 13px var(--font-sans)">${names.length}</text>
     </svg>`
   el.addEventListener('click', onClick)
   return el
@@ -101,7 +126,7 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
   const { pin, hole, face, eyes } = PINGO_MARK
   const el = document.createElement('button')
   el.type = 'button'
-  el.setAttribute('aria-label', `AI 추천 ${c.rank}위 · ${c.name}`)
+  el.setAttribute('aria-label', `AI 추천 ${c.rank}위, ${c.name}`)
   el.style.cssText =
     'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   // 손은 머리 원(가운데 12,10 · 반지름 8)의 양 어깨(위에서 ±40°)에 걸친다. 핑고(Pingo.tsx)의 흰 몸 + 외곽선과 같은 색이고,

@@ -168,18 +168,18 @@ export function restoreMapErrorMessage(err: unknown, retentionDays: number): str
 
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */
 const INVITE_ERROR_MESSAGES: Record<string, string> = {
-  INVITE_NOT_FOUND: '유효하지 않은 초대 링크예요',
-  INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요',
-  INVITE_REVOKED: '방장이 이 초대 링크를 껐어요. 새 링크를 요청하세요',
+  INVITE_NOT_FOUND: '잘못된 초대 링크예요',
+  INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 부탁해 보세요',
+  INVITE_REVOKED: '방장이 이 초대 링크를 껐어요. 새 링크를 부탁해 보세요',
   // 게스트로 참여(#485)에서만 나는 코드. 문구는 docs/errors.md 표.
-  GUEST_LIMIT: '이 링크로는 더 입장할 수 없어요. 초대한 분께 새 링크를 요청하세요',
+  GUEST_LIMIT: '이 링크로는 더 들어갈 수 없어요. 초대한 분께 새 링크를 부탁해 보세요',
   RATE_LIMITED: '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요',
 }
 
 /** 상한 숫자는 화면이 들고 있지 않는다 — 409 MAP_LIMIT 응답의 detail.limit만 쓴다(멘토 리뷰 #380). */
 function mapLimitMessage(err: ApiError): string {
   const limit = typeof err.detail?.limit === 'number' ? `${err.detail.limit}개까지` : '정해진 개수까지'
-  return `지도는 ${limit} 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`
+  return `지도는 ${limit} 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제하고 다시 해 보세요`
 }
 
 /** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369), 게스트면 403 GUEST_NOT_ALLOWED(#472, docs/errors.md 문구). */

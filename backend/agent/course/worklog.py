@@ -317,3 +317,86 @@ def render(
 ) -> list[str]:
     """평가·시연 스크립트용 글 줄 `[단계] 역할(누가) 내용`."""
     return [r.line() for r in records(trip, goals, unmatched, result, understood_by=understood_by, candidates=candidates)]
+
+
+# ---- 일정 점검(review, #1321) ----
+# 찾기 → 옮겨 보기 → 결정 순서로 문제마다 줄을 붙인다. 전부 코드 템플릿이다 — 장소 이름(DB)과 날짜 말(코드 표)만 들어가고 사용자가 쓴 글은 섞지 않는다(#717).
+
+_REVIEW_STEP_TRY = {1: "두 날을 통째로 바꿔 보는 중이에요", 2: "1곳만 다른 날로 옮겨 보는 중이에요", 3: "2곳을 서로 바꿔 보는 중이에요"}
+
+
+def problem_text(trip: core.Trip, goals: Sequence[goals_mod.Goal], p: Any) -> str:
+    """점검이 찾은 문제 한 줄(`review.Problem`). 카드의 text도 같은 문장을 쓴다(응답은 다음 PR)."""
+    if p.kind == "closed":
+        place = trip.place(p.places[0]).name
+        return f"{attach(place, '은/는')} {core.day_label(trip, p.day)}에 쉬어요"
+    if p.kind == "travel":
+        return f"{core.day_label(trip, p.day)}은 이동이 상한을 넘어요"
+    if p.kind == "member":
+        return f"{core.day_label(trip, p.day)}은 걷는 시간이 구성원이 고른 상한을 넘어요"
+    if p.kind in ("condition", "goal"):
+        goal = next(g for g in goals if g.id == p.goal_id)
+        return f"{goals_mod.label(trip, goal)} 목표를 지키지 못했어요"
+    if p.kind == "cluster":
+        return f"같은 동네 {len(p.places)}곳이 여러 날로 갈려 있어요"
+    label = core.day_label(trip, p.day)
+    return f"{label}에 식당이 없어요" if p.variant == "none" else f"{label}에 식당이 너무 많아요"
+
+
+def _move_text(trip: core.Trip, fix: Any) -> str:
+    names = [trip.place(m.place).name for m in fix.moves]
+    if fix.step == 1:
+        days = sorted({m.from_day for m in fix.moves} | {m.to_day for m in fix.moves})
+        a, b = (core.day_label(trip, core.day_alias(i)) for i in days)
+        return f"{a}와 {b}를 통째로 바꿔 보는 중이에요"
+    if fix.step == 2:
+        return f"{names[0]}만 {core.day_label(trip, core.day_alias(fix.moves[0].to_day))}로 옮겨 보는 중이에요"
+    return f"{attach(names[0], '와/과')} {attach(names[1], '을/를')} 서로 바꿔 보는 중이에요"
+
+
+# 모델이 점검 판단에 고른 이유 코드(llm CourseReviewReason) → 한 마디. 모델은 문장을 짓지 않는다 — 코드와 고정 문구만 쓴다(#717)
+REVIEW_REASON_TEXT = {
+    "FIXES_REQUEST": "요청한 목표를 지키려고", "FIXES_MEMBER_NEED": "구성원 조건을 지키려고", "SMALL_CHANGE": "옮김이 적고 남는 문제가 없어서",
+    "TOO_MANY_MOVES": "옮길 곳이 많아서", "LEAVES_PROBLEMS": "따라도 문제가 남아서", "MINOR_GAIN": "얻는 것이 작아서",
+}
+JUDGMENT_FAILED_TEXT = "모델의 점검 판단을 쓰지 못해 코드 기본(입력 순서, 모두 고침)으로 이어받았어요."
+
+
+def judgment_records(
+    trip: core.Trip, goals: Sequence[goals_mod.Goal], judge: Any, decision: Any, *, asked: bool,
+) -> list[StepRecord]:
+    """모델의 점검 판단(by ai, 지휘)과 코드 기본이 이어받은 자리(대행). judge는 `review.JudgeInput`, decision은 llm의 검증을 거친 판단(없으면 None).
+    모델을 부르지 않은 run(dev, 목표 없음)은 이어받은 것이 아니라 처음부터 코드 기본이라 줄을 남기지 않는다."""
+    if judge is None or not asked:
+        return []
+    if decision is None or not (decision.order or decision.worth):
+        return [_rec("대행", DIRECT, CODE, JUDGMENT_FAILED_TEXT)]
+    out = []
+    if decision.order:
+        out.append(_rec("판단", DIRECT, MODEL, f"선호 문제 {len(decision.order)}개를 볼 순서를 정했어요"))
+    for alias, (verdict, reason) in decision.worth.items():
+        out.append(_rec("판단", DIRECT, MODEL, f"{problem_text(trip, goals, judge.aliases[alias])} — "
+                        f"{'고치기로' if verdict == 'fix' else '고치지 않기로'} 했어요({REVIEW_REASON_TEXT[reason]})"))
+    open_soft = [r["alias"] for r in judge.payload["problems"] if r["strength"] == "soft" and r["options"]]
+    if n := sum(a not in decision.worth for a in open_soft):
+        out.append(_rec("대행", DIRECT, CODE, f"판단이 없는 {n}개는 코드 기본(모두 고침)으로 두었어요."))
+    return out
+
+
+def review_records(
+    trip: core.Trip, goals: Sequence[goals_mod.Goal], result: Any, *, judge: Any = None, decision: Any = None, asked: bool = False,
+) -> list[StepRecord]:
+    """`review.ReviewResult` → 작업 기록. 문제가 없으면 한 줄, 있으면 문제마다 찾기 → (시도마다 옮겨 보기 → 결정) 줄이 붙고,
+    모델의 판단이 있으면(`judgment_records`) 그 뒤에 이어 붙는다."""
+    if not result.problems:
+        return [_rec("찾기", VERIFY, CODE, "일정을 점검했어요. 고칠 점이 없어요")]
+    out = []
+    for fix in result.fixes:
+        out.append(_rec("찾기", VERIFY, CODE, problem_text(trip, goals, fix.problem)))
+        for attempt in fix.attempts:
+            last = attempt.ok
+            out.append(_rec("옮겨 보기", COMPUTE, CODE, _move_text(trip, fix) if last and fix.step is not None else _REVIEW_STEP_TRY[attempt.step]))   # 모델이 「그대로」로 정해 안을 지운 문제는 옮길 수를 말하지 않는다
+            out.append(_rec("결정", DECIDE, CODE, f"풀려요(옮김 {fix.moved}곳)" if last else "안 돼요"))
+        if fix.step is None:
+            out.append(_rec("결정", DECIDE, CODE, "고치지 않기로 했어요" if fix.not_fixed != "BIG_CHANGE" else "크게 바꿔야 해요"))
+    return out + judgment_records(trip, goals, judge, decision, asked=asked)

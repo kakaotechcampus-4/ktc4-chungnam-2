@@ -1,6 +1,7 @@
 """#811 — 「추천 받기」 멱등 키(Idempotency-Key). 예약은 모델 호출 전에 독립 트랜잭션으로 커밋되므로 실제 커밋과 연결
 둘 이상이 필요하다 — db_session(롤백 전용)이 아니라 test_engine에 직접 연결한다."""
 
+import hashlib
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -86,13 +87,15 @@ def env(test_engine, monkeypatch):
         lambda db, **kw: [{"user_id": USER, "type": "against", "reason_text": "너무 매워요", "chips": []}],
     )
 
-    def create(planner, *, map_id, category="음식점", key="key-00000001", user=USER):
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+
+    def create(planner, *, center=None, map_id, category="음식점", key="key-00000001", user=USER):
         map_ids.add(map_id)
         session = Session()
         try:
             run = flows.create_run(
                 session, map_id=map_id, category=category, requested_by=user, evidence_planner=planner,
-                idempotency_key=key,
+                idempotency_key=key, center=center,
             )
             session.commit()
             return run.id
@@ -350,3 +353,50 @@ def test_withdraw_keeps_completed_keys_and_pending_reservations(db_session):
 
 def _count_in(db, model, *conditions):
     return db.execute(select(func.count()).select_from(model).where(*conditions)).scalar_one()
+
+
+def test_center_changes_idempotency_identity():
+    a = core.idempotency_request_hash("map", "cafe", center=(35.0, 129.0))
+    assert a == core.idempotency_request_hash("map", "cafe", center=(35, 129))
+    assert a != core.idempotency_request_hash("map", "cafe", center=(35.1, 129.0))
+    assert a != core.idempotency_request_hash("map", "cafe")
+    legacy = hashlib.sha256(b"mapcafe0").hexdigest()   # 이 PR 이전의 해시 — center 없는 요청은 그대로여야 한다
+    assert core.idempotency_request_hash("map", "cafe") == legacy
+
+
+def test_center_idempotency_replay_and_conflict(env):
+    Session, create = env
+    planner = _Planner()
+    first = create(planner, map_id="idem_center", center=(35.0, 129.0))
+    assert create(planner, map_id="idem_center", center=(35.0, 129.0)) == first
+    with pytest.raises(AppError) as exc:
+        create(planner, map_id="idem_center", center=(35.1, 129.0))
+    assert exc.value.code == "IDEMPOTENCY_CONFLICT"
+    assert planner.calls == 1
+
+
+@pytest.mark.no_center_shim
+def test_old_key_without_center_still_replays_its_run_but_a_new_key_without_center_is_422_1331(env, monkeypatch):
+    """center가 필수가 되기 전에 만든 키(해시에 center 없음)의 재시도는 그 run을 그대로 돌려준다(24시간 보관). 새 키는 422이고 예약이 남지 않는다."""
+    Session, create = env
+    planner = _Planner()
+    first = create(planner, map_id="idem_legacy", center=(35.0, 129.0))
+    session = Session()
+    session.execute(update(IdempotencyKey).where(IdempotencyKey.run_id == first).values(
+        request_hash=core.idempotency_request_hash("idem_legacy", "음식점", False, None)))
+    session.commit()
+    session.close()
+
+    assert create(planner, map_id="idem_legacy", center=None) == first
+    reservations = []
+    real_reserve = service.reserve_idempotency_key
+    monkeypatch.setattr(service, "reserve_idempotency_key", lambda *a, **kw: reservations.append(kw["key"]) or real_reserve(*a, **kw))
+    with pytest.raises(AppError) as exc:
+        create(planner, map_id="idem_legacy", center=None, key="key-00000002")
+    assert exc.value.code == "VALIDATION_ERROR"
+    assert reservations == []   # 예약을 만들었다 지우지 않는다 — 그 사이 같은 키가 409를 받는 구간이 없다
+    session = Session()
+    assert session.execute(select(func.count()).select_from(IdempotencyKey).where(
+        IdempotencyKey.key == "key-00000002")).scalar_one() == 0
+    session.close()
+    assert planner.calls == 1

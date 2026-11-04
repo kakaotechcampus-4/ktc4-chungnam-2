@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from common.database import SessionLocal
 from common.kst import kst_day_start
 from common.settings import settings
-from llm.models import LlmCall
+from llm.models import OK_OUTCOMES, LlmCall
 
 log = logging.getLogger("pingo.llm")
 
@@ -137,7 +137,7 @@ def record_call(
         "model": settings.llm_model, "prompt_version": prompt_version,
         "input_tokens": counts.input_tokens, "cached_input_tokens": counts.cached_input_tokens,
         "cache_write_tokens": counts.cache_write_tokens, "output_tokens": counts.output_tokens,
-        "cost_krw": cost_krw(counts, web_searches=web_searches), "outcome": outcome, "ok": outcome == "ok",
+        "cost_krw": cost_krw(counts, web_searches=web_searches), "outcome": outcome, "ok": outcome in OK_OUTCOMES,
         "elapsed_ms": elapsed_ms, "batch_size": batch_size, "web_searches": web_searches,
     }
     try:

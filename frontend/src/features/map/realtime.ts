@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useQueryClient, type InvalidateQueryFilters, type QueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 
-import { agentEventHandlers } from '@/features/agent/queries'
+import { agentEventHandlers, agentKeys } from '@/features/agent/queries'
 import { useMeQuery } from '@/features/auth/queries'
+import { courseKeys } from '@/features/course/queries'
 import { mapKeys } from '@/features/maps/queries'
 import { recommendKeys } from '@/features/recommend/queries'
 import { showToast } from '@/features/shell/toast'
@@ -67,7 +68,8 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     'map.updated': [map, myMaps],
     'map.deleted': [myMaps],
     // 확정 리스트는 다른 구성원이 바꿀 수 있다(5-10). 동선은 이 기기의 일정 순서라(2026-11-03) 서버 동선(route.recalculated)은 받지 않는다.
-    'shortlist.changed': [{ queryKey: shortlistKeys.list(mapId) }, pins],
+    // 일정도 이 이벤트로 바뀐다. 열려 있는 AI 코스 결과는 일정이 바뀌면 stale 이 되어 「반영」을 막아야 해서 최근 코스와 run 상세도 다시 받는다(#1322).
+    'shortlist.changed': [{ queryKey: shortlistKeys.list(mapId) }, pins, { queryKey: courseKeys.latest(mapId) }, { queryKey: courseKeys.runs }],
   }
 }
 
@@ -125,7 +127,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       // 내 의견은 이미 캐시에 반영했다 — 알리지 않는다. 사유는 이벤트에 없다.
       if (pin && user_id !== myUserId) {
         const who = `${display_name ?? '구성원'}님이 ${pin.place_name ?? '핀'}`
-        showToast(type ? `${who}에 ${REACTION_WORD[type]} 의견을 남겼어요` : `${who} 의견을 거뒀어요`)
+        showToast(type ? `${who}에 ${REACTION_WORD[type]} 의견을 남겼어요` : `${who}에 남긴 의견을 취소했어요`)
       }
       update((pins) => pins.map((p) => (p.id === pin_id ? { ...p, reaction_summary } : p)))
       // 열려 있는 핀 상세의 의견 목록 — 키가 페이로드의 핀이라 표에 두지 않는다.
@@ -137,6 +139,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       source.close()
       showToast('방장이 이 지도를 삭제했어요')
       queryClient.removeQueries({ queryKey: mapKeys.detail(mapId) })
+      queryClient.removeQueries({ queryKey: agentKeys.state(mapId) })
       navigate('/', { replace: true })
     }
 
@@ -148,6 +151,10 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       'pin.deleted': remove,
       'reaction.changed': reaction,
       'map.deleted': mapDeleted,
+      // 내가 나갔다(다른 기기에서 나가기 등) — 그 지도의 핑고 AI 조언 상태를 버린다(agent-v2 16.4). 남이 나간 건 표대로 다시 받는다.
+      'member.left': (e) => {
+        if (parse<{ user_id: string }>(e).user_id === myUserId) queryClient.removeQueries({ queryKey: agentKeys.state(mapId) })
+      },
       ...agentEventHandlers(queryClient, mapId),
     }
     const table = refetchTable(mapId)

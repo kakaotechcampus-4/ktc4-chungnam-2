@@ -54,26 +54,28 @@ export default function ImportSheet({
 }
 
 const NOTICE: Record<Exclude<AddResult, 'added'>, string> = {
-  noLinks: '이 기간에 지도 링크가 없어요. 기간을 넓혀 다시 넣어 주세요',
-  noDates: '날짜를 읽지 못했어요. 「대화 내보내기」로 받은 파일인지 확인해 주세요',
-  full: '목록이 가득 차서 새 링크를 더하지 못했어요. 지금 목록을 찍고 「완료된 것 지우기」를 누른 뒤 다시 넣어 주세요',
+  noLinks: '이 기간에 지도 링크가 없어요. 기간을 넓혀 보세요',
+  noDates: '날짜를 읽지 못했어요. 카톡에서 대화 내보내기로 받은 파일인지 확인해 주세요',
+  full: '목록이 가득 차서 새 링크를 더하지 못했어요. 지금 목록을 찍고 완료된 것을 지운 뒤 다시 넣어 주세요',
 }
 
 /** .txt 만 받는다 — accept 는 고르는 창의 힌트일 뿐이라 이름·형식을 한 번 더 본다. */
 const isTextFile = (file: File) => /\.txt$/i.test(file.name)
 
 /**
- * 기간(여행 얘기를 한 날짜) 두 칸 + 대화 파일 넣기(#1139). 기간을 고르기 전에는 파일을 넣지 못한다.
+ * 기간(여행 얘기를 한 날짜) 두 칸 + 대화 파일 넣기(#1139). 시작일을 고르기 전에는 파일을 넣지 못한다.
+ * 종료일은 선택이다 — 비우면 시작일부터 대화 끝까지 읽는다.
  * 파일은 브라우저 안에서만 읽고 바로 버린다. 기간은 시트가 열려 있는 동안 남아서 다른 대화 파일을 같은 기간으로 더 넣을 수 있다.
  */
 function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => AddResult; more: boolean }) {
-  const [range, setRange] = useState<DayRange>({ from: '', to: '' })
+  // 입력칸 값이라 빈 종료일은 ''다. 읽을 때는 없는 것(끝까지)으로 넘긴다.
+  const [range, setRange] = useState({ from: '', to: '' })
   const [notice, setNotice] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
   const input = useRef<HTMLInputElement>(null)
-  const errorId = useId()
+  const hintId = useId()
   const wrongOrder = Boolean(range.from && range.to && range.from > range.to)
-  const ready = Boolean(range.from && range.to) && !wrongOrder
+  const ready = Boolean(range.from) && !wrongOrder
 
   async function read(file: File) {
     setNotice(null)
@@ -88,18 +90,18 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
     } finally {
       setReading(false)
     }
-    const result = onAdd(text.replace(/^﻿/, ''), range)
+    const result = onAdd(text.replace(/^﻿/, ''), { from: range.from, to: range.to || undefined })
     if (result !== 'added') setNotice(NOTICE[result])
   }
 
-  const setDay = (patch: Partial<DayRange>) => {
+  const setDay = (patch: Partial<typeof range>) => {
     setRange((r) => ({ ...r, ...patch }))
     setNotice(null)
   }
 
   return (
     <div className="mt-1 space-y-3">
-      {!more && <p className="text-sm text-ink-500">카톡 「대화 내보내기」로 받은 .txt 파일을 넣어 주세요. 대화 내용은 보내지도 남기지도 않아요</p>}
+      {!more && <p className="text-sm text-ink-500">카톡에서 대화 내보내기로 받은 .txt 파일을 넣어 주세요. 대화 내용은 어디에도 보내거나 저장하지 않아요</p>}
       <fieldset>
         <legend className="mb-1.5 text-sm font-semibold text-ink-900">여행 얘기를 한 기간</legend>
         <div className="grid grid-cols-2 gap-2">
@@ -108,23 +110,22 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
             <input type="date" value={range.from} onChange={(e) => setDay({ from: e.target.value })} className="field w-full" />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs text-ink-500">종료일</span>
+            <span className="mb-1 block text-xs text-ink-500">종료일 (선택)</span>
             <input
               type="date"
               value={range.to}
               min={range.from || undefined}
               onChange={(e) => setDay({ to: e.target.value })}
               aria-invalid={wrongOrder}
-              aria-describedby={wrongOrder ? errorId : undefined}
+              aria-describedby={hintId}
               className="field w-full"
             />
           </label>
         </div>
-        {wrongOrder && (
-          <p id={errorId} className="mt-1.5 text-sm text-warn-text">
-            종료일은 시작일과 같거나 뒤여야 해요
-          </p>
-        )}
+        {/* 안내와 오류는 같은 자리·같은 id라 종료일 칸이 늘 지금 줄을 읽힌다. */}
+        <p id={hintId} className={wrongOrder ? 'mt-1.5 text-sm text-warn-text' : 'mt-1.5 text-xs text-ink-500'}>
+          {wrongOrder ? '종료일은 시작일과 같거나 뒤여야 해요' : '종료일을 비우면 대화 끝까지 읽어요'}
+        </p>
       </fieldset>
       {/* 파일 고르는 창은 아래 버튼이 연다 — 숨긴 입력칸은 화면 읽기에서 빠지고 버튼 하나만 남는다. */}
       <input
@@ -200,8 +201,9 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <p className="min-w-0 flex-1 text-sm text-ink-500">
-            지도 링크 {imp.rows.length}개
-            {checking > 0 && imp.phase === 'checking' && ` · 확인하는 중 ${imp.rows.length - checking}/${imp.rows.length}`}
+            {checking > 0 && imp.phase === 'checking'
+              ? `지도 링크 ${imp.rows.length}개 중 ${imp.rows.length - checking}개 확인했어요`
+              : `지도 링크 ${imp.rows.length}개`}
           </p>
           {(doneRows.length > 0 || already.length > 0) && (
             <button type="button" onClick={imp.clearDone} disabled={busy} className="btn-text text-sm">
@@ -212,7 +214,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
             모두 비우기
           </button>
         </div>
-        {imp.truncated && <p className="text-xs text-warn-text">일부 링크는 더하지 못했어요. 찍고 「완료된 것 지우기」를 누른 뒤 나머지 기간을 다시 넣어 주세요</p>}
+        {imp.truncated && <p className="text-xs text-warn-text">목록이 가득 차서 일부 링크가 빠졌어요. 찍고 완료된 것을 지운 뒤 나머지 기간을 다시 넣어 주세요</p>}
       </div>
 
       {imp.error != null && (
@@ -235,7 +237,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
               const label = foundLabel(e.row)
               return (
                 <li key={e.row.share.url} className="flex items-center gap-2">
-                  <Checkbox checked={e.row.picked} onChange={() => imp.toggle(e.i)} disabled={Boolean(e.row.outcome) || busy}>
+                  <Checkbox checked={e.row.picked} onChange={() => imp.toggle(e.row.share.url)} disabled={Boolean(e.row.outcome) || busy}>
                     <span className="block truncate font-bold text-ink-900">{rowTitle(e.row)}</span>
                     <span className="block truncate text-xs text-ink-500">{[place?.category, place?.address].filter(Boolean).join(' · ')}</span>
                     {label && <span className="mt-0.5 block text-xs font-semibold text-[var(--good-text)]">{label}</span>}
@@ -251,7 +253,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
       {confirm.length > 0 && (
         <section>
           <h3 className="text-sm font-bold text-ink-900">이 장소가 맞나요? {confirm.length}</h3>
-          <p className="text-xs text-ink-500">공유한 곳과 주소가 같은 곳이에요. 이름이 달라서 직접 확인해 주세요</p>
+          <p className="text-xs text-ink-500">주소는 같은데 이름이 달라요. 같은 곳인지 확인해 주세요</p>
           <ul className="mt-1 divide-y divide-ink-100">
             {confirm.map((e) => {
               const candidate = e.row.item?.result?.address_candidates?.[0]
@@ -259,7 +261,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
               const on = e.row.picked && e.row.choice?.place_id === candidate.place_id
               return (
                 <li key={e.row.share.url} className="flex items-center gap-2">
-                  <Checkbox checked={on} onChange={() => imp.choose(e.i, on ? null : candidate)} disabled={Boolean(e.row.outcome) || busy}>
+                  <Checkbox checked={on} onChange={() => imp.choose(e.row.share.url, on ? null : candidate)} disabled={Boolean(e.row.outcome) || busy}>
                     <span className="block truncate font-bold text-ink-900">{candidate.place_name}</span>
                     <span className="block truncate text-xs text-ink-500">{candidate.address}</span>
                     <span className="block truncate text-xs text-ink-500">
@@ -277,10 +279,10 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
       {search.length > 0 && (
         <section>
           <h3 className="text-sm font-bold text-ink-900">이름으로 찾을 곳 {search.length}</h3>
-          <p className="text-xs text-ink-500">우리 장소 데이터에서 바로 찾지 못했어요. 이름으로 찾은 곳에서 골라 주세요</p>
+          <p className="text-xs text-ink-500">이름으로 찾아봤어요. 맞는 곳을 골라 주세요</p>
           {imp.searchPaused && (
             <div className="mt-2 flex items-center gap-2">
-              <p className="text-xs text-warn-text">너무 빨리 찾고 있어요. 잠시 뒤 이어서 찾아 주세요</p>
+              <p className="text-xs text-warn-text">찾을 곳이 많아 잠깐 멈췄어요. 조금 뒤에 이어서 찾아 주세요</p>
               <button type="button" onClick={imp.retrySearch} className="btn-outline btn-sm">
                 이어서 찾기
               </button>
@@ -297,9 +299,9 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
       {needsName.length > 0 && (
         <section>
           <h3 className="text-sm font-bold text-ink-900">이름 확인 필요 {needsName.length}</h3>
-          <p className="text-xs text-ink-500">링크에 장소 번호만 있어요. 같이 온 말을 보고 하나씩 찍어 주세요</p>
+          <p className="text-xs text-ink-500">링크만으로는 어떤 곳인지 알 수 없어요. 같이 보낸 메시지를 보고 하나씩 찍어 주세요</p>
           <ul className="mt-1 divide-y divide-ink-100">
-            {needsName.map(({ row, i }) => (
+            {needsName.map(({ row }) => (
               <li key={row.share.url} className={`flex min-h-11 items-center gap-2 py-1.5 ${row.opened ? 'opacity-60' : ''}`}>
                 <span className="min-w-0 flex-1 space-y-0.5">
                   {/* 같은 메시지의 말은 사람이 알아보는 데만 — 화면 메모리에만 있고 보내지 않는다(#1046). */}
@@ -313,7 +315,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
                 <button
                   type="button"
                   onClick={() => {
-                    imp.markOpened(i)
+                    imp.markOpened(row.share.url)
                     onOpenOne(row.share.url)
                   }}
                   className="btn-outline btn-sm"
@@ -331,7 +333,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
           {already.length > 0 && <p>이미 지도에 있는 곳 {already.length}개는 뺐어요</p>}
           {failed.length > 0 && (
             <p>
-              읽지 못한 링크 {failed.length}개 · {[...new Set(failed.map(({ row }) => linkErrorMessage(row.item?.error_code)))].join(' · ')}
+              읽지 못한 링크가 {failed.length}개 있어요. {[...new Set(failed.map(({ row }) => linkErrorMessage(row.item?.error_code)))].join('. ')}
             </p>
           )}
         </section>
@@ -340,7 +342,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
       {doneRows.length > 0 && (
         // 찍은 줄은 접어 둔다 — 새로고침하거나 대화를 더 넣어도 남아서, 무엇을 이미 찍었는지 볼 수 있다(#1045).
         <details className="rounded-xl bg-ink-50 px-3 py-2">
-          <summary className="text-sm font-bold text-ink-900">찍음 {new Set(doneRows.map((e) => placeKey(e.row) ?? e.row.share.url)).size}곳</summary>
+          <summary className="text-sm font-bold text-ink-900">찍은 곳 {new Set(doneRows.map((e) => placeKey(e.row) ?? e.row.share.url)).size}개</summary>
           <ul className="mt-1 divide-y divide-ink-100">
             {doneRows.map((e) => (
               <li key={e.row.share.url} className="flex min-h-11 items-center gap-2">
@@ -414,17 +416,17 @@ function SearchRow({ e, imp, busy, sameAsAbove, onSearchName }: { e: Entry; imp:
       {s?.status === 'done' && s.results.length > 0 && (
         <div role="radiogroup" aria-label={`${name} 후보`}>
           {s.results.map((p) => (
-            <Radio key={p.place_id} name={group} checked={chosen === p.place_id} onChange={() => imp.choose(e.i, p)} disabled={busy || Boolean(e.row.outcome) || !pickable(p)}>
+            <Radio key={p.place_id} name={group} checked={chosen === p.place_id} onChange={() => imp.choose(e.row.share.url, p)} disabled={busy || Boolean(e.row.outcome) || !pickable(p)}>
               <span className="block truncate text-body font-semibold text-ink-900">
                 {p.place_name}
                 {e.row.auto && chosen === p.place_id && <span className="tag tag-good ml-1.5 align-middle">{foundLabel(e.row)}</span>}
               </span>
               <span className="block truncate text-xs text-ink-500">
-                {pickable(p) ? [p.category, p.address].filter(Boolean).join(' · ') : '핀으로 남길 수 없는 분류예요'}
+                {pickable(p) ? [p.category, p.address].filter(Boolean).join(' · ') : '핀으로 찍을 수 없는 카테고리예요'}
               </span>
             </Radio>
           ))}
-          <Radio name={group} checked={!chosen} onChange={() => imp.choose(e.i, null)} disabled={busy || Boolean(e.row.outcome)}>
+          <Radio name={group} checked={!chosen} onChange={() => imp.choose(e.row.share.url, null)} disabled={busy || Boolean(e.row.outcome)}>
             <span className="text-body text-ink-700">여기 없어요</span>
           </Radio>
         </div>

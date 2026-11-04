@@ -54,7 +54,7 @@ export default function TestAdWindow({ seconds, onClose }: { seconds: number; on
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
             <Dialog.Title className="break-keep text-title font-bold text-ink-900">테스트 광고예요</Dialog.Title>
             <Dialog.Description className="break-keep text-sm text-ink-600">
-              실제 광고 자리를 대신하는 창이에요. 끝까지 보면 보상을 받아요
+              끝까지 보면 보상을 받아요
             </Dialog.Description>
             <p role="status" className="break-keep text-xs text-ink-500">
               {finished ? '다 봤어요. 닫으면 보상을 받아요' : '지금 닫으면 보상을 받지 못해요'}

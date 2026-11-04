@@ -48,4 +48,9 @@ describe('추천 막힘 조언(#589)', () => {
     // 기다리는 동안의 자리가 사라지고 빈 채로 남는다.
     await waitFor(() => expect(container).toBeEmptyDOMElement())
   })
+
+  it('500이면 자리를 숨기지 않고 「조언을 불러오지 못했어요」(#1297)', async () => {
+    show({ code: 'INTERNAL', message: 'x' }, 500)
+    expect(await screen.findByText('조언을 불러오지 못했어요')).toBeInTheDocument()
+  })
 })

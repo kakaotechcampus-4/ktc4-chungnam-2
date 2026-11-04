@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { allInside, fitCenter, fitLevel, MAX_LEVEL, zoomSteps } from './camera'
+import { allInside, fitCenter, fitLevel, groupNear, MAX_LEVEL, zoomSteps } from './camera'
 
 const size = { w: 1000, h: 800 }
 const none = { top: 0, right: 0, bottom: 0, left: 0 }
@@ -44,5 +44,22 @@ describe('지도가 스스로 움직일 때의 계산(#1026)', () => {
     const pad = { top: 100, right: 0, bottom: 300, left: 0 }
     expect(allInside([{ x: 10, y: 150 }, { x: 990, y: 490 }], size, pad)).toBe(true)
     expect(allInside([{ x: 10, y: 150 }, { x: 500, y: 600 }], size, pad)).toBe(false)
+  })
+})
+
+describe('겹친 검색 결과 묶기(#1174)', () => {
+  it('가까운 점끼리 묶고, 먼 점은 따로 둔다', () => {
+    const pts = [
+      { x: 100, y: 100 },
+      { x: 300, y: 100 },
+      { x: 110, y: 105 },
+      { x: 100, y: 131 },
+    ]
+    expect(groupNear(pts, 32)).toEqual([[0, 2, 3], [1]])
+  })
+
+  it('하나도 겹치지 않으면 하나씩이다', () => {
+    expect(groupNear([{ x: 0, y: 0 }, { x: 40, y: 0 }], 32)).toEqual([[0], [1]])
+    expect(groupNear([], 32)).toEqual([])
   })
 })

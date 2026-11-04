@@ -53,13 +53,14 @@ function renderSheet() {
 /** 픽스처 대화가 오간 날(2026-11-02) 하루. */
 const DAY = { from: '2026-11-02', to: '2026-11-02' }
 
-function setRange(range: { from: string; to: string }) {
+/** 종료일은 선택이라 라벨이 「종료일 (선택)」이다. `to`가 없으면 비워 둔다(끝까지 읽기). */
+function setRange(range: { from: string; to?: string }) {
   fireEvent.change(screen.getByLabelText('시작일'), { target: { value: range.from } })
-  fireEvent.change(screen.getByLabelText('종료일'), { target: { value: range.to } })
+  fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: range.to ?? '' } })
 }
 
 /** 기간을 고르고 대화 파일을 넣는다. `button`은 파일 고르는 창을 여는 버튼 이름 — 기간을 고르면 눌리는지 본다. */
-async function pickFile(text: string, button: string, range = DAY) {
+async function pickFile(text: string, button: string, range: { from: string; to?: string } = DAY) {
   setRange(range)
   expect(screen.getByRole('button', { name: button })).toBeEnabled()
   await userEvent.upload(screen.getByLabelText('카톡 대화 파일'), new File([text], 'KakaoTalk_Chat.txt', { type: 'text/plain' }))
@@ -124,23 +125,41 @@ describe('카톡 대화에서 핀 가져오기 — 네이버·공유 글 힌트�
     expect(pins.find((p) => p.place_name === '해운대 바다 카페')).toMatchObject({ link_ref: { provider: 'naver', external_id: 'naver:addrB' } })
     expect(pins.find((p) => p.source === 'live')).toEqual({ source: 'live', category: '음식점', kakao_place_id: 'kakao:mock-6', search_query: '성수 노포 곱창' })
     expect(await screen.findByText('3곳을 찍었어요')).toBeInTheDocument()
-    expect(screen.getByText('찍음 3곳')).toBeInTheDocument()
+    expect(screen.getByText('찍은 곳 3개')).toBeInTheDocument()
   })
 })
 
 describe('카톡 가져오기 — .txt 파일과 여행 얘기를 한 기간(#1139)', () => {
-  it('붙여넣기 칸은 없고, 기간을 다 고르기 전에는 파일을 넣지 못한다 — 종료일이 앞이면 안내', () => {
+  it('붙여넣기 칸은 없고, 시작일을 고르기 전에는 파일을 넣지 못한다 — 종료일은 선택이고 앞이면 안내', () => {
     renderSheet()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     const button = screen.getByRole('button', { name: '대화 파일 넣기' })
     expect(button).toBeDisabled()
+    expect(screen.getByLabelText(/^종료일/)).toHaveAccessibleDescription('종료일을 비우면 대화 끝까지 읽어요')
     fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-11-02' } })
-    expect(button).toBeDisabled()
-    fireEvent.change(screen.getByLabelText('종료일'), { target: { value: '2026-11-01' } })
-    expect(button).toBeDisabled()
-    expect(screen.getByText('종료일은 시작일과 같거나 뒤여야 해요')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('종료일'), { target: { value: '2026-11-02' } })
     expect(button).toBeEnabled()
+    fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: '2026-11-01' } })
+    expect(button).toBeDisabled()
+    expect(screen.getByLabelText(/^종료일/)).toHaveAccessibleDescription('종료일은 시작일과 같거나 뒤여야 해요')
+    fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: '2026-11-02' } })
+    expect(button).toBeEnabled()
+  })
+
+  it('종료일을 비우면 시작일부터 대화 끝까지의 링크를 싣는다', async () => {
+    const previews = capture(`/maps/${MAP}/pins/link-preview`)
+    renderSheet()
+    const chat = [
+      '2026년 10월 30일 금요일',
+      '2026년 10월 30일 오후 9:00, 친구A : 지난번 https://naver.me/hintA',
+      '2026년 11월 3일 화요일',
+      '2026년 11월 3일 오전 8:00, 친구A : 여기 가자 https://place.map.kakao.com/mock-2',
+      '2026년 12월 20일 일요일',
+      '2026년 12월 20일 오전 8:00, 친구B : 여기도 https://naver.me/addrB',
+    ].join('\n')
+    await pickFile(chat, '대화 파일 넣기', { from: '2026-11-01' })
+
+    await waitFor(() => expect(previews).toHaveLength(1))
+    expect((previews[0] as { urls: string[] }).urls).toEqual(['https://place.map.kakao.com/mock-2', 'https://naver.me/addrB'])
   })
 
   it('기간 밖에 보낸 링크는 확인 요청에 싣지 않는다', async () => {
@@ -242,7 +261,7 @@ describe('카톡 가져오기 — 누적·새로고침 뒤 유지·버튼(#1045)
     resetImport()
     renderSheet()
     expect(await screen.findByText('지도 링크 5개')).toBeInTheDocument()
-    expect(await screen.findByText('찍음 2곳')).toBeInTheDocument()
+    expect(await screen.findByText('찍은 곳 2개')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '다른 대화 파일 더하기' })).toBeInTheDocument()
   })
 

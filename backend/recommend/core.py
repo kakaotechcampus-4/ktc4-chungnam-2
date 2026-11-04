@@ -515,9 +515,12 @@ IDEMPOTENCY_RETENTION = timedelta(hours=24)   # run이 연결된 행의 보관 �
 ReservationDecision = Literal["conflict", "reuse", "in_progress", "takeover"]
 
 
-def idempotency_request_hash(map_id: str, category: str, execute: bool = False) -> str:
-    """요청 동일성 = (지도, category, execute — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
-    return hashlib.sha256(f"{map_id}{category}{int(bool(execute))}".encode()).hexdigest()
+def idempotency_request_hash(map_id: str, category: str, execute: bool = False, center: tuple[float, float] | None = None) -> str:
+    """요청 동일성 = (지도, category, execute, center — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
+    value = f"{map_id}{category}{int(bool(execute))}"   # center 없는 요청은 예전 해시와 같아야 한다 — 배포 직전에 만든 키(24시간 보관)의 재시도가 409가 되지 않게
+    if center is not None:
+        value += f"\x1f{center[0]:.17g}\x1f{center[1]:.17g}"
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def reservation_decision(
@@ -558,13 +561,17 @@ class HeartedPlace:
 
 @dataclass(frozen=True)
 class ScoredCandidate:
-    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표."""
+    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표.
+
+    met_conditions는 카드에 싣는 충족 집계(`build_member_fulfillment`)의 met 수(`met_condition_count`)다 —
+    같은 점수끼리의 순서에만 쓴다(#1288)."""
 
     place_id: str
     score: int
     region_label: str
     lat: float
     lng: float
+    met_conditions: int = 0
 
 
 def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) -> list[HeartedPlace]:
@@ -790,6 +797,14 @@ def build_member_fulfillment(
     }
 
 
+def met_condition_count(fulfillment: Mapping) -> int:
+    """`build_member_fulfillment` 결과에서 구성원별 conditions[] 중 met인 것의 합 — 화면 「조건 n/m 충족」의 n을 다 더한 값.
+    새로 판정하지 않고 카드에 싣는 결과를 읽기만 한다. 같은 점수끼리의 순서에 쓴다(#1288)."""
+    return sum(
+        1 for member in fulfillment["by_member"] for condition in member["conditions"] if condition["status"] == "met"
+    )
+
+
 def _member_condition_entries(
     member_id: str,
     preferences: Collection[str],
@@ -859,13 +874,12 @@ def select_top_candidates(
     *,
     limit: int = 3,
 ) -> list[str]:
-    """3단계 — 상위 N곳(기본 3곳) 고르기(이슈 #112).
+    """상위 limit곳을 한 곳씩 고른다(docs/constraints.md 「상위 3곳 선택」). 매번 남은 후보 중 이 순서로 가장 앞선 곳이다.
 
-    한 번에 정렬하지 않고 점수 높은 순으로 하나씩 집는다 — 동네 배분 tie-break가 "이미 뽑힌
-    동네"에 따라 달라지기 때문이다. 우선순위: 1) 점수(무조건 우선 — 동네 배분이 점수를 이기지
-    않는다) 2) 점수가 같으면 아직 안 뽑힌 동네(region_label) 우선 3) 그래도 같으면 그 무리의
-    기준 핀들까지 거리 "평균"(합이 아니다 — 무리마다 기준 핀 개수가 달라 합으로 비교하면
-    핀이 적은 동네가 무조건 유리해진다)이 가까운 쪽.
+      점수 내림차순 → 충족 조건 수(`met_conditions`) 내림차순(#1288) → 아직 안 뽑힌 region_label 우선 → 기준 핀 거리 평균
+
+    지역 안배는 점수와 충족 수를 이기지 못한다 — 둘 다 같을 때만 다른 동네를 먼저 고른다(2026-11-04 결정, #1288.
+    #1252의 「6점 하한 안 무리별 라운드로빈」은 낮은 점수의 동네가 높은 점수를 밀어내 걷어냈다).
 
     anchor_points_by_region에 후보의 region_label 키가 없거나 빈 시퀀스면 ValueError —
     "후보가 존재한다는 건 그 후보가 어떤 원 안에 있다는 뜻이고, 그 원의 중심이 기준 핀이다.
@@ -881,17 +895,17 @@ def select_top_candidates(
         ]
         return sum(distances) / len(distances)
 
+    if limit <= 0:
+        return []
+    distances = {candidate.place_id: avg_distance(candidate) for candidate in candidates}
     remaining = list(candidates)
-    chosen_ids: list[str] = []
-    chosen_regions: set[str] = set()
-
-    while remaining and len(chosen_ids) < limit:
-        best = min(
-            remaining,
-            key=lambda c: (-c.score, c.region_label in chosen_regions, avg_distance(c)),
-        )
-        chosen_ids.append(best.place_id)
-        chosen_regions.add(best.region_label)
+    chosen: list[str] = []
+    picked_regions: set[str] = set()
+    while remaining and len(chosen) < limit:
+        best = min(remaining, key=lambda c: (
+            -c.score, -c.met_conditions, c.region_label in picked_regions, distances[c.place_id],
+        ))
         remaining.remove(best)
-
-    return chosen_ids
+        chosen.append(best.place_id)
+        picked_regions.add(best.region_label)
+    return chosen

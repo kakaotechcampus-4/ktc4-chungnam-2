@@ -5,6 +5,7 @@ import { FILTER_CATEGORIES, isPlaced, type Pin, type PinCreateRequest } from '@/
 
 export type PlaceSearchResultDto = components['schemas']['PlaceSearchResult']
 export type LinkParseResultDto = components['schemas']['LinkParseResult']
+export type ExternalSearchDto = components['schemas']['ExternalSearch']
 
 /**
  * 검색창에 붙여넣은 값이 링크인가(#487). 링크면 이름 검색 대신 서버가 링크를 해석한다.

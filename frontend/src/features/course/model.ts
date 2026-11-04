@@ -9,6 +9,16 @@ export type CourseStepDto = components['schemas']['CourseStep']
 export type CourseGoalDto = components['schemas']['CourseGoal']
 export type CourseDayDto = components['schemas']['CourseDay']
 export type CourseViolationDto = components['schemas']['CourseViolation']
+export type CourseFixDto = components['schemas']['CourseFix']
+export type CourseMoveDto = components['schemas']['CourseMove']
+export type CourseCheckedDto = components['schemas']['CourseChecked']
+export type CourseMode = CourseRunDto['mode']
+
+/** 실서버가 아직 mode 를 안 내면 plan 으로 그린다(#1322). */
+export const modeOf = (run: Pick<CourseRunDto, 'mode'>): CourseMode => run.mode ?? 'plan'
+/** fixes·checked 도 없을 수 있다고 보고 그린다. */
+export const fixesOf = (run: Pick<CourseRunDto, 'fixes'>): CourseFixDto[] => run.fixes ?? []
+export const checkedOf = (run: Pick<CourseRunDto, 'checked'>): CourseCheckedDto[] => run.checked ?? []
 
 /** 요청 한 줄의 글자 수 상한(api-spec CourseRequest.request_text). */
 export const REQUEST_MAX = 100
@@ -23,13 +33,6 @@ export const requestBody = (text: string): { request_text?: string } => {
   return trimmed ? { request_text: trimmed } : {}
 }
 
-/** 작업 기록의 「누가」 칩 — 색(tag-*)과 글자를 함께 쓴다. AI 파랑 · 코드 회색 · 사람 회색+사람 아이콘(주의 색은 조건 체크용이라 쓰지 않는다). */
-export const BY: Record<CourseStepDto['by'], { label: string; tag: string }> = {
-  ai: { label: 'AI', tag: 'tag-ai' },
-  code: { label: '코드', tag: 'tag-neutral' },
-  human: { label: '사람', tag: 'tag-neutral' },
-}
-
 /** 첫 줄 「이해」는 카드의 제목이 "이렇게 이해했어요"라서, 문장 앞에 같은 말이 오면 한 번만 보이게 뗀다. */
 export function understandBody(text: string): string {
   return text.replace(/^이렇게 이해했어요\s*[:：]?\s*/, '')
@@ -38,7 +41,7 @@ export function understandBody(text: string): string {
 export const GOAL_STATE = {
   met: { label: '지킴', tag: 'tag-good' },
   missed: { label: '못 지킴', tag: 'tag-bad' },
-  unknown: { label: '확인할 수 없어요', tag: 'tag-neutral' },
+  unknown: { label: '알 수 없음', tag: 'tag-neutral' },
 } as const
 
 export function goalState(goal: CourseGoalDto) {
@@ -59,9 +62,9 @@ export function outcomeText(outcome: NonNullable<CourseRunDto['outcome']>): stri
     case 'solved_with_checks':
       return '코스를 짰어요. 영업 여부는 가게에 직접 확인해 주세요'
     case 'unresolved':
-      return '코스를 짰지만 지키지 못한 조건이 남았어요'
+      return '코스를 짰지만 지키지 못한 조건이 있어요'
     case 'timeout':
-      return '시간이 다 돼서 지금까지 짠 코스예요'
+      return '시간이 부족해서 여기까지 짰어요'
   }
 }
 
@@ -76,7 +79,7 @@ export function createErrorMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
   switch (error.code) {
     case 'COURSE_NOT_ENOUGH_PLACES':
-      return '확정 리스트에 위치를 아는 장소가 2곳 이상 있어야 코스를 짤 수 있어요'
+      return '위치가 확인된 장소가 확정 리스트에 2곳 이상 있어야 해요'
     default:
       return null
   }
@@ -213,3 +216,17 @@ export function courseDrawings(run: Pick<CourseRunDto, 'days'>, points: Map<stri
     return [{ title: dayTitle(day.date, i), stops: placed, legs, ...dayLine(i) }]
   })
 }
+
+/** 고칠 점 카드 순서 — 하드 문제가 먼저, 같은 세기 안에서는 서버가 준 순서 그대로. */
+export const sortFixes = (fixes: CourseFixDto[]): CourseFixDto[] => [...fixes.filter((f) => f.strength === 'hard'), ...fixes.filter((f) => f.strength !== 'hard')]
+
+/** 카드가 일정을 바꾸는 카드인지(고치지 않기로 한 카드는 moves 가 비고 「반영」이 없다). */
+export const hasMoves = (fix: CourseFixDto): boolean => fix.moves.length > 0
+
+/** 미배정 장소를 날짜에 넣는 카드는 「○일째에 넣기」다(from_date 가 null). */
+export const isFill = (fix: CourseFixDto): boolean => fix.kind === 'unassigned' || fix.moves.every((m) => m.from_date === null)
+
+export const stalePrompt = '일정이 바뀌었어요'
+
+/** 카드를 반영했거나 반영 중에 일정이 바뀌어, 남은 카드가 낡았을 때의 안내(#1322). */
+export const staleFixText = `${stalePrompt}. 다시 점검하면 이어서 고칠 수 있어요`

@@ -169,6 +169,18 @@ def course_transit_legs(trip: Trip, course: Course) -> int:
     return sum(day_transit_legs(trip, day) for day in course)
 
 
+def clusters(trip: Trip) -> list[list[Place]]:
+    """같은 동네 묶음(3km 단일 연결). 점검이 부른다(review.py)."""
+    return _clusters(trip)
+
+
+def moved_count(home: Course, course: Course) -> int:
+    """사람이 정한 일정(home)에서 다른 날로 옮겨진 장소 수. home이 비어 있으면(일정을 점검하는 중이 아니면) 0."""
+    if not home:
+        return 0
+    return sum(p not in home[i] for i, day in enumerate(course) for p in day)
+
+
 # ---- 초안 배치 (명세 14.4) ----
 
 def _clusters(trip: Trip) -> list[list[Place]]:
@@ -194,11 +206,15 @@ def _clusters(trip: Trip) -> list[list[Place]]:
     return list(groups.values())   # 첫 등장 순서 그대로
 
 
-def draft_course(trip: Trip) -> Course:
-    """같은 입력이면 항상 같은 코스. 하루 장소 수는 올림(전체 ÷ 날짜 수)을 넘지 않는다.
+def draft_course(trip: Trip, locks: Optional[Mapping[str, str]] = None) -> Course:
+    """locks(장소 → 날짜 별칭)가 있으면 그 장소를 그 날에 두고 나머지만 `_fill_course`로 나눈다. 없으면 아래 그대로다.
+
+    같은 입력이면 항상 같은 코스. 하루 장소 수는 올림(전체 ÷ 날짜 수)을 넘지 않는다.
     큰 묶음부터 넣고, 묶음이 들어갈 날이 있으면 가장 적은 날(동점이면 앞 날짜)에 통째로 넣는다.
     어느 날에도 안 들어가는 묶음만 가까운 순으로(최근접 이웃 순서) 잘라 가장 적은 날부터 채운다.
     하루 안은 최근접 이웃 순서다."""
+    if locks:
+        return _fill_course(trip, locks)
     n_days = len(trip.days)
     cap = -(-len(trip.places) // n_days)
     clusters = sorted(enumerate(_clusters(trip)), key=lambda ic: (-len(ic[1]), ic[0]))
@@ -222,6 +238,33 @@ def draft_course(trip: Trip) -> Course:
     return tuple(
         tuple(nearest_neighbor_order([Point(p.alias, p.lat, p.lng) for p in day])) for day in days
     )
+
+
+def _fill_course(trip: Trip, locks: Mapping[str, str]) -> Course:
+    """고정한 장소는 그 날에 두고, 미배정은 하나씩 이동 합계가 가장 적게 늘어나는 날에 넣는다(#1237 남은 곳 채우기).
+    하루 장소 수가 올림(전체 ÷ 날짜 수)에 이르지 않은 날 중에서 고르고(그런 날이 없으면 모든 날), 장소가 이미 있는 날을
+    빈 날보다 먼저 본다 — 빈 날은 늘어나는 이동이 0이라 항상 이겨서 동선이 짧은 날을 가리지 못한다. 하루 안은 `best_day_order`."""
+    n_days = len(trip.days)
+    cap = -(-len(trip.places) // n_days)
+    days: list[list[str]] = [[] for _ in trip.days]
+    for p in trip.places:
+        if p.alias in locks:
+            days[int(locks[p.alias][1:]) - 1].append(p.alias)
+    days = [list(best_day_order(trip, d)) for d in days]
+    for p in trip.places:
+        if p.alias in locks:
+            continue
+        open_days = [i for i in range(n_days) if len(days[i]) < cap] or list(range(n_days))
+
+        def key(i: int) -> tuple[int, int, int, int]:
+            if not days[i]:
+                return (1, 0, 0, i)
+            grown = best_day_order(trip, [*days[i], p.alias])
+            return (0, day_travel(trip, grown) - day_travel(trip, days[i]), len(days[i]), i)
+
+        best = min(open_days, key=key)
+        days[best] = list(best_day_order(trip, [*days[best], p.alias]))
+    return tuple(tuple(d) for d in days)
 
 
 # ---- 위반 판정 (명세 7.2, 범위 B) ----

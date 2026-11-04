@@ -30,6 +30,7 @@ from authz.core import Principal
 from authz.deps import MembershipGatewayDep
 from authz.guard import require_map_member, require_on_map, require_with_principal
 from authz.ports import MembershipGateway
+from common.errors import AppError
 from pins.schemas import Pin
 from recommend import flows
 from recommend.deps import DbSession, EvidencePlanGatewayDep, PlaceFactsGatewayDep, PlaceSearchGatewayDep
@@ -67,8 +68,13 @@ def _run_response(run) -> RecommendRunResponse:
 def get_readiness(
     mapId: str = Path(...), _principal: Principal = RecommendForMap, db: Session = DbSession,
     place_search: PlaceSearchGateway = PlaceSearchGatewayDep,
+    center_lat: float | None = Query(None, ge=33, le=39), center_lng: float | None = Query(None, ge=124, le=132),
 ):
-    return flows.get_readiness(db, map_id=mapId, place_search=place_search)
+    """center_lat·center_lng는 함께(#1331) — 하나만 보내면 422. 있으면 curated_nearby를 run 생성의 center와 같은 원으로 센다."""
+    if (center_lat is None) != (center_lng is None):
+        raise AppError("VALIDATION_ERROR", "center_lat과 center_lng는 함께 보내야 합니다")
+    center = (center_lat, center_lng) if center_lat is not None else None
+    return flows.get_readiness(db, map_id=mapId, place_search=place_search, center=center)
 
 
 @router.get("/maps/{mapId}/runs", response_model=list[RunSummary])
@@ -88,6 +94,7 @@ def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principa
     run = flows.create_run(
         db, map_id=mapId, category=body.category, requested_by=principal.user_id, evidence_planner=evidence_planner,
         idempotency_key=idempotency_key, execute=body.execute, place_search=place_search, place_facts=place_facts,
+        center=(body.center.lat, body.center.lng) if body.center else None,
     )
     return _run_response(run)
 

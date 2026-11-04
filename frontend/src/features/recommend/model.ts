@@ -6,6 +6,7 @@ import { josa } from '@/ui/josa'
 export type RecommendCategory = components['schemas']['RecommendCategory']
 export type ReadinessDto = components['schemas']['Readiness']
 export type RecommendRunDto = components['schemas']['RecommendRun']
+export type RunSummaryDto = components['schemas']['RunSummary']
 export type EvidenceLineDto = components['schemas']['EvidenceLine']
 export type EvidencePatchRequest = components['schemas']['EvidencePatchRequest']
 export type RegionDto = components['schemas']['Region']
@@ -113,9 +114,9 @@ export function evidenceLimitMessage(err: unknown): string | null {
 /** docs/errors.md — run 시작·실행 실패 문구. */
 export function runErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 ♥나 반대 의견을 남기면 다시 눌러 주세요'
-    if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요'
-    if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 남긴 의견은 그대로 있고 크레딧도 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
+    if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 좋음이나 반대 의견을 남긴 뒤 다시 눌러 주세요'
+    if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
+    if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 크레딧은 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
     if (err.code === 'REQUEST_IN_PROGRESS') return '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
   }
   return '추천을 시작하지 못했어요'
@@ -174,7 +175,7 @@ const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이
  */
 export function sourceLabel(e: AiEvidence): string {
   const p = e.place_source?.provider
-  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
+  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 정보'
 }
 
 export type CheckView = { label: string; tone: 'pass' | 'check' | 'fail' }
@@ -234,3 +235,16 @@ export function fulfillmentLine(e: AiEvidence, members: MemberRef[]): string {
     .filter(Boolean)
     .join(' · ')
 }
+
+/**
+ * 지난 추천 한 줄(#482). 결과는 마지막 시도의 후보만 남아 있다(api-spec GET /maps/{mapId}/runs).
+ * 누르면 이 run 을 다시 연다 — 목록 항목이 run 의 필수 칸을 다 갖고 있어 그대로 run 으로 쓴다.
+ */
+export function runHistoryLine(r: RunSummaryDto): string {
+  if (r.status === 'failed') return '끝내지 못했어요'
+  if (r.status !== 'done') return '찾는 중'
+  if (r.candidate_count === 0) return '찾은 곳 없음'
+  return r.published_count > 0 ? `${r.candidate_count}곳 찾음 · 지도에 올림 ${r.published_count}곳` : `${r.candidate_count}곳 찾음`
+}
+
+export const summaryToRun = (r: RunSummaryDto): RecommendRunDto => ({ id: r.id, map_id: r.map_id, category: r.category, status: r.status, attempt_no: r.attempt_no })
