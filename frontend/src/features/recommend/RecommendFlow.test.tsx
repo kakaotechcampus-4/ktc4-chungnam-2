@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { useState, type ReactNode } from 'react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Outlet, Route, Routes } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+
+import { useSheetStore } from '@/features/shell/sheetStore'
 
 import { useAiStore } from './aiStore'
 import { createRun, fetchResult, retryRun } from './api'
@@ -43,20 +45,55 @@ async function doneRun() {
 }
 
 describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', () => {
-  it('근거 확인 없이 execute 로 시작하고, 시도마다 Idempotency-Key 를 싣는다', async () => {
+  it('근거 확인 없이 execute 로 시작하고, 시도마다 Idempotency-Key 와 보고 있는 지도 가운데를 싣는다(#1331)', async () => {
+    const center = { lat: 37.5665, lng: 126.978 }
     const sent: { body: unknown; key: string | null }[] = []
+    const readinessQuery: string[] = []
     server.events.on('request:start', async ({ request }) => {
-      if (request.method === 'POST' && new URL(request.url).pathname === `/maps/${MAP}/runs`) {
+      const url = new URL(request.url)
+      if (request.method === 'POST' && url.pathname === `/maps/${MAP}/runs`) {
         sent.push({ body: await request.clone().json(), key: request.headers.get('Idempotency-Key') })
       }
+      if (url.pathname === `/maps/${MAP}/recommend/readiness`) readinessQuery.push(url.search)
     })
-    renderWithClient(<ReadinessBody mapId={MAP} />)
+    // 지도 셸(MapLayout)이 Outlet 으로 getCenter 를 내린다.
+    renderWithClient(
+      <Routes>
+        <Route element={<Outlet context={{ getCenter: () => center }} />}>
+          <Route path="*" element={<ReadinessBody mapId={MAP} />} />
+        </Route>
+      </Routes>,
+    )
     await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
 
     await waitFor(() => expect(useAiStore.getState().runs[MAP]?.status).toBe('done'))
+    expect(readinessQuery[0]).toBe(`?center_lat=${center.lat}&center_lng=${center.lng}`)
     expect(sent).toHaveLength(1)
-    expect(sent[0].body).toEqual({ category: '음식점', execute: true })
+    expect(sent[0].body).toEqual({ category: '음식점', execute: true, center })
     expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/)
+    server.events.removeAllListeners()
+  })
+
+  it('지도를 끌어 옮기고 멈추면 「근처 정예 수」를 새 가운데로 다시 센다(#1331)', async () => {
+    let center = { lat: 37.5665, lng: 126.978 }
+    const queries: string[] = []
+    server.events.on('request:start', ({ request }) => {
+      const url = new URL(request.url)
+      if (url.pathname === `/maps/${MAP}/recommend/readiness`) queries.push(url.search)
+    })
+    renderWithClient(
+      <Routes>
+        <Route element={<Outlet context={{ getCenter: () => center }} />}>
+          <Route path="*" element={<ReadinessBody mapId={MAP} />} />
+        </Route>
+      </Routes>,
+    )
+    await screen.findByRole('button', { name: '음식점 추천받기' })
+
+    center = { lat: 35.1, lng: 129.04 }
+    act(() => useSheetStore.getState().setMapMoving(true)) // 끌기 시작과 멈춤은 따로 오는 이벤트다
+    act(() => useSheetStore.getState().setMapMoving(false))
+    await waitFor(() => expect(queries.at(-1)).toBe('?center_lat=35.1&center_lng=129.04'))
     server.events.removeAllListeners()
   })
 
@@ -64,7 +101,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     const { run, result } = await doneRun()
     renderWithClient(<Card run={run} result={result} />)
 
-    const toggle = screen.getByRole('button', { name: /이 조건으로 찾았어요/ })
+    const toggle = screen.getByRole('button', { name: /조건 .*찾았어요/ })
     expect(toggle).toHaveTextContent(/조건 \d+개/)
     await userEvent.click(toggle)
 
@@ -72,8 +109,8 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     await userEvent.click(await screen.findByRole('button', { name: '매운맛 전문 빼기' }))
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '빼기' }))
 
-    expect(await screen.findByText('고친 조건 1개 · 다시 추천 때 반영')).toBeInTheDocument()
-    const removed = screen.getByRole('heading', { name: '뺀 조건 · 다시 추천 때 반영' }).parentElement!
+    expect(await screen.findByText('고친 조건 1개는 다시 추천할 때 반영돼요')).toBeInTheDocument()
+    const removed = screen.getByRole('heading', { name: '뺀 조건' }).parentElement!
     expect(within(removed).getByRole('button', { name: '매운맛 전문 다시 넣기' })).toBeInTheDocument()
   })
 
@@ -116,7 +153,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     for (let n = 0; n < 10; n++) last = await retryRun(run.id)
     renderWithClient(<Card run={last} result={await fetchResult(run.id)} />)
 
-    await userEvent.click(screen.getByRole('button', { name: /이 조건으로 찾았어요/ }))
+    await userEvent.click(screen.getByRole('button', { name: /조건 .*찾았어요/ }))
     expect(await screen.findByRole('button', { name: '매운맛 전문 빼기' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '조건 더하기' })).toBeInTheDocument()
   })

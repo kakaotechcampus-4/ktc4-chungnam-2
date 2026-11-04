@@ -105,6 +105,30 @@ def test_readiness_counts_curated_within_widen_limit_of_default_region(db_sessio
     assert circle.radius_m == core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)   # 기본 반경 × 넓히기 상한 배율
 
 
+def test_readiness_with_center_counts_around_that_point_not_the_pins_1331(db_session):
+    """center가 있으면 그 점 한 곳의 원이다(run 생성과 같은 기준). 핀 위치는 쓰지 않고, ready·answered_count는 그대로다."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category=CATEGORY, lat=37.5, lng=127.0)
+    _react(db_session, pin, user_id="user_1")
+    places = _Places(curated=7)
+
+    readiness = flows.get_readiness(db_session, map_id="map_1", place_search=places, center=(35.1, 129.0))
+
+    assert readiness[CATEGORY] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 7}
+    [[circle]] = places.curated_circles[:1]
+    assert (circle.anchor_lat, circle.anchor_lng) == (pytest.approx(35.1), pytest.approx(129.0))
+    assert circle.radius_m == core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)
+    without = flows.get_readiness(db_session, map_id="map_1", place_search=_Places(curated=7))
+    assert {c: (v["ready"], v["answered_count"]) for c, v in without.items()} ==         {c: (v["ready"], v["answered_count"]) for c, v in readiness.items()}
+
+
+def test_readiness_with_center_counts_even_without_an_opinion_pin_1331(db_session):
+    """중심은 점 하나라 의견 핀이 없어도 센다. ready는 거짓 그대로다."""
+    _make_members(db_session, user_ids=["user_1"])
+    readiness = flows.get_readiness(db_session, map_id="map_1", place_search=_Places(curated=3), center=(35.1, 129.0))
+    assert readiness[CATEGORY]["ready"] is False and readiness[CATEGORY]["curated_nearby"] == 3
+
+
 def test_readiness_without_curated_gives_search_link_with_pin_area(db_session):
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category=CATEGORY)

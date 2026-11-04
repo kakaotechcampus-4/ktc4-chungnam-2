@@ -175,7 +175,7 @@ def reason_text_inputs(reactions: Sequence[Mapping[str, Any]]) -> list[dict]:
 def preview_filter(
     db: Session, *, map_id: str, category: str, text_lines: Mapping[str, Sequence[Mapping[str, Any]]],
     with_keys: Sequence[str] = (), place_search: PlaceSearchGateway | None = None,
-    place_facts: PlaceFactsGateway | None = None,
+    place_facts: PlaceFactsGateway | None = None, center: tuple[float, float] | None = None,
 ) -> dict:
     """agent의 미리 돌려 보기(docs/agent-v2.md 6.7, #1180)가 진단 전에 부른다 — 지금 「추천 받기」를 누르면 실격 조건까지 남는
     곳이 몇 곳인가. **run이 없어도 된다.** 줄 조립과 거르기는 run을 만들고 실행할 때와 같은 함수다(flows.preview_filter — 다시
@@ -188,9 +188,11 @@ def preview_filter(
     따로라(비공개) 실제 추천은 이 수보다 적을 수 있다. 추천 대상이 아닌 카테고리나 ② 결과가 빠진 글 반응은 ValueError, 추천 준비가
     안 됐으면 AppError NOT_READY. Gateway를 생략하면 실행(라우터)과 같은 것을 고른다. 권한 판정 없음. 읽기 전용, 커밋하지 않는다.
 
+    `center`(lat, lng)를 주면 run 생성의 center와 같은 원 한 개로 센다(#1331). 생략하면 그 카테고리 핀들이 앵커다(지금 동작).
+
     `simulate_filter`(run이 있어야 하는 추천 막힘 조언 전용)와 다르다 — 그쪽은 그 run의 저장된 줄과 제외 목록을 쓴다."""
     return flows.preview_filter(
-        db, map_id=map_id, category=category, text_lines=text_lines, with_keys=with_keys,
+        db, map_id=map_id, category=category, text_lines=text_lines, with_keys=with_keys, center=center,
         place_search=place_search or deps.get_place_search_gateway(),
         place_facts=place_facts or deps.get_place_facts_gateway(),
     )

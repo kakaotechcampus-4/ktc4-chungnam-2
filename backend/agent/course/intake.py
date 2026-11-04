@@ -12,7 +12,7 @@ from datetime import date
 from typing import Mapping, Optional, Sequence
 
 from agent.course.constants import MIN_PLACES
-from agent.course.core import MemberConstraint, Place, Trip, day_alias
+from agent.course.core import Course, MemberConstraint, Place, Trip, day_alias
 
 EXCLUDED_NO_COORDINATES = "NO_COORDINATES"
 EXCLUDED_MESSAGE = "좌표를 알 수 없어 동선에서 빠졌어요"
@@ -29,6 +29,7 @@ class PinInput:
     lng: Optional[float] = None
     labels: frozenset[str] = frozenset()
     scheduled_date: Optional[date] = None     # 사람이 확정 탭 일정에서 이 장소를 넣은 날(#1237). 없으면 미배정
+    visit_order: Optional[int] = None         # 그날 안의 순서(일정의 visit_order). 점검이 사람이 정한 순서를 그대로 읽는다
 
     @property
     def routable(self) -> bool:
@@ -53,6 +54,7 @@ class TripBuild:
     trip: Optional[Trip]               # 코스를 짤 장소가 MIN_PLACES보다 적으면 None
     excluded: tuple[Excluded, ...]
     locks: Mapping[str, str] = field(default_factory=dict)    # 사람이 날짜에 넣은 장소 별칭 → 날짜 별칭. AI는 옮기지 못한다
+    schedule: Optional[Course] = None      # mode가 review일 때만: 사람이 정한 일정 그대로(날짜 위치별 장소 별칭, 그날 순서는 visit_order)
 
     @property
     def mode(self) -> Optional[str]:
@@ -88,4 +90,10 @@ def build_trip(
         f"p{i + 1}": day_alias(day_index[p.scheduled_date])
         for i, p in enumerate(routable) if p.scheduled_date in day_index
     }
-    return TripBuild(Trip(places, tuple(days), tuple(member_constraints), unknown_hours), excluded, locks)  # type: ignore[arg-type]
+    schedule = None
+    if locks and len(locks) == len(routable):               # 모두 넣은 일정(review) — 점검이 그대로 읽는다. 순서 없는 장소는 확정 순서대로 뒤에
+        order = {f"p{i + 1}": (p.visit_order is None, p.visit_order or 0, i) for i, p in enumerate(routable)}
+        schedule = tuple(
+            tuple(sorted((a for a, d in locks.items() if d == day_alias(k)), key=order.__getitem__)) for k in range(len(days))
+        )
+    return TripBuild(Trip(places, tuple(days), tuple(member_constraints), unknown_hours), excluded, locks, schedule)  # type: ignore[arg-type]

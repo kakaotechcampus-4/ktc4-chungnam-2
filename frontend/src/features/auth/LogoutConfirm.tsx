@@ -10,7 +10,7 @@ export default function LogoutConfirm({ onCancel }: { onCancel: () => void }) {
   return (
     <ConfirmDialog
       title="로그아웃할까요?"
-      body="지도와 핀은 그대로 남아요. 다시 들어오려면 카카오로 로그인하면 돼요."
+      body="지도와 핀은 그대로 남아요."
       ok="로그아웃"
       pending={logout.isPending}
       onCancel={onCancel}

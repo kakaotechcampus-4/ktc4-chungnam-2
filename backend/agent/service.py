@@ -15,6 +15,8 @@
   해시는 `load_history`가 함께 읽는다
 - 작업 기록과 살펴본 상태(#1297, 명세 11.3, 21.3): 제안의 관찰 행(`get_run`), 마지막 관찰 시각(`last_observed_at`),
   가장 최근 지도 관찰 행(`latest_observation`)
+- 후속 관찰(#1346, 명세 6.9): 이력 한 건(`past_suggestion`, `list_past`), followup 쓰기(`set_followup`, `stop_watching`).
+  수락 때 지켜보기 시작은 `resolve_suggestion(followup=...)`, 후속 제안의 사슬은 `insert_suggestion`이 신호에서 읽는다
 
 제안 상태를 바꾸는 함수는 (id, shadow) 목록을 돌려준다. agent.resolved는 shadow가 아닌 것만 낸다(호출부).
 
@@ -237,13 +239,32 @@ def advance_cursor(
 
 # ---------------------------------------------------------------- 이력 (12.3)
 
-def load_history(db: Session, map_id: str, now: datetime) -> core.History:
-    """정책이 보는 이 지도의 제안 이력(최신순)과 오늘(KST 자정 이후) 모델을 쓴 관찰 수, 요약 갱신 판단이 보는 카테고리
-    요약 메타(8절, #586), 현황 문단을 마지막으로 만들려 한 칸의 해시(8.2, #1168)."""
+def past_suggestion(r: AgentSuggestion) -> core.PastSuggestion:
+    """agent_suggestions 한 행 → 정책과 후속 관찰(6.9)이 보는 칸. 수락한 버튼의 라벨은 그 행의 actions에서 읽는다(그때 문구)."""
+    action = r.resolved_action or {}
+    label = next((a.get("label") for a in r.actions or () if a.get("index") == action.get("index")), None)
+    return core.PastSuggestion(
+        id=str(r.id), diagnosis=r.diagnosis, category=r.category, fingerprint=r.fingerprint,
+        status=r.status, created_at=r.created_at, resolved_at=r.resolved_at, expires_at=r.expires_at,
+        evidence_hash=r.evidence_hash, pin_id=str(r.pin_id) if r.pin_id else None,
+        resolved_action_type=action.get("type"), resolved_action_label=label, attempt=r.attempt or 0,
+        followup_of=str(r.followup_of) if r.followup_of else None, followup=r.followup,
+    )
+
+
+def list_past(db: Session, map_id: str) -> tuple[core.PastSuggestion, ...]:
+    """이 지도의 제안 이력, 최신순(created_at 내림차순)."""
     rows = db.execute(
         select(AgentSuggestion).where(AgentSuggestion.map_id == map_id)
         .order_by(AgentSuggestion.created_at.desc(), AgentSuggestion.id)
     ).scalars().all()
+    return tuple(past_suggestion(r) for r in rows)
+
+
+def load_history(db: Session, map_id: str, now: datetime) -> core.History:
+    """정책이 보는 이 지도의 제안 이력(최신순)과 오늘(KST 자정 이후) 모델을 쓴 관찰 수, 요약 갱신 판단이 보는 카테고리
+    요약 메타(8절, #586), 현황 문단을 마지막으로 만들려 한 칸의 해시(8.2, #1168). 이력 한 건에는 후속 관찰(6.9)이 보는 칸
+    (pin_id, 수락한 버튼, attempt, followup_of, followup)도 있다."""
     model_runs_today = db.execute(
         select(func.count()).select_from(AgentRun).where(
             AgentRun.map_id == map_id,
@@ -254,14 +275,7 @@ def load_history(db: Session, map_id: str, now: datetime) -> core.History:
     ).scalar_one()
     return core.History(
         status_hash=_last_status_hash(db, map_id),
-        suggestions=tuple(
-            core.PastSuggestion(
-                id=str(r.id), diagnosis=r.diagnosis, category=r.category, fingerprint=r.fingerprint,
-                status=r.status, created_at=r.created_at, resolved_at=r.resolved_at, expires_at=r.expires_at,
-                evidence_hash=r.evidence_hash,
-            )
-            for r in rows
-        ),
+        suggestions=list_past(db, map_id),
         model_runs_today=model_runs_today,
         summaries=tuple(core.summary_meta(r.category, r.summary, r.updated_at) for r in list_summaries(db, map_id)),
         summary_failed=_recent_summary_failures(db, map_id, now),
@@ -343,7 +357,10 @@ def insert_suggestion(
     status='active' DO NOTHING — 부분 유니크 인덱스가 지도당 하나를 지킨다, 17절 8번).
 
     제목, 문장, 버튼은 초안(core.Draft)의 슬롯 문장과 claim 그대로 넣는다. 우리 데이터 확인(6.6)은 (pin_id, fact_key)만 넣는다.
-    핀 이름, 사유 글, 라벨 값은 어디에도 넣지 않는다(명세 2절 13번) — 렌더는 응답과 이벤트를 만들 때 한다."""
+    핀 이름, 사유 글, 라벨 값은 어디에도 넣지 않는다(명세 2절 13번) — 렌더는 응답과 이벤트를 만들 때 한다.
+    후속 신호(6.9)면 attempt와 followup_of(앞 제안)를 넣고, 충돌 선언은 followup을 처음부터 {declared}로 둔다(버튼이 없다)."""
+    attempt = int(signal.features.get("attempt") or 0)
+    followup_of = signal.features.get("followup_of") if attempt else None
     return db.execute(
         pg_insert(AgentSuggestion)
         .values(
@@ -352,10 +369,33 @@ def insert_suggestion(
             evidence_hash=signal.evidence_hash, title=draft.title, claims=draft.claims, analysis=draft.analysis,
             advice=draft.advice, actions=draft.actions, facts=draft.facts,
             status="active", shadow=shadow, created_at=now, expires_at=now + SUGGESTION_TTL,
+            attempt=attempt, followup_of=uuid.UUID(followup_of) if followup_of else None,
+            followup=core.followup_record("declared", now) if core.is_declaration(signal) else None,
         )
         .on_conflict_do_nothing(index_elements=[AgentSuggestion.map_id], index_where=text("status = 'active'"))
         .returning(AgentSuggestion.id)
     ).scalar_one_or_none()
+
+
+def set_followup(db: Session, records: dict[str, dict], *, only_status: tuple[str, ...] | None = None) -> int:
+    """제안들의 followup을 쓴다(6.9) — 풀림(resolved), 이어짐(followed_up). only_status를 주면 지금 followup.status가 그중
+    하나일 때만 바꾼다(그새 다른 관찰이 먼저 썼으면 두고). 바꾼 행 수."""
+    changed = 0
+    for suggestion_id, record in records.items():
+        where = [AgentSuggestion.id == uuid.UUID(suggestion_id)]
+        if only_status is not None:
+            where.append(AgentSuggestion.followup["status"].astext.in_(only_status))
+        changed += db.execute(update(AgentSuggestion).where(*where).values(followup=record)).rowcount
+    return changed
+
+
+def stop_watching(db: Session, map_id: str) -> int:
+    """모드를 끄면 지켜보던 막힌 곳을 끝낸다(6.9 끝나는 경우) — followup을 비운다. 바꾼 행 수."""
+    return db.execute(
+        update(AgentSuggestion)
+        .where(AgentSuggestion.map_id == map_id, AgentSuggestion.followup["status"].astext == "watching")
+        .values(followup=null())
+    ).rowcount
 
 
 def recent_suggestion_facts(db: Session, map_id: str, since: datetime) -> list[list[dict]]:
@@ -505,14 +545,19 @@ def record_view(db: Session, suggestion_id: uuid.UUID, user_id: str, now: dateti
 
 def resolve_suggestion(
     db: Session, suggestion_id: uuid.UUID, *, status: str, user_id: str, now: datetime, action: dict | None = None,
+    followup: dict | None = None,
 ) -> bool:
     """수락(accepted)과 닫기(dismissed). status='active'이고 만료 전일 때만 바꾸는 가드 UPDATE — 두 사람이 동시에
-    누르면 늦은 쪽은 앞 트랜잭션을 기다린 뒤 조건을 다시 보고 0행이 된다. 바꿨으면 True."""
+    누르면 늦은 쪽은 앞 트랜잭션을 기다린 뒤 조건을 다시 보고 0행이 된다. 바꿨으면 True. followup을 주면(수락, 6.9) 그
+    값으로 지켜보기 시작한다."""
+    values = {"status": status, "resolved_by": user_id, "resolved_at": now, "resolved_action": action}
+    if followup is not None:
+        values["followup"] = followup
     return db.execute(
         update(AgentSuggestion)
         .where(AgentSuggestion.id == suggestion_id, AgentSuggestion.status == "active",
                AgentSuggestion.expires_at > now)
-        .values(status=status, resolved_by=user_id, resolved_at=now, resolved_action=action)
+        .values(**values)
         .returning(AgentSuggestion.id)
     ).first() is not None
 

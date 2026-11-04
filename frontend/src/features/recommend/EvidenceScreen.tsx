@@ -71,7 +71,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               <span className="tag tag-ai">AI</span> AI가 정리한 조건
             </p>
             <p className="mt-1 font-bold text-ink-900">이 조건으로 추천해도 될까요?</p>
-            <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요.</p>
+            <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요</p>
           </div>
         </div>
 
@@ -92,14 +92,14 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
           취소
         </button>
         <button type="button" disabled={busy || evidence.isPending} onClick={() => start(false)} className="btn-primary btn-lg">
-          {busy ? '찾기 시작하는 중…' : '네, 추천해주세요'}
+          {busy ? '찾기 시작하는 중…' : '추천받기'}
         </button>
       </div>
 
       {conflict && (
         <ConfirmDialog
           title="두 조건을 동시에 만족하는 곳이 없어요"
-          body="두 곳이 멀어서 한 번에 찾을 수 없어요. 각 지역에서 따로 찾아 결과를 나눠 보여 드릴 수 있어요."
+          body="두 지역이 멀어서 한 번에 찾을 수 없어요. 지역별로 따로 찾아 드릴까요?"
           detail={
             conflict.length > 0 && (
               <ul className="space-y-1 font-semibold text-ink-900">
@@ -110,8 +110,8 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
             )
           }
           note="같은 사유가 남아 있는 동안에는 다시 묻지 않아요."
-          cancel="근거를 다시 볼게요"
-          ok="두 지역 각각 찾기"
+          cancel="조건 다시 보기"
+          ok="지역별로 찾기"
           onCancel={() => setConflict(null)}
           onOk={() => start(true)}
         />

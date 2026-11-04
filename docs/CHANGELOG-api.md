@@ -2,6 +2,58 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-04, `GET /maps/{mapId}/recommend/readiness` — 선택 쿼리 `center_lat`·`center_lng` 추가 (#1331)
+
+- 지도 중심 앵커 추천이 기존 핀 기반 위치 기준을 **run 생성에서 대체**한다(#1331, 사용자 결정 2026-11-04). 이 요청에는 상위 호환 선택 쿼리를 더했다: `center_lat`·`center_lng`(함께, 위도 33~39·경도 124~132). 있으면 `curated_nearby`를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다.
+- 하나만 보내거나 범위 밖이면 422 `VALIDATION_ERROR`. 응답 모양은 그대로다. `ready`·`answered_count`(의견 핀 수)는 위치와 무관하다.
+- FE: 추천 시작 화면이 readiness를 부를 때 run 생성에 보낼 중심과 같은 값을 보내면 「근처 정예 수」가 실제 추천 범위와 일치한다. 안 보내도 동작한다.
+- 정책: `POST /maps/{mapId}/runs`의 `center`는 **필수가 된다** — 계약 필수화는 FE가 `center`를 보내기 시작한 뒤에 별도 PR로 한다(그때까지 선택). 중심이 없는 호출(readiness·미리 돌려 보기·AI 조언)에서만 기존 핀 기반 로직이 남는다. 교체 전 로직 보존: 태그 `legacy/recommend-pin-anchor`.
+
+## 2026-11-04, 「핑고 AI 조언」이 AI 추천·AI 코스를 엮는다 — `AgentAction.type`에 `open_pin`·`open_course`, `AgentDiagnosis`에 `schedule` (#1356)
+
+- 결정 #1356 「엔진은 도구로, 실행은 버튼으로」(`docs/agent-v2.md` 6.10)
+  - 조언이 AI 코스 엔진으로 미확정 핀을 확정 일정에 끼워 보고(모델 도구 `try_in_schedule`), 사람이 넣은 일정을 코스 점검과 같은 판정으로 본다.
+  - 실제 AI 추천과 AI 코스는 사람이 누르는 버튼으로 넘긴다.
+- `AgentAction.type`(그리고 `AgentTried.action_type`)에 두 값을 더했다. **enum 값 추가 — FE는 모르는 type을 지금처럼 「바뀌었어요」로 처리하고 있어 깨지지 않는다.**
+  - `open_pin`: 지도 탭에서 `params.pin_ids[0]` 핀 카드를 연다. 확정은 사람이 한다. 카테고리 공백 제안에 나온다.
+  - `open_course`: AI 코스 짜기를 시작한다 — 확정 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/courses`(크레딧 1, 게스트·잔액 부족은 그 API의 오류 그대로). 일정 점검 제안에만 나온다.
+- `AgentDiagnosis`에 `schedule`(일정 점검): 확정 일정에 쉬는 날 방문이나 이동 과다가 있을 때. 코드 유형이고 `category`는 null이다. 버튼은 `open_course` 하나다.
+- 카테고리 공백은 지도에 그 카테고리 핀이 있으면 모델 진단이 된다. 응답 모양은 같고, 작업 기록에 조사 줄(「AI 코스 엔진으로 핀 2개를 일정에 끼워 봤어요」)이 붙는다.
+- data-model: `agent_suggestions.diagnosis`에 `'schedule'`
+- 목 서버: 시나리오 `agent-linked`(카테고리 공백 + `open_pin`), `agent-schedule`(일정 점검 + `open_course`)
+- FE 구현 이슈 #1359, 서버 #1357, 지시문 #1358
+
+## 2026-11-04, 「핑고 AI 조언」 막힌 곳 후속 관찰과 충돌 선언 — `AgentSuggestion.attempt`·`tried`, `AgentState.tracking` (#1345)
+
+- 결정 #1345: 수락한 제안을 막힌 곳 하나로 보고 풀렸는지 서버가 매 관찰마다 본다. 그대로면 이미 해 본 것과 다른 방법(다음 방법), 그래도 그대로면 해 본 것을 남기는 충돌 선언이다(`docs/agent-v2.md` 6.9).
+- 모두 **선택 필드, 상위 호환**이다. 서버 구현(#1346) 전에는 없다.
+- `AgentSuggestion.attempt`(0·1·2): 0 첫 제안, 1 다음 방법, 2 충돌 선언. 충돌 선언은 `actions`가 빈 목록이다(버튼 없음). 없으면 0으로 본다.
+- `AgentSuggestion.tried[]`(`AgentTried` {`action_type`, `label`, `accepted_at`}): 이 막힌 곳에서 이미 해 본 것(수락한 앞 제안의 버튼), 오래된 것부터. 누가 눌렀는지와 추천 결과는 싣지 않는다.
+- `AgentState.tracking[]`(`AgentTracking` {`suggestion_id`, `diagnosis`, `category`, `status`, `text`, `since`, `tried`}): 핑고가 지켜보는 막힌 곳, 최근 48시간.
+  - `status`: watching(수락 뒤 지켜보는 중), resolved(풀림), declared(충돌 선언을 냄)
+  - `text`는 서버 고정 문구다. 경과 시간은 FE가 `since`로 그린다.
+  - 지금 활성 제안인 막힌 곳과 닫기·만료로 끝난 것은 들어가지 않는다.
+- `WorkStep.stage`에 「후속 확인」(감지 다음, attempt ≥ 1)을 더했다. 이벤트 타입은 그대로다. 풀림은 GET 상태로만 보이고, 후속 제안과 충돌 선언은 지금처럼 `agent.suggested`다.
+- data-model: `agent_suggestions`에 `attempt`, `followup_of`, `followup` 세 칸(사용자 id 열 아님).
+- 목 서버: 지도 `map_1`의 tracking에 지켜보는 중 하나와 풀림 하나, 지도 `map_2`의 활성 제안이 충돌 선언(attempt 2)이다.
+- FE 구현 이슈 #1348: 「지켜보는 중」 줄, 후속 제안 카드(「두 번째 방법」, 해 본 것), 충돌 선언 카드.
+
+## 2026-11-04, 「핑고 AI 조언」 버튼에서 「핀 보기」 빼기, 웹 확인은 「모름」 줄마다 (#1317)
+
+- 스키마는 그대로다(`AgentAction.type` enum도 그대로). 서버가 내리는 값만 바뀐다.
+- 정체·갈림 제안의 버튼은 「{카테고리} 추천 받기」(`open_recommend`) 또는 「{카테고리} 검색」(`search_place`) 하나다. 카테고리 공백도 버튼 하나다. 이 셋에서 `show_pins`는 더 오지 않는다. 반응 공백의 「미확인 핀 보기」(`show_pins`)는 그대로다.
+- `AgentFactLine.web`: 전에는 제안마다 첫 「모름」 줄 하나에만 왔다. 이제 value가 unknown인 줄마다 올 수 있다(줄이 많아야 2개라 많아야 두 줄). 모양은 그대로다.
+- `AgentSuggestion.steps`: 웹 확인 줄이 줄마다 하나씩, 많아야 두 줄이다.
+- FE: 바꿀 것 없음. `show_pins` 처리는 반응 공백 때문에 남겨 둔다. 서버 구현은 #1318(PR #1320), 지시문은 #1319(PR #1338).
+
+## 2026-11-04, `POST /maps/{mapId}/runs` — 선택 필드 `center`(지도 중심에서 추천) 추가 (#1331)
+
+- 요청 본문에 선택 필드 `center: {lat, lng} | null`을 더했다. **상위 호환** — 없으면 지금 동작(그 카테고리 핀들이 앵커)이다.
+- 있으면 그 run의 앵커는 이 점 하나다: 후보를 찾는 원의 중심(카테고리 기본 반경, 넓히기도 같은 점에서), 동점 거리 비교, 지도 여행 지역이 없을 때의 시·도 판정. 시작 조건(그 카테고리 의견 핀 1곳 이상, 미충족 409 `NOT_READY`)·크레딧·멱등·결과 가시성은 그대로다. 서버가 중심을 run에 저장해 `retry`·`widen`이 같은 점을 쓰고, 응답에 좌표는 없다.
+- 새 에러: **422 `VALIDATION_ERROR`** — `center`가 위도 33~39·경도 124~132 밖이거나 시·도를 정할 수 없는 곳. 멱등키의 요청 동일성에 `center`가 들어간다(같은 키로 다른 중심은 409 `IDEMPOTENCY_CONFLICT`).
+- FE 사용: 카테고리 버튼(「여기서 음식점」 등)을 누른 순간 보이는 영역의 중심(모바일은 하단 시트에 가린 부분을 뺀 중심)을 `center`로 보낸다. 시작 조건 미충족 안내 문구는 FE가 만든다: 「장소 핀을 찍고 최소 1개의 의사 표시(♥ 또는 🚫)를 해야 추천 기능이 시작돼요」. 정본 이슈 #1331.
+- 목 서버는 범위 밖 `center`에 422를 내고 키의 동일성에 `center`를 포함한다. 서버 구현은 backend/recommend 후속이다.
+
 ## 2026-11-04, `CourseRun`에 일정 기준 모드와 고칠 점 카드 추가, stale는 일정 version 기준으로 (#1237)
 
 - 결정(#1237, 2026-11-04): AI 코스 버튼은 하나이고 확정 리스트의 일정 상태에 따라 하는 일이 다르다. 서버가 요청 때 정하고 응답의 `mode`로 알려 준다 — `plan`(날짜에 넣은 장소 없음, 짜기) · `fill`(일부만 넣음, 남은 곳 채우기) · `review`(다 넣음, 점검과 최소 수정). 사람이 날짜에 넣은 장소는 AI가 바꾸지 않고, 일정은 사람이 카드마다 「반영」을 누를 때만 바뀐다.

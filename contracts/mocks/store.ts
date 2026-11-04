@@ -29,6 +29,7 @@ export type AgentSummary = Schemas["AgentSummary"];
 export type AgentMapStatus = Schemas["AgentMapStatus"];
 /** 살펴본 상태(#1297). notice는 제안이 없고 모드가 켜져 있을 때만 응답에 실린다(handlers/agent.ts). */
 export type AgentObservation = Schemas["AgentObservation"];
+export type AgentTracking = Schemas["AgentTracking"];
 export type RunAdvice = Schemas["RunAdvice"];
 /** 추천 탭 광고(docs/ads.md, #642). on_map은 응답 때 계산한다. */
 export type Ad = Schemas["Ad"];
@@ -125,7 +126,7 @@ export interface StoreState {
   runs: Record<string, RecommendRun>; // runId -> run
   runRequestedBy: Record<string, string>; // runId -> user_id (run 요청자 기록)
   appliedEvidence: Record<string, unknown[]>; // runId -> 마지막 실행이 실제로 쓴 근거 줄(#845 스냅샷)
-  idempotencyKeys: Record<string, { runId: string; mapId: string; category: string; execute: boolean }>; // 요청자:키 -> 첫 요청(#811 Idempotency-Key)
+  idempotencyKeys: Record<string, { runId: string; mapId: string; category: string; execute: boolean; center?: string }>; // 요청자:키 -> 첫 요청(#811 Idempotency-Key)
   pendingLogin: { display_name: string; withdrawn_at: string } | null; // #855 선택 대기 중인 탈퇴 계정(카카오 콜백이 ?login_pending=withdrawn_account로 돌려보낸 상태)
   forceNoResults: boolean; // #1015 시나리오 no-results: 새 run의 첫 실행이 후보 0곳이다(그러면 크레딧을 돌려준다)
   trashedMaps: Record<string, { map: StoreState["maps"][string]; members: StoreState["members"][string]; deleted_at: string }>; // #464 삭제한 지도(30일 안 복구)
@@ -141,6 +142,7 @@ export interface StoreState {
   agentSummaries: Record<string, AgentSummary[]>; // mapId -> 카테고리별 우리 조건 요약
   agentStatus: Record<string, AgentMapStatus>; // mapId -> 지도 현황 문단(#1152). 없으면 null
   agentObservation: Record<string, AgentObservation>; // mapId -> 마지막 관찰 시각과 최근 관찰의 안내 문구(#1297). 없으면 관찰 전
+  agentTracking: Record<string, AgentTracking[]>; // mapId -> 지켜보는 막힌 곳(#1345). 없으면 빈 목록
   runAdvice: Record<string, RunAdvice | null>; // runId -> 추천 막힘 조언. null이면 204
   courseRuns: Record<string, CourseRunEntity>; // runId -> AI 코스 run(#334)
   ads: Ad[]; // 진행 중인 광고(#642, 목 서버는 기간과 active를 따지지 않는다)
@@ -186,6 +188,7 @@ function emptyState(): StoreState {
     agentSummaries: {},
     agentStatus: {},
     agentObservation: {},
+    agentTracking: {},
     runAdvice: {},
     courseRuns: {},
     ads: [],

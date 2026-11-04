@@ -138,8 +138,8 @@ function GuestJoin({ token, onBroken }: { token: string; onBroken: (problem: Inv
         구성원에게 보일 이름
       </label>
       <TextField id="guest-name" value={name} onChange={setName} maxLength={DISPLAY_NAME_MAX} placeholder="예: 지우" clearLabel="이름 지우기" autoFocus />
-      <p className="break-keep text-xs text-ink-500">아무렇게나 지은 이름이에요. 그대로 들어가도 되고, 지우고 내 이름을 적어도 돼요</p>
-      <p className="break-keep text-xs text-ink-500">게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 계정을 만들면 기록이 이어져요</p>
+      <p className="break-keep text-xs text-ink-500">자동으로 지은 이름이에요. 원하면 바꿔도 돼요</p>
+      <p className="break-keep text-xs text-ink-500">게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 가입하면 기록이 그대로 이어져요</p>
       {join.error && <ErrorText message={inviteErrorMessage(join.error)} error={join.error} />}
       <button type="submit" disabled={!trimmed || join.isPending} className="btn-primary btn-md w-full">
         {join.isPending ? '들어가는 중…' : '게스트로 참여하기'}
@@ -169,7 +169,7 @@ function InviteCard({ invite }: { invite: InviteView }) {
 const BROKEN_TITLE: Record<InviteProblem, string> = {
   expired: '초대 링크가 만료됐어요',
   revoked: '방장이 이 초대 링크를 껐어요',
-  invalid: '유효하지 않은 초대 링크예요',
+  invalid: '잘못된 초대 링크예요',
 }
 
 /** 더 쓸 수 없는 초대 링크(#719). 참여 버튼과 에러 코드를 보이지 않는다 — 다음 행동은 새 링크 받기와 내 지도로. */

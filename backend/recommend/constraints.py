@@ -166,7 +166,7 @@ PASSED_LABELS: dict[str, str] = {
     "cuisine_raw_fish": "횟집",
     "cuisine_buffet": "뷔페",
     "spacious": "단체가 앉기 넓음",
-    "long_established": "30년 넘은 노포",
+    "long_established": "20년 넘은 노포",
     "parking_available": "주차할 수 있음",
     "vegetarian_friendly": "채식 메뉴가 있음",
     "franchise": "체인점",

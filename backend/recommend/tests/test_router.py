@@ -74,6 +74,18 @@ def test_readiness_endpoint_returns_all_categories(app_client, db_session):
     assert body["음식점"]["ready"] is True
 
 
+def test_readiness_with_center_is_200_and_half_or_out_of_range_center_is_422_1331(app_client, db_session):
+    """#1331 — center_lat·center_lng는 함께, 위도 33~39·경도 124~132. 하나만이거나 범위 밖이면 422 VALIDATION_ERROR."""
+    _seed_ready_map(db_session)
+    url = "/maps/map_1/recommend/readiness"
+    ok = app_client.get(url, params={"center_lat": 37.5, "center_lng": 127.0}, cookies=_auth())
+    assert ok.status_code == 200 and ok.json()["음식점"]["ready"] is True
+    for params in ({"center_lat": 37.5}, {"center_lng": 127.0}, {"center_lat": 40, "center_lng": 127.0},
+                   {"center_lat": 37.5, "center_lng": 133}, {"center_lat": 32.9, "center_lng": 127.0}):
+        response = app_client.get(url, params=params, cookies=_auth())
+        assert response.status_code == 422 and response.json()["code"] == "VALIDATION_ERROR", params
+
+
 def test_create_run_for_accommodation_is_422(app_client, db_session):
     """#146 — 숙소는 추천 대상이 아니다(RecommendCategory)."""
     _seed_ready_map(db_session)
@@ -424,3 +436,36 @@ def test_run_not_found_is_404(app_client, db_session):
     _seed_ready_map(db_session)
     resp = app_client.get(f"/runs/{'0' * 8}-0000-0000-0000-{'0' * 12}/evidence", cookies=_auth())
     assert resp.status_code == 404
+
+
+@pytest.mark.parametrize("center", [{"lat": 32.9, "lng": 129}, {"lat": 39.1, "lng": 129}, {"lat": 35, "lng": 123.9}, {"lat": 35, "lng": 132.1}])
+def test_center_outside_contract_is_422(app_client, db_session, center):
+    _seed_ready_map(db_session)
+    response = app_client.post("/maps/map_1/runs", json={"category": "\uc74c\uc2dd\uc810", "center": center}, cookies=_auth())
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_center_run_readiness_and_private_result(app_client, db_session, monkeypatch):
+    from recommend import flows
+    _seed_ready_map(db_session)
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    center = {"lat": 35.1, "lng": 129.0}
+    not_ready = app_client.post("/maps/map_1/runs", json={"category": "\uce74\ud398", "center": center}, cookies=_auth())
+    assert not_ready.status_code == 409
+    assert not_ready.json()["code"] == "NOT_READY"
+    assert not_ready.json()["detail"]["ready"] is False
+    created = app_client.post("/maps/map_1/runs", json={"category": "\uc74c\uc2dd\uc810", "center": center}, cookies=_auth("user_1"))
+    assert created.status_code == 202
+    assert "origin_lat" not in created.json() and "origin_lng" not in created.json()
+    result = app_client.get(f"/runs/{created.json()['id']}/result", cookies=_auth("user_2"))
+    assert result.status_code == 403
+
+
+def test_center_with_unknown_sido_returns_422(app_client, db_session, monkeypatch):
+    from recommend import flows
+    _seed_ready_map(db_session)
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: None)
+    response = app_client.post("/maps/map_1/runs", json={"category": "\uc74c\uc2dd\uc810", "center": {"lat": 35.1, "lng": 129.0}}, cookies=_auth())
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"

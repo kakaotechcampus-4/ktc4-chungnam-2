@@ -138,7 +138,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     return (
       <EmptyState
         mood="sorry"
-        title="우리 장소 데이터에서 찾지 못했어요"
+        title="링크의 장소를 찾지 못했어요"
         action={
           hint ? (
             <button type="button" onClick={() => submit(hint, near)} className="btn-outline btn-md">
@@ -175,7 +175,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
-          {selected.far && <p className="text-body font-semibold text-warn-text">지금 보는 곳에서 멀어요 — 같은 이름의 다른 지역 가게일 수 있어요</p>}
+          {selected.far && <p className="text-body font-semibold text-warn-text">지금 보는 곳에서 멀어요. 다른 지역의 같은 이름 가게일 수 있어요</p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
@@ -242,7 +242,7 @@ function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; f
         <div className="flex flex-col items-center gap-2">
           {fixed ? (
             <button type="button" onClick={onRetry} className="btn-primary btn-md">
-              「{fixed}」 찾아보기
+              ‘{fixed}’ 찾아보기
             </button>
           ) : (
             <SearchAgainButton onClose={onClose} label="검색어 지우고 다시 찾기" />
@@ -251,7 +251,7 @@ function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; f
         </div>
       }
     >
-      {fixed ? `혹시 「${fixed}」${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
+      {fixed ? `혹시 ‘${fixed}’${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
     </EmptyState>
   )
 }
@@ -293,8 +293,8 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
   return (
     <div className="space-y-2.5">
       <div className="rounded-xl bg-ink-50 p-3.5 text-body text-ink-700">
-        <p className="font-semibold text-ink-900">우리 장소 데이터에 없는 곳이에요</p>
-        <p className="mt-0.5">장소 정보와 조건 확인, AI 추천, 동선에는 쓰이지 않아요. 그래도 핀으로 남겨서 서로 의견을 나눌 수 있어요.</p>
+        <p className="font-semibold text-ink-900">장소 정보가 없는 곳이에요</p>
+        <p className="mt-0.5">조건 확인, AI 추천, 동선에는 쓰이지 않지만 핀으로 남겨 의견을 나눌 수 있어요.</p>
       </div>
       {askName && (
         <>
@@ -332,7 +332,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
 function PinItButton({ result, filled = false, pending, onPin }: { result: SearchResultView; filled?: boolean; pending: boolean; onPin: () => void }) {
   if (result.alreadyPinned) return <span className="shrink-0 text-xs text-ink-500">이미 지도에 있어요</span>
   if (result.unsupported) {
-    return <span className="shrink-0 text-xs text-ink-500">{result.dto.category ? '핀으로 남길 수 없는 분류예요' : '분류를 알 수 없는 장소예요'}</span>
+    return <span className="shrink-0 text-xs text-ink-500">{result.dto.category ? '핀으로 찍을 수 없는 카테고리예요' : '카테고리를 알 수 없는 장소예요'}</span>
   }
   return (
     <button

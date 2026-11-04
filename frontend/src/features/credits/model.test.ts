@@ -34,12 +34,12 @@ const apiError = (status: number, code: string, detail?: Record<string, unknown>
 
 describe('광고 보고 충전 문구(#1039)', () => {
   it('고지 한 줄 — 보상과 남은 횟수(daily_max − used_today)는 응답 값', () => {
-    expect(adOfferText({ reward: 10, daily_max: 3, used_today: 1 })).toBe('광고를 끝까지 보면 10 크레딧을 드려요 · 오늘 2번 남음')
-    expect(adOfferText({ reward: 7, daily_max: 5, used_today: 0 })).toBe('광고를 끝까지 보면 7 크레딧을 드려요 · 오늘 5번 남음')
+    expect(adOfferText({ reward: 10, daily_max: 3, used_today: 1 })).toBe('광고를 끝까지 보면 10 크레딧을 드려요. 오늘 2번 남았어요')
+    expect(adOfferText({ reward: 7, daily_max: 5, used_today: 0 })).toBe('광고를 끝까지 보면 7 크레딧을 드려요. 오늘 5번 남았어요')
   })
 
   it('남은 횟수는 0 아래로 적지 않는다', () => {
-    expect(adOfferText({ reward: 10, daily_max: 3, used_today: 4 })).toBe('광고를 끝까지 보면 10 크레딧을 드려요 · 오늘 0번 남음')
+    expect(adOfferText({ reward: 10, daily_max: 3, used_today: 4 })).toBe('광고를 끝까지 보면 10 크레딧을 드려요. 오늘 0번 남았어요')
   })
 
   it('버튼과 받은 뒤 토스트도 응답 값', () => {
