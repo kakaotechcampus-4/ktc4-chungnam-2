@@ -25,6 +25,8 @@ from llm.schemas import (  # noqa: F401 — 모델 출력 스키마(11.1)의 정
     DiagnosisOutput,
     QuoteClaim,
     RefClaim,
+    StatusCategory,
+    StatusOutput,
     ToolClaim,
 )
 
@@ -88,6 +90,48 @@ class AgentAnalysis(BaseModel):
     axes: list[AgentConflictAxis]
 
 
+class AgentWebStatement(BaseModel):
+    text: str = Field(max_length=120)   # 모델이 웹 글에서 옮긴 문장(조각이 아닌 문자열). 구성원 글은 입력에 없다
+    source_url: str                     # http·https만(llm.verify_web_answer가 걸렀다)
+    source_name: str                    # URL 호스트에서 www.를 뺀 것(서버가 만든다)
+
+
+class AgentWebCheck(BaseModel):
+    """웹 확인 결과(명세 6.8, #1216). found면 notice는 null이고 문장이 1~2개, not_found·paused면 문장이 없고 notice가 서버 고정
+    문구다. failed는 여기 오지 않는다(그 줄에 web이 없다)."""
+    status: Literal["found", "not_found", "paused"]
+    notice: str | None
+    statements: list[AgentWebStatement] = Field(max_length=2)
+    checked_at: datetime
+
+
+class AgentFactLine(BaseModel):
+    """우리 데이터 확인 한 줄(명세 6.6, #1168). 서버가 그 핀 장소의 라벨로 렌더한 고정 문구다 — 모델이 쓰지 않는다. 핀 이름은
+    pin 조각이고 구성원 글(quote)은 없다. web(6.8)은 값이 지금도 unknown인 줄에만 있고, 없으면 직렬화에서 뺀다(스펙은 null을 받지
+    않는다)."""
+    fact_key: str
+    value: Literal["yes", "no", "unknown"]
+    segments: list[AdviceSegment] = Field(min_length=1)
+    web: AgentWebCheck | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_missing_web(self, handler):
+        data = handler(self)
+        if data.get("web") is None:
+            data.pop("web", None)
+        return data
+
+
+class WorkStep(BaseModel):
+    """작업 기록 한 줄(api-spec WorkStep, #1297). AI 코스(`course.api_schemas.CourseStep`)와 「핑고 AI 조언」(AgentSuggestion.steps)이
+    같이 쓴다. 문장은 서버 고정 문구와 숫자뿐이다."""
+    stage: str
+    role: Literal["해석", "지휘", "계산", "검증", "결정"]
+    by: Literal["ai", "code", "human"]   # 섞여 있으면 대표값(사람 > 모델 > 코드)이고 by_detail에 원문
+    by_detail: str | None = None         # 예: "모델 → 코드", "코드(목표 세우기 실패)". 단순하면 null
+    text: str
+
+
 class AgentSuggestion(BaseModel):
     id: str
     diagnosis: AgentDiagnosis
@@ -96,6 +140,8 @@ class AgentSuggestion(BaseModel):
     analysis: AgentAnalysis | None = None
     advice: list[AgentAdviceLine]
     actions: list[AgentAction]
+    facts: list[AgentFactLine] = Field(default_factory=list, max_length=2)   # 6.6. 사실 다툼이 아니면 빈 목록
+    steps: list[WorkStep] = Field(default_factory=list)   # 11.3 작업 기록(#1297). run 기록이 지워졌으면 빈 목록
     created_at: datetime
     expires_at: datetime
 
@@ -143,11 +189,25 @@ class AgentSettingsRequest(BaseModel):
     enabled: bool
 
 
+class AgentMapStatus(BaseModel):
+    """지도 현황 문단(명세 8.2, #1168). 검증(core.verify_status)을 통과한 문단만 내린다."""
+    paragraph: str = Field(max_length=400)
+    updated_at: datetime
+
+
+class AgentObservation(BaseModel):
+    """살펴본 상태(명세 21.3, #1297). notice는 core.observation_notice가 정한 서버 고정 문구다."""
+    checked_at: datetime | None = None   # agent_cursors.last_observed_at. 관찰한 적이 없으면 null
+    notice: str | None = Field(default=None, max_length=100)   # 지금 제안이 있거나 모드가 꺼져 있으면 null
+
+
 class AgentState(BaseModel):
     settings: AgentSettings
     active_suggestion: AgentSuggestion | None  # 모드가 꺼져 있거나 shadow면 null
     has_unseen: bool
     summaries: list[AgentSummary]
+    status: AgentMapStatus | None = None  # 8.2. 아직 만든 적이 없으면 null
+    observation: AgentObservation = Field(default_factory=AgentObservation)   # 21.3(#1297)
 
 
 class AgentAcceptRequest(BaseModel):

@@ -25,11 +25,14 @@ import {
   type ImportRow,
   type PlaceSearchResultDto,
 } from './model'
-import { readShares } from './share'
+import { readShares, type DayRange } from './share'
 import { clearImport, loadImport, saveImport } from './storage'
 
 /** idle: 할 일 없음 · checking: 링크 미리보기 중 · saving: 핀 찍는 중. 결과는 같은 목록에 쌓인다(끝난 화면을 따로 두지 않는다, #1045). */
 export type ImportPhase = 'idle' | 'checking' | 'saving'
+
+/** 파일 하나를 넣은 결과. noLinks: 그 기간에 지도 링크가 없다 · noDates: 날짜를 하나도 읽지 못했다(내보내기 파일이 아니다, #1139) · full: 목록이 가득 차서 새 링크를 하나도 못 더했다(찍고 완료된 것을 지워야 더할 수 있다). */
+export type AddResult = 'added' | 'noLinks' | 'noDates' | 'full'
 
 type Outcome = NonNullable<BulkPinItemResultDto['status']>
 
@@ -44,7 +47,7 @@ type ImportState = {
   openFor: string | null
   phase: ImportPhase
   rows: ImportRow[]
-  /** 지난 붙여넣기에서 상한을 넘어 버린 링크가 있었다. */
+  /** 지난 파일에서 상한을 넘어 버린 링크가 있었다. */
   truncated: boolean
   /** 이름으로 찾을 때 가까운 순의 기준(지도 핀들의 가운데). */
   near: LatLng | null
@@ -210,17 +213,24 @@ export function useLinkImport(mapId: string, near: LatLng | null = null) {
   return {
     ...mine,
     /**
-     * 대화에서 링크와 공유 글을 읽어 목록에 더한다 — 이미 있는 링크는 한 줄로 합치고 새 링크만 확인한다(#1045).
-     * 뽑은 링크가 없으면 false. 대화 원문은 여기서 쓰고 버린다.
+     * 대화 파일에서 고른 기간의 링크와 공유 글을 읽어 목록에 더한다 — 이미 있는 링크는 한 줄로 합치고 새 링크만 확인한다(#1045, #1139).
+     * 대화 원문과 기간은 여기서 쓰고 버린다.
      */
-    add(text: string): boolean {
+    add(text: string, range: DayRange): AddResult {
       ensureMap(mapId, near)
-      const { shares } = readShares(text)
-      if (shares.length === 0) return false
+      const { shares, found, dated } = readShares(text, range)
+      if (!dated) return 'noDates'
+      if (shares.length === 0) return 'noLinks'
       const merged = mergeRows(useImportStore.getState().rows, shares)
-      patch({ rows: merged.rows, truncated: merged.truncated, lastSaved: null })
+      // 누적 상한(50줄)이 이미 찼다면 새 링크가 하나도 안 들어간다 — 「더했다」고 하지 말고 따로 알린다. 기간을 좁혀도 풀리지 않는다.
+      if (merged.added === 0 && merged.truncated) {
+        patch({ truncated: true })
+        return 'full'
+      }
+      // 파일 하나에서 상한을 넘은 링크(readShares 가 자른 것)도 넘친 것으로 센다.
+      patch({ rows: merged.rows, truncated: merged.truncated || found > shares.length, lastSaved: null })
       if (merged.added > 0) void checkRemaining(mapId)
-      return true
+      return 'added'
     },
     retryCheck: () => void checkRemaining(mapId),
     retrySearch: () => void searchRemaining(),

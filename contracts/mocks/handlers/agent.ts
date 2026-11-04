@@ -18,6 +18,13 @@ function activeEntryOf(mapId: string) {
   return Object.values(store.agentSuggestions).find((e) => e.map_id === mapId && e.status === "active") ?? null;
 }
 
+/** 살펴본 상태(#1297) — 안내 문구는 지금 제안이 없고 모드가 켜져 있을 때만 싣는다. 관찰한 적이 없으면 둘 다 null. */
+function observationOf(mapId: string, showsSuggestion: boolean) {
+  const observed = store.agentObservation[mapId];
+  const quiet = settingsOf(mapId).enabled && !showsSuggestion;
+  return { checked_at: observed?.checked_at ?? null, notice: quiet ? observed?.notice ?? null : null };
+}
+
 /** 처리(수락, 닫기, 무효화)는 한 번만 — 이미 끝났으면 409 SUGGESTION_RESOLVED(docs/errors.md). */
 function resolve(suggestionId: string, status: "accepted" | "dismissed" | "superseded", actionType: string | null) {
   const entry = store.agentSuggestions[suggestionId];
@@ -50,6 +57,8 @@ export const agentHandlers = [
       active_suggestion: entry?.suggestion ?? null,
       has_unseen: !!entry && !entry.viewed_by.includes(ME_USER_ID),
       summaries: store.agentSummaries[mapId] ?? [],
+      status: store.agentStatus[mapId] ?? null, // 지도 현황 문단(#1152, docs/agent-v2.md 8.2)
+      observation: observationOf(mapId, !!entry), // 살펴본 상태(#1297)
     });
   }),
 

@@ -47,7 +47,8 @@ def _tables(url):
 def test_revision_id_fits_and_follows_the_previous_head():
     assert len(REVISION) <= 32
     script = ScriptDirectory.from_config(base._config())
-    assert script.get_heads() == [REVISION]
+    assert len(script.get_heads()) == 1                      # 체인은 하나다. 뒤에 다른 마이그레이션이 붙어도 된다(0056, #1168)
+    assert REVISION in {r.revision for r in script.walk_revisions()}
     assert script.get_revision(REVISION).down_revision == PREVIOUS
 
 

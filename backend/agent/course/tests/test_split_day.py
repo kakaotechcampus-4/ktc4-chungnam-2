@@ -1,4 +1,4 @@
-"""이동 위반이 남았을 때 코드가 여는 질문(split_day) — 막힌 곳(이동)을 겨눈다. 영업 여부 질문은 이동 위반이 있는 동안 열지 않는다."""
+"""이동 위반이 남았을 때 코드가 푸는 나누기(resolve_split, #1131) — 나누기마다 짜 보고 견줘 고른다. 요청자에게 묻지 않는다."""
 
 from datetime import date
 
@@ -84,11 +84,10 @@ class TestSplitOptions:
         assert direct.pending_split(ds_with(s, fine)) is None
         assert direct.pending_split(direct.DirectState(s)) is None             # 후보가 없다
 
-    def test_not_asked_twice_for_the_same_day(self):
+    def test_not_resolved_twice_for_the_same_day(self):
         s = make_state()
-        ds = ds_with(s)
-        ds2, _ = direct.execute(direct._split_call(direct.pending_split(ds)), ds, O_GATEWAY, "code")
-        again = direct.DirectState(ds2.state, candidates=(stuck_candidate(ds2.state, STUCK),), questions=ds2.questions)
+        done = direct.resolve_split(ds_with(s), direct.pending_split(ds_with(s)), O_GATEWAY)
+        again = direct.DirectState(done.ds.state, candidates=(stuck_candidate(done.ds.state, STUCK),), resolved=done.ds.resolved)
         assert direct.pending_split(again) is None
 
 
@@ -100,103 +99,70 @@ class _Gateway:
 O_GATEWAY = _Gateway()
 
 
-class TestQuestion:
-    def test_default_applies_the_first_option_and_locks_what_moved(self):
+class TestResolve:
+    def test_every_option_is_tried_and_the_best_is_locked(self):
         s = make_state()
         ds = ds_with(s)
         split = direct.pending_split(ds)
-        first = split["options"][0]
-        ds2, result = direct.execute(direct._split_call(split), ds, O_GATEWAY, "code")
-        q = ds2.questions[0]
-        assert result.ok and q.kind == "split_day" and q.subject == "d1" and q.default == "m1"
-        assert q.options[-1] == direct.KEEP and q.option_labels[-1] == "그대로 두기" and len(q.option_labels) == len(q.options)
-        assert q.text.endswith("다른 날로 나눌까요?") and "같은 날 넣었어요" in q.text and "대중교통 약" in q.text
-        assert ds2.state.course == first.course and ds2.candidates == ()
-        assert all(ds2.state.locks[p] == first.to_day for p in first.places)
-        assert core.hard_score(ds2.state.violations)[0] == 0
+        done = direct.resolve_split(ds, split, O_GATEWAY)
+        data = done.result.data
+        assert done.result.tool == direct.RESOLVE_SPLIT and data["day"] == "d1"
+        assert [t["option_id"] for t in data["tried"]] == [o.option_id for o in split["options"]]
+        chosen = next(o for o in split["options"] if o.option_id == data["chosen"])
+        assert data["moved"] == list(chosen.places) and all(done.ds.state.locks[p] == chosen.to_day for p in chosen.places)
+        assert done.ds.candidates and core.hard_score(direct.best_candidate(done.ds.state, done.ds.candidates).violations)[0] == 0
+        assert min(t["confirmed"] for t in data["tried"]) == next(t for t in data["tried"] if t["option_id"] == data["chosen"])["confirmed"]
 
-    def test_model_may_only_pick_among_code_options_and_the_first_is_the_default(self):
+    def test_decision_sentence_names_the_moved_places_and_passes_verify(self):
         s = make_state()
-        ds = ds_with(s)
-        ids = [o.option_id for o in direct.pending_split(ds)["options"]]
-        assert len(ids) >= 2
-        picked = direct.execute(direct.CourseAskRequester(tool="ask_requester", kind="split_day", subject="d1", options=[ids[1], ids[0]]), ds, O_GATEWAY)
-        assert picked[1].ok and picked[0].questions[0].default == ids[1]
-        for bad in (["m9"], [], [ids[0], ids[0]]):
-            r = direct.execute(direct.CourseAskRequester(tool="ask_requester", kind="split_day", subject="d1", options=bad), ds, O_GATEWAY)[1]
-            assert not r.ok and r.error == "INVALID_MOVE"
-        wrong_day = direct.execute(direct.CourseAskRequester(tool="ask_requester", kind="split_day", subject="d2", options=[ids[0]]), ds, O_GATEWAY)[1]
-        assert wrong_day.error == "INVALID_ID"
+        done = direct.resolve_split(ds_with(s), direct.pending_split(ds_with(s)), O_GATEWAY)
+        moved = [s.trip.place(p).name for p in done.result.data["moved"]]
+        assert done.guard == () and all(n in done.note for n in moved) and "이동이 길어서" in done.note and "{" not in done.note
 
-    def test_must_ask_shows_the_model_alias_options_only(self):
+    def test_model_input_has_no_question_fields(self):
         s = make_state()
-        must = direct.direct_input(ds_with(s), None, 2, 0)["must_ask"]
-        assert must["kind"] == "split_day" and must["subject"] == "d1"
-        assert all(set(o) == {"id", "places", "to_day"} and o["places"][0].startswith("p") for o in must["options"])
-
-    def test_asking_opening_hours_is_refused_while_a_travel_violation_remains(self):
-        hours = {**OPEN, "p1": {}}                                   # p1의 영업 여부를 모른다 — 평소엔 물을 수 있다
-        s = make_state(hours=hours)
-        ask = direct.CourseAskRequester(tool="ask_requester", kind="ask_closed_day", subject="p1")
-        r = direct.execute(ask, ds_with(s), O_GATEWAY)[1]
-        assert not r.ok and r.error == "BLOCKED_BY_TRAVEL"
-        fine = (("p1", "p2"), ("p3", "p4"), ())
-        assert direct.execute(ask, ds_with(s, fine), O_GATEWAY)[1].ok
-
-    def test_opening_hours_question_is_also_refused_when_no_split_exists(self):
-        one = (("p1", "p2", "p3", "p4"),)
-        s = make_state(one, days=(MON,), hours={**OPEN, "p1": {}})        # 하루뿐 — 나눌 길이 없다
-        ds = ds_with(s, one)
-        assert direct.pending_split(ds) is None
-        ask = direct.CourseAskRequester(tool="ask_requester", kind="ask_closed_day", subject="p1")
-        assert direct.execute(ask, ds, O_GATEWAY)[1].error == "BLOCKED_BY_TRAVEL"
+        got = direct.direct_input(ds_with(s), None, 2, 0)
+        assert "must_ask" not in got and "asked" not in got and "asks_left" not in got["budget"]
 
 
 class TestLoop:
-    def test_model_asking_opening_hours_is_replaced_by_the_travel_question(self, monkeypatch):
+    def test_code_resolves_before_the_model_turn(self, monkeypatch):
         stub_optimize(monkeypatch)
         s = make_state(hours={**OPEN, "p1": {}}, goals=WALK_LOW)
-        decide = scripted({"tool": "optimize", "priority": [], "locks": []},
-                          {"tool": "ask_requester", "kind": "ask_closed_day", "subject": "p1"},
-                          {"tool": "optimize", "priority": [], "locks": []},
-                          {"tool": "finish", "candidate_id": "c1"})
+        seen = []
+        queue = [CourseDirectTurn.model_validate({"thought": "해 볼게요", "action": a}) for a in (
+            {"tool": "optimize", "priority": [], "locks": []}, {"tool": "finish", "candidate_id": "c1"})]
+
+        def decide(turn_input):
+            seen.append(turn_input)
+            return queue.pop(0)
+
         result = direct.run_direct(s, decide=decide, hours=O_GATEWAY)
-        kinds = [q.kind for q in result.questions]
-        assert kinds == ["split_day"]                                  # 영업 여부 질문은 열리지 않았다
-        sub = next(st for st in result.steps if st.substituted_for)
-        assert sub.substituted_for["call"]["kind"] == "ask_closed_day" and sub.by == "code"
+        assert result.model_turns == 2 and seen[1]["last_result"]["tool"] == direct.RESOLVE_SPLIT
+        assert [st.call["tool"] for st in result.steps if st.turn > 0] == ["optimize", direct.RESOLVE_SPLIT, "finish"]
         assert result.outcome in ("solved", "solved_with_checks") and core.hard_score(result.violations)[0] == 0
 
-    def test_a_wrong_model_split_question_is_opened_by_code_instead(self, monkeypatch):
-        stub_optimize(monkeypatch)
-        s = make_state(goals=WALK_LOW)
-        decide = scripted({"tool": "optimize", "priority": [], "locks": []},
-                          {"tool": "ask_requester", "kind": "split_day", "subject": "d1", "options": ["m9"]},
-                          {"tool": "optimize", "priority": [], "locks": []},
-                          {"tool": "finish", "candidate_id": "c1"})
-        result = direct.run_direct(s, decide=decide, hours=O_GATEWAY)
-        assert [q.kind for q in result.questions] == ["split_day"] and result.questions[0].default == "m1"
-
-    def test_without_a_model_the_code_asks_and_then_rebuilds(self, monkeypatch):
+    def test_without_a_model_the_code_resolves_and_finishes(self, monkeypatch):
         stub_optimize(monkeypatch)
         result = direct.run_direct(make_state(), decide=None, hours=O_GATEWAY)
-        assert [q.kind for q in result.questions] == ["split_day"]
         assert core.hard_score(result.violations)[0] == 0
-        assert [s.call["tool"] for s in result.steps if s.turn > 0][:3] == ["optimize", "ask_requester", "optimize"]
+        assert [s.call["tool"] for s in result.steps if s.turn > 0] == ["optimize", direct.RESOLVE_SPLIT, "finish"]
 
-    def test_no_question_when_the_course_has_no_travel_violation(self):
+    def test_nothing_to_resolve_when_the_course_has_no_travel_violation(self):
         s = make_state((("p1", "p2"), ("p3", "p4"), ()))
         result = direct.run_direct(s, decide=None, hours=O_GATEWAY)
-        assert result.questions == ()
+        assert not any(st.call["tool"] == direct.RESOLVE_SPLIT for st in result.steps)
 
 
 class TestWorklog:
-    def test_the_question_and_default_answer_are_recorded(self, monkeypatch):
+    def test_find_try_compare_decide_are_recorded_without_a_question(self, monkeypatch):
         stub_optimize(monkeypatch)
         s = make_state()
         result = direct.run_direct(s, decide=None, hours=O_GATEWAY)
         lines = worklog.render(s.trip, (), (), result)
-        q = next(line for line in lines if line.startswith("[질문]"))
-        assert "코드가 열음 → 사람" in q and "다른 날로 나눌까요?" in q and "그대로 두기" in q and "기본값" in q
-        assert any(line.startswith("[답]") and "이어 가요" in line for line in lines)
-        assert any(line.startswith("[다시 짜기]") for line in lines)
+        stages = [l.split("]")[0][1:] for l in lines]
+        assert "질문" not in stages and "답" not in stages
+        i = stages.index("찾기")
+        tried = len(next(st for st in result.steps if st.call["tool"] == direct.RESOLVE_SPLIT).result.data["tried"])
+        assert stages[i:i + tried + 3] == ["찾기", *["옮겨 보기"] * tried, "비교", "결정"]
+        assert "이동 위반이 남았어요" in lines[i] and "가장 나아요" in lines[i + tried + 1]

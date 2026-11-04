@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import ErrorText from '@/ErrorText'
 import { usePinsQuery } from '@/features/map/queries'
@@ -12,7 +12,8 @@ import Radio from '@/ui/Radio'
 import SheetTitle from '@/ui/SheetTitle'
 
 import { foundLabel, linkErrorMessage, placeKey, rowName, rowPlace, rowState, rowTitle, toPinRequest, type ImportRow, type PlaceSearchResultDto } from './model'
-import { closeImport, openImport, pinsCenter, useImportOpen, useLinkImport } from './queries'
+import { closeImport, openImport, pinsCenter, useImportOpen, useLinkImport, type AddResult } from './queries'
+import type { DayRange } from './share'
 
 const OUTCOME: Record<NonNullable<ImportRow['outcome']>, { label: string; tag: string }> = {
   created: { label: '찍었어요', tag: 'tag-good' },
@@ -24,8 +25,8 @@ type Imp = ReturnType<typeof useLinkImport>
 type Entry = { row: ImportRow; i: number }
 
 /**
- * 카톡 대화에서 핀 가져오기(기획안 5-9, #578, #1046). 붙여넣은 대화에서 지도 링크(네이버·카카오·구글)와 공유 글의 상호명·주소만
- * 브라우저 안에서 읽고, 대화 원문은 서버로 보내지도 저장하지도 않는다(읽는 순간 입력칸을 비운다).
+ * 카톡 대화에서 핀 가져오기(기획안 5-9, #578, #1046). 「대화 내보내기」 .txt 파일에서 고른 기간의 지도 링크(네이버·카카오·구글)와
+ * 공유 글의 상호명·주소만 브라우저 안에서 읽고, 대화 원문은 서버로 보내지도 저장하지도 않는다(#1139 — 붙여넣기는 없앴다).
  * 링크마다 4단으로 푼다(#1046): 서버가 찾은 곳 → 같은 주소 후보 확인 → 이름으로 찾은 후보 → 직접 찾기·하나씩 찍기.
  */
 export default function ImportSheet({
@@ -45,51 +46,114 @@ export default function ImportSheet({
   return (
     <ModalSheet label="카톡 대화에서 핀 가져오기" onClose={onClose}>
       <SheetTitle>카톡 대화에서 핀 가져오기</SheetTitle>
-      {/* 입력칸은 늘 있다 — 다른 대화를 붙여넣으면 아래 목록에 새 링크만 더한다(#1045). */}
-      <PasteBox onAdd={imp.add} more={hasRows} />
+      {/* 파일 넣기는 늘 있다 — 다른 대화 파일을 넣으면 아래 목록에 새 링크만 더한다(#1045). */}
+      <FileBox onAdd={imp.add} more={hasRows} />
       {hasRows && <ReviewStep imp={imp} onOpenOne={onOpenOne} onSearchName={onSearchName} />}
     </ModalSheet>
   )
 }
 
-function PasteBox({ onAdd, more }: { onAdd: (text: string) => boolean; more: boolean }) {
-  const [text, setText] = useState('')
-  const [none, setNone] = useState(false)
-  const id = useId()
+const NOTICE: Record<Exclude<AddResult, 'added'>, string> = {
+  noLinks: '이 기간에 지도 링크가 없어요. 기간을 넓혀 다시 넣어 주세요',
+  noDates: '날짜를 읽지 못했어요. 「대화 내보내기」로 받은 파일인지 확인해 주세요',
+  full: '목록이 가득 차서 새 링크를 더하지 못했어요. 지금 목록을 찍고 「완료된 것 지우기」를 누른 뒤 다시 넣어 주세요',
+}
+
+/** .txt 만 받는다 — accept 는 고르는 창의 힌트일 뿐이라 이름·형식을 한 번 더 본다. */
+const isTextFile = (file: File) => /\.txt$/i.test(file.name)
+
+/**
+ * 기간(여행 얘기를 한 날짜) 두 칸 + 대화 파일 넣기(#1139). 시작일을 고르기 전에는 파일을 넣지 못한다.
+ * 종료일은 선택이다 — 비우면 시작일부터 대화 끝까지 읽는다.
+ * 파일은 브라우저 안에서만 읽고 바로 버린다. 기간은 시트가 열려 있는 동안 남아서 다른 대화 파일을 같은 기간으로 더 넣을 수 있다.
+ */
+function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => AddResult; more: boolean }) {
+  // 입력칸 값이라 빈 종료일은 ''다. 읽을 때는 없는 것(끝까지)으로 넘긴다.
+  const [range, setRange] = useState({ from: '', to: '' })
+  const [notice, setNotice] = useState<string | null>(null)
+  const [reading, setReading] = useState(false)
+  const input = useRef<HTMLInputElement>(null)
+  const hintId = useId()
+  const wrongOrder = Boolean(range.from && range.to && range.from > range.to)
+  const ready = Boolean(range.from) && !wrongOrder
+
+  async function read(file: File) {
+    setNotice(null)
+    if (!isTextFile(file)) return setNotice('.txt 파일만 넣을 수 있어요')
+    setReading(true)
+    let text: string
+    try {
+      text = await file.text()
+    } catch {
+      setNotice('파일을 읽지 못했어요')
+      return
+    } finally {
+      setReading(false)
+    }
+    const result = onAdd(text.replace(/^﻿/, ''), { from: range.from, to: range.to || undefined })
+    if (result !== 'added') setNotice(NOTICE[result])
+  }
+
+  const setDay = (patch: Partial<typeof range>) => {
+    setRange((r) => ({ ...r, ...patch }))
+    setNotice(null)
+  }
+
   return (
     <div className="mt-1 space-y-3">
-      {!more && (
-        <p className="text-sm text-ink-500">
-          대화를 복사하거나 「대화 내보내기」로 받은 글을 붙여넣어 주세요. 지도 앱에서 공유한 메시지를 통째로 넣으면 가게 이름·주소로 찾아요. 대화 내용은 보내지도 남기지도 않아요.
+      {!more && <p className="text-sm text-ink-500">카톡 「대화 내보내기」로 받은 .txt 파일을 넣어 주세요. 대화 내용은 보내지도 남기지도 않아요</p>}
+      <fieldset>
+        <legend className="mb-1.5 text-sm font-semibold text-ink-900">여행 얘기를 한 기간</legend>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="mb-1 block text-xs text-ink-500">시작일</span>
+            <input type="date" value={range.from} onChange={(e) => setDay({ from: e.target.value })} className="field w-full" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs text-ink-500">종료일 (선택)</span>
+            <input
+              type="date"
+              value={range.to}
+              min={range.from || undefined}
+              onChange={(e) => setDay({ to: e.target.value })}
+              aria-invalid={wrongOrder}
+              aria-describedby={hintId}
+              className="field w-full"
+            />
+          </label>
+        </div>
+        {/* 안내와 오류는 같은 자리·같은 id라 종료일 칸이 늘 지금 줄을 읽힌다. */}
+        <p id={hintId} className={wrongOrder ? 'mt-1.5 text-sm text-warn-text' : 'mt-1.5 text-xs text-ink-500'}>
+          {wrongOrder ? '종료일은 시작일과 같거나 뒤여야 해요' : '종료일을 비우면 대화 끝까지 읽어요'}
+        </p>
+      </fieldset>
+      {/* 파일 고르는 창은 아래 버튼이 연다 — 숨긴 입력칸은 화면 읽기에서 빠지고 버튼 하나만 남는다. */}
+      <input
+        ref={input}
+        type="file"
+        accept=".txt,text/plain"
+        aria-label="카톡 대화 파일"
+        className="hidden"
+        disabled={!ready || reading}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          // 같은 파일을 다른 기간으로 다시 넣을 수 있게 비운다.
+          e.target.value = ''
+          if (file) void read(file)
+        }}
+      />
+      {notice && (
+        <p role="alert" className="text-sm text-warn-text">
+          {notice}
         </p>
       )}
-      <label htmlFor={id} className="sr-only">
-        카톡 대화
-      </label>
-      <textarea
-        id={id}
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value)
-          setNone(false)
-        }}
-        rows={more ? 2 : 6}
-        placeholder={more ? '다른 대화를 붙여넣으면 아래에 더해요' : '여기에 대화를 붙여넣기'}
-        className="field w-full resize-none py-3"
-      />
-      {none && <p className="text-sm text-warn-text">지도 링크를 찾지 못했어요. 링크가 포함된 대화 구간을 붙여넣어 주세요</p>}
       <button
         type="button"
-        disabled={!text.trim()}
-        onClick={() => {
-          const ok = onAdd(text)
-          // 대화 원문은 읽자마자 버린다 — 링크가 없으면 고쳐 붙일 수 있게 남긴다.
-          if (ok) setText('')
-          else setNone(true)
-        }}
+        disabled={!ready || reading}
+        onClick={() => input.current?.click()}
         className={more ? 'btn-outline btn-md w-full' : 'btn-primary btn-lg w-full'}
       >
-        {more ? '링크 더하기' : '지도 링크 찾기'}
+        {reading ? '읽는 중…' : more ? '다른 대화 파일 더하기' : '대화 파일 넣기'}
       </button>
     </div>
   )
@@ -149,7 +213,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
             모두 비우기
           </button>
         </div>
-        {imp.truncated && <p className="text-xs text-warn-text">앞부분만 읽었어요. 뒤쪽 대화를 잘라 다시 넣어 주세요</p>}
+        {imp.truncated && <p className="text-xs text-warn-text">일부 링크는 더하지 못했어요. 찍고 「완료된 것 지우기」를 누른 뒤 나머지 기간을 다시 넣어 주세요</p>}
       </div>
 
       {imp.error != null && (

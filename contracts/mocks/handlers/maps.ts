@@ -70,6 +70,7 @@ export const mapsHandlers = [
       title: string; start_date: string; end_date: string; region?: MapRegion;
     };
     if (store.users[ME_USER_ID]?.is_guest) return apiError(403, "GUEST_NOT_ALLOWED", "지도를 만들려면 카카오로 로그인해 주세요"); // #472
+    if (body.start_date && body.end_date && body.end_date < body.start_date) return apiError(422, "VALIDATION_ERROR", "종료일은 시작일과 같거나 뒤여야 해요"); // #1197
     if (myMapCount() >= MAP_LIMIT) return mapLimitError();
     const mapId = nextId("map");
     store.maps[mapId] = {
@@ -110,6 +111,11 @@ export const mapsHandlers = [
     if (Object.keys(body).length === 0 || title.trim().length < 1 || title.length > 100 || end < start) {
       return apiError(422, "VALIDATION_ERROR", "지도 수정 값이 올바르지 않아요");
     }
+    const items = store.shortlist[mapId] ?? [];
+    const ordered = [...items].sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999") || (a.visit_order ?? 1e9) - (b.visit_order ?? 1e9));
+    const unassigned = ordered.filter(i => !i.scheduled_date);
+    const outside = ordered.filter(i => i.scheduled_date && (i.scheduled_date < start || i.scheduled_date > end));
+    if (outside.length) [...unassigned, ...outside].forEach((item, index) => { item.scheduled_date = null; item.visit_order = index; });
     Object.assign(map, { title, start_date: start, end_date: end, ...(body.region ? { region: body.region } : {}) });
     emitEvent(mapId, "public", "map.updated", {
       map_id: mapId, title, start_date: start, end_date: end, ...(map.region ? { region: map.region } : {}),

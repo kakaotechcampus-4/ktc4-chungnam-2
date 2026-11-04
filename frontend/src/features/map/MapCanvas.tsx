@@ -2,9 +2,15 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
-import { allInside, fitCenter, fitLevel, fitPadding, zoomSteps } from './camera'
+import { allInside, fitCenter, fitLevel, fitPadding, groupNear, zoomSteps } from './camera'
 import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
-import { createCandidateMarkerElement, createSearchMarkerElement, createTapBubbleElement, markSelected } from './pinMarker'
+import {
+  createCandidateMarkerElement,
+  createSearchGroupMarkerElement,
+  createSearchMarkerElement,
+  createTapBubbleElement,
+  markSelected,
+} from './pinMarker'
 import type { PlaceSearchResultDto } from '@/features/search/model'
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 import type { RouteDrawing } from '@/features/shortlist/model'
@@ -25,7 +31,11 @@ const FOCUS_LEVEL = 3
 /** 확대 애니메이션 시간(ms). 옮기기는 카카오 panTo 의 기본 시간을 쓴다. */
 const ZOOM_MS = 300
 
+/** 검색 결과 핀끼리 좌표 사이가 이만큼(px)보다 가까우면 하나로 묶는다 — 빨간 원(지름 28 + 테두리)이 포개지는 거리다(#1174). */
+const GROUP_PX = 32
+
 export type SearchMarker = {
+  id: string
   n: number
   name: string
   category?: PlaceSearchResultDto['category']
@@ -52,8 +62,11 @@ export type MapController = {
   /** 고른 곳으로 부드럽게 옮기고, 멀리 보고 있었으면 FOCUS_LEVEL 까지 2단계씩 확대한다. */
   focusPin: (lat: number, lng: number) => void
   getCenter: () => { lat: number; lng: number }
-  /** 점 전체가 보이게 맞춘다. 이미 다 보이면 그대로 둔다 — `force` 면(「전체 핀 보기」) 그래도 맞춘다. */
-  fitPins: (points: { lat: number; lng: number }[], opts?: { force?: boolean }) => void
+  /**
+   * 점 전체가 보이게 맞춘다. 이미 다 보이면 그대로 둔다 — `force` 면(「전체 핀 보기」) 그래도 맞춘다.
+   * `closest` 는 가장 가까운 레벨이다(기본 FOCUS_LEVEL). 근처 찾기는 1까지 들어간다(#1174).
+   */
+  fitPins: (points: { lat: number; lng: number }[], opts?: { force?: boolean; closest?: number }) => void
 }
 
 /**
@@ -69,11 +82,13 @@ export default function MapCanvas({
   candidates = [],
   route = [],
   onSelect,
+  onResultGroup,
   onReady,
   onMovingChange,
   onMapClick,
   tapBubble = null,
   leftInset = 0,
+  startCenter,
 }: {
   pins: Pin[]
   /** 핀 색(참여율)의 분모 — 지도 전체 구성원 수. */
@@ -87,6 +102,8 @@ export default function MapCanvas({
   /** 확정 탭 「동선 보기」 또는 AI 코스 지도 보기 — 경로선·순서 번호·구간 시간. */
   route?: RouteDrawing[]
   onSelect: (pinId: string) => void
+  /** 화면에서 겹쳐 하나로 묶인 검색 결과 핀을 눌렀다(#1174). 시트에 그곳들만 보인다. */
+  onResultGroup: (ids: string[]) => void
   onReady: (controller: MapController) => void
   /** 사용자가 지도를 끌기 시작하면 true, 멈추면 false. */
   onMovingChange: (moving: boolean) => void
@@ -97,15 +114,25 @@ export default function MapCanvas({
   tapBubble?: { lat: number; lng: number; onPress: () => void } | null
   /** 지도 왼쪽을 가리는 패널 폭(px). 넓은 화면에서 패널이 열려 있을 때만 0이 아니다. */
   leftInset?: number
+  /** 핀이 없을 때 첫 화면 가운데 — 지도 만들 때 고른 지역(시청·도청). 없으면 서울이다. 핀이 있으면 핀들에 맞춘다. */
+  startCenter?: { lat: number; lng: number }
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const layerRef = useRef<MarkerLayer | null>(null)
   // 콜백이 바뀔 때마다 지도를 다시 만들면 깜빡인다. 최신 참조만 갈아끼운다.
-  const callbacks = useRef({ onSelect, onReady, onMovingChange, onMapClick })
+  const callbacks = useRef({ onSelect, onResultGroup, onReady, onMovingChange, onMapClick })
   useLayoutEffect(() => {
-    callbacks.current = { onSelect, onReady, onMovingChange, onMapClick }
+    callbacks.current = { onSelect, onResultGroup, onReady, onMovingChange, onMapClick }
   })
   const fittedRef = useRef(false)
+  // 첫 화면을 지역 가운데로 옮겼거나(started) 사용자가 지도를 움직였으면(moved) 지역으로 다시 옮기지 않는다 — 시야를 뺏지 않는다.
+  // moved 는 끌기뿐 아니라 화면이 사람 대신 옮긴 것(핀·검색 결과·AI 후보 고르기, 내 위치, 전체 핀 보기)도 센다.
+  const startedRef = useRef(false)
+  const movedRef = useRef(false)
+  const startCenterRef = useRef(startCenter)
+  useLayoutEffect(() => {
+    startCenterRef.current = startCenter
+  })
   const mapRef = useRef<{ maps: typeof kakao.maps; map: kakao.maps.Map } | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -117,8 +144,11 @@ export default function MapCanvas({
     loadKakaoMaps()
       .then((maps) => {
         if (cancelled || !containerRef.current) return
+        // 지도 정보(지역)가 먼저 와 있으면 그 지역에서 만든다. 늦게 오면 아래 effect 가 한 번 옮긴다.
+        const start = startCenterRef.current ?? FALLBACK_CENTER
+        startedRef.current = Boolean(startCenterRef.current)
         const map = new maps.Map(containerRef.current, {
-          center: new maps.LatLng(FALLBACK_CENTER.lat, FALLBACK_CENTER.lng),
+          center: new maps.LatLng(start.lat, start.lng),
           level: 5,
         })
         const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId))
@@ -167,6 +197,7 @@ export default function MapCanvas({
         const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
         const onDragStart = () => {
+          movedRef.current = true
           // 움직이는 도중에 사용자가 지도를 잡으면 남은 옮기기·확대를 하지 않는다.
           stopMoves()
           callbacks.current.onMovingChange(true)
@@ -203,6 +234,7 @@ export default function MapCanvas({
         callbacks.current.onReady({
           // 축척은 그대로 두고 부드럽게 옮긴다(화면보다 먼 곳은 카카오가 바로 옮긴다).
           panTo: (lat, lng) => {
+            movedRef.current = true
             const target = new maps.LatLng(lat, lng)
             if (still()) {
               stopMoves()
@@ -214,6 +246,7 @@ export default function MapCanvas({
           },
           // 옮기고 나서 고른 곳을 붙든 채(anchor) 2단계씩 확대한다. 한꺼번에 하면 확대 중심이 화면 밖일 수 있다.
           focusPin: (lat, lng) => {
+            movedRef.current = true
             const target = new maps.LatLng(lat, lng)
             const to = Math.min(map.getLevel(), FOCUS_LEVEL)
             if (still()) {
@@ -234,13 +267,14 @@ export default function MapCanvas({
           fitPins: (list, opts) => {
             const el = containerRef.current
             if (list.length === 0 || !el) return
+            movedRef.current = true
             const size = { w: el.clientWidth, h: el.clientHeight }
             const pad = fitPadding(window.innerHeight, isDesktopNow())
             const proj = map.getProjection()
             const px = list.map((p) => proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)))
             if (!opts?.force && allInside(px, size, pad)) return
             const level = map.getLevel()
-            const to = fitLevel(px, size, pad, level, FOCUS_LEVEL)
+            const to = fitLevel(px, size, pad, level, opts?.closest ?? FOCUS_LEVEL)
             const c = fitCenter(px, size, pad, level, to)
             const center = proj.coordsFromContainerPoint(new maps.Point(c.x, c.y))
             if (still()) {
@@ -275,12 +309,25 @@ export default function MapCanvas({
 
     layer.sync(pins, memberCount)
 
-    // 처음 핀이 들어왔을 때만 시야를 맞춘다. 매번 하면 사용자가 옮긴 시야를 뺏는다.
-    if (!fittedRef.current && pins.length > 0) {
-      layer.fit(pins.filter(isPlaced))
+    // 처음 위치를 아는 핀이 생겼을 때 한 번만 시야를 맞춘다. 매번 하면 사용자가 옮긴 시야를 뺏는다.
+    // 실시간 핀(#382)은 처음엔 좌표가 없고 카카오에서 찾은 뒤에 생긴다 — 좌표 없는 핀만 있을 때 맞추기를 써 버리면
+    // 나중에 좌표가 와도 맞추지 않아 지역(또는 서울)에 그대로 남았다. 그 사이 사용자가 지도를 움직였으면 맞추지 않는다.
+    const placed = pins.filter(isPlaced)
+    if (!fittedRef.current && !movedRef.current && placed.length > 0) {
+      layer.fit(placed)
       fittedRef.current = true
     }
   }, [pins, memberCount, ready])
+
+  // 위치를 아는 핀이 없는 지도는 지도 만들 때 고른 지역에서 시작한다(지역 정보가 지도보다 늦게 왔을 때 한 번).
+  // 핀 좌표가 오면(실시간 핀은 나중에 온다) 위에서 핀들에 맞춘다.
+  const hasPins = pins.some(isPlaced)
+  useEffect(() => {
+    const m = mapRef.current
+    if (!ready || !m || !startCenter || hasPins || startedRef.current || fittedRef.current || movedRef.current) return
+    m.map.setCenter(new m.maps.LatLng(startCenter.lat, startCenter.lng))
+    startedRef.current = true
+  }, [ready, startCenter, hasPins])
 
   useEffect(() => {
     if (ready) layerRef.current?.select(selectedPinId)
@@ -305,23 +352,52 @@ export default function MapCanvas({
 
   // 검색 결과 핀. 몇 개 안 되고 검색할 때마다 통째로 바뀌어서 매번 새로 그린다.
   // 고를 때마다 다시 그리니 새로 고른 핀만 한 번 튄다(pin-bounce). 고른 핀은 다른 핀처럼 후광·이름 말풍선을 단다.
+  // 고르지 않은 핀은 화면에서 겹치면 「N곳」 핀 하나로 묶는다(#1174). 겹침은 축척에만 달려서 확대·축소할 때만 다시 묶고,
+  // 묶음이 그대로면 다시 그리지 않는다.
   useEffect(() => {
     const m = mapRef.current
     if (!ready || !m) return
-    const overlays = results.map((r) => {
-      const el = createSearchMarkerElement(r, r.onClick)
-      if (r.selected) markSelected(el, r.name, true)
-      const overlay = new m.maps.CustomOverlay({
-        position: new m.maps.LatLng(r.lat, r.lng),
-        content: el,
-        yAnchor: 1,
-        clickable: true,
-        zIndex: r.selected ? 12 : 5,
-      })
-      overlay.setMap(m.map)
+    const { maps, map } = m
+    const put = (el: HTMLElement, at: SearchMarker, zIndex: number) => {
+      const overlay = new maps.CustomOverlay({ position: new maps.LatLng(at.lat, at.lng), content: el, yAnchor: 1, clickable: true, zIndex })
+      overlay.setMap(map)
       return overlay
-    })
-    return () => overlays.forEach((o) => o.setMap(null))
+    }
+    const picked = results
+      .filter((r) => r.selected)
+      .map((r) => {
+        const el = createSearchMarkerElement(r, r.onClick)
+        markSelected(el, r.name, true)
+        return put(el, r, 12)
+      })
+    const rest = results.filter((r) => !r.selected)
+    let grouped: kakao.maps.CustomOverlay[] = []
+    let drawn = ''
+    const regroup = () => {
+      const proj = map.getProjection()
+      const px = rest.map((r) => proj.containerPointFromCoords(new maps.LatLng(r.lat, r.lng)))
+      const groups = groupNear(px, GROUP_PX).map((g) => g.map((i) => rest[i]))
+      const key = groups.map((g) => g.map((r) => r.id).join(',')).join('|')
+      if (key === drawn) return
+      drawn = key
+      grouped.forEach((o) => o.setMap(null))
+      grouped = groups.map((g) => {
+        if (g.length === 1) return put(createSearchMarkerElement(g[0], g[0].onClick), g[0], 5)
+        const ids = g.map((r) => r.id)
+        const el = createSearchGroupMarkerElement(
+          g.map((r) => r.name),
+          () => callbacks.current.onResultGroup(ids),
+        )
+        return put(el, g[0], 6)
+      })
+    }
+    regroup()
+    maps.event.addListener(map, 'zoom_changed', regroup)
+    return () => {
+      maps.event.removeListener(map, 'zoom_changed', regroup)
+      picked.forEach((o) => o.setMap(null))
+      grouped.forEach((o) => o.setMap(null))
+    }
   }, [results, ready])
 
   // 「이 근처 장소 찾기」 말풍선(#1028). 누르는 일은 최신 것을 부르게 ref 로 둔다 — 자리가 그대로면 다시 그리지 않는다.

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import ErrorText from '@/ErrorText'
 import type { RecommendRunDto } from '@/features/recommend/model'
 import { PingoMark } from '@/ui/Pingo'
 
@@ -8,7 +9,7 @@ import { useRunAdviceQuery } from './queries'
 
 /**
  * 추천 막힘 조언(agent-v2 9절, 16.5) — 결과가 적거나 같은 카테고리를 여러 번 받았을 때 더 받는 방법. 대상인지는 서버가 정한다.
- * 깔때기 아래에 둔다. 기다리는 동안 자리만 두고, 204·실패면 아무것도 없다.
+ * 깔때기 아래에 둔다. 기다리는 동안 자리만 두고, 204면 아무것도 없다. 실패(500)면 자리를 숨기지 않고 한 줄로 알린다(16.5, #1297).
  * 버튼은 둘뿐이다: widen_radius 는 화면의 「반경 넓히기」(확인 창 포함, 가드레일 4)를 그대로 받고, open_evidence 는 결과 위
  * 「이 조건으로 찾았어요」 카드를 연다(#849, `onOpenEvidence`). `widen` 을 주지 않으면(0곳 화면처럼 이미 같은 버튼이 있을 때) 문장만 보인다.
  */
@@ -16,10 +17,7 @@ export default function RunAdvice({ run, widen, onOpenEvidence }: { mapId: strin
   const advice = useRunAdviceQuery(run.id)
 
   if (advice.isPending) return <div aria-hidden="true" className="h-16 rounded-xl bg-ink-50" />
-  if (advice.error) {
-    console.error('[agent] 추천 막힘 조언을 받지 못했어요', advice.error)
-    return null
-  }
+  if (advice.error) return <ErrorText message="조언을 불러오지 못했어요" error={advice.error} />
   if (!advice.data) return null
 
   const actions = widen
@@ -46,7 +44,7 @@ export default function RunAdvice({ run, widen, onOpenEvidence }: { mapId: strin
           <li key={i} className="flex items-start gap-1.5">
             {l.is_guess && <span className="tag tag-neutral mt-px">추정</span>}
             <span className="min-w-0 break-keep">
-              <AdviceText line={l} />
+              <AdviceText segments={l.segments} />
             </span>
           </li>
         ))}

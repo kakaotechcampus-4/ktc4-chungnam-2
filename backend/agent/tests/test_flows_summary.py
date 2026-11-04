@@ -166,6 +166,7 @@ def test_observation_summarizes_five_sections_and_announces(world, client):
     assert (row.category, row.based_on_reaction_count, row.run_id, row.updated_at) == (
         "음식점", 9, run.id, world.now)
     assert row.summary["reaction_ids"] == sorted(ids.values())
+    assert row.summary["rules_version"] == llm_api.plan_evidence_rules_version()   # 다음 관찰이 ② 규칙이 바뀌었는지 본다(#1095)
     assert row.summary["must_keep"][0] == {"fact_key": "spicy_focused", "wants": False, "member_count": 2,
                                            "reaction_ids": sorted([ids["u1_a"], ids["u2_a"]])}
     assert row.summary["not_filtered"] == {"count": 2, "reaction_ids": sorted([ids["u1_d"], ids["u3_d"]]),
@@ -181,10 +182,12 @@ def test_observation_summarizes_five_sections_and_announces(world, client):
     assert all(t not in state.text for t in ALL_TEXTS)   # 알러지 원문을 포함해 사유 글이 응답에 없다
 
 
-def test_summary_structuring_carries_server_usage_label(world):
-    """요약의 ②는 사용량 기록(llm_calls, #870)에 agent_summary로 남는다. 서버 호출이라 user_id가 없다."""
+def test_summary_structuring_carries_server_usage_label(world, monkeypatch):
+    """요약의 ②는 사용량 기록(llm_calls, #870)에 agent_summary로 남는다. 서버 호출이라 user_id가 없다. 진단의 미리 돌려 보기(6.7)는
+    같은 카테고리 사유를 진단 trace에서 먼저 구조화해 캐시를 채우므로 여기서는 끈다 — 요약이 ②를 직접 부르는 경로를 본다."""
     from llm import usage
 
+    monkeypatch.setattr(flows, "_preview", lambda *args: None)
     map_id, _ = _five_section_map(world)
     labels = []
 
@@ -365,3 +368,19 @@ def test_structured_texts_are_cached_across_observations(world):
     assert len(summary_runs(world, map_id)) == 2
     assert gateway.structured.count("비밀사유_너무 매워요") == 1
     assert gateway.structured.count("비밀사유_고기 좋아요") == 3
+
+
+def test_failing_category_does_not_starve_the_other_category(world):
+    """가장 많이 바뀐 카테고리의 ②가 계속 실패해도 다음 관찰에서 다른 카테고리가 갱신된다(#1187). 실패한 쪽은 마지막에 다시 시도한다."""
+    map_id, _ = _five_section_map(world)   # 음식점 사유 9개
+    cafe = world.pin(map_id, category="카페", hours_ago=100)
+    for user in ("u1", "u2", "u3"):   # 새 사유 3개 — 갱신 대상
+        world.react(cafe, user, "against", hours_ago=2, text="비밀사유_시끄러워요")
+    world.event(map_id)
+
+    observe(world, map_id, gateway=KeyedGateway(fail=True))                       # 음식점이 먼저 뽑혀 실패
+    observe(world, map_id, gateway=KeyedGateway(), after=timedelta(minutes=5))     # 실패한 음식점은 미루고 카페를 갱신
+
+    runs = summary_runs(world, map_id)
+    assert [(r.outcome, r.outcome_detail["category"]) for r in runs] == [("model_failed", "음식점"), ("summarized", "카페")]
+    assert [r.category for r in world.rows(AgentReasonSummary, map_id=map_id)] == ["카페"]

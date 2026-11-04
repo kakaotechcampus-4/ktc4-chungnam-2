@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { forgetImport } from '@/features/kakaoImport/queries'
+import { forgetSchedule } from '@/features/shortlist/scheduleStore'
 
 import { choosePendingAccount, fetchMe, fetchPendingAccount, isNoPendingLogin, isUnauthorized, joinAsGuest, logout, updateMe, withdraw } from './api'
 
@@ -25,7 +26,7 @@ export function usePendingAccountQuery() {
 }
 
 /**
- * 「새 계정으로 시작」·「기존 계정 되살리기」. 응답이 세션 쿠키와 함께 온 `User` 라 그대로 로그인 상태로 둔다.
+ * 「새 계정으로 시작」·「기존 계정 복구」. 응답이 세션 쿠키와 함께 온 `User` 라 그대로 로그인 상태로 둔다.
  * 그 전 캐시는 통째로 비운다 — 게스트로 시작한 로그인이었으면 게스트의 데이터가 남아 있을 수 있다.
  */
 export function usePendingChoiceMutation() {
@@ -100,8 +101,9 @@ export function useLogoutMutation() {
     mutationFn: logout,
     onSuccess: () => {
       queryClient.clear()
-      // 카톡 가져오기 목록(지도별 링크·가게 이름)도 남기지 않는다(#1045).
+      // 카톡 가져오기 목록(지도별 링크·가게 이름, #1045)과 이 기기에 둔 일정도 남기지 않는다.
       forgetImport()
+      forgetSchedule()
     },
   })
 }

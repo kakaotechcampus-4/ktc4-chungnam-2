@@ -8,6 +8,7 @@ import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import SheetTitle from '@/ui/SheetTitle'
 import StarRating from '@/ui/StarRating'
+import TextArea from '@/ui/TextArea'
 
 import { canSave, saveErrorMessage, type MyReviewDto } from './model'
 import { useSaveReviewMutation } from './queries'
@@ -60,18 +61,16 @@ export default function ReviewSheet({
         <StarRating value={rating} onChange={setRating} size={28} label="별점 고르기" />
       </div>
 
-      <textarea
-        aria-label="후기"
+      <TextArea
+        label="후기"
         value={body}
+        onChange={setBody}
         maxLength={bodyMax}
-        onChange={(e) => setBody(e.target.value)}
         placeholder="다녀온 느낌을 적어 주세요"
         rows={5}
-        className="field mt-3 w-full resize-none py-3"
+        clearLabel="후기 지우기"
+        className="mt-3"
       />
-      <p className="mt-1 text-right text-label text-ink-500">
-        {body.length}/{bodyMax}
-      </p>
 
       {guest?.kind === 'guest' ? (
         <div className="mt-3">

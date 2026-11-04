@@ -24,16 +24,20 @@ export const REGIONS: MapRegion[] = [
   { label: '제주특별자치도', lat: 33.489, lng: 126.4983 },
 ]
 
+/** 열린 시·도에 덧붙일 것. `note`는 「· 춘천만」처럼 범위, `beta`는 「(베타)」. */
+export type RegionAvailability = { note?: string; beta?: boolean }
+
 /**
  * 장소 데이터(자체 DB)가 있는 시·도와 덧붙일 말. 없는 지역을 고르면 모든 검색이 「아직 지원하지 않는 장소예요」로 끝나서
- * 고르지 못하게 하고 「곧 열려요」로 보여 준다(#351). 서울 밖은 정예DB 공유본 2026-10-25판(#966, deploy_rules.md).
+ * 고르지 못하게 하고 「준비 중」으로 보여 준다(#351). 서울 밖은 정예DB 공유본 2026-10-25판(#966, deploy_rules.md).
  * 강원은 춘천 데이터만 있다. 데이터가 늘면 여기에 더한다.
+ * 베타: 데이터를 주력으로 모은 서울·대전 밖이라 장소가 적을 수 있다(2026-11-04). 고르기 창 아래에 한 줄로 알린다.
  */
-export const AVAILABLE_REGIONS: Record<string, string | null> = {
-  서울특별시: null,
-  부산광역시: null,
-  대구광역시: null,
-  광주광역시: null,
-  대전광역시: null,
-  강원특별자치도: '춘천만',
+export const AVAILABLE_REGIONS: Record<string, RegionAvailability> = {
+  서울특별시: {},
+  부산광역시: { beta: true },
+  대구광역시: { beta: true },
+  광주광역시: { beta: true },
+  대전광역시: {},
+  강원특별자치도: { note: '춘천만', beta: true },
 }

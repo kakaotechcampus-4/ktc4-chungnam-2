@@ -4,7 +4,8 @@ agent v2 끝단 통합 테스트(#676) — 사람이 API로 만든 지도 상태
 
 agent/tests는 다른 모듈 데이터를 행으로 직접 넣는다(World). 여기서는 지도, 초대, 핀, 반응, 추천을 모두 실제 API로 만들고,
 관찰(flows.run_tick)과 추천 막힘 조언(GET /runs/{runId}/advice)이 그 데이터를 각 모듈의 api.py로 읽어 끝까지 가는지 본다.
-조언은 모델 없이 코드가 고른다(#749, docs/agent-v2.md 9.1). 모델은 관찰의 진단(agent_diagnose)에서만 부른다.
+조언은 모델 없이 코드가 고른다(#749, docs/agent-v2.md 9.1). 모델은 관찰의 진단(agent_diagnose)과 관찰 끝의 지도 현황
+문단(agent_status, 8.2, #1168 — 칸이 바뀔 때만)에서 부른다.
 
 가짜는 셋뿐이다.
 - 모델: llm.client._client 자리의 ScriptedModel(OpenAI 호환 chat.completions.parse). 대화와 도구 결과를 읽고 도구를
@@ -41,10 +42,11 @@ from auth.models import User
 from auth.testing import ensure_users, session_cookie
 from common.database import get_db_session, session_scope
 from common.events import EventLog
+from common.kst import kst_date
 from llm import api as llm_api
 from llm import client as llm_client
 from llm.schemas import (
-    Action, AdviceLine, CountClaim, DiagnosisOutput, EvidenceLine, QuoteClaim, RefClaim, ToolClaim,
+    Action, AdviceLine, CountClaim, DiagnosisOutput, EvidenceLine, QuoteClaim, RefClaim, StatusOutput, ToolClaim,
 )
 from main import app
 from maps.models import Map
@@ -142,7 +144,7 @@ class ScriptedModel:
     그 예외를 낸다(장애). 요청은 (형식, tool_choice)만 남긴다 — 본문은 남기지 않는다."""
 
     def __init__(self):
-        self.brains = {}
+        self.brains = {StatusOutput: status_brain}
         self.error = None
         self.requests = []
         self.chat = SimpleNamespace(completions=SimpleNamespace(parse=self._parse))
@@ -157,6 +159,16 @@ class ScriptedModel:
             raise LookupError(f"이 테스트가 예상하지 못한 모델 호출: {fmt.__name__}")
         usage = SimpleNamespace(prompt_tokens=900, completion_tokens=60)
         return SimpleNamespace(choices=[SimpleNamespace(message=brain(Turn(kwargs)), finish_reason="stop")], usage=usage)
+
+
+def status_brain(turn):
+    """지도 현황 문단(8.2, #1168)을 쓰는 모델 — 칸을 읽고 어긋나지 않는 상태와 숫자 없는 문단을 낸다(llm의 고정 응답 스텁과 같은
+    답). 검증, 저장, 응답은 운영 코드 그대로다."""
+    return _answer(llm_api.fixed_status_planner(turn.input))
+
+
+def diagnosis_requests(model):
+    return [r for r in model.requests if r[0] == "DiagnosisOutput"]
 
 
 def _silent(inp):
@@ -226,7 +238,7 @@ class E2E:
 
     def shared_map(self, owner, *others) -> str:
         """owner가 만들고 others가 초대 링크로 들어온 지도. 출발은 30일 뒤다(D-day 계수 1.0, 명세 6.1)."""
-        start = core.kst_date(datetime.now(timezone.utc)) + timedelta(days=30)
+        start = kst_date(datetime.now(timezone.utc)) + timedelta(days=30)
         r = owner.post("/maps", json={"title": "성수 여행", "start_date": start.isoformat(),
                                       "end_date": (start + timedelta(days=2)).isoformat(), "region": REGION})
         assert r.status_code == 201, r.text
@@ -361,8 +373,10 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     # 에이전트가 스스로 도구 둘을 차례로 부르고(모델 요청 3번: 도구, 도구, 답) 검증을 통과한 제안을 저장했다
     run = e2e.runs(map_id)[-1]
     assert (run.outcome, run.used_model) == ("suggested", True)
-    assert [t["name"] for t in run.tool_calls] == ["get_reasons", "get_readiness"]
-    assert e2e.model.requests == [("DiagnosisOutput", "auto")] * 3
+    # 모델 전에 코드가 미리 돌려 본다(6.7, p1 — 모델이 고르지 않아 도구 상한에 세지 않는다)
+    assert [t["name"] for t in run.tool_calls] == ["preview_filter", "get_reasons", "get_readiness"]
+    assert diagnosis_requests(e2e.model) == [("DiagnosisOutput", "auto")] * 3
+    assert e2e.model.requests.count(("StatusOutput", None)) == 1   # 관찰 끝의 현황 문단(도구 없음)
     assert (run.tokens_in, run.tokens_out) == (2700, 180)
     assert run.verification["established"] is True and run.verification["claims"]["removed"] == []
     stored = json.dumps([run.tool_calls, run.verification], ensure_ascii=False)
@@ -384,6 +398,22 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
         {"index": 0, "type": "open_recommend", "label": "음식점 추천 받기", "params": {"category": "음식점"}},
     ]
     assert body["has_unseen"] is True
+    # 작업 기록(11.3, #1297): 코드가 찾고 모델이 도구를 골라 읽고, 코드가 미리 찾고 대조하고 다시 봤다. 숫자는 기록에서 온다
+    assert [(st["stage"], st["role"], st["by"], st["text"]) for st in sug["steps"]] == [
+        ("감지", "계산", "code", "음식점에 반대 의견 2개가 남은 뒤로 새 후보가 없어요"),
+        ("조사", "지휘", "ai", "반대 사유 2개를 읽었어요"),
+        ("조사", "지휘", "ai", "추천 준비를 확인했어요"),
+        ("미리 찾기", "계산", "code", f"지금 조건으로 미리 찾아봤어요 · {run.tool_calls[0]['result']['passed_count']}곳 남아요"),
+        ("우리 데이터", "검증", "code", f"가게 정보 {len(sug['facts'])}개를 우리 데이터에서 확인했어요"),
+        ("검증", "검증", "code", f"숫자와 인용 {len(run.verification['claims']['kept'])}개를 지도와 대조했어요"),
+        ("재확인", "검증", "code", core.STEP_RECHECK),
+    ]
+    steps_text = json.dumps(sug["steps"], ensure_ascii=False)
+    assert not any(leak in steps_text for leak in (*names.values(), SPICY, ALLERGY, "m1", "m2", "m3"))
+    # 같은 관찰 끝에서 만든 지도 현황 문단(8.2). 칸에 이름과 사유 글이 없어 문단에도 없다
+    [status_run] = e2e.runs(map_id, trigger="status")
+    assert (status_run.outcome, status_run.used_model) == ("status_updated", True)
+    assert body["status"]["paragraph"] == "지도 현황을 정리했어요. 음식점부터 보면 좋겠어요."
 
     # 우리 조건 요약도 같은 관찰에서 만들어졌다. 알러지 사유는 개수와 고정 안내만, 원문은 어디에도 없다(2절 11번)
     summary = next(s for s in body["summaries"] if s["category"] == "음식점")
@@ -392,6 +422,8 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     assert summary["not_filtered"] == {"count": 1, "notices": [core.SUMMARY_NOTICES["allergy"]]}
     events = e2e.events(map_id)
     assert {"agent.suggested", "agent.summary_updated"} <= {t for t, _ in events}
+    # 이벤트도 GET과 같은 렌더를 거친다(#1297)
+    assert [p["steps"] for t, p in events if t == "agent.suggested"] == [sug["steps"]]
     assert ALLERGY not in json.dumps([body, events], ensure_ascii=False, default=str)
 
     # 열람은 사람마다, 수락은 지도 단위로 한 번. 서버는 실행하지 않고 버튼의 동작만 돌려준다(명세 16.3)
@@ -410,7 +442,8 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     e2e.tick(now + timedelta(minutes=10))
     last = e2e.runs(map_id)[-1]
     assert last.outcome == "blocked" and [b_["reason"] for b_ in last.blocked] == ["duplicate"]
-    assert len(e2e.model.requests) == 3
+    assert len(diagnosis_requests(e2e.model)) == 3
+    assert len(e2e.runs(map_id, trigger="status")) == 1   # 칸이 그대로라 현황 문단도 다시 부르지 않는다
     assert b.get(f"/maps/{map_id}/agent").json()["active_suggestion"] is None
 
 
@@ -425,9 +458,15 @@ def test_model_outage_leaves_no_suggestion_and_the_rest_keeps_working(e2e):
     run = e2e.runs(map_id)[-1]
     assert (run.outcome, run.used_model) == ("model_failed", True)
     assert run.outcome_detail["reason"] == "timeout"
-    assert e2e.model.requests == [("DiagnosisOutput", "auto")]   # 다시 묻지 않는다(2절 10번)
+    # 다시 묻지 않는다(2절 10번). 관찰 끝의 현황 문단도 실패해 지난 문단(없음)이 그대로다
+    assert e2e.model.requests == [("DiagnosisOutput", "auto"), ("StatusOutput", None)]
+    assert [r.outcome for r in e2e.runs(map_id, trigger="status")] == ["model_failed"]
     body = b.get(f"/maps/{map_id}/agent").json()
     assert body["active_suggestion"] is None and body["has_unseen"] is False   # 화면은 "지금은 따로 드릴 제안이 없어요"
+    # 그 아래 실패와 「낼 제안 없음」을 가르는 안내(21.3, #1297). 마지막으로 살펴본 시각도 함께 간다
+    assert body["observation"]["notice"] == core.OBSERVATION_NOTICES["failed"]
+    assert body["observation"]["checked_at"] is not None
+    assert body["status"] is None
     assert "agent.suggested" not in {t for t, _ in e2e.events(map_id)}
     # 모델 없이 도는 요약은 그대로 갱신된다 — 모델 장애가 다른 기능을 막지 않는다
     assert [s["category"] for s in body["summaries"]] == ["음식점"]

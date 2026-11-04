@@ -25,6 +25,10 @@ export type User = Schemas["User"];
 export type AgentSettings = Schemas["AgentSettings"];
 export type AgentSuggestion = Schemas["AgentSuggestion"];
 export type AgentSummary = Schemas["AgentSummary"];
+/** 지도 현황 문단(#1152). */
+export type AgentMapStatus = Schemas["AgentMapStatus"];
+/** 살펴본 상태(#1297). notice는 제안이 없고 모드가 켜져 있을 때만 응답에 실린다(handlers/agent.ts). */
+export type AgentObservation = Schemas["AgentObservation"];
 export type RunAdvice = Schemas["RunAdvice"];
 /** 추천 탭 광고(docs/ads.md, #642). on_map은 응답 때 계산한다. */
 export type Ad = Schemas["Ad"];
@@ -122,6 +126,8 @@ export interface StoreState {
   agentSettings: Record<string, AgentSettings>; // mapId -> 모드. 없으면 켜짐(기본값)
   agentSuggestions: Record<string, AgentSuggestionEntity>; // suggestionId -> 제안
   agentSummaries: Record<string, AgentSummary[]>; // mapId -> 카테고리별 우리 조건 요약
+  agentStatus: Record<string, AgentMapStatus>; // mapId -> 지도 현황 문단(#1152). 없으면 null
+  agentObservation: Record<string, AgentObservation>; // mapId -> 마지막 관찰 시각과 최근 관찰의 안내 문구(#1297). 없으면 관찰 전
   runAdvice: Record<string, RunAdvice | null>; // runId -> 추천 막힘 조언. null이면 204
   courseRuns: Record<string, CourseRunEntity>; // runId -> AI 코스 run(#334)
   ads: Ad[]; // 진행 중인 광고(#642, 목 서버는 기간과 active를 따지지 않는다)
@@ -165,6 +171,8 @@ function emptyState(): StoreState {
     agentSettings: {},
     agentSuggestions: {},
     agentSummaries: {},
+    agentStatus: {},
+    agentObservation: {},
     runAdvice: {},
     courseRuns: {},
     ads: [],

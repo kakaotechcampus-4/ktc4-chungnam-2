@@ -10,11 +10,12 @@ import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
+import ExternalSearchLink from '@/ui/ExternalSearchLink'
 
 import { useAiStore } from './aiStore'
-import ExternalSearchLink from './ExternalSearchLink'
 import { AiChecks, AiFulfillment, AiReason } from './Evidence'
 import {
+  hasExcluded,
   missingWants,
   noResultsExternalSearch,
   noResultsFunnel,
@@ -119,10 +120,12 @@ export function ResultsBody({
       {/* 원한 조건에 맞는 곳이 반경 안에 없으면 다른 곳만 보여 주지 않고 이유를 말한다. 넓히는 건 사람이다(가드레일 4). */}
       {missing.length > 0 && (
         <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
-          반경 안에서 ‘{missing.join('·')}’에 맞는 곳을 찾지 못해 다른 곳을 골랐어요. 반경을 넓혀 볼까요?
+          {hasExcluded(result.funnel)
+            ? `이미 보여 드린 곳을 빼면, 반경 안에 ‘${missing.join('·')}’에 맞는 곳이 더 없어요. 반경을 넓혀 볼까요?`
+            : `반경 안에서 ‘${missing.join('·')}’에 맞는 곳을 찾지 못해 다른 곳을 골랐어요. 반경을 넓혀 볼까요?`}
         </Notice>
       )}
-      <div className="space-y-3 pb-[100px]">
+      <div className="space-y-3">
         {fresh.length > 0 && (
           <ol className="space-y-3">
             {fresh.map((c) => (

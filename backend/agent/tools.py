@@ -17,6 +17,7 @@
 `ToolContext.results`에 메모리로만 둔다.
 """
 
+import logging
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -32,12 +33,16 @@ from agent import core
 from agent.constants import TOOL_RESULT_MAX_ITEMS
 from agent.snapshot import Snapshot
 from common import categories
+from common.errors import AppError
+from common.kst import kst_date
 from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
 from recommend import api as recommend_api
 from shortlist import api as shortlist_api
+
+log = logging.getLogger("pingo.agent")
 
 NOT_FOUND = {"error": "NOT_FOUND"}
 UNAVAILABLE = {"error": "UNAVAILABLE"}
@@ -167,7 +172,7 @@ def get_map_overview(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any
     times = ([p["created_at"] for p in matrix] + [r["updated_at"] for p in matrix for r in p["reactions"]]
              + [i["added_at"] for i in confirmed])
     return {
-        "dday": (found["start_date"] - core.kst_date(ctx.now)).days,
+        "dday": (found["start_date"] - kst_date(ctx.now)).days,
         "member_count": len(found["members"]),
         "categories": [
             {"category": c, "pins": sum(v == c for v in alive.values()),
@@ -269,29 +274,33 @@ def get_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     return _top(reasons, "reasons")
 
 
-def _lines(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
-    """반응마다 근거 줄 [{fact_key, wants, badge, source, …}] (8.1). 글은 ②로(캐시에 없을 때만, 한 번에 모아서), 칩은 칩 표
-    그대로. ♥ 글은 preferred, 🚫 글은 required로 넣는다 — 추천이 근거 줄을 만들 때와 같다. 칩은 🚫에만 있어 required.
-    글 줄과 칩 줄을 합친 뒤 추천과 같은 #422 규칙(🚫 사유 안의 음식 종류 "원함"은 preferred)을 recommend.api로 건다(#564).
-    줄마다 출처(source: text|chip)를 붙이고 칩 줄에는 chip_id와 label(칩 표의 고정 이름)도 붙인다 — 요약의 키 없는 사유
-    나누기(8절)가 쓴다. enforced와 not_enforced_reason은 recommend.api.evidence_line_uses가 붙인다(#740). ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
+def _text_lines(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> dict[str, tuple[dict[str, Any], ...]]:
+    """글이 있는 반응마다 ② 결과 줄 {fact_key, wants, badge} — reaction_id → 줄(8.1). 캐시에 없는 것만 한 번에 모아 ②를 부른다.
+    ②의 입력은 추천이 run을 만들 때와 같은 함수(recommend.api.reason_text_inputs, #1180)로 만든다 — ♥ 글은 preferred, 🚫 글은
+    required를 agent가 다시 정하지 않는다. ②가 실패하면 llm.api.PlanEvidenceFailed."""
     def key(r: Mapping[str, Any]) -> tuple[str, str]:
         return r["reaction_id"], _iso(r["updated_at"])
 
     pending = [r for r in rows if r["reason_text"] and ctx.cache.get(key(r)) is None]
     if pending:
-        groups = ctx.structure([
-            {"source": "reaction", "text": r["reason_text"], "fact_key": None,
-             "badge": "required" if r["type"] == "against" else "preferred"}
-            for r in pending
-        ])
+        groups = ctx.structure(recommend_api.reason_text_inputs(pending))
         for r, group in zip(pending, groups, strict=True):
             ctx.cache.put(key(r), tuple(
                 {"fact_key": line.fact_key, "wants": line.wants, "badge": line.badge} for line in group
             ))
+    return {r["reaction_id"]: ctx.cache.get(key(r)) or () for r in rows if r["reason_text"]}
+
+
+def _lines(ctx: ToolContext, rows: Sequence[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
+    """반응마다 근거 줄 [{fact_key, wants, badge, source, …}] (8.1). 글은 ②로(_text_lines — 캐시에 없을 때만, 한 번에 모아서,
+    입력은 recommend.api.reason_text_inputs), 칩은 칩 표 그대로. 칩은 🚫에만 있어 required.
+    글 줄과 칩 줄을 합친 뒤 추천과 같은 #422 규칙(🚫 사유 안의 음식 종류 "원함"은 preferred)을 recommend.api로 건다(#564).
+    줄마다 출처(source: text|chip)를 붙이고 칩 줄에는 chip_id와 label(칩 표의 고정 이름)도 붙인다 — 요약의 키 없는 사유
+    나누기(8절)가 쓴다. enforced와 not_enforced_reason은 recommend.api.evidence_line_uses가 붙인다(#740). ②가 실패하면 llm.api.PlanEvidenceFailed가 그대로 올라간다."""
+    texts = _text_lines(ctx, rows)
     out = []
     for r in rows:
-        lines = [dict(line, source="text") for line in ctx.cache.get(key(r)) or ()] if r["reason_text"] else []
+        lines = [dict(line, source="text") for line in texts[r["reaction_id"]]] if r["reason_text"] else []
         lines += [{"fact_key": c["fact_key"], "wants": c["wants"], "badge": "required", "source": "chip",
                    "chip_id": c["chip_id"], "label": c["label"]} for c in r["chips"]]
         out.append(recommend_api.demote_wanted_place_identity(r["category"], lines))
@@ -334,6 +343,14 @@ def summary_reasons(ctx: ToolContext, category: str) -> list[dict[str, Any]]:
     ]
 
 
+def reasons_of(ctx: ToolContext, reaction_ids: Sequence[str]) -> list[dict[str, Any]]:
+    """그 반응들의 구조화 결과 [{reaction_id, type, lines[{fact_key, wants, badge}]}] — 우리 데이터 확인(6.6)이 정체 신호의 🚫
+    사유에서 키를 고를 때 쓴다. 모델 도구가 아니라 기록(calls)에 남지 않고 상위 30개로 자르지 않는다. 같은 글의 ②는 캐시로
+    한 번만 부른다. ②가 실패하면 PlanEvidenceFailed."""
+    wanted = set(reaction_ids)
+    return _structured(ctx, [r for r in _reasoned(ctx) if r["reaction_id"] in wanted])
+
+
 def structure_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
     """[{reaction_id, type, lines[{fact_key 또는 null, wants 또는 null, badge}]}]. 글은 ②, 칩은 칩 표 그대로(8.1).
     이 지도에 없는 반응 id는 not_found로 돌려준다."""
@@ -357,6 +374,54 @@ def comparison(ctx: ToolContext, *, pin_id: str | None = None, category: str | N
     else:
         return None
     return core.compare_reasons(_structured(ctx, rows[:TOOL_RESULT_MAX_ITEMS]))
+
+
+PREVIEW_CALL_ID = "p1"   # 미리 돌려 보기의 도구 기록 번호(6.7). llm이 매기는 t1, t2 …와 겹치지 않는다
+
+
+def preview(ctx: ToolContext, *, category: str | None, with_keys: Sequence[str] = ()) -> dict[str, Any] | None:
+    """미리 돌려 보기(6.7, #1180) — 진단 전에 코드가 부른다. 그 카테고리의 사유 있는 반응 전부(삭제된 핀 포함, 추천과 같은
+    기준)의 ② 결과를 모아 recommend.api.preview_filter로 실격 조건까지 남는 수를 센다. 줄 조립과 거르기는 recommend가 한다.
+
+    결과 `{passed_count, funnel}`, with_keys가 있으면 `with_keys_count`와 `with_labels`(키의 표시 이름)도. 도구 기록에 p1로
+    남긴다(모델이 고르지 않아 도구 상한에 세지 않는다, 6.3 비교와 같은 취급) — 모델은 수를 ToolClaim(call_id="p1")으로 가리킨다.
+    run, 후보, 제외 목록은 다루지 않고 장소 이름과 id도 받지 않는다(2절 2번). ②가 실패하거나(UNAVAILABLE) 추천 대상이 아니거나
+    추천 준비가 안 됐으면 None — 기록하지 않고, 진단은 미리 돌려 보기 없이 간다."""
+    started = time.monotonic()
+    if category not in categories.recommendable():
+        return None
+    rows = _reasoned(ctx, category=category)
+    try:
+        texts = _text_lines(ctx, rows)
+    except llm_api.PlanEvidenceFailed:
+        log.warning("agent 미리 돌려 보기 건너뜀(②) map_id=%s", ctx.map_id)
+        return None
+    keys = list(dict.fromkeys(with_keys))
+    try:
+        with ctx.read() as db:
+            found = recommend_api.preview_filter(
+                db, map_id=ctx.map_id, category=category, text_lines={rid: list(lines) for rid, lines in texts.items()},
+                with_keys=keys,
+            )
+    except (AppError, ValueError) as exc:   # 준비 안 됨, 그 사이 새 글 반응(② 결과 없음) — 다음 관찰에서 다시 본다
+        log.warning("agent 미리 돌려 보기 건너뜀 map_id=%s error=%s", ctx.map_id, type(exc).__name__)
+        return None
+    result: dict[str, Any] = {"passed_count": found["passed_count"]}
+    if keys:
+        labels = recommend_api.fact_labels()
+        result |= {"with_keys_count": found["with_keys_count"], "with_labels": [labels[k] for k in keys if k in labels]}
+    result["funnel"] = found["funnel"]
+    _record(ctx, PREVIEW_CALL_ID, "preview_filter", {"category": category, "with_keys": keys}, result, started)
+    return result
+
+
+WEB_CHECK_CALL_ID = "w1"   # 웹 확인의 도구 기록 번호(6.8, #1216). 모델이 고르지 않아 도구 상한에 세지 않는다(p1과 같은 취급)
+
+
+def record_web_check(ctx: ToolContext, *, pin_id: str, fact_key: str, result: dict[str, Any], started: float) -> None:
+    """웹 확인 한 번을 도구 기록 w1로 남긴다 — 인자는 pin_id·fact_key, 결과는 status와 문장 수만(core.web_tool_record). 문장, URL,
+    장소 이름은 남기지 않는다. 확인 자체는 flows가 llm을 불러 한다(진단 도구가 아니다)."""
+    _record(ctx, WEB_CHECK_CALL_ID, "web_check", {"pin_id": pin_id, "fact_key": fact_key}, result, started)
 
 
 def compare_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:

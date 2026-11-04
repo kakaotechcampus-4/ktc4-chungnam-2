@@ -312,7 +312,7 @@ export function buildCandidates(regionLabel: string) {
  * 문장은 실서버처럼 서버 렌더 결과를 그대로 둔다 — FE는 숫자나 슬롯을 다루지 않는다.
  */
 export const SEED_SUGGESTION_ID = "sug_1";
-export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings" | "agentSuggestions" | "agentSummaries" | "runAdvice"> {
+export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings" | "agentSuggestions" | "agentSummaries" | "agentStatus" | "agentObservation" | "runAdvice"> {
   const now = new Date("2026-10-15T09:00:00+09:00");
   return {
     agentSettings: {},
@@ -332,6 +332,13 @@ export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings"
             { index: 0, type: "open_recommend", label: "카페 추천 받기", params: { category: "카페" } },
             { index: 1, type: "show_pins", label: "카페 핀 보기", params: { category: "카페" } },
           ],
+          facts: [], // 우리 데이터 확인(#1152)은 갈림·정체의 사실 다툼에만 붙는다 — 카테고리 공백에는 없다
+          // 작업 기록(#1297). 코드 유형이라 감지·순위·재확인뿐이다. 정체·갈림이면 조사·미리 찾기·우리 데이터·웹 확인·검증이 사이에 온다
+          steps: [
+            { stage: "감지", role: "계산", by: "code", by_detail: null, text: "확정한 2곳 중 카페가 없어요" },
+            { stage: "순위", role: "결정", by: "code", by_detail: null, text: "살펴볼 곳 2개 중 이것부터 골랐어요" },
+            { stage: "재확인", role: "검증", by: "code", by_detail: null, text: "저장 직전에 지도가 그대로인지 다시 봤어요" },
+          ],
           created_at: now.toISOString(),
           expires_at: new Date(now.getTime() + 24 * 3600 * 1000).toISOString(),
         },
@@ -349,6 +356,16 @@ export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings"
           updated_at: now.toISOString(),
         },
       ],
+    },
+    agentStatus: {
+      [mapId]: {
+        paragraph: "음식점은 반대 의견이 하나 있고 아직 확정한 곳이 없어요. 카페는 후보만 있고 정한 곳이 없어요. 출발이 다가오니 카페부터 보면 좋겠어요.",
+        updated_at: now.toISOString(),
+      },
+    },
+    // 살펴본 상태(#1297). 안내 문구는 제안이 없을 때만 응답에 실린다 — 시드는 제안이 있어 비워 둔다
+    agentObservation: {
+      [mapId]: { checked_at: now.toISOString(), notice: null },
     },
     runAdvice: {},
   };

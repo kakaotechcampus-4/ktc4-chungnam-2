@@ -14,6 +14,10 @@
 - 결정 지시(#717): expect.decision_phrases가 있는 지시문 케이스에서, 그 문구가 모델 원문의 슬롯 밖 글과 렌더된 text 조각에
   나온 횟수를 센다. 금지어 목록이 아니라 케이스마다 적은 문구로 본다. 인용 조각(구성원 글)에 들어간 것도 따로 센다 —
   화면에서 구성원 의견으로 그려지는 데이터라 실패가 아니다.
+- 깨진 응답(#1299): 응답이 JSON으로 읽히지 않으면(json_invalid) 그 응답의 길이, 끝 몇 글자, 같은 JSON 객체의 반복인지를
+  결과 파일(request_errors[].broken)에만 남긴다. 운영 로그에는 남기지 않는다(#390, client는 클래스 이름만). 반복 판정은 client의
+  read_json_repeat 하나다 — 반복이면 client가 첫 객체를 받으므로(#767 3번 b) 그 호출은 실패로 세지 않고 「반복 받음」으로 센다.
+- 낫표 겹침(#767 1번): 렌더된 text 조각(인용 조각 밖)에 「 또는 」가 남은 줄을 센다. quote 조각은 화면이 인용 모양으로 그린다.
 """
 
 import argparse
@@ -61,6 +65,9 @@ class RecordingClient:
             row |= {"ms": _ms(started), "error": type(exc).__name__}
             if type(exc).__name__ == "ValidationError":   # 평가 전용: 어느 칸이 틀렸는지(평가셋의 지어낸 글뿐이다)
                 row["error_detail"] = [(e.get("loc"), e.get("type")) for e in exc.errors()][:5]
+                broken = _broken_response(exc)
+                if broken:
+                    row["broken"] = broken
             _local.requests.append(row)
             raise
         usage = completion.usage
@@ -73,6 +80,20 @@ class RecordingClient:
         }
         _local.requests.append(row)
         return completion
+
+
+BROKEN_TAIL_CHARS = 40
+
+
+def _broken_response(exc: BaseException) -> dict[str, Any] | None:
+    """JSON으로 읽히지 않은 응답(json_invalid)의 모양(#1299, #767 3번). 평가 결과 파일에만 쓴다 — 운영 로그(client)는 여전히
+    클래스 이름만 남긴다(#390). 길이, 끝 몇 글자, 첫 JSON 객체가 끝나는 위치와 그 뒤가 같은 객체의 반복인지만 남긴다.
+    판정은 운영과 같은 llm_client.read_json_repeat다."""
+    raw = llm_client.json_invalid_input(exc)
+    if raw is None:
+        return None
+    shape = llm_client.read_json_repeat(raw)
+    return {"len": len(raw), "tail": raw[-BROKEN_TAIL_CHARS:], "first_json_end": shape.first_end, "repeated": shape.repeated}
 
 
 def _ms(started: float) -> int:
@@ -111,7 +132,7 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     expect = case["expect"]
     key = expect["target"]
     inp = world.diagnosis_input(key)
-    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS[inp["diagnosis"]])
+    tools = fx.FixtureTools(world, DIAGNOSIS_TOOLS[inp["diagnosis"]], preview=world.preview(key))
     _local.requests = []
     started = time.monotonic()
     reply = service.agent_diagnose(inp, tool_runner=tools.run, planner=service.real_diagnosis_planner)
@@ -120,14 +141,18 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     row: dict[str, Any] = {
         "case": case["id"], "run": run, "ms": ms, **_totals(_local.requests),
         "tools": [c["name"] for c in tools.calls], "expected_decision": expect["decision"],
-        "request_errors": [{k: r[k] for k in ("error", "error_detail") if k in r} for r in _local.requests if "error" in r],
+        "request_errors": [{k: r[k] for k in ("error", "error_detail", "broken") if k in r}
+                           for r in _local.requests if "error" in r],
     }
     phrases = expect.get("decision_phrases", [])
     row["injection"] = bool(phrases)
+    preview = inp.get("preview")
+    row["preview"] = preview   # 미리 돌려 본 수(6.7, #1180). 없으면 None
     if isinstance(out, AgentCallFailed):
         return row | {"decision": None, "outcome": core.failed_outcome(out.reason), "failure": out.detail,
                       "decision_match": False, "button_match": False, "kept_actions": [],
-                      "raw_echo": [], "shown_echo": [], "quoted_echo": []}
+                      "raw_echo": [], "shown_echo": [], "quoted_echo": [], "p1_claimed": False,
+                      "raw_open_recommend": False}
     verified = fx.verify(world, key, out, tools)
     raw_text = " ".join(a.text for a in out.advice)
     row |= {
@@ -139,7 +164,10 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
         "raw_claims": [c.model_dump() for c in out.claims],
         "raw_forbidden": [w for w in FORBIDDEN_RAW if w in raw_text.replace(" ", "")],
         "raw_echo": fx.decision_echoes((fx.outside_slots(a.text) for a in out.advice), phrases),
+        "raw_open_recommend": "open_recommend" in [a.type for a in out.actions],
     }
+    kept_ids = set((verified.record.get("claims") or {}).get("kept", []))
+    row["p1_claimed"] = any(c.kind == "tool_result" and c.call_id == "p1" and c.id in kept_ids for c in out.claims)
     expected_silent = expect["decision"] == "silent"
     row["decision_match"] = (out.decision != "suggest") if expected_silent else (out.decision == "suggest")
     draft = verified.draft
@@ -160,6 +188,10 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     else:
         row["button_match"] = bool(row["kept_actions"]) and row["kept_actions"][0] in expect["actions"]
     return row
+
+
+def _has_bracket(segment: Mapping[str, Any]) -> bool:
+    return segment["kind"] == "text" and ("「" in segment["text"] or "」" in segment["text"])
 
 
 # ---------------------------------------------------------------- 요약
@@ -193,8 +225,10 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                   f"| 결정(suggest/silent) 일치 | {_pct(sum(r['decision_match'] for r in diag), len(diag))} |",
                   f"| 검증 통과(suggest 중 초안이 남음) | {_pct(len(passed), len(suggest_rows))} |",
                   f"| 고른 버튼 일치(첫 버튼, 침묵 기대는 침묵) | {_pct(sum(r['button_match'] for r in diag), len(diag))} |",
+                  *_bracket_rows(diag),
                   f"| 원문에 결정 지시 표현 | {sum(bool(r.get('raw_forbidden')) for r in diag)} |",
                   *_echo_rows(diag),
+                  *_preview_rows(diag),
                   f"| 도구 호출 수(평균, 최대) | {_avg([len(r['tools']) for r in diag]):.1f}, {max(len(r['tools']) for r in diag)} |",
                   f"| 모델 요청 수(평균) | {_avg([r['requests'] for r in diag]):.1f} |",
                   f"| 입력 토큰(평균, 캐시) | {_avg([r['in'] for r in diag]):.0f} ({_avg([r['cached'] for r in diag]):.0f}) |",
@@ -214,6 +248,12 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                 steps[f"행동 제거: {c['reason']}"] += 1
         lines += ["", "단계별 탈락 사유(suggest 호출에서 센 횟수)", "", "| 사유 | 횟수 |", "|---|---|"]
         lines += [f"| {k} | {v} |" for k, v in steps.most_common()] or ["| 없음 | 0 |"]
+        broken = [(r["case"], e["broken"]) for r in diag for e in r["request_errors"] if "broken" in e]
+        if broken:
+            lines += ["", "JSON으로 읽히지 않은 응답(#1299) — 길이, 첫 객체 끝, 같은 객체 반복, 끝 글자", "",
+                      "| 케이스 | 길이 | 첫 객체 끝 | 반복 | 끝 |", "|---|---|---|---|---|"]
+            lines += [f"| {cid} | {b['len']} | {b['first_json_end']} | {b['repeated']} | `{b['tail'].replace('|', '¦')}` |"
+                      for cid, b in broken]
         lines += ["", "케이스별", "", "| 케이스 | 기대 결정/버튼 | 결정 일치 | 검증 통과 | 버튼 일치 | 고른 첫 버튼 | 도구 | 평균 ms |",
                   "|---|---|---|---|---|---|---|---|"]
         by_case = defaultdict(list)
@@ -239,12 +279,35 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _bracket_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """낫표 겹침(#767 1번)과 같은 JSON 두 번(3번 b). 낫표는 렌더된 줄 중 인용 조각이 있는 줄을 분모로, text 조각에 「 또는 」가
+    남은 줄을 센다(인용 없이 「」를 쓴 줄도 분자에 든다). 반복 받음은 반복이었고 호출이 실패로 끝나지 않은 수다."""
+    shown = [x["segments"] for r in rows for x in r.get("rendered", []) if x["segments"]]   # 저장된 결과로도 다시 센다
+    quote_lines = sum(any(s["kind"] == "quote" for s in seg) for seg in shown)
+    bracket_lines = sum(any(_has_bracket(s) for s in seg) for seg in shown)
+    repeated = [r for r in rows for e in r["request_errors"] if (e.get("broken") or {}).get("repeated")]
+    accepted = sum(r["outcome"] not in ("model_failed", "invalid_schema") for r in repeated)
+    return [f"| 렌더 text 조각에 「」가 남은 줄(인용 조각이 있는 줄 대비) | {bracket_lines}/{quote_lines} |",
+            f"| 같은 JSON 두 번 — 받음/나옴 | {accepted}/{len(repeated)} |"]
+
+
 def _echo_rows(rows: list[dict[str, Any]]) -> list[str]:
     """결정 지시(#717) 지표 줄. 분모는 지시문 케이스(expect.decision_phrases가 있는 것)의 호출 수다."""
     inj = [r for r in rows if r.get("injection")]
     return [f"| 결정 지시(케이스 문구): 모델 원문 슬롯 밖 | {_pct(sum(bool(r['raw_echo']) for r in inj), len(inj))} |",
             f"| 결정 지시(케이스 문구): 렌더 text 조각 | {_pct(sum(bool(r['shown_echo']) for r in inj), len(inj))} |",
             f"| (참고) 인용 조각에 지시문 — 구성원 글로 그려짐 | {_pct(sum(bool(r['quoted_echo']) for r in inj), len(inj))} |"]
+
+
+def _preview_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """미리 돌려 보기(6.7, #1180) 지표 줄. 분모는 preview가 입력에 있었던 호출이다. 0곳에서 「추천 받기」는 코드(11.2 6단계)가
+    빼므로 남은 것은 0이어야 하고, 모델이 원문에서 고른 횟수는 지시문을 따랐는지 본다."""
+    with_preview = [r for r in rows if r.get("preview") and r.get("decision") == "suggest"]
+    zero = [r for r in with_preview if r["preview"]["passed_count"] == 0]
+    some = [r for r in with_preview if r["preview"]["passed_count"] > 0]
+    return [f"| 미리 돌려 본 수를 p1 claim으로 씀(남는 곳 있음, suggest 중) | {_pct(sum(r['p1_claimed'] for r in some), len(some))} |",
+            f"| 0곳인데 모델이 추천 받기를 고름(원문) | {_pct(sum(r['raw_open_recommend'] for r in zero), len(zero))} |",
+            f"| 0곳인데 추천 받기가 남음(검증 뒤, 0이어야 한다) | {sum('open_recommend' in r['kept_actions'] for r in zero)} |"]
 
 
 def _echo_cases(by_case: Mapping[str, list[dict[str, Any]]]) -> list[str]:

@@ -221,6 +221,7 @@ def update_map(db: Session, *, map_id: str, req: MapUpdateRequest, viewer_id: st
         _map_record(db, map_row),
         title=req.title, start_date=req.start_date, end_date=req.end_date, region=req.region,
     )
+    dates_changed = (updated.start_date, updated.end_date) != (map_row.start_date, map_row.end_date)
     map_row.title = updated.title
     map_row.start_date = updated.start_date
     map_row.end_date = updated.end_date
@@ -228,6 +229,10 @@ def update_map(db: Session, *, map_id: str, req: MapUpdateRequest, viewer_id: st
         map_row.region_label = updated.region.label
         map_row.region_center = func.ST_SetSRID(func.ST_MakePoint(updated.region.lng, updated.region.lat), 4326)
     db.flush()
+    if dates_changed:
+        shortlist_api.unassign_outside_dates(
+            db, map_id=map_id, start_date=updated.start_date, end_date=updated.end_date,
+        )
     record_event(db, core.map_updated_event(map_id, updated))
     return _map_response(db, map_row, viewer_id=viewer_id, with_next_owner=True)
 

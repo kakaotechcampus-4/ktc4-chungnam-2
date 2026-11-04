@@ -8,10 +8,10 @@
 모델 호출(backend/llm/CLAUDE.md)에 대응하는 스키마만 담는다:
   ②    PlanningOutput (사유 → 실격/선호/반경 구조화)
   ③-a-1 PlaceFactLabel (장소 라벨링)
-  ③-b   RankedCandidate (선호 순위)
   v2 에이전트 DiagnosisOutput, AgentCallFailed (docs/agent-v2.md 11.1, #532), AgentUsage·AgentReply(#564).
        PriorityOutput은 #582에서, RunAdviceOutput은 #749에서 지웠다(우선순위와 추천 막힘 조언은 agent의 코드)
   v2 동선 에이전트 CourseTurn (drafts/agent-route-v2.md 11.1, #334), 목표 세우기 CourseGoalSet, 지휘 턴 CourseDirectTurn
+  v2 웹 확인 WebCheckOutput(모델 답), WebCheckResult(검증 뒤 결과) (docs/agent-v2.md 6.8, #1216)
 """
 
 from dataclasses import dataclass
@@ -182,14 +182,6 @@ class PlaceFactLabel(BaseModel):
         return self
 
 
-class RankedCandidate(BaseModel):
-    """③-b 선호 순위 채점 출력. 입력은 이미 실격 통과분이며, 이 스키마는 순위만 매긴다."""
-
-    place_id: str
-    rank: int
-    member_comment: Optional[str] = None  # 근거 없으면 None (5-7-1) — 지어내지 않는다
-
-
 # ---------- v2 계획 보조 에이전트 — 모델 출력 (docs/agent-v2.md 11.1, #532) ----------
 # agent_diagnose의 구조화 출력 스키마다. agent/schemas.py(#513)의 같은 이름 클래스와 필드가 같다 —
 # 하나로 합치는 일(agent가 여기서 가져가기)은 #533이 한다. 모델은 숫자를 문장에 직접 쓰지 않고 claim을 슬롯({c1.value},
@@ -258,6 +250,23 @@ class DiagnosisOutput(BaseModel):
     actions: list[Action]
 
 
+# ---- 지도 현황 문단 (#1168, docs/agent-v2.md 8.2) ----
+# 입력은 agent의 core.status_cells가 센 칸(사실)뿐이다. 모델은 카테고리마다 상태를 고르고 문단을 쓴다. 상태가 사실과
+# 어긋나는지, 문단의 숫자가 칸에 있는지, 먼저 볼 카테고리를 지켰는지는 agent의 core.verify_status가 본다 — 여기서는 스키마까지다.
+
+StatusState = Literal["decided", "almost", "split_left", "stalled", "few", "gathering", "empty"]
+
+
+class StatusCategory(BaseModel):
+    category: str  # 칸의 카테고리 이름 그대로. 빠뜨리거나 두 번 쓰면 검증에서 떨어진다
+    state: StatusState
+
+
+class StatusOutput(BaseModel):
+    categories: list[StatusCategory]
+    paragraph: str  # 2~4문장, 해요체. 숫자는 칸의 값만
+
+
 AgentFailureReason = Literal["invalid_schema", "timeout", "call_failed"]
 
 
@@ -295,6 +304,55 @@ class AgentReply(Generic[AgentResultT]):
 
     result: Union[AgentResultT, AgentCallFailed]
     usage: AgentUsage
+
+
+# ---- v2 웹 확인 (#1216, docs/agent-v2.md 6.8) ----
+# 모델 답(WebCheckOutput)은 strict JSON 스키마(prompts.WEB_CHECK_SCHEMA)로 받아 여기로 읽는다. 「많아야 2개」, 길이, 출처 대조는
+# 스키마가 아니라 코드(service.verify_web_answer)가 본다 — 걸린 문장만 빼고 나머지를 살리려고. 결과(WebCheckResult)의 문장은 검증을
+# 통과한 것뿐이고 출처 이름은 코드가 URL 호스트로 만든다.
+
+class WebCheckStatement(BaseModel):
+    text: str
+    source_url: str
+
+
+class WebCheckOutput(BaseModel):
+    """모델 답. not_found면 statements를 버린다."""
+    status: Literal["found", "not_found"]
+    statements: list[WebCheckStatement]
+
+
+@dataclass(frozen=True)
+class WebAnswer:
+    """웹 확인 호출 한 번이 돌려준 것 — 모델 답과 그 호출의 검색 출처 목록(web_search_call.action.sources의 URL), 검색 횟수.
+    출처 대조는 이 목록으로만 한다(모델이 쓴 URL을 믿지 않는다)."""
+    output: WebCheckOutput
+    sources: tuple[str, ...]
+    web_searches: int
+
+
+WebCheckStatus = Literal["found", "not_found", "paused", "failed"]
+
+
+@dataclass(frozen=True)
+class VerifiedStatement:
+    text: str
+    source_url: str
+    source_name: str   # URL 호스트에서 www.를 뺀 것(코드가 만든다)
+
+
+@dataclass(frozen=True)
+class WebCheckResult:
+    """llm.api.web_check의 결과. found는 검증을 통과한 문장이 1~2개, not_found·paused·failed는 문장이 없다.
+
+    dropped: 검증에서 뺀 문장마다 이유 하나(source_not_listed, bad_scheme, forbidden, length, newline_or_url, over_limit) — 평가와
+    agent_runs 기록용이고 문장은 담지 않는다. web_searches: 그 호출의 검색 횟수(부르지 않았으면 0). detail: failed의 원인(예외
+    클래스명이나 고정 문구)."""
+    status: WebCheckStatus
+    statements: tuple[VerifiedStatement, ...] = ()
+    dropped: tuple[str, ...] = ()
+    web_searches: int = 0
+    detail: Optional[str] = None
 
 
 # ---- v2 동선 에이전트 턴 (#334, drafts/agent-route-v2.md 7·11절) ----
@@ -399,7 +457,8 @@ class CourseGoal(_CourseStrict):
     day: Optional[str] = None            # d1 … (day_indoor, night_end, day_light, place_on_day, day_has)
     places: list[str] = []               # p1 … (place_on_day 1개, together 2개)
     tag: Optional[str] = None            # day_has만: 고정 목록(performance, exhibition, night_view, indoor, shopping, walkable, kid_friendly, heritage, korean_food, cafe, restaurant). 코드가 대조한다
-    source: Literal["request", "reason"] = "request"    # reason(구성원 사유)은 이번 범위 밖 — 자리만 둔다
+    source: Literal["request", "reason", "map"] = "request"    # reason(구성원 사유)은 이번 범위 밖 — 자리만 둔다. map: 지도 근거 후보에서 고른 목표(#1131)
+    candidate_id: Optional[str] = None   # source=map: 고른 지도 목표 후보 id(g1 …). 코드가 후보 종류와 대조한다
     quote: str = ""                      # source=request: 근거가 된 요청 문장 조각(코드가 원문 부분 문자열인지 대조)
     reaction_ids: list[str] = []         # source=reason: 근거 사유 별칭(r1 …). 이번 범위 밖
 
@@ -428,20 +487,12 @@ class CourseLockCall(_CourseStrict):
     day: str
 
 
-class CourseAskRequester(_CourseStrict):
-    """요청자에게 묻는다. 문구는 코드 템플릿이다 — 종류와 대상만 고른다."""
-    tool: Literal["ask_requester"]
-    kind: Literal["pick_course", "ask_closed_day", "choose_day", "split_day"]
-    subject: Optional[str] = None        # ask_closed_day: 장소 별칭, choose_day: 쉬는 날에 걸린 목표 id, split_day: 이동 위반이 남은 날 별칭
-    options: list[str] = []              # pick_course: 후보 id(c1, c2 …), choose_day: 여는 날 별칭, split_day: 나누기 선택지 id(m1, m2 …) — 첫 번째가 제안하는 기본값
-
-
 class CourseDirectFinish(_CourseStrict):
     tool: Literal["finish"]
     candidate_id: str
 
 
-CourseDirectCall = Union[CourseOptimize, CourseLockCall, CourseAskRequester, CourseDirectFinish]
+CourseDirectCall = Union[CourseOptimize, CourseLockCall, CourseDirectFinish]   # 되묻기(ask_requester)는 #1131에서 뺐다
 
 
 class CourseDirectTurn(_CourseStrict):

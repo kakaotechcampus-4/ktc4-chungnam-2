@@ -4,7 +4,9 @@ import { useMeQuery } from '@/features/auth/queries'
 
 import { acceptInvite, createInvite, createMap, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, restoreMap, revokeInvite, transferOwner, updateMap } from './api'
 import { ApiError } from '@/api'
+import { agentKeys } from '@/features/agent/queries'
 import { forgetImport } from '@/features/kakaoImport/queries'
+import { forgetSchedule } from '@/features/shortlist/scheduleStore'
 
 import { inviteProblem, toInviteRowView, toInviteView, toMapHeaderView, toMapListView, toMemberView, toTrashView, type InviteDto, type MapCreateRequest, type MapDto, type MapUpdateRequest } from './model'
 
@@ -57,8 +59,11 @@ function useLeaveCleanup() {
     queryClient.removeQueries({ queryKey: mapKeys.detail(mapId) })
     queryClient.removeQueries({ queryKey: ['pins', mapId] })
     queryClient.removeQueries({ queryKey: ['shortlist', mapId] })
-    // 그 지도의 카톡 가져오기 목록도 버린다(#1045).
+    // 핑고 AI 조언 상태도 그 지도 몫이다(agent-v2 16.4).
+    queryClient.removeQueries({ queryKey: agentKeys.state(mapId) })
+    // 그 지도의 카톡 가져오기 목록(#1045)과 이 기기에 둔 일정도 버린다.
     forgetImport(mapId)
+    forgetSchedule(mapId)
     void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
   }
 }

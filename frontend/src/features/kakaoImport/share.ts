@@ -1,5 +1,6 @@
 /**
- * 카톡 대화에서 지도 링크와 공유 글의 상호명·주소를 읽는다(#1046, 형식은 #1046 루트 코멘트의 실제 내보내기).
+ * 카톡 「대화 내보내기」 파일에서 지도 링크와 공유 글의 상호명·주소를 읽는다(#1046, 형식은 #1046 루트 코멘트의 실제 내보내기).
+ * 사용자가 고른 기간(여행 얘기를 한 날짜, #1139)에 보낸 메시지만 읽는다.
  * 브라우저 안에서만 돌고, 대화 원문·보낸 사람·시각은 여기서 쓰고 버린다 — 돌려주는 것은 링크와 그 링크의 이름·주소뿐이다.
  *
  * 메시지 머리(시각·보낸 사람)는 내보내기·복사 방식마다 달라서 기대지 않는다. **링크 줄을 기준으로 위로 거꾸로** 읽는다.
@@ -110,51 +111,76 @@ const SHARE_HEAD = /^\[(?:네이버\s?지도|카카오\s?맵|지도)\]\s*/
 
 type Line = { text: string; sender?: string; at?: number; head: boolean }
 
-/** 메시지 머리 — 내보내기(모바일·예전 형식)와 PC 복사. 있으면 떼고, 보낸 사람·시각(분)은 구글 분리형 판단에만 쓴다. */
-const HEADS: { re: RegExp; read: (m: RegExpMatchArray) => { sender: string; at: number; text: string } }[] = [
+/** 여행 얘기를 한 기간(#1139). `YYYY-MM-DD`, 양끝 포함. `to`가 없으면 파일 끝까지 읽는다. */
+export type DayRange = { from: string; to?: string }
+
+/** 메시지 하나와 보낸 날짜(`YYYY-MM-DD`). 파일 맨 앞 제목 줄처럼 첫 날짜보다 먼저 나온 줄은 날짜가 없다. */
+type Message = { day?: string; lines: Line[] }
+
+type Head = { sender: string; at: number; text: string; day?: string }
+
+/**
+ * 메시지 머리 — 내보내기(모바일·예전 형식)와 PC. 있으면 떼고, 보낸 사람·시각(분)은 구글 분리형 판단에만 쓴다.
+ * 모바일·예전 형식 머리에는 날짜가 붙어 있고, PC 머리에는 시각만 있어 날짜는 구분선에서 읽는다.
+ */
+const HEADS: { re: RegExp; read: (m: RegExpMatchArray) => Head }[] = [
   {
     re: /^(\d{4})년 (\d{1,2})월 (\d{1,2})일 (오전|오후) (\d{1,2}):(\d{2}), (.+?) : (.*)$/,
-    read: (m) => ({ sender: m[7], at: minutes(+m[1], +m[2], +m[3], m[4], +m[5], +m[6]), text: m[8] }),
+    read: (m) => ({ sender: m[7], at: minutes(+m[1], +m[2], +m[3], m[4], +m[5], +m[6]), text: m[8], day: dayOf(+m[1], +m[2], +m[3]) }),
   },
   {
     re: /^(\d{4})\. (\d{1,2})\. (\d{1,2})\. (오전|오후) (\d{1,2}):(\d{2}), (.+?) : (.*)$/,
-    read: (m) => ({ sender: m[7], at: minutes(+m[1], +m[2], +m[3], m[4], +m[5], +m[6]), text: m[8] }),
+    read: (m) => ({ sender: m[7], at: minutes(+m[1], +m[2], +m[3], m[4], +m[5], +m[6]), text: m[8], day: dayOf(+m[1], +m[2], +m[3]) }),
   },
   { re: /^\[(.+?)\] \[(오전|오후) (\d{1,2}):(\d{2})\] (.*)$/, read: (m) => ({ sender: m[1], at: minutes(0, 1, 1, m[2], +m[3], +m[4]), text: m[5] }) },
 ]
-/** 날짜 구분선(모바일 「2026년 11월 2일 일요일」, PC 「--------------- … ---------------」). 메시지가 아니다. */
+/** 날짜 구분선(모바일 「2026년 11월 2일 일요일」, PC 「--------------- 2026년 11월 2일 일요일 ---------------」). 메시지가 아니다. */
 const SEPARATOR = /^(?:\d{4}년 \d{1,2}월 \d{1,2}일 \S+요일|-{3,}.*-{3,})$/
+/** 구분선 안의 날짜 — 모바일·PC 구분선 둘 다 이 글자가 들어 있다. */
+const SEPARATOR_DATE = /(\d{4})년 (\d{1,2})월 (\d{1,2})일/
 
 function minutes(y: number, mo: number, d: number, ampm: string, h: number, mi: number): number {
   const h24 = (h % 12) + (ampm === '오후' ? 12 : 0)
   return Date.UTC(y, mo - 1, d, h24, mi) / 60000
 }
 
-function readLine(raw: string): Line | null {
-  const line = raw.trim()
-  if (SEPARATOR.test(line)) return null
+const pad = (n: number) => String(n).padStart(2, '0')
+const dayOf = (y: number, mo: number, d: number) => `${y}-${pad(mo)}-${pad(d)}`
+
+function readHead(line: string): Head | null {
   for (const { re, read } of HEADS) {
     const m = line.match(re)
-    if (m) return { ...read(m), head: true }
+    if (m) return read(m)
   }
-  return { text: line, head: false }
+  return null
 }
 
-/** 메시지로 묶는다 — 머리가 있는 줄이 새 메시지를 연다. 머리 없는 줄은 앞 메시지에 이어 붙는다. */
-function toMessages(text: string): Line[][] {
-  const messages: Line[][] = []
+/**
+ * 메시지로 묶는다 — 머리가 있는 줄이 새 메시지를 연다. 머리 없는 줄은 앞 메시지에 이어 붙는다.
+ * 날짜는 구분선과 날짜가 붙은 머리가 바꾸고, 그 뒤 메시지(날짜 없는 PC 머리 포함)는 그 날짜를 따른다.
+ */
+function toMessages(text: string): Message[] {
+  const messages: Message[] = []
+  let day: string | undefined
   for (const raw of text.split(/\r?\n/)) {
-    const line = readLine(raw)
-    if (!line) {
-      messages.push([])
+    const line = raw.trim()
+    if (SEPARATOR.test(line)) {
+      const m = line.match(SEPARATOR_DATE)
+      if (m) day = dayOf(+m[1], +m[2], +m[3])
+      // 구분선 뒤 머리 없는 줄이 앞 메시지에 붙지 않게 끊는다.
+      messages.push({ day, lines: [] })
       continue
     }
     // 빈 줄은 담지 않는다(공유 글 안의 빈 줄도 위로 읽을 때 건너뛴다). 링크만 든 메시지를 알아보는 데 걸리지 않게.
-    if (line.text === '') continue
-    if (line.head || messages.length === 0) messages.push([line])
-    else messages[messages.length - 1].push(line)
+    if (line === '') continue
+    const head = readHead(line)
+    if (head) {
+      if (head.day) day = head.day
+      messages.push({ day, lines: [{ text: head.text, sender: head.sender, at: head.at, head: true }] })
+    } else if (messages.length === 0) messages.push({ day, lines: [{ text: line, head: false }] })
+    else messages[messages.length - 1].lines.push({ text: line, head: false })
   }
-  return messages.filter((m) => m.length > 0)
+  return messages.filter((m) => m.lines.length > 0)
 }
 
 const clean = (s: string, max: number) => {
@@ -177,12 +203,14 @@ function readAbove(above: string[]): { name?: string; address?: string } {
 }
 
 /**
- * 대화에서 지도 링크를 뽑고, 링크마다 공유 글의 상호명·주소를 읽는다. 같은 링크는 한 번만, 나온 순서대로.
- * 같은 링크가 여러 번이면 이름·주소를 읽은 쪽을 남긴다. `found`는 중복을 뺀 전체 수, `shares`는 앞에서부터 LINK_MAX개.
+ * 고른 기간(양끝 포함, 끝이 없으면 시작일부터 파일 끝까지)에 보낸 메시지만 남겨 지도 링크를 뽑고, 링크마다 공유 글의 상호명·주소를 읽는다. 날짜를 모르는 메시지는 뺀다.
+ * 같은 링크는 한 번만, 나온 순서대로. 같은 링크가 여러 번이면 이름·주소를 읽은 쪽을 남긴다.
+ * `found`는 중복을 뺀 전체 수, `shares`는 앞에서부터 LINK_MAX개, `dated`는 날짜를 하나라도 읽었는지다(내보내기 파일이 아니면 false).
  */
-export function readShares(text: string): { shares: Share[]; found: number } {
+export function readShares(text: string, range: DayRange): { shares: Share[]; found: number; dated: boolean } {
   const byUrl = new Map<string, Share>()
-  const messages = toMessages(text)
+  const all = toMessages(text)
+  const messages = all.filter((m) => m.day !== undefined && m.day >= range.from && (!range.to || m.day <= range.to)).map((m) => m.lines)
   messages.forEach((message, mi) => {
     message.forEach((line, li) => {
       for (const m of line.text.matchAll(MAP_LINK)) {
@@ -219,6 +247,6 @@ export function readShares(text: string): { shares: Share[]; found: number } {
       }
     })
   })
-  const all = [...byUrl.values()]
-  return { shares: all.slice(0, LINK_MAX), found: all.length }
+  const shares = [...byUrl.values()]
+  return { shares: shares.slice(0, LINK_MAX), found: shares.length, dated: all.some((m) => m.day !== undefined) }
 }

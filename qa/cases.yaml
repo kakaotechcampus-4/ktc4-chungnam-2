@@ -62,13 +62,13 @@
 - {id: L08, layer: api, area: auth, scenario: "탈퇴 후 같은 세션 쿠키로 API 호출", expect: "401", status: pass}
 
 # ───────── 실시간·알림·기타(api) ─────────
-- {id: S01, layer: api, area: realtime, scenario: "SSE Last-Event-ID 재연결, 놓친 이벤트", expect: "놓친 이벤트 재전송 또는 새 스냅샷 안내", status: untested}
-- {id: S02, layer: api, area: realtime, scenario: "나가기/탈퇴/삭제 시 SSE 종료·map.deleted", expect: "스트림 정리", status: untested}
+- {id: S01, layer: api, area: realtime, scenario: "SSE Last-Event-ID 재연결, 놓친 이벤트(HTTP 전용)", expect: "끊긴 동안 생긴 핀 2개가 순서대로 다시 오고, 숫자 아닌 값은 무시하고 지금부터 받는다", status: pass}
+- {id: S02, layer: api, area: realtime, scenario: "나가기·지도 삭제 시 SSE 종료·map.deleted(HTTP 전용, 탈퇴는 realtime 단위 테스트)", expect: "나간 사람의 구독만 닫히고 재구독 404, 삭제하면 구독자 모두 map.deleted 뒤 닫힘, 비구성원 404(전체 채널·개인 채널 /events/me 모두, #1220)", status: pass}
 - {id: S03, layer: api, area: notification, scenario: "알림 목록·읽음·선호", expect: "권한 경계(남의 알림 접근 불가)", status: pass}
 - {id: S04, layer: api, area: feedback, scenario: "피드백 제출 빈/긴/연타", expect: "빈·공백·1001자·모르는 필드 422, 1000자 201, 상한에서 429 RATE_LIMITED", status: pass}
 - {id: S05, layer: api, area: shortlist, scenario: "확정 리스트 내보내기·순서 변경 경계", expect: "빈 리스트, 1개, 많은 개수", status: pass}
 - {id: S06, layer: api, area: permission, scenario: "비구성원이 지도 리소스 접근", expect: "404(존재 노출 안 함)", status: pass}
-- {id: P01, layer: api, area: permission, scenario: "비구성원이 남의 지도·핀·후기·추천·후보·확정 리스트·초대 id로 경로마다 49개 요청(쓰기 포함, 본문은 유효하게, #1096). 핀 휴지통은 서버 구현 전(#864)", expect: "모두 앱 오류 본문이 있는 404(경로 없음 404는 실패), 끝나고 방장의 데이터 그대로(P01.kept)", status: pass}
+- {id: P01, layer: api, area: permission, scenario: "비구성원이 남의 지도·핀·후기·추천·후보·확정 리스트·초대 id로 경로마다 53개 요청(쓰기 포함, 본문은 유효하게, #1096, 휴지통·확정 일정 #1220). 에이전트 제안 view·accept·dismiss는 제안 id를 만들 수 없어 뺐다", expect: "모두 앱 오류 본문이 있는 404(경로 없음 404는 실패), 끝나고 방장의 데이터·휴지통 그대로(P01.kept)", status: pass}
 
 # ───────── 크레딧 원장(api) — 백엔드 A, #1091. 숫자는 GET /credits/me에서 받는다(괄호는 지금 값) ─────────
 - {id: W01, layer: api, area: credits, scenario: "정식 계정의 처음 GET /credits/me", expect: "balance = max_balance(30), prices.recommend_run·course(1), review_reward(10)", status: pass}
@@ -78,7 +78,7 @@
 - {id: W05, layer: api, area: credits, scenario: "첫 실행 0곳(부산 지도에 서울 핀, #1055) 뒤 다시 추천·넓히기", expect: "잔액 그대로(#1015), 다시 추천·넓히기도 차감 없음", status: pass}
 - {id: W06, layer: api, area: credits, scenario: "게스트의 GET /credits/me와 추천 받기", expect: "403 GUEST_NOT_ALLOWED + detail.initial_credits(30)", status: pass}
 - {id: W07, layer: api, area: credits, scenario: "W01~W06에서 쓴 계정의 잔액과 원장 합(로컬만)", expect: "credit_accounts.balance = sum(credit_ledger.delta)", status: pass}
-- {id: W08, layer: api, area: credits, scenario: "코스 요청: 확정 1곳 422, 게스트 403, 2곳 202 → 진행 중 재요청 409, 끝나면 done −course / failed 환불", expect: "422·409는 잔액 그대로, done이면 −prices.course, failed면 그대로", status: pass}
+- {id: W08, layer: api, area: credits, scenario: "코스 요청: 확정 1곳 422, 게스트 403, 2곳 202 → 진행 중 재요청 409, 끝나면 done −course / failed 환불", expect: "422·409는 잔액 그대로, done이면 −prices.course, failed면 그대로. 코스 결과 GET /course-runs/{id}는 비구성원 404·다른 구성원 403(#1220)", status: pass}
 - {id: W09, layer: api, area: credits, scenario: "잔액 0 계정의 코스 요청", expect: "402 CREDIT_INSUFFICIENT(required=prices.course, balance 0), run 안 남음(latest 204)", status: pass}
 - {id: L09, layer: api, area: auth, scenario: "탈퇴 → 같은 카카오로 로그인 → 되살리기 / 새로 시작(#855, 로컬 전용)", expect: "되살리기는 지도·핀·잔액(30 아닌 값)이 그대로, 새로 시작은 새 계정에 잔액 30·옛 크레딧 계정 삭제", status: pass}
 - {id: L10, layer: api, area: auth, scenario: "탈퇴 7일 뒤 정리(로컬 전용)", expect: "7일 전엔 그대로, 뒤엔 크레딧 계정·원장·로그인 수단 삭제, 후기는 남음, 이름 「탈퇴한 구성원」(핀 작성자·알림)", status: pass}
@@ -125,12 +125,12 @@
 - {id: K11, layer: api, area: credits, scenario: "ENGINE_ERROR·INTERRUPTED로 끝난 코스(서버 재시작으로 끊기)", expect: "환불 1번만, 상한 30까지(credits-reviews 3.3·3.6)", status: untested}
 - {id: K12, layer: ui, area: course, scenario: "모델이 느리거나 실패(목표 세우기 실패)", expect: "기본 코스로 끝까지 감, 문구가 사용자 글 탓처럼 읽히지 않음(점검 K6 — 환불 여부는 결정 대기)", status: untested}
 # ───────── 계획 보조 에이전트(agent) — AI-B, 스테이징 ─────────
-- {id: G01, layer: ui, area: agent, scenario: "반대 뒤 정체 지도에서 제안 카드 수락 / 닫기", expect: "수락은 FE 동작만, 에이전트가 직접 실행하지 않음 / 닫으면 지도 단위로 사라짐", status: untested}
-- {id: G02, layer: ui, area: agent, scenario: "모드 끄기 → 켜기", expect: "끄면 새 제안 없음, 켜면 다시 관찰", status: untested}
-- {id: G03, layer: ui, area: agent, scenario: "우리 조건 요약", expect: "칸 나누기 맞음, 사유 원문이 서버 문장에 섞이지 않음(#717)", status: untested}
-- {id: G04, layer: ui, area: agent, scenario: "따옴표·이모지·140자 사유가 있는 지도의 제안·요약", expect: "문장이 깨지지 않음", status: untested}
-- {id: G05, layer: api, area: agent, scenario: "이미 처리한 제안 accept/dismiss, 버튼 범위 밖 action_index", expect: "409 / 422 VALIDATION_ERROR, 비구성원 404", status: untested}
-- {id: G06, layer: api, area: agent, scenario: "지도 하루 모델 상한(구성원 수 × 4)", expect: "상한 넘으면 진단 안 부름, KST 자정 초기화", status: untested}
+- {id: G01, layer: ui, area: agent, scenario: "반대 뒤 정체 지도에서 제안 카드 수락 / 닫기", expect: "수락은 FE 동작만, 에이전트가 직접 실행하지 않음 / 닫으면 지도 단위로 사라짐", status: pass}
+- {id: G02, layer: ui, area: agent, scenario: "모드 끄기 → 켜기", expect: "끄면 새 제안 없음, 켜면 다시 관찰", status: pass}
+- {id: G03, layer: ui, area: agent, scenario: "우리 조건 요약", expect: "칸 나누기 맞음, 사유 원문이 서버 문장에 섞이지 않음(#717)", status: pass}
+- {id: G04, layer: ui, area: agent, scenario: "따옴표·이모지·140자 사유가 있는 지도의 제안·요약", expect: "문장이 깨지지 않음", status: pass}
+- {id: G05, layer: api, area: agent, scenario: "이미 처리한 제안 accept/dismiss, 버튼 범위 밖 action_index", expect: "409 / 422 VALIDATION_ERROR, 비구성원 404", status: pass}
+- {id: G06, layer: api, area: agent, scenario: "지도 하루 모델 상한(구성원 수 × 4)", expect: "상한 넘으면 진단 안 부름, KST 자정 초기화", status: pass}
 # ───────── 모델 비용·실패(llm) — AI-B ─────────
 - {id: M01, layer: api, area: llm, scenario: "Actions llm-cost 수동 실행(스테이징)", expect: "기능별 호출 수·토큰·비용 리포트, 실패 0", status: untested}
 - {id: M02, layer: api, area: llm, scenario: "② 🚫 짧은 불평 「주차 안됨」 지도에서 추천(#1078)", expect: "parking_available wants=true, 주차 되는 곳이 실격되지 않음", status: pass}

@@ -607,7 +607,7 @@ describe("#469·#471 — 지난 추천 기록, 확정 리스트 내보내기", (
     const bytes = new Uint8Array(await csv.clone().arrayBuffer());
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // 엑셀에서 한글이 깨지지 않게 UTF-8 BOM (fetch의 text()는 BOM을 벗기므로 바이트로 본다)
     const body = await csv.text();
-    expect(body.split(/\r?\n/)[0]).toBe("순서,이름,분류,링크,메모");
+    expect(body.split(/\r?\n/)[0]).toBe("날짜,순서,이름,분류,링크,메모");
     expect(body).toContain('"여기, 맛있대"'); // 쉼표가 든 칸은 따옴표로 감싼다
 
     expect((await fetch(`${BASE}/maps/map_1/shortlist/export?format=pdf`)).status).toBe(422);
@@ -1281,6 +1281,8 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     expect(state.summaries[0].category).toBe("음식점");
     expect(state.summaries[0].not_filtered.notices[0]).toContain("가게에 직접 확인");
     expect(state.active_suggestion.claims).toBeUndefined(); // 서버 내부 값은 싣지 않는다
+    expect(state.status.paragraph).toContain("부터 보면 좋겠어요"); // 지도 현황 문단(#1152)
+    expect(state.active_suggestion.facts).toEqual([]); // 우리 데이터 확인은 사실 다툼에만(#1152)
   });
 
   it("열람하면 점이 꺼지고, 열람은 멱등이다", async () => {
@@ -1335,6 +1337,28 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
 
     store.runRequestedBy["run_no_results"] = "u_2";
     expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(403);
+  });
+
+  it("#1297 작업 기록: 제안에 WorkStep 모양의 단계가 붙고, 코드 유형은 감지로 시작해 재확인으로 끝난다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    const steps = state.active_suggestion.steps;
+    expect(steps.map((s: { stage: string }) => s.stage)).toEqual(["감지", "순위", "재확인"]);
+    for (const s of steps) expect(Object.keys(s).sort()).toEqual(["by", "by_detail", "role", "stage", "text"]);
+  });
+
+  it("#1297 살펴본 상태: 제안이 있으면 안내 문구가 없고, 제안이 없을 때만 최근 관찰의 문구가 실린다", async () => {
+    const notice = "이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요";
+    store.agentObservation["map_1"] = { checked_at: "2026-10-15T00:00:00.000Z", notice };
+    const withSuggestion = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(withSuggestion.observation).toEqual({ checked_at: "2026-10-15T00:00:00.000Z", notice: null });
+
+    await fetch(`${BASE}/agent/suggestions/sug_1/dismiss`, { method: "POST" });
+    const quiet = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(quiet.observation.notice).toBe(notice);
+
+    await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(off.observation.notice).toBeNull(); // 모드가 꺼져 있으면 스위치만 보인다
   });
 });
 
@@ -1431,7 +1455,8 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const placed = done.days.flatMap((d: { slots: { pin_id: string }[] }) => d.slots.map((s) => s.pin_id));
     expect(placed.sort()).toEqual(["pin_1", "pin_2"]);
     expect(done.checks.length).toBe(2);
-    expect(done.steps.length).toBe(7);
+    expect(done.steps.length).toBe(14);
+    expect(done.steps.map((s: { stage: string }) => s.stage)).toEqual(expect.arrayContaining(["찾기", "옮겨 보기", "결정", "비교", "끝", "가정"])); // 진행 화면 줄 색·단계 막대(#1243)
     expect(done.stale).toBe(false);
 
     await confirm("pin_3");
@@ -1920,5 +1945,50 @@ describe("#1037 — 광고 보고 충전", () => {
     resetScenario("guest");
     expect((await open()).status).toBe(403);
     expect((await claim("00000000-0000-0000-0000-000000000000")).status).toBe(403);
+  });
+});
+
+describe("확정 일정 (#1172)", () => {
+  it("날짜 배정과 충돌을 확인한다", async () => {
+    const url = `${BASE}/maps/map_1/shortlist/schedule`;
+    const before = await (await fetch(url)).json();
+    const groups = [{ date: before.start_date, item_ids: before.items.map((i: {id: string}) => i.id) }];
+    const saved = await fetch(url, { method: "PUT", body: JSON.stringify({ version: before.version, groups }) });
+    expect(saved.status).toBe(200);
+    const stale = await fetch(url, { method: "PUT", body: JSON.stringify({ version: "stale", groups }) });
+    expect(stale.status).toBe(409);
+  });
+});
+
+describe("여행 기간 변경과 확정 일정 (#1172)", () => {
+  it("범위 밖 항목을 기존 미배정 뒤에 날짜별 순서로 보존한다", async () => {
+    const base = `${BASE}/maps/map_1`;
+    await fetch(base, { method: "PATCH", body: JSON.stringify({ start_date: "2026-11-01", end_date: "2026-11-05" }) });
+    const items = await Promise.all(["pin_1", "pin_2", "pin_3"].map(pin_id => fetch(`${base}/shortlist`, { method: "POST", body: JSON.stringify({ pin_id }) }).then(r => r.json())));
+    const original = await (await fetch(`${base}/shortlist/schedule`)).json();
+    const groups = [{ date: null, item_ids: [items[0].id] }, { date: "2026-11-04", item_ids: [items[2].id, items[1].id] }];
+    expect((await fetch(`${base}/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: original.version, groups }) })).status).toBe(200);
+    const stale = await fetch(`${base}/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: original.version, groups }) });
+    expect((await stale.json()).message).toBe("확정 리스트가 변경되었습니다");
+    const order = await fetch(`${base}/shortlist/order`, { method: "PUT", body: JSON.stringify({ item_ids: items.map(i => i.id) }) });
+    expect((await order.json()).message).toBe("날짜별 일정을 사용 중입니다");
+    expect((await fetch(base, { method: "PATCH", body: JSON.stringify({ end_date: "2026-11-02" }) })).status).toBe(200);
+    const result = await (await fetch(`${base}/shortlist/schedule`)).json();
+    expect(result.items.map((i: { id: string }) => i.id)).toEqual([items[0].id, items[2].id, items[1].id]);
+    expect(result.items.every((i: { scheduled_date: string | null }) => i.scheduled_date === null)).toBe(true);
+  });
+});
+
+describe("지도 만들기 응답(#1197)", () => {
+  it("종료일이 시작일보다 앞이면 422, 게스트는 403 GUEST_NOT_ALLOWED", async () => {
+    const post = (body: object) => fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify(body) });
+    const bad = await post({ title: "거꾸로", start_date: "2026-11-05", end_date: "2026-11-01" });
+    expect(bad.status).toBe(422);
+    expect((await bad.json()).code).toBe("VALIDATION_ERROR");
+
+    store.users[ME_USER_ID].is_guest = true;
+    const guest = await post({ title: "게스트", start_date: "2026-11-01", end_date: "2026-11-02" });
+    expect(guest.status).toBe(403);
+    expect((await guest.json()).code).toBe("GUEST_NOT_ALLOWED");
   });
 });

@@ -560,13 +560,30 @@ def test_build_member_fulfillment_counts_member_with_unmet_condition_in_total_on
     ]}
 
 
-def test_build_member_fulfillment_requires_all_of_a_members_conditions():
-    """한 구성원의 조건이 둘인데 하나만 맞으면 충족으로 세지 않는다."""
+def test_build_member_fulfillment_counts_only_visible_conditions_1100():
+    """#1100 — ♥에서 이어받은 숨은 선호(모름)는 집계에 넣지 않는다. 보이는 조건이 전부 met이면 충족이다."""
     criteria = {"quiet": True, "local_flavor": True}
     hearted = [_place(_check("quiet"), _check("local_flavor"), members=frozenset({"u1"}))]
     candidate = [_check("quiet", passed=True), _check("local_flavor", passed=True, confidence="unknown")]
     result = core.build_member_fulfillment(candidate, hearted, criteria)
-    assert result["satisfied"] == 0 and result["total"] == 1
+    assert _conditions(result, "u1") == [_cond("quiet", "met")]
+    assert result["satisfied"] == 1 and result["total"] == 1
+
+
+def test_build_member_fulfillment_unmet_visible_condition_is_not_satisfied_1100():
+    criteria = {"quiet": True}
+    hearted = [_place(_check("quiet"), members=frozenset({"u1"}))]
+    candidate = [_check("quiet", passed=True)]
+    result = core.build_member_fulfillment(
+        candidate, hearted, criteria, {"quiet": frozenset({"u1"})}, written_line_ids={("u1", "quiet"): "L1"},
+    )
+    assert result["satisfied"] == 1
+    result = core.build_member_fulfillment(
+        [_check("quiet", passed=False)], hearted, criteria, {"quiet": frozenset({"u1"})},
+        written_line_ids={("u1", "quiet"): "L1"},
+    )
+    assert _conditions(result, "u1") == [_cond("quiet", "unmet", "L1")]
+    assert result["satisfied"] == 0
 
 
 def test_build_member_fulfillment_ignores_members_without_criteria_conditions():
@@ -635,7 +652,7 @@ def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
 
 
 def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
-    """#631 — 한 구성원이 양식·조용함을 원했고 후보가 양식인데 조용한지는 모르면, 구성원은 충족(0/1)이 아니다.
+    """#631 — 한 구성원이 양식·조용함을 원했고 후보가 양식인데 조용한지는 모르면, 보이는 조건(양식)만 센다(#1100: 1/1).
     이유 문장은 "선호 충족: 양식"만 말하고 인원은 카드의 member_fulfillment가 말한다 — 같은 문장에 (0/1명)이 없다."""
     hearted = [
         _place(_check("cuisine_western", passed=True), members=frozenset({"u1"})),
@@ -647,7 +664,7 @@ def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
     fulfillment = core.build_member_fulfillment(candidate, hearted, criteria)
     reason = core.build_reason(candidate, criteria)
 
-    assert (fulfillment["satisfied"], fulfillment["total"]) == (0, 1)
+    assert (fulfillment["satisfied"], fulfillment["total"]) == (1, 1)
     assert reason == "선호 충족: 양식"
     assert "명)" not in reason
 
@@ -694,7 +711,7 @@ def test_sight_hearts_only_user_is_satisfied_by_a_matching_candidate_681():
 
     raw = core.build_preference_criteria(hearted, disqualifying_fact_keys=[], preferred_authors={})
     assert len(raw) == len(everything)
-    assert core.build_member_fulfillment(candidate, hearted, raw)["satisfied"] == 0   # 고치기 전
+    assert core.build_member_fulfillment(candidate, hearted, raw)["total"] == 1
 
     filtered = core.filter_heart_signals(hearted, "관광지")
     criteria = core.build_preference_criteria(filtered, disqualifying_fact_keys=[], preferred_authors={})
@@ -775,15 +792,26 @@ def test_select_top_candidates_picks_highest_scores_first():
     assert core.select_top_candidates(candidates, anchors, limit=3) == ["high", "mid", "low"]
 
 
-def test_select_top_candidates_region_diversity_never_beats_score():
-    # 5점짜리가 전부 해운대고 광안리 최고점이 2점이면 해운대 3곳이 뽑힌다(이슈 본문 예시).
-    candidates = [
-        core.ScoredCandidate(place_id=f"haeundae_{i}", score=5, region_label="해운대", lat=35.0, lng=129.0)
-        for i in range(3)
-    ] + [core.ScoredCandidate(place_id="gwangalli", score=2, region_label="광안리", lat=35.1, lng=129.1)]
+def test_select_top_candidates_region_balance_never_beats_score():
+    """constraints.md 예 — 5점이 전부 해운대고 광안리 최고점이 2점이면 해운대 3곳이 뽑힌다. 1점 차이여도 같다."""
     anchors = {"해운대": [(35.0, 129.0)], "광안리": [(35.1, 129.1)]}
-    result = core.select_top_candidates(candidates, anchors, limit=3)
-    assert result == ["haeundae_0", "haeundae_1", "haeundae_2"]
+    for gwangalli_score in (2, 4):
+        candidates = [
+            core.ScoredCandidate(place_id=f"haeundae_{i}", score=5, region_label="해운대", lat=35.0, lng=129.0)
+            for i in range(3)
+        ] + [core.ScoredCandidate(place_id="gwangalli", score=gwangalli_score, region_label="광안리", lat=35.1, lng=129.1)]
+        assert core.select_top_candidates(candidates, anchors, limit=3) == ["haeundae_0", "haeundae_1", "haeundae_2"]
+
+
+def test_select_top_candidates_met_conditions_beat_region_balance():
+    """#1288 — 같은 점수면 충족 수가 먼저고, 아직 안 뽑힌 동네는 그다음이다."""
+    candidates = [
+        core.ScoredCandidate(place_id="a_met_1", score=5, region_label="a", lat=35.0, lng=129.0, met_conditions=2),
+        core.ScoredCandidate(place_id="a_met_2", score=5, region_label="a", lat=35.0, lng=129.0, met_conditions=2),
+        core.ScoredCandidate(place_id="b_none", score=5, region_label="b", lat=36.0, lng=130.0, met_conditions=0),
+    ]
+    anchors = {"a": [(35.0, 129.0)], "b": [(36.0, 130.0)]}
+    assert core.select_top_candidates(candidates, anchors) == ["a_met_1", "a_met_2", "b_none"]
 
 
 def test_select_top_candidates_tie_break_prefers_unpicked_region():
@@ -797,6 +825,34 @@ def test_select_top_candidates_tie_break_prefers_unpicked_region():
     # 첫 번째는 (동점이라) 거리로 정해지고(해운대_a가 앵커에 더 가까움), 두 번째는 이미 해운대가
     # 뽑혔으니 동점이면 아직 안 뽑힌 광안리를 우선한다 — 해운대_b가 아니라.
     assert result == ["haeundae_a", "gwangalli"]
+
+
+def test_select_top_candidates_same_score_prefers_more_met_conditions_over_distance():
+    """#1288 — 같은 점수면 충족 조건 수가 많은 곳이 기준 핀에 더 먼 곳이어도 먼저다."""
+    candidates = [
+        core.ScoredCandidate(place_id="near_unknown", score=0, region_label="r", lat=35.0, lng=129.0, met_conditions=0),
+        core.ScoredCandidate(place_id="far_met", score=0, region_label="r", lat=35.01, lng=129.0, met_conditions=1),
+    ]
+    assert core.select_top_candidates(candidates, {"r": [(35.0, 129.0)]}) == ["far_met", "near_unknown"]
+
+
+def test_select_top_candidates_score_still_beats_met_conditions():
+    """#1288 — 충족 수는 점수가 같을 때만 쓴다. 점수가 높으면 충족이 적어도 먼저다."""
+    candidates = [
+        core.ScoredCandidate(place_id="met_many", score=1, region_label="r", lat=35.0, lng=129.0, met_conditions=5),
+        core.ScoredCandidate(place_id="high", score=3, region_label="r", lat=35.0, lng=129.0, met_conditions=0),
+    ]
+    assert core.select_top_candidates(candidates, {"r": [(35.0, 129.0)]}) == ["high", "met_many"]
+
+
+def test_met_condition_count_sums_met_across_members():
+    checks = [_label_check("spicy_focused", value=False), _label_check("quiet")]  # 매운맛 거짓, 조용함 모름
+    fulfillment = core.build_member_fulfillment(
+        checks, [], {},
+        disqualifier_conditions={"u1": {("spicy_focused", False), ("quiet", True)}, "u2": {("spicy_focused", False)}},
+        written_line_ids={("u1", "spicy_focused"): "l1", ("u1", "quiet"): "l2", ("u2", "spicy_focused"): "l3"},
+    )
+    assert core.met_condition_count(fulfillment) == 2  # u1 매운맛 met + u2 매운맛 met, u1 조용함은 needs_check
 
 
 def test_select_top_candidates_distance_tie_break_uses_average_not_sum():
@@ -858,21 +914,19 @@ def _label_check(fact_key, *, value=None):
     return core.build_check(fact_key, "pass", known=value is not None, value=value, passes=bool(value))
 
 
-def test_soft_requirement_wants_false_disqualifies_only_a_true_label():
+def test_soft_labels_never_disqualify():
     flags = core.apply_disqualifier_filters(
         [[_label_check("cuisine_korean", value=True)], [_label_check("cuisine_korean", value=False)],
          [_label_check("cuisine_korean")]],
-        [("cuisine_korean", False)],
     )
-    assert flags == [False, True, True]
+    assert flags == [True, True, True]
 
 
-def test_soft_requirement_wants_true_disqualifies_only_a_false_label():
+def test_soft_labels_never_disqualify_for_a_wanted_fact():
     flags = core.apply_disqualifier_filters(
         [[_label_check("quiet", value=True)], [_label_check("quiet", value=False)], [_label_check("quiet")]],
-        [("quiet", True)],
     )
-    assert flags == [True, False, True]
+    assert flags == [True, True, True]
 
 
 def test_soft_checks_without_requirement_never_disqualify():
@@ -1042,7 +1096,10 @@ def test_written_preference_outweighs_other_heart_labels():
 
 @pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
     ("required", "is_crowded_large", None, "카페", (), (True, None, "filter")),         # hard 키는 방향이 없어도 쓰인다
-    ("required", "quiet", False, "카페", (), (True, None, "filter")),                   # soft 키 + 방향, required는 거른다
+    ("required", "quiet", False, "카페", (), (True, None, "score")),                    # soft 키는 감점
+    ("required", "accessible", True, "관광지", (), (True, None, "filter")),
+    ("required", "accessible", False, "관광지", (), (True, None, "score")),
+    ("preferred", "accessible", True, "관광지", (), (True, None, "score")),
     ("preferred", "quiet", True, "음식점", (), (True, None, "score")),                  # preferred는 점수만
     ("required", None, None, "카페", (), (False, "no_key", None)),
     ("required", "quiet", None, "카페", (), (False, "no_direction", None)),
@@ -1055,6 +1112,20 @@ def test_written_preference_outweighs_other_heart_labels():
 ])
 def test_evidence_line_use_picks_the_reason_and_effect(badge, fact_key, wants, category, off_season, expected):
     assert core.evidence_line_use(badge, fact_key, wants, category, off_season) == expected
+
+
+@pytest.mark.parametrize("badge, fact_key, wants, category, off_season, expected", [
+    ("required", "is_crowded_large", None, "카페", (), True),            # hard 키
+    ("required", "accessible", True, "관광지", (), True),                # 접근성 필요 조건
+    ("required", "spicy_focused", False, "음식점", (), False),           # 취향 반대는 순위만
+    ("required", "accessible", False, "관광지", (), False),
+    ("preferred", "accessible", True, "관광지", (), False),
+    ("required", None, None, "카페", (), None),                          # 안 쓰이는 줄은 값이 없다
+    ("required", "quiet", None, "카페", (), None),
+    ("required", "cherry_blossom", True, "관광지", ("cherry_blossom",), None),
+])
+def test_evidence_line_use_filters_candidates_1260(badge, fact_key, wants, category, off_season, expected):
+    assert core.evidence_line_use(badge, fact_key, wants, category, off_season).filters_candidates is expected
 
 
 def test_evidence_line_use_reason_order_is_no_key_then_off_season_then_category():
@@ -1103,9 +1174,9 @@ def test_conditions_written_preference_shows_unmet_and_needs_check_but_heart_onl
         written_line_ids={("u1", "quiet"): "L1", ("u1", "bakery"): "L2"},
     )
     assert _conditions(result, "u1") == [_cond("bakery", "needs_check", "L2"), _cond("quiet", "unmet", "L1")]
-    # ♥에서만 나온 선호: met(한식)만 보이고 라벨이 모름인 bakery는 빠진다. satisfied는 모름이 있어 거짓 그대로.
+    # ♥에서만 나온 선호: met(한식)만 보이고 라벨이 모름인 bakery는 빠진다. 보이는 조건이 met이라 u2는 충족(#1100).
     assert _conditions(result, "u2") == [_cond("cuisine_korean", "met")]
-    assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": False}
+    assert {e["user_id"]: e["satisfied"] for e in result["by_member"]} == {"u1": False, "u2": True}
 
 
 def test_conditions_heart_only_unmet_is_hidden_and_keyless_member_is_absent():
@@ -1114,10 +1185,12 @@ def test_conditions_heart_only_unmet_is_hidden_and_keyless_member_is_absent():
         [_check("quiet", passed=False)], hearted, {"quiet": True}, disqualifier_conditions={"u2": set()},
     )
     assert _conditions(result, "u1") == []
+    assert result["satisfied"] == 0 and result["total"] == 1
+    assert result["by_member"][0]["satisfied"] is False
     assert [e["user_id"] for e in result["by_member"]] == ["u1"]   # 키 없는 반대만 낸 u2는 넣지 않는다
 
 
-def test_conditions_do_not_change_satisfied_or_total():
+def test_met_condition_line_ids_do_not_change_satisfied_or_total():
     checks = [_check("quiet", passed=True), _label_check("spicy_focused")]
     args = (checks, [], {"quiet": True}, {"quiet": frozenset({"u1", "u2"})})
     kwargs = {"disqualifier_conditions": {"u1": {("spicy_focused", False)}}}

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
@@ -50,15 +50,25 @@ function renderSheet() {
   )
 }
 
-async function pasteText(text: string, button: string) {
-  await userEvent.click(screen.getByRole('textbox', { name: '카톡 대화' }))
-  await userEvent.paste(text)
-  await userEvent.click(screen.getByRole('button', { name: button }))
+/** 픽스처 대화가 오간 날(2026-11-02) 하루. */
+const DAY = { from: '2026-11-02', to: '2026-11-02' }
+
+/** 종료일은 선택이라 라벨이 「종료일 (선택)」이다. `to`가 없으면 비워 둔다(끝까지 읽기). */
+function setRange(range: { from: string; to?: string }) {
+  fireEvent.change(screen.getByLabelText('시작일'), { target: { value: range.from } })
+  fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: range.to ?? '' } })
+}
+
+/** 기간을 고르고 대화 파일을 넣는다. `button`은 파일 고르는 창을 여는 버튼 이름 — 기간을 고르면 눌리는지 본다. */
+async function pickFile(text: string, button: string, range: { from: string; to?: string } = DAY) {
+  setRange(range)
+  expect(screen.getByRole('button', { name: button })).toBeEnabled()
+  await userEvent.upload(screen.getByLabelText('카톡 대화 파일'), new File([text], 'KakaoTalk_Chat.txt', { type: 'text/plain' }))
 }
 
 async function paste() {
   renderSheet()
-  await pasteText(MOCK_SAMPLE, '지도 링크 찾기')
+  await pickFile(MOCK_SAMPLE, '대화 파일 넣기')
   // 이름으로 찾기까지 끝나면 후보 라디오가 뜬다.
   await screen.findByRole('radiogroup', { name: '성수 노포 곱창 후보' })
 }
@@ -119,13 +129,110 @@ describe('카톡 대화에서 핀 가져오기 — 네이버·공유 글 힌트�
   })
 })
 
+describe('카톡 가져오기 — .txt 파일과 여행 얘기를 한 기간(#1139)', () => {
+  it('붙여넣기 칸은 없고, 시작일을 고르기 전에는 파일을 넣지 못한다 — 종료일은 선택이고 앞이면 안내', () => {
+    renderSheet()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    const button = screen.getByRole('button', { name: '대화 파일 넣기' })
+    expect(button).toBeDisabled()
+    expect(screen.getByLabelText(/^종료일/)).toHaveAccessibleDescription('종료일을 비우면 대화 끝까지 읽어요')
+    fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-11-02' } })
+    expect(button).toBeEnabled()
+    fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: '2026-11-01' } })
+    expect(button).toBeDisabled()
+    expect(screen.getByLabelText(/^종료일/)).toHaveAccessibleDescription('종료일은 시작일과 같거나 뒤여야 해요')
+    fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: '2026-11-02' } })
+    expect(button).toBeEnabled()
+  })
+
+  it('종료일을 비우면 시작일부터 대화 끝까지의 링크를 싣는다', async () => {
+    const previews = capture(`/maps/${MAP}/pins/link-preview`)
+    renderSheet()
+    const chat = [
+      '2026년 10월 30일 금요일',
+      '2026년 10월 30일 오후 9:00, 친구A : 지난번 https://naver.me/hintA',
+      '2026년 11월 3일 화요일',
+      '2026년 11월 3일 오전 8:00, 친구A : 여기 가자 https://place.map.kakao.com/mock-2',
+      '2026년 12월 20일 일요일',
+      '2026년 12월 20일 오전 8:00, 친구B : 여기도 https://naver.me/addrB',
+    ].join('\n')
+    await pickFile(chat, '대화 파일 넣기', { from: '2026-11-01' })
+
+    await waitFor(() => expect(previews).toHaveLength(1))
+    expect((previews[0] as { urls: string[] }).urls).toEqual(['https://place.map.kakao.com/mock-2', 'https://naver.me/addrB'])
+  })
+
+  it('기간 밖에 보낸 링크는 확인 요청에 싣지 않는다', async () => {
+    const previews = capture(`/maps/${MAP}/pins/link-preview`)
+    renderSheet()
+    const chat = [
+      '2026년 10월 30일 금요일',
+      '2026년 10월 30일 오후 9:00, 친구A : 지난번 https://naver.me/hintA',
+      '2026년 11월 3일 화요일',
+      '2026년 11월 3일 오전 8:00, 친구A : 여기 가자 https://place.map.kakao.com/mock-2',
+    ].join('\n')
+    await pickFile(chat, '대화 파일 넣기', { from: '2026-11-01', to: '2026-11-03' })
+
+    await waitFor(() => expect(previews).toHaveLength(1))
+    expect((previews[0] as { urls: string[] }).urls).toEqual(['https://place.map.kakao.com/mock-2'])
+    expect(await screen.findByText('지도 링크 1개')).toBeInTheDocument()
+  })
+
+  it('그 기간에 링크가 없거나 날짜를 못 읽으면 안내하고 아무것도 보내지 않는다', async () => {
+    const previews = capture(`/maps/${MAP}/pins/link-preview`)
+    renderSheet()
+    await pickFile(MOCK_SAMPLE, '대화 파일 넣기', { from: '2026-10-01', to: '2026-10-02' })
+    expect(await screen.findByRole('alert')).toHaveTextContent('이 기간에 지도 링크가 없어요')
+
+    await pickFile('여기 가자 https://naver.me/hintA', '대화 파일 넣기')
+    expect(await screen.findByRole('alert')).toHaveTextContent('날짜를 읽지 못했어요')
+    expect(previews).toHaveLength(0)
+  })
+
+  it('.txt 가 아닌 파일은 읽지 않는다', async () => {
+    const user = userEvent.setup({ applyAccept: false })
+    renderSheet()
+    setRange(DAY)
+    await user.upload(screen.getByLabelText('카톡 대화 파일'), new File([MOCK_SAMPLE], 'chat.csv', { type: 'text/csv' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('.txt 파일만 넣을 수 있어요')
+    expect(screen.queryByText(/지도 링크 \d+개/)).not.toBeInTheDocument()
+  })
+  it('확장자가 .txt 가 아니면 형식이 text/plain 이어도 읽지 않는다 — 대문자 .TXT 는 받는다', async () => {
+    const user = userEvent.setup({ applyAccept: false })
+    renderSheet()
+    setRange(DAY)
+    await user.upload(screen.getByLabelText('카톡 대화 파일'), new File([MOCK_SAMPLE], 'chat.csv', { type: 'text/plain' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('.txt 파일만 넣을 수 있어요')
+    expect(screen.queryByText(/지도 링크 \d+개/)).not.toBeInTheDocument()
+
+    await user.upload(screen.getByLabelText('카톡 대화 파일'), new File([MOCK_SAMPLE], 'KAKAO.TXT', { type: '' }))
+    expect(await screen.findByText(/지도 링크 \d+개/)).toBeInTheDocument()
+  })
+
+  it('목록이 가득 찬 뒤 새 파일을 넣으면 「더했다」가 아니라 가득 찼다고 알리고, 안내대로 완료된 것을 지우면 더해진다', async () => {
+    const lines = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => `2026년 11월 2일 오전 1:00, 친구A : https://place.map.kakao.com/mock-${from + i}`).join('\n')
+    const previews = capture(`/maps/${MAP}/pins/link-preview`)
+    renderSheet()
+    await pickFile(lines(1, 50), '대화 파일 넣기')
+    await screen.findByText('지도 링크 50개')
+    await waitFor(() => expect(previews).toHaveLength(5))
+
+    // 가득 찬 목록에 새 링크 — 아무것도 더해지지 않고 이유를 알린다(기간을 좁혀도 풀리지 않는다)
+    await pickFile(lines(51, 3), '다른 대화 파일 더하기')
+    expect(await screen.findByRole('alert')).toHaveTextContent('목록이 가득 차서 새 링크를 더하지 못했어요')
+    expect(screen.getByText('지도 링크 50개')).toBeInTheDocument()
+    expect(previews).toHaveLength(5)
+  })
+})
+
 describe('카톡 가져오기 — 누적·새로고침 뒤 유지·버튼(#1045)', () => {
-  it('다른 대화를 붙여넣으면 이전 줄은 남고 새 링크만 더해 확인한다 — 같은 링크는 한 줄', async () => {
+  it('다른 대화 파일을 넣으면 이전 줄은 남고 새 링크만 더해 확인한다 — 같은 링크는 한 줄', async () => {
     const previews = capture(`/maps/${MAP}/pins/link-preview`)
     await paste()
-    await pasteText(
+    await pickFile(
       '2026년 11월 2일 오전 2:00, 친구C : 또 https://naver.me/hintA\n2026년 11월 2일 오전 2:01, 친구C : 새 곳 https://place.map.kakao.com/mock-2',
-      '링크 더하기',
+      '다른 대화 파일 더하기',
     )
 
     await waitFor(() => expect(previews).toHaveLength(2))
@@ -155,7 +262,7 @@ describe('카톡 가져오기 — 누적·새로고침 뒤 유지·버튼(#1045)
     renderSheet()
     expect(await screen.findByText('지도 링크 5개')).toBeInTheDocument()
     expect(await screen.findByText('찍음 2곳')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '링크 더하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '다른 대화 파일 더하기' })).toBeInTheDocument()
   })
 
   it('시트가 열린 채 사라져도(화면이 바뀜) 「모달 열림」이 남지 않는다 — 지도 버튼·핑고 조언이 숨은 채 남던 원인', async () => {

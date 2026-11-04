@@ -203,8 +203,8 @@ def test_full_golden_path_run_to_execute_to_result_to_publish(app_client, db_ses
 
     result = app_client.get(f"/runs/{run_id}/result", cookies=_auth())
     assert result.status_code == 200
-    # 깔때기 단계 키는 recommend.api만 내준다 — HTTP 응답은 스펙(FunnelEntry) 그대로(#751)
-    assert {key for entry in result.json()["funnel"] for key in entry} == {"label", "removed_count"}
+    # 깔때기 항목은 스펙(FunnelEntry)대로 key를 싣는다(#1146)
+    assert {key for entry in result.json()["funnel"] for key in entry} == {"key", "label", "removed_count"}
     candidates = result.json()["candidates"]
     assert len(candidates) > 0  # DevPlaceSearchGateway가 항상 최소 몇 개는 채운다
     assert candidates[0]["permissions"]["can_publish"] is True
@@ -348,6 +348,26 @@ def test_evidence_response_marks_enforced_by_fact_key_720(app_client, db_session
     assert lines["새우 알레르기"].get("not_enforced_reason") == "no_key"
     assert lines["그냥 분위기 좋은 곳"].get("not_enforced_reason") == "no_key"
     assert all("effect" not in line for line in lines.values())   # effect는 recommend.api만 내준다(#751)
+
+
+def test_evidence_response_says_whether_a_line_filters_candidates_1260(app_client, db_session):
+    """#1260 — 쓰이는 줄 중 접근성 필요 조건만 후보를 뺀다(true). 취향 줄은 순위만 낮추고(false), 안 쓰이는 줄은 값이 없다."""
+    from recommend import service
+
+    run_id = _evidence_run(app_client, db_session)
+    service.add_reaction_evidence(db_session, run_id=uuid.UUID(run_id), lines=[
+        {"author_id": "user_1", "source": "reaction", "text": "휠체어 필요", "badge": "required", "fact_key": "accessible", "wants": True},
+        {"author_id": "user_1", "source": "reaction", "text": "매운 건 싫어", "badge": "required", "fact_key": "spicy_focused", "wants": False},
+        {"author_id": "user_1", "source": "reaction", "text": "접근성 있으면 좋아", "badge": "preferred", "fact_key": "accessible", "wants": True},
+        {"author_id": "user_1", "source": "reaction", "text": "새우 알레르기", "badge": "required", "fact_key": None},
+    ])
+    db_session.commit()
+
+    lines = {line["text"]: line for line in app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_1")).json()}
+    assert lines["휠체어 필요"]["filters_candidates"] is True
+    assert lines["매운 건 싫어"]["filters_candidates"] is False
+    assert lines["접근성 있으면 좋아"]["filters_candidates"] is False
+    assert lines["새우 알레르기"]["enforced"] is False and lines["새우 알레르기"].get("filters_candidates") is None
 
 
 def _evidence_run_with_three_authors(app_client, db_session) -> str:

@@ -27,11 +27,12 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from agent.course import runner, worklog
+from agent import service as agent_service
+from agent.course import goals as goals_mod, runner, worklog
 from agent.course.api_schemas import CourseRequest, CourseRun
 from agent.course.constants import (
     COURSE_DAYS_MAX, STARTUP_ORPHAN_AFTER, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
-    MAX_PLACES, MIN_PLACES,
+    MAP_SUMMARY_SECTIONS, MAX_PLACES, MIN_PLACES,
 )
 from agent.course.core import MemberConstraint
 from agent.course.gateways import CourseLlm
@@ -44,6 +45,7 @@ from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
+from recommend import api as recommend_api
 from shortlist import api as shortlist_api
 
 log = logging.getLogger("pingo.agent.course")
@@ -132,6 +134,22 @@ class CourseJob:
     request_text: str
     map_id: str            # 사용량 기록(llm_calls, #870)의 라벨
     requested_by: str
+    map_items: tuple[goals_mod.SummaryItem, ...] = ()     # 우리 조건 요약 줄(지도 목표 후보의 근거, #1131 B안)
+
+
+def read_map_items(db: Session, map_id: str) -> tuple[goals_mod.SummaryItem, ...]:
+    """우리 조건 요약(agent_reason_summaries)을 코스가 읽는 자리 — 여기 한 곳이다(#1131 B안). 같은 agent 모듈의 `service.list_summaries`를
+    부르고, 요약에서 키·방향·사람 수만 꺼낸다(MAP_SUMMARY_SECTIONS 칸). 요약에는 사유 원문과 구성원이 없다(명세 2절 13번). 표시 이름은
+    recommend.api.fact_labels(근거 줄·요약 화면과 같은 이름). 어느 키가 목표가 되는지는 goals.map_candidates가 MAP_GOAL_KEYS로 고른다."""
+    labels = recommend_api.fact_labels()
+    return tuple(
+        goals_mod.SummaryItem(row.category, item["fact_key"], bool(item["wants"]), int(item["member_count"]),
+                              labels.get(item["fact_key"], item["fact_key"]), must_keep=section == "must_keep")
+        for row in agent_service.list_summaries(db, map_id)
+        for section in MAP_SUMMARY_SECTIONS
+        for item in (row.summary or {}).get(section, ())
+        if item.get("wants") is not None
+    )
 
 
 def fail_stale_runs(
@@ -200,7 +218,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
     except IntegrityError:      # 동시 요청이 확인을 함께 통과했다 — 부분 유니크 인덱스가 하나만 남긴다
         raise AppError("COURSE_IN_PROGRESS") from None
     credits_api.charge(db, user_id=requested_by, feature=CREDIT_FEATURE, run_id=str(row.id))
-    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by)
+    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by, map_items=read_map_items(db, map_id))
 
 
 # ---------------------------------------------------------------- 실행 (백그라운드)
@@ -226,7 +244,7 @@ def execute_run(
         try:
             with llm_api.usage_context("course", map_id=job.map_id, user_id=job.requested_by, run_id=job.run_id):
                 computed = runner.run_course(
-                    job.build, job.request_text,
+                    job.build, job.request_text, map_items=job.map_items,
                     goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
                     on_step=progress_writer(session_factory, run_id),
                 )

@@ -43,7 +43,7 @@ async function publishedAiPin(): Promise<Pin> {
   return { ...pin, reason: c.reason, member_fulfillment: c.member_fulfillment, place_source: c.place_source ?? { provider: 'kakao' } }
 }
 
-const members = [{ userId: 'u_me', name: '나', initial: '나', isMe: true, isOwner: true }]
+const members = [{ userId: 'u_me', name: '나', initial: '나', isMe: true, isOwner: true, isGuest: false }]
 
 describe('지도에 올린 AI 핀 상세(#1032, 가드레일 5)', () => {
   it('제목 옆 「AI」 배지와 추천 이유·조건 체크·구성원 충족·출처가 상세에 보인다', async () => {
