@@ -149,6 +149,16 @@ export type PinUpdateRequest = components['schemas']['PinUpdateRequest']
 export function pinEditErrorMessage(err: unknown): string {
   return err instanceof ApiError && err.code === 'VALIDATION_ERROR' ? err.message : '핀을 고치지 못했어요'
 }
+
+/** 핀 휴지통(#864). 보관 일수는 응답의 retention_days 로 적는다 — 화면에 숫자를 따로 두지 않는다. */
+export type PinTrash = components['schemas']['PinTrash']
+export type TrashedPin = components['schemas']['TrashedPin']
+
+/** 되살리기 실패 문구. 휴지통에 있는 동안 같은 장소로 새 핀이 생겼으면 409 PIN_DUPLICATE 다(api-spec /pins/{pinId}/restore). */
+export function restorePinErrorMessage(err: unknown): string {
+  return err instanceof ApiError && err.code === 'PIN_DUPLICATE' ? '이미 지도에 같은 장소가 있어요' : '핀을 되살리지 못했어요'
+}
+
 export type ReactionDto = components['schemas']['Reaction']
 export type ReactionRequest = components['schemas']['ReactionRequest']
 /** 반대 사유 칩(최종기획안 5-1-1). 목록은 서버가 카테고리별로 준다 — 화면엔 label, 요청엔 id. */

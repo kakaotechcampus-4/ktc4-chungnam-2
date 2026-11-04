@@ -48,6 +48,8 @@ declare namespace kakao.maps {
     getProjection(): MapProjection
     /** 지도 틀 크기를 CSS 로 바꾼 뒤 부른다. 창 크기 변경(resize)에는 SDK 가 알아서 부른다. */
     relayout(): void
+    /** 끌어서 옮기기를 켜고 끈다. 핀을 휴지통으로 끄는 동안 끈다(#1012). */
+    setDraggable(draggable: boolean): void
   }
 
   namespace event {

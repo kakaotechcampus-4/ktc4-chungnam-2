@@ -1,18 +1,20 @@
 import { useCallback, useMemo } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 
 import { nudgeGuestOnce } from '@/features/auth/guestNudge'
 import type { User } from '@/features/auth/model'
 import { authKeys } from '@/features/auth/queries'
+import { showToast } from '@/features/shell/toast'
 
-import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchReactions, fetchReasonChips, putReaction, resolvePin, updatePin } from './api'
+import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchPinTrash, fetchReactions, fetchReasonChips, putReaction, resolvePin, restorePin, updatePin } from './api'
 import { useLivePlaceStore, withLivePlace } from './livePlaces'
-import { withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type PinResolveRequest, type PinUpdateRequest, type ReactionRequest } from './model'
+import { restorePinErrorMessage, withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type PinResolveRequest, type PinUpdateRequest, type ReactionRequest } from './model'
 
 export const pinKeys = {
   list: (mapId: string) => ['pins', mapId] as const,
   reactions: (pinId: string) => ['pins', 'reactions', pinId] as const,
   counts: (mapId: string) => ['pins', mapId, 'counts'] as const,
+  trash: (mapId: string) => ['pins', mapId, 'trash'] as const,
   chips: (category: PinCategory) => ['reason-chips', category] as const,
 }
 
@@ -35,19 +37,51 @@ export function usePinsQuery(mapId: string) {
 }
 
 /**
- * 핀 삭제(구성원 누구나). 목록 캐시에서 바로 빼고, 같이 달라지는 집계·확정 리스트·추천 준비 상태는 다시 받는다.
- * 확정 리스트의 항목은 서버가 핀과 함께 지운다.
+ * 핀을 휴지통으로(#864) — 상세의 「핀 삭제」와 끌어서 버리기가 같이 쓴다. 목록 캐시에서 바로 빼고,
+ * 같이 달라지는 집계·확정 리스트·추천 준비·휴지통은 다시 받는다. 확정 리스트의 항목은 서버가 빼 두고 되살릴 때 다시 올린다.
+ *
+ * 알림과 「되돌리기」는 훅의 onSuccess 에 둔다 — mutate 마다 넘긴 콜백은 부른 화면(상세)이 닫히면 불리지 않는다.
  */
-export function useDeletePinMutation(mapId: string, pinId: string) {
+export function useTrashPinMutation(mapId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => deletePin(pinId),
-    onSuccess: () => {
-      queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins?.filter((p) => p.id !== pinId))
+    mutationFn: (pin: Pin) => deletePin(pin.id),
+    onSuccess: (_, pin) => {
+      queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins?.filter((p) => p.id !== pin.id))
       void queryClient.invalidateQueries({ queryKey: pinKeys.counts(mapId) })
+      void queryClient.invalidateQueries({ queryKey: pinKeys.trash(mapId) })
       void queryClient.invalidateQueries({ queryKey: ['shortlist', mapId] })
       void queryClient.invalidateQueries({ queryKey: ['recommend', mapId] })
+      showToast(pin.kind === '확정' ? '확정 리스트에서도 빠졌어요' : '휴지통으로 옮겼어요', {
+        label: '되돌리기',
+        onClick: () => void restoreInto(queryClient, mapId, pin.id).catch((err: unknown) => showToast(restorePinErrorMessage(err))),
+      })
     },
+    onError: () => showToast('핀을 지우지 못했어요'),
+  })
+}
+
+/** 핀 휴지통(#864). 지도 정보의 「핀 휴지통」을 열거나 삭제 확인 창이 보관 일수를 적을 때만 받는다. */
+export function usePinTrashQuery(mapId: string, enabled = true) {
+  return useQuery({ queryKey: pinKeys.trash(mapId), queryFn: () => fetchPinTrash(mapId), enabled })
+}
+
+/** 휴지통 화면의 「되살리기」. 실패는 부르는 쪽이 그 줄에 적는다. */
+export function useRestorePinMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({ mutationFn: (pinId: string) => restoreInto(queryClient, mapId, pinId) })
+}
+
+/**
+ * 되살린 핀을 목록에 바로 올리고 휴지통을 다시 받는다. 집계·추천 준비·확정 리스트는 내게도 오는 pin.restored 를 받아
+ * realtime 의 표(refetchTable)대로 다시 받는다 — 다시 받을 목록을 여기에 또 적지 않는다.
+ * 알림의 「되돌리기」는 화면이 닫힌 뒤에도 눌리므로 훅이 아니라 함수다.
+ */
+function restoreInto(queryClient: QueryClient, mapId: string, pinId: string): Promise<Pin> {
+  return restorePin(pinId).then((pin) => {
+    queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins && [...pins.filter((p) => p.id !== pin.id), pin])
+    void queryClient.invalidateQueries({ queryKey: pinKeys.trash(mapId) })
+    return pin
   })
 }
 

@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { allInside, fitCenter, fitLevel, fitPadding, groupNear, zoomSteps } from './camera'
 import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
+import { usePinDragStore } from './pinDrag'
 import {
   createCandidateMarkerElement,
   createSearchGroupMarkerElement,
@@ -335,6 +336,12 @@ export default function MapCanvas({
   useEffect(() => {
     if (ready) layerRef.current?.select(selectedPinId)
   }, [selectedPinId, pins, ready])
+
+  // 핀을 휴지통으로 끄는 동안 지도가 손을 따라 움직이지 않게 한다(#1012).
+  const pinDragging = usePinDragStore((s) => s.drag !== null)
+  useEffect(() => {
+    if (ready) mapRef.current?.map.setDraggable(!pinDragging)
+  }, [pinDragging, ready])
 
   // 패널을 접고 펼치면 지도 틀의 왼쪽 끝이 움직인다. 카카오맵은 CSS 로 바뀐 크기를 모르니 다시 재게 하고,
   // 보던 장소가 화면에서 같은 자리에 남게 한다. relayout 은 가운데가 아니라 틀 왼쪽 위를 붙잡고 있어서,

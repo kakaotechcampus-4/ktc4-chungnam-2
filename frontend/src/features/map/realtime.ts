@@ -59,6 +59,8 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     // 확정 리스트는 핀을 따로 들고 있어 실시간 핀 승격(#777)으로 이름이 바뀌면 다시 받는다(#786).
     'pin.updated': [counts, readiness, { queryKey: shortlistKeys.list(mapId) }],
     'pin.deleted': [counts, readiness],
+    // 되살린 핀이 확정이었으면 확정 리스트에 다시 올라간다(#864). 휴지통 목록에서도 빠진다.
+    'pin.restored': [counts, readiness, { queryKey: shortlistKeys.list(mapId) }, { queryKey: pinKeys.trash(mapId) }],
     'reaction.changed': [counts, readiness],
     'member.joined': [map, members],
     // 누가 나가면 그 사람의 의견이 지워진다.
@@ -146,6 +148,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       'pin.created': upsert,
       'pin.published': upsert,
       'pin.updated': upsert,
+      'pin.restored': upsert,
       'pin.deleted': remove,
       'reaction.changed': reaction,
       'map.deleted': mapDeleted,
