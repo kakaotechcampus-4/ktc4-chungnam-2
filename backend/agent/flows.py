@@ -26,6 +26,11 @@
 템플릿)이나 충돌 선언(attempt 2, 코드 템플릿)이 된다. 숫자는 코드 호출 기록 f1에 남긴다. 풀렸으면 저장 트랜잭션에서 followup을
 resolved로 쓴다. 저장 직전에도 잠근 사본으로 다시 보고, 풀렸으면 stale로 버린다.
 
+**AI 추천·AI 코스와 엮기(6.10, #1357)**: 엔진은 도구로, 실행은 버튼으로. 카테고리 공백에 후보 핀이 있으면 모델 진단이다(core.uses_model)
+— 모델은 try_in_schedule(tools.py, AI 코스의 일정 입력과 끼울 자리)로 후보를 일정에 끼워 보고 open_pin·open_recommend·search_place 중 하나를
+고른다. llm이 그 유형을 진단하지 못하면(llm.api.DIAGNOSIS_TOOLS에 없음) 지금 템플릿이다. 일정 점검(schedule)은 코드 유형이다 — 스냅샷의 확정
+일정을 AI 코스 점검과 같은 함수로 보고 템플릿(open_course)을 낸다. AI 추천과 AI 코스는 관찰 중에 돌리지 않는다(모델·크레딧·비공개 결과).
+
 **지도 현황 문단(8.2, #1168)**: 관찰 끝(요약 다음)에서 `update_status`가 칸(core.status_cells)을 계산해, 마지막으로 만들려 한 칸과
 다를 때만 모델(Gateway.status)을 부른다. 별도 트랜잭션, 별도 agent_runs 행(trigger=status)이다. 모델을 부르지만 지도 하루
 상한에는 세지 않는다(service.MODEL_RUN_TRIGGERS에 없다 — 비용은 서비스 일일 예산, 19절). 검증(core.verify_status)에서 떨어지면
@@ -484,7 +489,7 @@ def _draft(
     다음 방법도 템플릿이다. 모델 유형의 다음 방법은 미리 돌려 본 뒤 남은 행동(해 본 것과 0곳인 추천 받기를 뺀 것)이 없으면 모델을
     부르지 않고 충돌 선언으로 바꾼다(_Step.signal)."""
     followup = core.is_followup(top)
-    if top.diagnosis in CODE_TYPES and not followup:
+    if not followup and not _by_model(top):
         return _Step(core.render_template(top))
     ctx = tools.ToolContext(
         map_id=map_id, snap=snap, allowed=llm_api.DIAGNOSIS_TOOLS.get(top.diagnosis, ()), session_factory=session_factory,
@@ -513,7 +518,7 @@ def _draft(
             return _Step(None, core.failed_outcome(out.reason), which | {"reason": out.reason, "detail": out.detail},
                          used_model=True, tool_calls=ctx.calls, usage=reply.usage)
         verified = core.verify_diagnosis(out, top, snap, ctx.results, member_names=names, comparison=comparison,
-                                         preview=preview)
+                                         preview=preview, fits=core.schedule_fits_of(ctx.calls))
         draft = verified.draft
         if draft is not None:
             draft = replace(draft, facts=_facts(ctx, top, comparison))
@@ -523,6 +528,12 @@ def _draft(
     outcome = None if draft is not None else verified.outcome
     return _Step(draft, outcome, None if outcome is None else which | {"decision": out.decision},
                  used_model=True, tool_calls=ctx.calls, verification=verified.record, usage=reply.usage)
+
+
+def _by_model(top: core.Signal) -> bool:
+    """첫 제안을 모델 진단으로 만드는가 — 모델을 쓰는 신호(core.uses_model)이고 llm이 그 유형을 진단할 수 있다(DIAGNOSIS_TOOLS). 카테고리
+    공백은 llm 지시문이 그 유형을 받기 전(#1358)에는 템플릿으로 간다."""
+    return core.uses_model(top) and top.diagnosis in llm_api.DIAGNOSIS_TOOLS
 
 
 def _facts(ctx: tools.ToolContext, top: core.Signal, comparison: dict[str, Any] | None) -> list[dict[str, str]]:
