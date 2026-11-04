@@ -6,6 +6,8 @@ import { createCourse, fetchCourseRun, fetchLatestCourse } from './api'
 import { isFinished, POLL_MS, requestBody } from './model'
 
 export const courseKeys = {
+  /** 모든 run 상세(`run(runId)`의 앞부분) — 일정이 바뀌면 열려 있는 결과의 `stale`을 다시 받는다. */
+  runs: ['course-runs'] as const,
   run: (runId: string) => ['course-runs', runId] as const,
   latest: (mapId: string) => ['maps', mapId, 'courses', 'latest'] as const,
 }
