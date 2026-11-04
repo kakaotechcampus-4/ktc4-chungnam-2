@@ -51,11 +51,51 @@ declare namespace kakao.maps {
   }
 
   namespace event {
-    /** click 의 인자 — 누른 자리. dragstart·idle·zoom_changed 는 인자가 없다. */
+    /** click 의 인자 — 누른 자리. dragstart·idle·zoom_changed·center_changed 는 인자가 없다. */
     type MouseEvent = { latLng: LatLng }
+    type MapEventType = 'dragstart' | 'idle' | 'click' | 'zoom_changed' | 'center_changed'
     /** click 은 지도 빈 곳을 눌렀을 때만 온다 — clickable 오버레이(핀 등)를 누르거나 끌고 놓으면 오지 않는다. */
-    function addListener(target: Map, type: 'dragstart' | 'idle' | 'click' | 'zoom_changed', handler: (e?: MouseEvent) => void): void
-    function removeListener(target: Map, type: 'dragstart' | 'idle' | 'click' | 'zoom_changed', handler: (e?: MouseEvent) => void): void
+    function addListener(target: Map, type: MapEventType, handler: (e?: MouseEvent) => void): void
+    function removeListener(target: Map, type: MapEventType, handler: (e?: MouseEvent) => void): void
+    /** 도형(다각형·원)도 click 을 받는다. */
+    function addListener(target: Polygon | Circle, type: 'click', handler: (e?: MouseEvent) => void): void
+    function removeListener(target: Polygon | Circle, type: 'click', handler: (e?: MouseEvent) => void): void
+  }
+
+  /** 선 모양 — solid, dash, shortdash 등. */
+  type StrokeStyle = string
+
+  /** path 를 배열의 배열로 주면 첫 고리가 외곽, 나머지가 구멍이다. */
+  class Polygon {
+    constructor(options: {
+      path: LatLng[] | LatLng[][]
+      strokeWeight?: number
+      strokeColor?: string
+      strokeOpacity?: number
+      strokeStyle?: StrokeStyle
+      fillColor?: string
+      fillOpacity?: number
+      zIndex?: number
+    })
+    setMap(map: Map | null): void
+  }
+
+  class Circle {
+    constructor(options: {
+      center: LatLng
+      /** 미터 */
+      radius: number
+      strokeWeight?: number
+      strokeColor?: string
+      strokeOpacity?: number
+      strokeStyle?: StrokeStyle
+      fillColor?: string
+      fillOpacity?: number
+      zIndex?: number
+    })
+    setMap(map: Map | null): void
+    setPosition(latlng: LatLng): void
+    setRadius(radius: number): void
   }
 
   class CustomOverlay {
@@ -73,7 +113,7 @@ declare namespace kakao.maps {
   }
 
   class Polyline {
-    constructor(options: { path: LatLng[]; strokeWeight?: number; strokeColor?: string; strokeOpacity?: number; strokeStyle?: string })
+    constructor(options: { path: LatLng[]; strokeWeight?: number; strokeColor?: string; strokeOpacity?: number; strokeStyle?: StrokeStyle; zIndex?: number })
     setMap(map: Map | null): void
   }
 

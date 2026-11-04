@@ -111,15 +111,23 @@ export function evidenceLimitMessage(err: unknown): string | null {
   return typeof limit === 'number' ? `직접 추가는 ${limit}개까지예요` : '직접 추가는 더 할 수 없어요'
 }
 
-/** docs/errors.md — run 시작·실행 실패 문구. */
+/**
+ * AI 추천이 찾는 범위 — 지도 가운데(보이는 가운데, #1331) 반경(m). 화면이 원을 그리고 확인 창에 알린다.
+ * 사용자 결정 2026-11-04(#1385): 모든 카테고리 3km. 서버는 아직 도보 15·25분(1.2·2km)으로 찾는다 —
+ * 서버가 반경을 응답으로 내리면 그 값을 쓴다(#733, 정책 값은 응답으로).
+ */
+export const RECOMMEND_RADIUS_M = 3000
+
+/** 확인 창에 보이는 범위 한 줄. */
+export const recommendAreaNote = () => `지도 가운데 반경 ${RECOMMEND_RADIUS_M / 1000}km 안에서 찾아요`
+
+/**
+ * docs/errors.md — run 시작·실행 실패 문구. 사용자 결정(2026-11-04, #1385)으로 실패는 한 줄이다.
+ * 넓히기 상한(`WIDEN_LIMIT`)만 따로 말한다 — 넓히기 버튼이 하는 일이라 다른 길(조건 고치기·직접 찍기)을 알려야 한다.
+ */
 export function runErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 좋음이나 반대 의견을 남긴 뒤 다시 눌러 주세요'
-    if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
-    if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 크레딧은 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
-    if (err.code === 'REQUEST_IN_PROGRESS') return '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
-  }
-  return '추천을 시작하지 못했어요'
+  if (err instanceof ApiError && err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
+  return '추천 장소를 찾지 못했어요'
 }
 
 export type FunnelRow = RecommendResultDto['funnel'][number]
