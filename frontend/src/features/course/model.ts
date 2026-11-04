@@ -227,3 +227,6 @@ export const hasMoves = (fix: CourseFixDto): boolean => fix.moves.length > 0
 export const isFill = (fix: CourseFixDto): boolean => fix.kind === 'unassigned' || fix.moves.every((m) => m.from_date === null)
 
 export const stalePrompt = '일정이 바뀌었어요'
+
+/** 카드를 반영했거나 반영 중에 일정이 바뀌어, 남은 카드가 낡았을 때의 안내(#1322). */
+export const staleFixText = `${stalePrompt}. 다시 점검하면 이어서 고칠 수 있어요`

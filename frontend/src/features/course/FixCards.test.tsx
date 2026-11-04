@@ -105,6 +105,23 @@ describe('AI 코스 — 모드별 결과(#1322)', () => {
   })
 })
 
+describe('한 카드를 반영한 뒤(#1322)', () => {
+  it('다른 카드의 「반영」은 막히고 「다시 점검」으로 바뀐다', async () => {
+    const user = userEvent.setup({ delay: null })
+    const card = (id: string, pin_id: string) => ({ id, kind: 'closed', strength: 'hard', text: `${id} 문제`, moves: [{ pin_id, from_date: null, to_date: days[1] }], resolved_text: null, remaining_text: null, not_fixed_reason: null })
+    open({ mode: 'review', headline: '고칠 점 3개', fixes: [card('fix_1', 'pin_1'), card('fix_2', 'pin_2'), { ...card('fix_3', 'pin_1'), moves: [], not_fixed_reason: '그대로 둬요' }], checked: [] })
+    await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
+    expect(await screen.findAllByRole('button', { name: '둘째 날에 넣기' })).toHaveLength(2)
+
+    await user.click(screen.getAllByRole('button', { name: '둘째 날에 넣기' })[0])
+    expect(await screen.findByText('반영했어요')).toBeInTheDocument()
+
+    expect(screen.queryByRole('button', { name: '둘째 날에 넣기' })).not.toBeInTheDocument() // 다른 카드 버튼 없음
+    expect(screen.getByText('일정이 바뀌었어요. 다시 점검하면 이어서 고칠 수 있어요')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '다시 점검' })).toHaveLength(1) // 반영 안 한 카드 하나
+  })
+})
+
 describe('applyMoves', () => {
   it('옮겨 간 장소는 남는 장소 뒤에 원래 일정 순서대로 붙는다', () => {
     const next = applyMoves({ days: { a: ['p1', 'p2'], b: ['p3'] } }, [

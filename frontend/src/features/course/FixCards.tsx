@@ -7,7 +7,7 @@ import ErrorText from '@/ErrorText'
 
 import { applyFix } from './applyFix'
 import { useAppliedFixStore } from './courseMapStore'
-import { checkedOf, dayOrdinal, fixesOf, hasMoves, isFill, sortFixes, stalePrompt, type CourseFixDto, type CourseRunDto } from './model'
+import { checkedOf, dayOrdinal, fixesOf, hasMoves, isFill, sortFixes, staleFixText, type CourseFixDto, type CourseRunDto } from './model'
 
 /**
  * 고칠 점 카드와 「괜찮아요」(#1322, 결정 #1237). 문장은 모두 서버가 만든 것을 그대로 보인다.
@@ -66,6 +66,8 @@ function FixCard({
 }) {
   const queryClient = useQueryClient()
   const applied = useAppliedFixStore((s) => s.applied[runId]?.includes(fix.id) ?? false)
+  // 다른 카드를 반영했으면 이 카드는 반영 전 일정 기준이라 그대로 누르면 틀린 이동이 저장된다 — 「반영」을 막고 다시 점검하게 한다.
+  const otherApplied = useAppliedFixStore((s) => (s.applied[runId]?.length ?? 0) > 0)
   const mark = useAppliedFixStore((s) => s.mark)
   const [state, setState] = useState<{ pending: boolean; error: unknown }>({
     pending: false,
@@ -113,20 +115,19 @@ function FixCard({
             <p className="flex items-center gap-1 text-body font-semibold text-[var(--good-text)]">
               <Check size={14} aria-hidden="true" /> 반영했어요
             </p>
-          ) : (
-            <button type="button" onClick={() => void apply()} disabled={state.pending} className="btn-primary btn-md">
-              {state.pending ? '반영하는 중…' : fill ? `${dayName(fix.moves[0].to_date)}에 넣기` : '반영'}
-            </button>
-          )}
-          {stale && (
+          ) : stale || otherApplied ? (
             <div className="space-y-2">
-              <p role="alert" className="break-keep text-body text-warn-text">
-                {stalePrompt}
+              <p role={stale ? 'alert' : undefined} className="break-keep text-body text-warn-text">
+                {staleFixText}
               </p>
               <button type="button" onClick={onRetry} className="btn-outline btn-md">
                 다시 점검
               </button>
             </div>
+          ) : (
+            <button type="button" onClick={() => void apply()} disabled={state.pending} className="btn-primary btn-md">
+              {state.pending ? '반영하는 중…' : fill ? `${dayName(fix.moves[0].to_date)}에 넣기` : '반영'}
+            </button>
           )}
           {state.error != null && !stale && <ErrorText message="일정에 반영하지 못했어요" error={state.error} />}
         </>
