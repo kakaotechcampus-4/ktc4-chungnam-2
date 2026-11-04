@@ -128,7 +128,18 @@ function ScheduleRow({
       ) : (
         <span className="min-w-0 flex-1">{label}</span>
       )}
-      <button type="button" aria-label={`${name} 일정에서 빼기`} onClick={() => onTakeOut(pinId)} className="btn-text shrink-0 text-xs">
+      <button
+        type="button"
+        aria-label={`${name} 일정에서 빼기`}
+        onClick={(e) => {
+          // 줄이 사라지면 포커스가 문서 처음으로 빠진다 — 다음 줄(없으면 앞 줄)의 ≡로 옮겨 둔다.
+          const row = e.currentTarget.closest('li')
+          const near = [row?.nextElementSibling, row?.previousElementSibling].find((el) => el?.matches('li[data-pin]'))
+          near?.querySelector<HTMLElement>('button[aria-keyshortcuts]')?.focus()
+          onTakeOut(pinId)
+        }}
+        className="btn-text shrink-0 text-xs"
+      >
         빼기
       </button>
       <button

@@ -122,7 +122,7 @@ function LoginScreen({ notice }: { notice?: string }) {
           <h1>
             <Wordmark className="h-10 w-auto lg:h-14" />
           </h1>
-          <p className="mt-1 font-semibold text-ink-900 lg:mt-2 lg:text-lg">같이 갈 곳을 한 지도에 모아요</p>
+          <p className="mt-1 font-semibold text-ink-900 lg:mt-2 lg:text-title">같이 갈 곳을 한 지도에 모아요</p>
           <LoginHero />
         </div>
 
