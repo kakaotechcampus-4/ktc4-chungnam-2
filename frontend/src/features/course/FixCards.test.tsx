@@ -122,6 +122,18 @@ describe('한 카드를 반영한 뒤(#1322)', () => {
   })
 })
 
+describe('stale run(#1322)', () => {
+  it('run.stale 이면 모든 카드의 「반영」이 없고 「다시 점검」이 보인다', async () => {
+    const user = userEvent.setup({ delay: null })
+    const card = (id: string, pin_id: string) => ({ id, kind: 'closed', strength: 'hard', text: `${id} 문제`, moves: [{ pin_id, from_date: null, to_date: days[1] }], resolved_text: null, remaining_text: null, not_fixed_reason: null })
+    open({ mode: 'review', stale: true, headline: '고칠 점 2개', fixes: [card('fix_1', 'pin_1'), card('fix_2', 'pin_2')], checked: [] })
+    await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
+    expect(await screen.findAllByRole('button', { name: '다시 점검' })).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: /^(반영|.*에 넣기)$/ })).not.toBeInTheDocument()
+    expect(screen.getAllByText('일정이 바뀌었어요. 다시 점검하면 이어서 고칠 수 있어요')).toHaveLength(2)
+  })
+})
+
 describe('applyMoves', () => {
   it('옮겨 간 장소는 남는 장소 뒤에 원래 일정 순서대로 붙는다', () => {
     const next = applyMoves({ days: { a: ['p1', 'p2'], b: ['p3'] } }, [

@@ -28,7 +28,7 @@ export default function FixCards({ mapId, run, names, onRetry }: { mapId: string
         <ul aria-label="고칠 점" className="space-y-2">
           {fixes.map((fix) => (
             <li key={fix.id}>
-              <FixCard mapId={mapId} runId={run.id} fix={fix} names={names} dayName={dayName} onRetry={onRetry} />
+              <FixCard mapId={mapId} runId={run.id} runStale={run.stale} fix={fix} names={names} dayName={dayName} onRetry={onRetry} />
             </li>
           ))}
         </ul>
@@ -52,6 +52,7 @@ export default function FixCards({ mapId, run, names, onRetry }: { mapId: string
 function FixCard({
   mapId,
   runId,
+  runStale,
   fix,
   names,
   dayName,
@@ -59,6 +60,7 @@ function FixCard({
 }: {
   mapId: string
   runId: string
+  runStale: boolean
   fix: CourseFixDto
   names: Map<string, string>
   dayName: (date: string | null) => string
@@ -66,6 +68,7 @@ function FixCard({
 }) {
   const queryClient = useQueryClient()
   const applied = useAppliedFixStore((s) => s.applied[runId]?.includes(fix.id) ?? false)
+  // run.stale(새로고침 뒤나 다른 구성원이 일정을 바꾼 뒤)이면 「반영」은 version 을 새로 읽어 409 가 나지 않으니 옛 카드가 그대로 저장된다 — 막는다.
   // 다른 카드를 반영했으면 이 카드는 반영 전 일정 기준이라 그대로 누르면 틀린 이동이 저장된다 — 「반영」을 막고 다시 점검하게 한다.
   const otherApplied = useAppliedFixStore((s) => (s.applied[runId]?.length ?? 0) > 0)
   const mark = useAppliedFixStore((s) => s.mark)
@@ -115,7 +118,7 @@ function FixCard({
             <p className="flex items-center gap-1 text-body font-semibold text-[var(--good-text)]">
               <Check size={14} aria-hidden="true" /> 반영했어요
             </p>
-          ) : stale || otherApplied ? (
+          ) : stale || otherApplied || runStale ? (
             <div className="space-y-2">
               <p role={stale ? 'alert' : undefined} className="break-keep text-body text-warn-text">
                 {staleFixText}
