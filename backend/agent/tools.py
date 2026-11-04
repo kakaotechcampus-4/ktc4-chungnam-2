@@ -415,6 +415,12 @@ def preview(ctx: ToolContext, *, category: str | None, with_keys: Sequence[str] 
     return result
 
 
+def record_followup_check(ctx: ToolContext, followup_of: str, result: dict[str, Any]) -> None:
+    """후속 확인(6.9, #1346)을 코드 호출 기록 f1(followup_check)로 남긴다 — 결과는 수락 뒤 지난 분과 그 카테고리 새 핀 수뿐이다
+    (core.followup_check_result). 모델이 고르지 않아 도구 상한에 세지 않고(p1과 같은 취급), 모델은 ToolClaim(call_id="f1")으로만 쓴다."""
+    _record(ctx, core.FOLLOWUP_CALL_ID, "followup_check", {"followup_of": followup_of}, result, time.monotonic())
+
+
 WEB_CHECK_CALL_PREFIX = "w"   # 웹 확인의 도구 기록 번호 w1, w2(6.8, #1216, #1317). 모델이 고르지 않아 도구 상한에 세지 않는다(p1과 같은 취급)
 
 
