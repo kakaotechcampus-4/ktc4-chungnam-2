@@ -173,6 +173,17 @@ def test_web_check_line_per_status(result, by, by_detail, text):
     assert (step.role, step.by, step.by_detail, step.text) == ("검증", by, by_detail, text)
 
 
+def test_two_web_checks_render_one_line_each_in_call_order():
+    """「모름」 두 줄이면 w1, w2가 남고 작업 기록에도 줄마다 하나씩 나온다(#1317). 기록 순서가 뒤섞여도 번호 순이다."""
+    w1 = _call("w1", "web_check", {"status": "found", "statements": 1, "reused": True})
+    w2 = _call("w2", "web_check", {"status": "not_found", "statements": 0, "reused": False})
+    run = _run(tool_calls=[w2, w1])
+
+    steps = [s.text for s in core.render_steps(run, _sug(facts=FACTS)) if s.stage == "웹 확인"]
+
+    assert steps == ["하루 안에 웹에서 찾은 결과를 다시 썼어요 · 출처 1개", "웹에서 찾아봤지만 확인되는 내용이 없었어요"]
+
+
 def test_verification_counts_removed_claims_lines_and_buttons():
     verification = {"claims": {"kept": ["c1", "c2"], "removed": [{"id": "c3", "reason": "count_mismatch"}]},
                     "lines": {"kept": 1, "removed": [{"index": 1}, {"index": 2}]},

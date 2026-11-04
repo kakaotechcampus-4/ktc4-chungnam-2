@@ -8,9 +8,13 @@ agent 규칙이 바뀌어 기대값이 낡으면 여기서 먼저 깨진다.
 어느 규칙이 순서를 바꿨는지(rule_hits)까지 본다.
 
 미리 돌려 보기 케이스(#1180, 명세 6.7)는 case.preview에 정해 둔 수(0곳, 몇 곳, 절충 0곳, 절충 몇 곳)를 적는다.
-운영에서 different_axes 갈림은 늘 미리 돌려 보므로 그 케이스(e08, e12, e19, e23)에도 preview가 있다. preview 없는 different_axes는
-e29 하나(카테고리의 다른 사유 ②가 실패한 경로)이고, 그래도 기대 첫 버튼은 「추천 받기」다(#1198 리뷰). 진단 입력과 도구
-기록 p1에 들어가는지, 0곳이면 검증이 「추천 받기」를 빼는지, 수가 p1 claim 슬롯으로만 문장에 나오는지 본다.
+운영에서 갈림은 충돌 종류와 상관없이 늘 미리 돌려 보므로(결정 #1317) 제안을 기대하는 갈림 케이스에는 preview가 있다.
+same_axis·unclear는 절충 키 없이 passed_count만이다. preview 없는 갈림은 e29 하나(카테고리의 다른 사유 ②가 실패한 경로)이고,
+그래도 기대 첫 버튼은 「추천 받기」다(#1198 리뷰). 진단 입력과 도구 기록 p1에 들어가는지, 0곳이면 검증이 「추천 받기」를 빼는지,
+수가 p1 claim 슬롯으로만 문장에 나오는지 본다.
+
+기대 버튼은 「추천 받기」와 「장소 검색」뿐이다(#1317 — 모델 유형의 「핀 보기」를 뺐다). 남는 곳이 있으면 추천 받기,
+0곳이면 장소 검색이다.
 
 지시문 케이스(#717)는 expect.decision_phrases에 결정 지시 기대 문구를 적는다. 그 문구가 사유 글에서 나왔는지, #717에서 더한
 표현이 금지어 목록(core.FORBIDDEN_PHRASES)을 지나가는지, 문구 판정이 인용 조각과 text 조각을 가르는지 본다.
@@ -56,6 +60,7 @@ def test_case_state_matches_expectation(case):
         if inp["diagnosis"] == "split":
             assert inp["comparison"]["conflict_type"] == expect["conflict_type"]
         assert set(expect["actions"]) <= set(core.MODEL_ACTIONS[inp["diagnosis"]])
+        assert "show_pins" not in expect["actions"]   # #1317
         dumped = json.dumps(inp, ensure_ascii=False, default=str)
         for r in world.snap.reasons:   # 사유 글은 진단 입력에 없다(도구로만 읽는다)
             assert not r.text or r.text not in dumped
@@ -196,9 +201,13 @@ def test_preview_cases_cover_zero_some_and_compromise():
              for c in PREVIEW_CASES}
     assert ("stall", False, None) in kinds and ("stall", True, None) in kinds
     assert ("split", True, 0) in kinds and any(k[0] == "split" and (k[2] or 0) > 0 for k in kinds)
+    axis = [c for c in PREVIEW_CASES if c["expect"]["conflict_type"] in ("same_axis", "unclear")]
+    assert {c["preview"]["passed_count"] > 0 for c in axis} == {True, False}   # same_axis·unclear 0곳 하나, 몇 곳 하나 이상
+    assert all("with_keys_count" not in c["preview"] for c in axis)
     assert all(c["expect"]["decision"] == "suggest" for c in PREVIEW_CASES)
-    for c in PREVIEW_CASES:   # 0곳 케이스는 「추천 받기」를 기대하지 않는다
-        assert ("open_recommend" in c["expect"]["actions"]) == (c["preview"]["passed_count"] > 0), c["id"]
+    for c in PREVIEW_CASES:   # 남는 곳이 있으면 「추천 받기」, 0곳이면 「장소 검색」만
+        expected = ["open_recommend"] if c["preview"]["passed_count"] > 0 else ["search_place"]
+        assert c["expect"]["actions"] == expected, c["id"]
 
 
 @pytest.mark.parametrize("case", PREVIEW_CASES, ids=[c["id"] for c in PREVIEW_CASES])
@@ -211,10 +220,11 @@ def test_preview_reaches_the_input_and_the_p1_record(case):
     assert inp["preview"]["passed_count"] == case["preview"]["passed_count"]
     assert tools.results["p1"]["passed_count"] == case["preview"]["passed_count"]
     assert "funnel" not in inp["preview"]   # 깔때기는 기록에만
-    if inp["diagnosis"] == "split":
-        assert inp["comparison"]["conflict_type"] == "different_axes"
+    if inp["diagnosis"] == "split" and inp["comparison"]["conflict_type"] == "different_axes":
         assert inp["preview"]["with_keys_count"] == case["preview"]["with_keys_count"]
         assert len(inp["preview"]["with_labels"]) == 1   # ♥ 쪽이 원한 키 하나의 표시 이름
+    elif inp["diagnosis"] == "split":   # same_axis·unclear는 절충 키 없이 그 카테고리 근거 전부로만 센다(#1317)
+        assert set(inp["preview"]) == {"passed_count"}
     assert not any(p["name"] in json.dumps(inp, ensure_ascii=False) for p in case["pins"])   # 장소 이름은 입력에 없다
 
 
@@ -250,14 +260,15 @@ def test_zero_places_leave_no_recommend_button_and_counts_stay_in_slots(case):
     assert digits.record["lines"]["removed"] == [{"index": 0, "reason": "digit"}]
 
 
-def test_every_different_axes_split_has_a_preview_except_the_failure_path():
-    """운영 모양: different_axes 갈림은 미리 돌려 본 결과가 있다. 없는 것은 ② 실패 경로 e29 하나다(#1198 리뷰)."""
-    diff = [c for c in CASES if c["expect"].get("conflict_type") == "different_axes"]
-    missing = [c["id"] for c in diff if not c.get("preview")]
+def test_every_suggested_split_has_a_preview_except_the_failure_path():
+    """운영 모양: 갈림은 충돌 종류와 상관없이 미리 돌려 본 결과가 있다(#1317). 없는 것은 ② 실패 경로 e29 하나다(#1198 리뷰).
+    침묵 기대 갈림(e14, e16)은 버튼이 없어 붙이지 않았다."""
+    splits = [c for c in CASES if (c["expect"]["target"] or "").startswith("split") and c["expect"]["decision"] == "suggest"]
+    missing = [c["id"] for c in splits if not c.get("preview")]
 
     assert missing == ["e29_split_diff_axes_no_preview"]
-    for c in diff:
-        if c.get("preview"):
+    for c in splits:
+        if c.get("preview") and c["expect"]["conflict_type"] == "different_axes":
             assert c["preview"]["passed_count"] >= 1 and c["preview"]["with_keys_count"] is not None, c["id"]
 
 

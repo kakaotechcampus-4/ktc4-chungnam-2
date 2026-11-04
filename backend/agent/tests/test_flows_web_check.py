@@ -1,11 +1,11 @@
 """웹 확인을 관찰부터 응답까지(명세 6.8, #1216) — 실제 DB, 실제 pins·recommend api. 장소와 라벨은 places 대역, 웹 확인은 Gateway 대역.
 
-- 「모름」인 첫 줄 하나만 확인한다. 값이 참·거짓이면 부르지 않는다
+- 「모름」인 줄 모두(많아야 2줄)를 동시에 확인한다(#1317). 값이 참·거짓이면 부르지 않는다
 - 모델 입력은 장소 이름·동네·특징 이름뿐이다(구성원 글, 이름, 별칭, 지도 id 없음). 부를 때 열린 DB 세션이 없다
 - 저장은 facts 항목의 web {status, statements[{text, source_url}], checked_at}. failed는 저장하지 않고 제안은 그대로 나간다
 - 렌더 때 값이 지금도 unknown일 때만 web을 낸다. not_found·paused는 서버 고정 문구(notice)
 - 같은 지도에서 24시간 안의 found·not_found는 다시 쓰고, paused와 24시간 지난 것은 다시 부른다
-- 도구 기록 w1(status와 문장 수만), 도구 상한과 지도 하루 상한에 세지 않는다
+- 도구 기록 w1, w2(줄 순서, status와 문장 수만), 도구 상한과 지도 하루 상한에 세지 않는다
 """
 
 import json
@@ -25,6 +25,7 @@ from llm import api as llm_api
 from llm import usage as llm_usage
 from places import api as places_api
 from places.schemas import FactLabel, PlaceInfo
+from recommend import api as recommend_api
 
 ADDRESS = "서울특별시 성동구 성수이로 1 (성수동2가)"
 AREA = "성동구 성수동2가"
@@ -269,3 +270,92 @@ def test_other_maps_results_are_not_reused(world):
     observe(world, map_id, gateway)
 
     assert len(gateway.web_inputs) == 1
+
+
+# ---------------------------------------------------------------- 「모름」 두 줄(#1317)
+
+QUIET = recommend_api.fact_labels()["quiet"]   # 특징 이름은 코드 표가 정한다
+KEYS_TWO = {AGAINST_TEXT: [("parking_available", True), ("quiet", True)], LIVE_TEXT: [("parking_available", True)]}
+
+
+class TwoLineGateway(WebGateway):
+    """🚫 사유가 두 키(주차, 조용함)를 말해 우리 데이터 줄이 두 개다. 웹 확인 결과는 특징 이름마다 정해 둔다."""
+
+    def __init__(self, results=None, **kw):
+        super().__init__(**kw)
+        self.keys = KEYS_TWO
+        self.results = results or {}
+
+    def web_check(self, *, place_name, area, feature, forbidden):
+        super().web_check(place_name=place_name, area=area, feature=feature, forbidden=forbidden)
+        return self.results.get(feature, FOUND)
+
+
+def _web_calls(world, map_id):
+    [run] = [r for r in world.rows(AgentRun, map_id=map_id) if r.trigger not in ("summary", "status")]
+    return [c for c in run.tool_calls if c["call_id"].startswith("w")]
+
+
+def test_two_unknown_lines_are_both_checked_and_logged_as_w1_w2(world, test_engine):
+    map_id, food = _stall_map(world)
+    not_found = llm_api.WebCheckResult(status="not_found")
+    gateway = TwoLineGateway({QUIET: not_found}, engine=test_engine)
+
+    assert observe(world, map_id, gateway) == "suggested"
+
+    assert sorted(c["feature"] for c in gateway.web_inputs) == sorted([QUIET, "주차 가능"])
+    assert all(c["feature_label"] == "agent_web_check" and c["map_id"] == map_id for c in gateway.web_inputs)   # 스레드에도 라벨
+    assert all(c["held"] == 0 for c in gateway.web_inputs)
+    stored = world.one(AgentSuggestion, map_id=map_id).facts
+    assert [(f["fact_key"], f["web"]["status"]) for f in stored] == [("parking_available", "found"), ("quiet", "not_found")]
+    calls = _web_calls(world, map_id)
+    assert [(c["call_id"], c["args"]) for c in calls] == [
+        ("w1", {"pin_id": food, "fact_key": "parking_available"}), ("w2", {"pin_id": food, "fact_key": "quiet"})]
+    assert [c["result"]["status"] for c in calls] == ["found", "not_found"]
+    lines = suggested(world, map_id)["facts"]
+    assert [line["web"]["status"] for line in lines] == ["found", "not_found"]
+    steps = [st for st in suggested(world, map_id)["steps"] if st["stage"] == "웹 확인"]
+    assert len(steps) == 2   # 작업 기록도 줄마다 하나
+
+
+def test_one_unknown_line_of_two_is_checked_once(world, labels):
+    map_id, _ = _stall_map(world)
+    labels["pl_food"] = {"quiet": (True, "known")}
+    gateway = TwoLineGateway()
+
+    observe(world, map_id, gateway)
+
+    assert [c["feature"] for c in gateway.web_inputs] == ["주차 가능"]
+    assert [c["call_id"] for c in _web_calls(world, map_id)] == ["w1"]
+
+
+def test_reuse_is_decided_per_line(world):
+    """한 줄은 24시간 안의 결과를 다시 쓰고, 다른 줄만 부른다."""
+    map_id, food = _stall_map(world)
+    earlier = _web("not_found", hours_ago=2, world=world)
+    _earlier(world, map_id, food, earlier, hours_ago=2)   # parking_available만 예전에 확인했다
+    gateway = TwoLineGateway()
+
+    observe(world, map_id, gateway)
+
+    assert [c["feature"] for c in gateway.web_inputs] == [QUIET]
+    [active] = [s for s in world.rows(AgentSuggestion, map_id=map_id) if s.status == "active"]
+    assert active.facts[0]["web"] == earlier and active.facts[1]["web"]["status"] == "found"
+    assert [(c["call_id"], c["result"]["reused"]) for c in _web_calls(world, map_id)] == [("w1", True), ("w2", False)]
+
+
+def test_two_checks_run_at_the_same_time(world):
+    """두 호출은 동시에 간다 — 한쪽이 다른 쪽을 기다리는 장벽을 둘 다 넘으면 동시에 돈 것이다(차례로 돌면 장벽에서 시간이 다 된다)."""
+    import threading
+    map_id, _ = _stall_map(world)
+    barrier = threading.Barrier(2, timeout=5)
+
+    class Together(TwoLineGateway):
+        def web_check(self, **kw):
+            barrier.wait()
+            return super().web_check(**kw)
+
+    gateway = Together()
+    observe(world, map_id, gateway)
+
+    assert len(gateway.web_inputs) == 2 and not barrier.broken
