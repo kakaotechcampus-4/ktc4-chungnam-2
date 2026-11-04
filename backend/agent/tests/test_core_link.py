@@ -15,6 +15,8 @@ from dataclasses import replace
 from datetime import date, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from agent import core
 from agent.course import core as course_core
 from agent.course.intake import PinInput, build_trip
@@ -312,6 +314,24 @@ def test_open_pin_not_for_confirmed_or_other_category_pins_and_open_course_not_f
                       Action.model_construct(type="open_course", category=None, pin_ids=None, basis=["c1"]))
     verified = _verify(s, out, sig, {"f1": FIT_C1 | {"pin_id": "f1"}})
     assert verified.record["actions"]["removed"] == [{"index": 0, "reason": "pin"}, {"index": 1, "reason": "type"}]
+
+
+@pytest.mark.parametrize("basis", [[], ["c9"]])
+def test_open_pin_basis_is_filled_from_its_try_in_schedule_result(basis):
+    """open_pin의 근거는 그 핀의 try_in_schedule 결과다(#1380). 기록이 없으면 지금처럼 뺀다."""
+    s = _gap_snap()
+    sig = _gap_signal(s)
+    action = Action.model_construct(type="open_pin", category=None, pin_ids=["c1"], basis=basis)
+    results = {"t1": {"pins": [FIT_C1], "total": 1, "not_found": []}}
+    calls = [{"call_id": "t1", "name": "try_in_schedule"}]
+
+    filled = core.verify_diagnosis(_gap_output(sig, action), sig, s, results, fits={"c1": FIT_C1}, calls=calls)
+    assert [a["type"] for a in filled.draft.actions] == ["open_pin"] and filled.record["basis_filled"] == 1
+    assert filled.draft.claims[-1] == {"id": "c3", "kind": "tool_result", "call_id": "t1", "path": "pins.0.pin_id",
+                                       "value": "c1"}
+
+    missing = core.verify_diagnosis(_gap_output(sig, action), sig, s, results, fits={"c1": FIT_C1})
+    assert missing.record["actions"]["removed"] == [{"index": 0, "reason": "basis"}]
 
 
 def test_schedule_fits_of_reads_only_try_in_schedule_calls():
