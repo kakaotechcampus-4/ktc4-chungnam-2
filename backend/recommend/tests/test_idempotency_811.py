@@ -1,6 +1,7 @@
 """#811 — 「추천 받기」 멱등 키(Idempotency-Key). 예약은 모델 호출 전에 독립 트랜잭션으로 커밋되므로 실제 커밋과 연결
 둘 이상이 필요하다 — db_session(롤백 전용)이 아니라 test_engine에 직접 연결한다."""
 
+import hashlib
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -359,6 +360,8 @@ def test_center_changes_idempotency_identity():
     assert a == core.idempotency_request_hash("map", "cafe", center=(35, 129))
     assert a != core.idempotency_request_hash("map", "cafe", center=(35.1, 129.0))
     assert a != core.idempotency_request_hash("map", "cafe")
+    legacy = hashlib.sha256(b"mapcafe0").hexdigest()   # 이 PR 이전의 해시 — center 없는 요청은 그대로여야 한다
+    assert core.idempotency_request_hash("map", "cafe") == legacy
 
 
 def test_center_idempotency_replay_and_conflict(env):
