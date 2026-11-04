@@ -20,7 +20,7 @@ import { chosenCategory, runErrorMessage, runHistoryLine, summaryToRun, toReadin
 import { useCreateRunMutation, useReadinessQuery, useRunHistoryQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
-export function AiHeader({ title, sub, mood }: { title: string; sub: string; mood?: PingoMood }) {
+export function AiHeader({ title, sub, mood }: { title: string; sub?: string; mood?: PingoMood }) {
   return (
     <div className="flex items-center gap-3 rounded-xl bg-[var(--pingo-bg)] p-3">
       <Pingo size={44} mood={mood} />
@@ -29,7 +29,7 @@ export function AiHeader({ title, sub, mood }: { title: string; sub: string; moo
           <span className="tag tag-ai">AI</span>
           {title}
         </p>
-        <p className="text-xs text-ink-600">{sub}</p>
+        {sub && <p className="text-xs text-ink-600">{sub}</p>}
       </div>
     </div>
   )

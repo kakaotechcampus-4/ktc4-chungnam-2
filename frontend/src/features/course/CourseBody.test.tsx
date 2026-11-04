@@ -213,7 +213,7 @@ describe('AI 코스 짜기 시트', () => {
     const user = userEvent.setup({ delay: null })
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
-    expect(await screen.findByText(/확정 리스트가 바뀌었어요/)).toBeInTheDocument()
+    expect(await screen.findByText(/일정이 바뀌었어요/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '다시 짜기' })).toBeInTheDocument()
     expect(screen.getByText(/반영하지 못한 요청: 아무거나/)).toBeInTheDocument()
     expect(screen.getAllByText('도보 5분')).toHaveLength(2) // 구간 + 하루 합계
