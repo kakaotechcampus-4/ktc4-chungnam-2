@@ -164,6 +164,7 @@ def list_runs(
         schemas.RunSummary(
             id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
             created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+            **core.run_radius_fields(run),
         )
         for run, candidate_count, published_count in service.list_runs_for_requester(
             db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
@@ -180,7 +181,7 @@ def get_readiness(
     result = {}
     for category in CATEGORIES:
         readiness = readiness_for_category(db, map_id=map_id, category=category)
-        result[category] = {**readiness, **_curated_nearby(db, map_id=map_id, category=category, readiness=readiness,
+        result[category] = {**readiness, "radius_m": core.DEFAULT_RADIUS_M, **_curated_nearby(db, map_id=map_id, category=category, readiness=readiness,
                                                              place_search=place_search, center=center)}
     return result
 
@@ -200,7 +201,7 @@ def _curated_nearby(
         if default_region is None:
             return {}
         circle, anchors = default_region
-    pool_radius_m = round(circle.radius_m * core.pool_radius_factor(core.radius_walk_mins(category)[0], category))
+    pool_radius_m = round(circle.radius_m * core.pool_radius_factor(round(circle.radius_m)))
     count = place_search.count_curated(
         category=category, circles=[Circle(anchor_lat=lat, anchor_lng=lng, radius_m=pool_radius_m) for lat, lng in anchors],
     )
@@ -305,15 +306,14 @@ def _default_circle_and_anchors(
     anchors = [(lat, lng) for _, lat, lng in coordinates]
     center_lat = sum(lat for lat, _ in anchors) / len(anchors)
     center_lng = sum(lng for _, lng in anchors) / len(anchors)
-    # 기본 반경 = 카테고리의 기본 도보 분(core.radius_walk_mins, #1055)을 common.geo 보정계수로 환산한 거리
-    radius_m = core.radius_m_for_walk_min(core.radius_walk_mins(category)[0])
+    radius_m = core.DEFAULT_RADIUS_M   # 모든 카테고리 같다(#1385)
     circle = Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=radius_m)
     return circle, anchors
 
 
 def _center_region(category: str, center: tuple[float, float]) -> tuple[Circle, list[tuple[float, float]]]:
     """지도 중심 한 점의 원 하나(카테고리 기본 반경, #1331). run 생성·readiness·미리 돌려 보기가 같은 함수로 지역을 만든다."""
-    return Circle(*center, core.radius_m_for_walk_min(core.radius_walk_mins(category)[0])), [center]
+    return Circle(*center, core.DEFAULT_RADIUS_M), [center]
 
 
 def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: list[tuple[float, float]]) -> dict:
@@ -423,6 +423,9 @@ def _create_run(
         raise AppError("NOT_READY", detail=readiness)
     if places_api.sido_at(*center, db=db) is None:
         raise AppError("VALIDATION_ERROR")
+    region_label = _outside_trip_region_label(db, map_id=map_id, center=center)   # 크레딧·모델 호출 전에 막는다(#1385)
+    if region_label is not None:
+        raise AppError("OUTSIDE_TRIP_REGION", detail={"region_label": region_label})
     credits_api.check_can_spend(db, user_id=requested_by, feature="recommend_run")   # 모델(②) 전에 막는다(#949)
 
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
@@ -666,7 +669,7 @@ def _pipeline_inputs(
     """저장된 지역과 활성 근거 줄을 _run_pipeline 입력으로 읽는다. 실행(execute/widen/retry)은 그대로 쓰고,
     시뮬레이션(#585)만 반경 배율과 비활성으로 볼 줄을 준다 — 사본과 거른 목록이라 행은 바뀌지 않는다.
     풀 반경은 배율과 무관하게 저장된 반경 × 넓히기 상한 배율이라 시뮬레이션도 실행과 같은 풀을 쓴다(#792)."""
-    pool_factor = core.pool_radius_factor(run.default_radius_walk_min, run.category)
+    pool_factor = core.pool_radius_factor(core.run_radius_m(run))
     regions = [
         _PipelineRegion(
             id=r.id, label=r.label, center_lat=r.center_lat, center_lng=r.center_lng,
@@ -697,6 +700,27 @@ def _within_trip_sido(
     if trip_sido is None:
         return places
     return [p for p in places if place_sido.get(p.place_id) in (None, trip_sido)]
+
+
+def _circle_outside_region(db: Session, *, center: tuple[float, float], radius_m: float, sido: str) -> bool | None:
+    """원 전체가 그 시·도 밖이면 True, 걸치기만 하면 False, 경계를 모르면 None — places가 시·도 경계 데이터로 정한다(#1385).
+    places.api.circle_outside_region을 부르는 자리 한 곳이다. 경계만 보므로 원이 경계에 닿기만 해도 False(막지 않음)다."""
+    return places_api.circle_outside_region(*center, radius_m, sido, db=db)
+
+
+def _outside_trip_region_label(db: Session, *, map_id: str, center: tuple[float, float]) -> str | None:
+    """요청 center 기준 기본 반경(3km) 원 전체가 이 지도의 여행 지역(시·도) 밖이면 여행 지역 이름, 아니면 None(#1385).
+    걸치기만 하면 막지 않고, 지도에 여행 지역이 없거나 그 시·도 또는 경계를 모르면 막지 않는다(모름을 실격으로 읽지 않는다).
+    여행 지역의 시·도는 후보를 시·도로 거르는 곳(`_within_trip_sido`)과 같은 값이다 — 지도 여행 지역 중심을 places.api.sido_at에 넣는다."""
+    trip_center = maps_api.get_map_region_center(db, map_id)
+    if trip_center is None:
+        return None
+    trip_sido = places_api.sido_at(*trip_center, db=db)
+    if trip_sido is None:
+        return None
+    if _circle_outside_region(db, center=center, radius_m=core.DEFAULT_RADIUS_M, sido=trip_sido) is not True:
+        return None
+    return maps_api.get_map_region_label(db, map_id) or trip_sido
 
 
 def _out_of_season_keys(db: Session, map_id: str) -> frozenset[str]:
@@ -1047,8 +1071,8 @@ def execute_run(
 def widen_run(
     db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
 ) -> RecommendRun:
-    """POST /runs/{runId}/widen (5-6-1, 가드레일4) — 기본값 원을 +5분(도보) 넓힌다. 카테고리 상한(core.radius_walk_mins)에
-    이미 닿았으면 409 WIDEN_LIMIT(core.next_default_radius_walk_min). v1은 사람이 명시한 원과
+    """POST /runs/{runId}/widen (5-6-1, 가드레일4) — 기본값 원을 +1,000m 넓힌다(#1385). 상한(5,000m)에
+    이미 닿았으면 409 WIDEN_LIMIT(core.widened_radius_m). v1은 사람이 명시한 원과
     기본값 원을 구분할 방법이 없어 — 반경 사유가 구조화되기 전이라 명시적 원이 저장되지 않는다 —
     저장된 원 전부가 기본값 원이다. 명시적 원이 생기면 그 원은 여기서 건드리지 않도록 좁혀야
     한다(docs/constraints.md "반경 넓히기 상수", #274)."""
@@ -1057,13 +1081,12 @@ def widen_run(
     regions = service.list_regions(db, run_id)
     if not regions:
         raise AppError("NOT_READY")
-    next_walk_min = core.next_default_radius_walk_min(run.default_radius_walk_min, run.category)  # 409 WIDEN_LIMIT
-    radius_m = core.radius_m_for_walk_min(next_walk_min)
+    radius_m = core.widened_radius_m(core.run_radius_m(run))   # 409 WIDEN_LIMIT
     for region in regions:
         anchors = region.anchor_points or [[region.center_lat, region.center_lng]]
         widened = [Circle(lat, lng, radius_m) for lat, lng in anchors]
         service.update_region_radius(db, region, radius_m=radius_m, signature=core.region_signature(widened))
-    service.set_default_radius_walk_min(db, run, next_walk_min)
+    service.set_default_radius_m(db, run, radius_m)
 
     service.set_run_status(db, run, "executing")
     return _search_and_store(db, run, place_search=place_search, place_facts=place_facts)
@@ -1101,7 +1124,7 @@ def simulate_filter(
     if radius_factor is not None and not radius_factor > 0:
         raise ValueError(f"radius_factor는 0보다 커야 한다: {radius_factor}")
     run = service.get_run_or_404(db, run_id)
-    if radius_factor is not None and radius_factor > core.pool_radius_factor(run.default_radius_walk_min, run.category):
+    if radius_factor is not None and radius_factor > core.pool_radius_factor(core.run_radius_m(run)):
         raise ValueError(f"radius_factor가 넓히기 상한을 넘는다: {radius_factor}")
     try:
         disabled = frozenset(str(uuid.UUID(str(line_id))) for line_id in disable_line_ids)
@@ -1183,7 +1206,7 @@ def preview_filter(
             raise AppError("NOT_READY")
         circle, anchors = default_region
         groups = _clustered_regions(circle, anchors)
-    pool_factor = core.pool_radius_factor(core.radius_walk_mins(category)[0], category)   # 새 run의 기본 반경과 같다
+    pool_factor = core.pool_radius_factor(core.DEFAULT_RADIUS_M)   # 새 run의 기본 반경과 같다
     regions = [
         _PipelineRegion(id=None, label=CENTER_REGION_LABEL if center is not None else DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
                         center_lat=c.anchor_lat, center_lng=c.anchor_lng, radius_m=c.radius_m,
