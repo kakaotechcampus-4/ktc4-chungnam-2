@@ -342,11 +342,28 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
 
   it("지도 응답에 요청자 기준 permissions가 붙고, 상세에서만 next_owner가 온다", async () => {
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true, can_manage_invites: true, can_transfer_owner: true });
     expect(detail.next_owner.user_id).toBe("u_2");
     const list = (await (await fetch(`${BASE}/maps`)).json()).items;
     expect(list[0].permissions.can_delete).toBe(true);
     expect(list[0].next_owner).toBeUndefined();
+  });
+
+  it("#1371 GET /maps에 trip_max_days 90, 90일 초과 기간은 만들기·날짜 수정에서 422 TRIP_TOO_LONG", async () => {
+    expect((await (await fetch(`${BASE}/maps`)).json()).trip_max_days).toBe(90);
+    const create = (end: string) => fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "긴 여행", start_date: "2026-01-01", end_date: end }) });
+    expect((await create("2026-03-31")).status).toBe(201); // 90일(포함)
+    const tooLong = await create("2026-04-01"); // 91일
+    expect(tooLong.status).toBe(422);
+    const err = await tooLong.json();
+    expect(err.code).toBe("TRIP_TOO_LONG");
+    expect(err.detail).toEqual({ limit: 90 });
+    const patch = (b: object) => fetch(`${BASE}/maps/map_1`, { method: "PATCH", body: JSON.stringify(b) });
+    const start = store.maps["map_1"].start_date;
+    expect((await patch({ end_date: "2099-01-01" })).status).toBe(422);
+    store.maps["map_1"].end_date = "2099-01-01"; // 이미 90일을 넘는 지도
+    store.maps["map_1"].start_date = start;
+    expect((await patch({ title: "제목만" })).status).toBe(200); // 제목만 고치는 것은 막지 않는다
   });
 
   it("방장이 나가면 다음 사람이 방장이 되고 member.left에 실린다", async () => {
@@ -361,7 +378,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
   it("넘길 사람이 없는 방장은 409 OWNER_CANNOT_LEAVE, can_leave=false", async () => {
     store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me");
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true, can_manage_invites: true, can_transfer_owner: true });
     const r = await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" });
     expect(r.status).toBe(409);
     expect((await r.json()).code).toBe("OWNER_CANNOT_LEAVE");
@@ -375,7 +392,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
     expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(204);
     expect((await fetch(`${BASE}/maps/map_1`)).status).toBe(404);
     expect((await (await fetch(`${BASE}/invites/${invite.token}/accept`, { method: "POST" })).json()).code).toBe("INVITE_NOT_FOUND");
-    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT });
+    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT, trip_max_days: 90 });
   });
 });
 

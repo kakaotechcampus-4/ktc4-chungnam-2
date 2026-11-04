@@ -2,6 +2,14 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-05, 여행 기간 상한 90일과 방장 권한 칸 두 개 — `MapList.trip_max_days`, `Permissions.can_manage_invites`·`can_transfer_owner`, 422 `TRIP_TOO_LONG` (#1371, #1154)
+
+- 모두 **상위 호환 선택 필드**다. 서버 구현은 backend/maps 후속이라 그 전까지 실서버는 보내지 않는다(없으면 FE는 지금처럼 동작).
+- `MapList.trip_max_days`(integer): 여행 기간 상한 일수, 시작일·종료일 포함, 지금 **90**(2026-11-04 FE 리드 결정). 화면은 이 값으로 날짜 칸의 고를 수 있는 끝을 막는다. 숫자는 화면에 적지 않는다.
+- 새 오류 코드 422 `TRIP_TOO_LONG`(`detail: { limit }`, `docs/errors.md`): `POST /maps`와 `PATCH /maps/{mapId}`에서 기간이 `trip_max_days`를 넘을 때. PATCH는 **날짜를 바꾸는 요청에서만** 검사하고, 제목·지역만 고치는 것은 막지 않는다(이미 90일을 넘는 지도의 제목 수정은 허용). 화면 문구는 「여행 기간은 최대 N일까지 정할 수 있어요」(N은 `detail.limit`).
+- `Permissions.can_manage_invites`(map 전용, `invite.revoke`, #467)와 `can_transfer_owner`(map 전용, `owner.transfer`, #468): 방장만 true. FE는 `my_role === 'owner'` 판정 대신 이 값으로 「초대 링크 관리」·「방장 넘기기」 버튼을 그린다.
+- 목 서버: `GET /maps`에 `trip_max_days: 90`, `POST /maps`·`PATCH /maps/{mapId}`의 `TRIP_TOO_LONG`, 지도 응답 `permissions`의 두 칸(방장이면 true). 타입 재생성 필요(`npm run gen:types`).
+
 ## 2026-11-04, `GET /maps/{mapId}/recommend/readiness` — 선택 쿼리 `center_lat`·`center_lng` 추가 (#1331)
 
 - 지도 중심 앵커 추천이 기존 핀 기반 위치 기준을 **run 생성에서 대체**한다(#1331, 사용자 결정 2026-11-04). 이 요청에는 상위 호환 선택 쿼리를 더했다: `center_lat`·`center_lng`(함께, 위도 33~39·경도 124~132). 있으면 `curated_nearby`를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다.
