@@ -933,19 +933,71 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
     expect(bad.status).toBe(422);
   });
 
-  it("반경 넓히기는 +5분씩, 도보 30분 상한에서 409 WIDEN_LIMIT", async () => {
+  it("반경 넓히기는 +1000m씩, 5000m 상한에서 409 WIDEN_LIMIT (#1385)", async () => {
     resetScenario("region-conflict");
     const runId = "run_region_conflict";
     const radii: number[] = [];
-    for (let i = 0; i < 3; i++) {
+    const nexts: Array<number | null> = [];
+    for (let i = 0; i < 2; i++) {
       const res = await post(`/runs/${runId}/widen`);
       expect(res.status).toBe(202);
-      radii.push((await res.json()).default_radius_walk_min);
+      const body = await res.json();
+      radii.push(body.default_radius_m);
+      nexts.push(body.next_default_radius_m);
     }
-    expect(radii).toEqual([20, 25, 30]);
+    expect(radii).toEqual([4000, 5000]);
+    expect(nexts).toEqual([5000, null]); // #1370 상한이면 null
     const over = await post(`/runs/${runId}/widen`);
     expect(over.status).toBe(409);
     expect((await over.json()).code).toBe("WIDEN_LIMIT");
+  });
+});
+
+describe("#1385·#1370·#1164 — 추천 반경(m)과 여행 지역 밖 오류", () => {
+  const createRun = (body: object) => fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점", execute: true, ...body }) });
+
+  it("readiness가 카테고리별 기본 반경 radius_m: 3000을 준다", async () => {
+    resetScenario("happy-path");
+    const res = await fetch(`${BASE}/maps/map_1/recommend/readiness`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body["음식점"].radius_m).toBe(3000);
+    expect(body["관광지"].radius_m).toBe(3000);
+  });
+
+  it("run 생성은 default_radius_m 3000·next 4000을 주고, 지난 추천(RunSummary)에도 같은 칸이 있다", async () => {
+    resetScenario("happy-path");
+    const res = await createRun({});
+    expect(res.status).toBe(202);
+    const run = await res.json();
+    expect(run.default_radius_m).toBe(3000);
+    expect(run.next_default_radius_m).toBe(4000);
+    const widened = await (await fetch(`${BASE}/runs/${run.id}/widen`, { method: "POST" })).json();
+    expect(widened.default_radius_m).toBe(4000);
+    const list = await (await fetch(`${BASE}/maps/map_1/runs`)).json();
+    const mine = list.find((r: { id: string }) => r.id === run.id);
+    expect(mine.default_radius_m).toBe(4000);
+    expect(mine.next_default_radius_m).toBe(5000);
+  });
+
+  it("지도가 서울이고 center가 부산이면 422 OUTSIDE_TRIP_REGION — detail.region_label, 크레딧을 쓰지 않는다", async () => {
+    resetScenario("happy-path");
+    store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };
+    const before = (await (await fetch(`${BASE}/credits/me`)).json()).balance;
+    const res = await createRun({ center: { lat: 35.1587, lng: 129.1604 } });
+    expect(res.status).toBe(422);
+    const err = await res.json();
+    expect(err.code).toBe("OUTSIDE_TRIP_REGION");
+    expect(err.detail).toEqual({ region_label: "서울" });
+    expect((await (await fetch(`${BASE}/credits/me`)).json()).balance).toBe(before);
+  });
+
+  it("지도에 여행 지역이 없거나 center가 지역 안이면 막지 않는다", async () => {
+    resetScenario("happy-path");
+    delete store.maps.map_1.region;
+    expect((await createRun({ center: { lat: 35.1587, lng: 129.1604 } })).status).toBe(202);
+    store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };
+    expect((await createRun({ center: { lat: 37.5665, lng: 126.978 } })).status).toBe(202);
   });
 });
 
