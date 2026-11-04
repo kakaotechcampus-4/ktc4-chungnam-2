@@ -9,6 +9,21 @@
 - FE: 추천 시작 화면이 readiness를 부를 때 run 생성에 보낼 중심과 같은 값을 보내면 「근처 정예 수」가 실제 추천 범위와 일치한다. 안 보내도 동작한다.
 - 정책: `POST /maps/{mapId}/runs`의 `center`는 **필수가 된다** — 계약 필수화는 FE가 `center`를 보내기 시작한 뒤에 별도 PR로 한다(그때까지 선택). 중심이 없는 호출(readiness·미리 돌려 보기·AI 조언)에서만 기존 핀 기반 로직이 남는다. 교체 전 로직 보존: 태그 `legacy/recommend-pin-anchor`.
 
+## 2026-11-04, 「핑고 AI 조언」 막힌 곳 후속 관찰과 충돌 선언 — `AgentSuggestion.attempt`·`tried`, `AgentState.tracking` (#1345)
+
+- 결정 #1345: 수락한 제안을 막힌 곳 하나로 보고 풀렸는지 서버가 매 관찰마다 본다. 그대로면 이미 해 본 것과 다른 방법(다음 방법), 그래도 그대로면 해 본 것을 남기는 충돌 선언이다(`docs/agent-v2.md` 6.9).
+- 모두 **선택 필드, 상위 호환**이다. 서버 구현(#1346) 전에는 없다.
+- `AgentSuggestion.attempt`(0·1·2): 0 첫 제안, 1 다음 방법, 2 충돌 선언. 충돌 선언은 `actions`가 빈 목록이다(버튼 없음). 없으면 0으로 본다.
+- `AgentSuggestion.tried[]`(`AgentTried` {`action_type`, `label`, `accepted_at`}): 이 막힌 곳에서 이미 해 본 것(수락한 앞 제안의 버튼), 오래된 것부터. 누가 눌렀는지와 추천 결과는 싣지 않는다.
+- `AgentState.tracking[]`(`AgentTracking` {`suggestion_id`, `diagnosis`, `category`, `status`, `text`, `since`, `tried`}): 핑고가 지켜보는 막힌 곳, 최근 48시간.
+  - `status`: watching(수락 뒤 지켜보는 중), resolved(풀림), declared(충돌 선언을 냄)
+  - `text`는 서버 고정 문구다. 경과 시간은 FE가 `since`로 그린다.
+  - 지금 활성 제안인 막힌 곳과 닫기·만료로 끝난 것은 들어가지 않는다.
+- `WorkStep.stage`에 「후속 확인」(감지 다음, attempt ≥ 1)을 더했다. 이벤트 타입은 그대로다. 풀림은 GET 상태로만 보이고, 후속 제안과 충돌 선언은 지금처럼 `agent.suggested`다.
+- data-model: `agent_suggestions`에 `attempt`, `followup_of`, `followup` 세 칸(사용자 id 열 아님).
+- 목 서버: 지도 `map_1`의 tracking에 지켜보는 중 하나와 풀림 하나, 지도 `map_2`의 활성 제안이 충돌 선언(attempt 2)이다.
+- FE 구현 이슈 #1348: 「지켜보는 중」 줄, 후속 제안 카드(「두 번째 방법」, 해 본 것), 충돌 선언 카드.
+
 ## 2026-11-04, 「핑고 AI 조언」 버튼에서 「핀 보기」 빼기, 웹 확인은 「모름」 줄마다 (#1317)
 
 - 스키마는 그대로다(`AgentAction.type` enum도 그대로). 서버가 내리는 값만 바뀐다.

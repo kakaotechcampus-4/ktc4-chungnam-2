@@ -3050,11 +3050,53 @@ components:
           items: { $ref: "#/components/schemas/WorkStep" }
           description: |
             작업 기록 — 이 제안을 만들 때 핑고가 거친 단계(#1297, docs/agent-v2.md 11.3). AI 코스의 작업 기록과 같은 모양이다.
-            순서: 감지 → 순위(신호가 2개 이상일 때만) → 조사(모델이 고른 도구마다 한 줄) → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인. 있는 단계만 온다. 코드 유형(no_reaction, category_gap)은 감지·순위·재확인뿐이다.
+            순서: 감지 → 후속 확인(attempt ≥ 1, #1345) → 순위(신호가 2개 이상일 때만) → 조사(모델이 고른 도구마다 한 줄) → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인. 있는 단계만 온다. 코드 유형(no_reaction, category_gap)과 충돌 선언은 조사·웹 확인·검증이 없다.
             문장은 서버 고정 문구와 숫자뿐이다 — 사유 글, 핀·장소 이름, 구성원, URL은 들어가지 않는다.
             선택 필드 — 서버 구현 전에는 없고, 기록이 지워진 제안(탈퇴, 30일 정리)은 빈 목록이다. FE는 없거나 빈 목록이면 「핑고가 한 일」을 그리지 않는다.
+        attempt:
+          type: integer
+          minimum: 0
+          maximum: 2
+          description: |
+            막힌 곳 한 살이의 몇 번째 제안인가(#1345, docs/agent-v2.md 6.9). 0=첫 제안, 1=다음 방법(앞 제안을 수락했는데 그대로라 이미 해 본 것과 다른 방법),
+            2=충돌 선언(최후 — 해 본 것을 남기고 결정은 사람에게. actions는 빈 목록). 선택 필드 — 서버 구현(#1346) 전에는 없고, FE는 없으면 0으로 본다.
+        tried:
+          type: array
+          maxItems: 2
+          items: { $ref: "#/components/schemas/AgentTried" }
+          description: "attempt ≥ 1일 때 이 막힌 곳에서 이미 해 본 것(수락한 앞 제안의 버튼), 오래된 것부터. attempt 0이면 빈 목록. 선택 필드"
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time, description: "만들고 24시간 뒤. 지나면 만료(agent.resolved, status=expired)" }
+
+    AgentTried:
+      type: object
+      required: [action_type, label, accepted_at]
+      description: "막힌 곳에서 이미 해 본 것 하나(#1345) — 수락한 제안의 버튼. 누가 눌렀는지와 추천 결과(비공개 run)는 싣지 않는다"
+      properties:
+        action_type: { type: string, enum: [open_recommend, show_pins, search_place, open_route, widen_radius, open_evidence] }
+        label: { type: string, maxLength: 40, description: "그때 버튼 문구(서버 렌더). 예: \"음식점 추천 받기\"" }
+        accepted_at: { type: string, format: date-time }
+
+    AgentTracking:
+      type: object
+      required: [suggestion_id, diagnosis, category, status, text, since, tried]
+      description: |
+        핑고가 지켜보는 막힌 곳 하나(#1345, docs/agent-v2.md 6.9). 수락한 제안이 풀렸는지 매 관찰마다 코드가 본다(모델 호출 없음).
+        지금 활성 제안인 막힌 곳과, 닫기·만료로 끝난 막힌 곳은 들어가지 않는다. 최근 48시간만.
+        watching=수락 뒤 지켜보는 중, resolved=풀림(text에 무엇으로 풀렸는지), declared=충돌 선언을 냈고 더 지켜보지 않음.
+        text는 서버 고정 문구다. 구성원 글과 이름은 없다. 예: "음식점 · 추천 받기 뒤로 지켜보는 중", "카페 · 풀렸어요 — 새 핀이 올라왔어요".
+        경과 시간은 FE가 since로 그린다(예: 「2시간째」).
+      properties:
+        suggestion_id: { type: string, description: "그 막힌 곳의 마지막 제안" }
+        diagnosis: { $ref: "#/components/schemas/AgentDiagnosis" }
+        category:
+          oneOf:
+            - $ref: "#/components/schemas/Category"
+            - type: "null"
+        status: { type: string, enum: [watching, resolved, declared] }
+        text: { type: string, maxLength: 100 }
+        since: { type: string, format: date-time, description: "watching이면 마지막 수락 시각, resolved면 풀린 것을 본 시각, declared면 충돌 선언 시각" }
+        tried: { type: array, items: { $ref: "#/components/schemas/AgentTried" } }
 
     AgentFactLine:
       type: object
@@ -3184,6 +3226,10 @@ components:
         observation:
           $ref: "#/components/schemas/AgentObservation"
           description: "살펴본 상태(#1297). 선택 필드 — 서버 구현 전에는 없고, FE는 없으면 자리를 두지 않는다"
+        tracking:
+          type: array
+          items: { $ref: "#/components/schemas/AgentTracking" }
+          description: "핑고가 지켜보는 막힌 곳(#1345). 최근 것부터. 모드가 꺼져 있으면 빈 목록. 선택 필드 — 서버 구현(#1346) 전에는 없고, FE는 없거나 빈 목록이면 자리를 두지 않는다"
 
     AgentObservation:
       type: object
@@ -3319,7 +3365,7 @@ components:
           description: |
             단계 이름. 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243).
             AI 코스: 이해(목표 세우기) · 확인(목표가 데이터로 되는지) · 짜기 · 다시 짜기 · 점검 · 재계획(AI가 결과를 보고 다음 수) · 고정 · 찾기 · 옮겨 보기(쉬는 날·이동 과다를 코드가 찾아 옮겨 봄) · 대행(모델 실패를 코드가 이어받음) · 검증(모델 문장을 코드 문장으로 바꿈) · 가정(모르는 영업시간을 여는 것으로 봄) · 비교(후보끼리 견줌) · 결정(코드가 고름) · 끝(지휘가 고름) · 결과. 되묻지 않으므로 질문·답 단계는 없다(#1131).
-            핑고 AI 조언(#1297): 감지(막힌 곳을 찾음) · 순위(여러 곳 중 먼저 볼 곳) · 조사(모델이 고른 도구로 지도 데이터를 읽음) · 미리 찾기(지금 조건으로 남는 곳 수) · 우리 데이터(장소 라벨 확인) · 웹 확인(모델이 웹을 찾고 코드가 출처를 대조) · 검증(모델 출력을 지도와 대조) · 재확인(저장 직전 지도가 그대로인지)
+            핑고 AI 조언(#1297): 감지(막힌 곳을 찾음) · 순위(여러 곳 중 먼저 볼 곳) · 조사(모델이 고른 도구로 지도 데이터를 읽음) · 미리 찾기(지금 조건으로 남는 곳 수) · 우리 데이터(장소 라벨 확인) · 웹 확인(모델이 웹을 찾고 코드가 출처를 대조) · 검증(모델 출력을 지도와 대조) · 재확인(저장 직전 지도가 그대로인지) · 후속 확인(#1345, 수락한 앞 제안 뒤로 막힌 곳이 그대로인지 — 다음 방법과 충돌 선언에만, 감지 다음)
         role: { type: string, enum: [해석, 지휘, 계산, 검증, 결정], description: "무슨 일이었나. 해석=요청을 목표로, 지휘=도구 고르기·점검·끝, 계산=최적화·수리·탐지·미리 찾기, 검증=코드가 사실과 맞춰 봄(모델 문장을 코드 문장으로 바꾼 기록, 웹 문장의 출처 대조 포함), 결정=코드가 고르거나 가정을 세움(결정·가정·순위 단계)" }
         by: { type: string, enum: [ai, code, human], description: "누가 했나. 칩으로 보여 준다. 여럿이 함께한 단계는 대표값(사람 > 모델 > 코드)이고 자세한 말은 by_detail" }
         by_detail: { type: [string, "null"], description: "섞인 단계의 원문. 예: 「모델 → 코드」, 「코드가 열고 모델이 고름 → 사람」, 「코드(목표 세우기 실패)」. 단순하면 null" }

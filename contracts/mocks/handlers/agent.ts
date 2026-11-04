@@ -59,6 +59,7 @@ export const agentHandlers = [
       summaries: store.agentSummaries[mapId] ?? [],
       status: store.agentStatus[mapId] ?? null, // 지도 현황 문단(#1152, docs/agent-v2.md 8.2)
       observation: observationOf(mapId, !!entry), // 살펴본 상태(#1297)
+      tracking: settings.enabled ? store.agentTracking[mapId] ?? [] : [], // 지켜보는 막힌 곳(#1345). 모드가 꺼져 있으면 빈 목록
     });
   }),
 

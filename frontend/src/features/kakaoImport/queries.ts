@@ -72,8 +72,12 @@ const EMPTY: ImportState = {
 
 const useImportStore = create<ImportState>(() => EMPTY)
 const patch = (p: Partial<ImportState>) => useImportStore.setState(p)
-const patchRow = (i: number, fn: (row: ImportRow) => ImportRow) =>
-  useImportStore.setState((s) => ({ rows: s.rows.map((r, j) => (j === i ? fn(r) : r)) }))
+/**
+ * 줄은 링크로 찾는다(링크마다 한 줄). 순번으로 찾으면 응답을 기다리는 사이 「완료된 것 지우기」·「모두 비우기」로
+ * 줄이 당겨졌을 때 다른 줄에 결과가 붙는다(#1116 검토). 지워진 줄의 응답은 버린다.
+ */
+const patchRow = (url: string, fn: (row: ImportRow) => ImportRow) =>
+  useImportStore.setState((s) => ({ rows: s.rows.map((r) => (r.share.url === url ? fn(r) : r)) }))
 
 // 목록이 바뀔 때마다 그 지도의 저장소에 옮긴다. 대화 원문은 애초에 스토어에 없다.
 useImportStore.subscribe((s, prev) => {
@@ -106,25 +110,35 @@ function ensureMap(mapId: string, near: LatLng | null) {
   if (rows.length > 0) void checkRemaining(mapId)
 }
 
-/** 아직 미리보기를 못 받은 줄을 10개씩 차례로 확인한다(찍은 줄 포함 — 이름·「이미 있음」을 다시 받는다). 실패하면 멈추고, 받은 줄은 그대로 둔다. */
+/**
+ * 아직 미리보기를 못 받은 줄을 10개씩 차례로 확인한다(찍은 줄 포함 — 이름·「이미 있음」을 다시 받는다). 실패하면 멈추고, 받은 줄은 그대로 둔다.
+ * 남은 줄은 매번 목록에서 다시 고른다 — 확인하는 중에 더 붙여넣은 링크도 이 반복이 이어 확인한다(#1116 검토).
+ */
 async function checkRemaining(mapId: string) {
   if (useImportStore.getState().phase === 'checking') return
   patch({ phase: 'checking', error: null })
-  const todo = useImportStore.getState().rows.flatMap((r, i) => (r.item ? [] : [i]))
+  // 한 번 보낸 링크는 다시 보내지 않는다 — 서버가 어떤 항목을 빠뜨려도 반복이 끝난다.
+  const sent = new Set<string>()
   try {
-    for (const part of chunk(todo, PREVIEW_CHUNK)) {
-      const rows = useImportStore.getState().rows
+    for (;;) {
+      const part = useImportStore
+        .getState()
+        .rows.filter((r) => !r.item && !sent.has(r.share.url))
+        .slice(0, PREVIEW_CHUNK)
+        .map((r) => r.share)
+      if (part.length === 0) break
+      for (const share of part) sent.add(share.url)
       // hints[i] 는 urls[i] 의 힌트 — 청크마다 같은 순서·같은 길이로 보낸다.
       const { items } = await previewLinks(
         mapId,
-        part.map((i) => rows[i].share.url),
-        part.map((i) => hintOf(rows[i].share)),
+        part.map((share) => share.url),
+        part.map(hintOf),
       )
       if (useImportStore.getState().mapId !== mapId) return
       for (const item of items) {
-        const i = part[item.index]
-        if (i === undefined) continue
-        patchRow(i, (r) => {
+        const url = part[item.index]?.url
+        if (url === undefined) continue
+        patchRow(url, (r) => {
           const next = { ...r, item }
           if (r.outcome) return next
           // 되살린 줄: 고른 주소 후보를 다시 맞춘다. 처음 받은 줄: 서버가 찾은 곳만 미리 체크.
@@ -150,26 +164,27 @@ async function checkRemaining(mapId: string) {
 async function searchRemaining() {
   patch({ searchPaused: false })
   const { rows, near, mapId } = useImportStore.getState()
-  const todo = rows.flatMap((r, i) => (!r.outcome && rowState(r) === 'search' && r.search?.status !== 'done' ? [i] : []))
-  for (const i of todo) {
-    const row = useImportStore.getState().rows[i]
+  // 찾는 중인 줄은 고르지 않는다 — 다른 확인이 끝나며 이 함수가 또 불려도 같은 이름을 두 번 찾지 않는다.
+  const todo = rows.flatMap((r) => (!r.outcome && rowState(r) === 'search' && (!r.search || r.search.status === 'error') ? [r.share.url] : []))
+  for (const url of todo) {
+    const row = useImportStore.getState().rows.find((r) => r.share.url === url)
     const name = row && rowName(row)
-    if (!name) continue
-    patchRow(i, (r) => ({ ...r, search: { status: 'loading', results: [] } }))
+    if (!row || !name) continue
+    patchRow(url, (r) => ({ ...r, search: { status: 'loading', results: [] } }))
     try {
       const found = (await searchPlaces(name.slice(0, 50), near)).slice(0, SEARCH_SHOWN)
       if (useImportStore.getState().mapId !== mapId) return
       const saved = row.choiceId ? found.find((p) => p.place_id === row.choiceId) : undefined
       const same = found.filter((p) => sameRoadAddress(row.share.address, p.address))
       const pick = saved ? null : same.length === 1 && toPinRequest({ ...row, choice: same[0] }) ? same[0] : null
-      patchRow(i, (r) => ({
+      patchRow(url, (r) => ({
         ...r,
         search: { status: 'done', results: found },
         choiceId: undefined,
         ...(saved ? { choice: saved } : pick ? { choice: pick, picked: true, auto: true } : {}),
       }))
     } catch (error) {
-      patchRow(i, (r) => ({ ...r, search: { status: 'error', results: [] } }))
+      patchRow(url, (r) => ({ ...r, search: { status: 'error', results: [] } }))
       if (error instanceof ApiError && error.status === 429) {
         patch({ searchPaused: true })
         return
@@ -219,11 +234,11 @@ export function useLinkImport(mapId: string, near: LatLng | null = null) {
     },
     retryCheck: () => void checkRemaining(mapId),
     retrySearch: () => void searchRemaining(),
-    toggle: (i: number) => patchRow(i, (r) => ({ ...r, picked: !r.picked })),
+    toggle: (url: string) => patchRow(url, (r) => ({ ...r, picked: !r.picked })),
     /** 주소 후보·이름 검색 후보에서 고른다. null 이면 「여기 없어요」 — 고르지 않은 채로 둔다. */
-    choose: (i: number, place: PlaceSearchResultDto | null) =>
-      patchRow(i, (r) => ({ ...r, choice: place, choiceId: undefined, picked: place !== null, auto: false })),
-    markOpened: (i: number) => patchRow(i, (r) => ({ ...r, opened: true })),
+    choose: (url: string, place: PlaceSearchResultDto | null) =>
+      patchRow(url, (r) => ({ ...r, choice: place, choiceId: undefined, picked: place !== null, auto: false })),
+    markOpened: (url: string) => patchRow(url, (r) => ({ ...r, opened: true })),
     /** 찍었거나 이미 지도에 있던 줄을 지운다. */
     clearDone: () =>
       useImportStore.setState((s) => ({ rows: s.rows.filter((r) => !r.outcome && rowState(r) !== 'already'), lastSaved: null })),
@@ -238,15 +253,14 @@ export function useLinkImport(mapId: string, near: LatLng | null = null) {
       patch({ phase: 'saving', error: null })
       let made = 0
       const tally: Record<Outcome, number> = { created: 0, duplicate: 0, rejected: 0 }
-      const groups = new Map<string, number[]>()
-      const rows = useImportStore.getState().rows
-      rows.forEach((r, i) => {
+      const groups = new Map<string, ImportRow[]>()
+      for (const r of useImportStore.getState().rows) {
         const key = r.picked && !r.outcome && toPinRequest(r) ? placeKey(r) : undefined
-        if (key) groups.set(key, [...(groups.get(key) ?? []), i])
-      })
+        if (key) groups.set(key, [...(groups.get(key) ?? []), r])
+      }
       const todo = [...groups.values()].map((group) => {
-        const lead = group.find((i) => rows[i].item?.result?.external_id) ?? group[0]
-        return { group, req: toPinRequest(rows[lead])! }
+        const lead = group.find((r) => r.item?.result?.external_id) ?? group[0]
+        return { urls: group.map((r) => r.share.url), req: toPinRequest(lead)! }
       })
       try {
         for (const part of chunk(todo, BULK_CHUNK)) {
@@ -258,7 +272,7 @@ export function useLinkImport(mapId: string, near: LatLng | null = null) {
           )
           for (const res of results) {
             tally[res.status] += 1
-            for (const i of part[res.index]?.group ?? []) patchRow(i, (r) => ({ ...r, outcome: res.status }))
+            for (const url of part[res.index]?.urls ?? []) patchRow(url, (r) => ({ ...r, outcome: res.status }))
           }
         }
         patch({ phase: 'idle', lastSaved: tally })
