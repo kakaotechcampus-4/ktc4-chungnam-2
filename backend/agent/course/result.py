@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
-from agent.course import core, goals as goals_mod
+from agent.course import cards, core, goals as goals_mod, review as review_mod
 from agent.course.direct import DirectResult
 from agent.course.intake import Excluded
 from agent.course.korean import attach
@@ -28,6 +28,10 @@ class CourseView:
     violations: list[dict[str, str]]
     checks: list[dict[str, str]]
     excluded: list[dict[str, str]] = field(default_factory=list)
+    mode: str = "plan"
+    headline: str = ""
+    fixes: list[dict[str, Any]] = field(default_factory=list)       # 고칠 점 카드(fill·review). plan은 빈 목록
+    checked: list[dict[str, str]] = field(default_factory=list)     # 점검했고 문제가 없는 항목(fill·review)
 
 
 def violation_text(trip: core.Trip, v: core.Violation) -> str:
@@ -63,12 +67,16 @@ def build_days(trip: core.Trip, course: core.Course, check_places: set[tuple[str
 
 def build_view(
     trip: core.Trip, excluded: Sequence[Excluded], goals: Sequence[goals_mod.Goal], unmatched: Sequence[str],
-    result: DirectResult, steps: Sequence[StepRecord],
+    result: DirectResult, steps: Sequence[StepRecord], *, mode: str = "plan",
+    reviewed: Optional[review_mod.ReviewResult] = None, unassigned: Sequence[str] = (),
 ) -> CourseView:
     checks = core.find_checks(trip, result.course, result.state.hours)
     check_cells = {(c.places[0], c.day) for c in checks}
     by_goal = {r.goal.id: r.met for r in result.goal_results}
+    fixes = cards.build_fixes(trip, goals, reviewed, result.course, unassigned) if reviewed is not None else []
     return CourseView(
+        mode=mode, headline=cards.headline(mode, n_fixes=len(fixes), n_unassigned=len(unassigned)),
+        fixes=fixes, checked=cards.checked_items(reviewed) if reviewed is not None else [],
         outcome=result.outcome,
         goals=[{"id": g.id, "kind": g.kind, "label": goals_mod.label(trip, g), "met": by_goal.get(g.id)} for g in goals],
         unmatched=list(unmatched),

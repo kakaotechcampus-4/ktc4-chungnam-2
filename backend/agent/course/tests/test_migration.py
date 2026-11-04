@@ -19,6 +19,8 @@ REVISION, PREVIOUS = "0037_agent_course_runs", "0036_ads"
 DROP_INDEX_REVISION, DROP_INDEX_PREVIOUS = "0050_drop_course_user_index", "0049_reviews"
 DROPPED_INDEX = "ix_agent_course_runs_user_created"   # 하루 상한을 세던 자리(0037). 상한이 크레딧으로 바뀌어(#950) 0050에서 지운다
 MODEL_INDEXES = {i.name for i in AgentCourseRun.__table__.indexes}
+MODE_REVISION, MODE_PREVIOUS = "0061_course_run_modes", "0060_llm_calls_web_searches"
+MODE_COLUMNS = {"mode", "headline", "fixes", "checked", "snapshot_version"}    # 0061이 더한 칸(snapshot_pin_ids는 0061이 지웠다)
 MIG_DB = f"{TEST_DB_NAME}_course_mig"[:63]
 
 
@@ -60,7 +62,7 @@ def test_upgrade_matches_model_enforces_single_active_run_and_downgrades(mig_url
     engine = sa.create_engine(mig_url)
     try:
         inspector = sa.inspect(engine)
-        assert {c["name"] for c in inspector.get_columns("agent_course_runs")} == set(AgentCourseRun.__table__.columns.keys())
+        assert {c["name"] for c in inspector.get_columns("agent_course_runs")} == (set(AgentCourseRun.__table__.columns.keys()) - MODE_COLUMNS) | {"snapshot_pin_ids"}   # 0037 시점 — 0061 전
         indexes = {i["name"]: i for i in inspector.get_indexes("agent_course_runs")}
         assert set(indexes) == MODEL_INDEXES | {DROPPED_INDEX}   # 0037 시점에는 0050에서 지울 인덱스가 아직 있다
         assert indexes["uq_agent_course_runs_active"]["unique"]
@@ -105,5 +107,27 @@ def test_0050_drops_user_created_index_matches_model_and_downgrade_restores_it(m
         assert _index_columns(engine) == before   # 0037과 같은 모양으로 돌아온다
         command.upgrade(cfg, DROP_INDEX_REVISION)
         assert set(_index_columns(engine)) == MODEL_INDEXES
+    finally:
+        engine.dispose()
+
+
+def test_0061_adds_mode_columns_backfills_old_rows_and_downgrade_restores_pin_ids(mig_url):
+    cfg = _config()
+    command.upgrade(cfg, MODE_PREVIOUS)
+    engine = sa.create_engine(mig_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text(
+                "INSERT INTO agent_course_runs (id, map_id, requested_by, status, input, snapshot_at, snapshot_pin_ids)"
+                " VALUES (gen_random_uuid(), 'm1', 'u1', 'done', '{}', now(), '[\"a\"]')"))
+        command.upgrade(cfg, MODE_REVISION)
+        assert {c["name"] for c in sa.inspect(engine).get_columns("agent_course_runs")} == set(AgentCourseRun.__table__.columns.keys())
+        with engine.begin() as conn:
+            row = conn.execute(sa.text("SELECT mode, headline, fixes, checked, snapshot_version FROM agent_course_runs")).one()
+        assert tuple(row) == ("plan", None, [], [], "legacy")          # 옛 run은 plan이고 version을 몰라 legacy(→ stale)
+        command.downgrade(cfg, MODE_PREVIOUS)
+        cols = {c["name"] for c in sa.inspect(engine).get_columns("agent_course_runs")}
+        assert "snapshot_pin_ids" in cols and not (MODE_COLUMNS & cols)
+        command.upgrade(cfg, MODE_REVISION)
     finally:
         engine.dispose()

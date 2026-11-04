@@ -18,6 +18,7 @@ from common.database import Base
 
 COURSE_STATUSES = ("queued", "running", "done", "failed")
 ACTIVE_STATUSES = ("queued", "running")
+COURSE_MODES = ("plan", "fill", "review")
 COURSE_OUTCOMES = ("solved", "solved_with_checks", "unresolved", "timeout")
 FAILURE_CODES = ("INTERRUPTED", "ENGINE_ERROR")   # failed일 때만. 예외 클래스 이름 같은 것은 로그에만 남긴다
 
@@ -43,7 +44,11 @@ class AgentCourseRun(Base):
     failure_code: Mapped[str | None] = mapped_column(String, nullable=True)   # FAILURE_CODES. failed일 때만
     input: Mapped[dict] = mapped_column(JSONB, nullable=False)   # {request_text, member_constraints:[{kind, value, day}]}
     snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    snapshot_pin_ids: Mapped[list] = mapped_column(JSONB, nullable=False)   # 요청 때 확정 리스트의 핀. 바뀌었는지(stale) 비교용
+    snapshot_version: Mapped[str] = mapped_column(String, nullable=False)   # 요청 때 일정 version(shortlist). 지금과 다르면 stale(#1237)
+    mode: Mapped[str] = mapped_column(String, nullable=False, default="plan", server_default="plan")   # plan | fill | review. 요청 때 정한다
+    headline: Mapped[str | None] = mapped_column(String, nullable=True)   # 결과 머리 문구. done일 때만
+    fixes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=_EMPTY_LIST)   # [{id, kind, strength, text, moves, resolved_text, remaining_text, not_fixed_reason}]
+    checked: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=_EMPTY_LIST)   # [{kind, text}]
     goals: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=_EMPTY_LIST)   # [{id, kind, label, met}]
     unmatched: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=_EMPTY_LIST)   # 요청 원문 조각
     excluded: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=_EMPTY_LIST)   # [{pin_id, reason, text}]

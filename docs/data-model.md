@@ -554,7 +554,9 @@ agent_course_runs(
   outcome null('solved'|'solved_with_checks'|'unresolved'|'timeout'),    -- done일 때만
   failure_code null('INTERRUPTED'|'ENGINE_ERROR'),                       -- failed일 때만
   input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
-  snapshot_at, snapshot_version text, -- 구현 전(#1321) — 요청 때 일정 version(shortlist, #1237), 지금 열은 snapshot_pin_ids(핀 id 목록)다. 지금과 다르면 응답의 stale=true
+  mode('plan'|'fill'|'review'),       -- 요청 때 서버가 확정 리스트의 일정 상태로 정한다(#1237). 진행 중에도 값이 있다
+  snapshot_at, snapshot_version text, -- 요청 때 일정 version(shortlist, #1237 — 장소 집합·날짜 배정·순서·여행 기간). 지금과 다르면 응답의 stale=true. 0061 전 run은 'legacy'(→ stale)
+  headline null, fixes jsonb, checked jsonb, -- 결과 머리 문구, 고칠 점 카드 [{id, kind, strength, text, moves:[{pin_id, from_date, to_date}], resolved_text, remaining_text, not_fixed_reason}], 점검 통과 [{kind, text}]. plan은 fixes·checked가 빈 배열
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
   steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)

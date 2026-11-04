@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, Collection, Mapping, Optional, Sequence
 
 from agent.course import core, goals as goals_mod
 from agent.course.constants import MEALS_PER_DAY_MAX
@@ -137,8 +137,9 @@ def reflect(course: core.Course, moves: Mapping[str, int]) -> core.Course:
     return tuple(tuple(d) for d in days)
 
 
-def _candidates(course: core.Course, step: int):
+def _candidates(course: core.Course, step: int, movable: Optional[Collection[str]] = None):
     n = len(course)
+    free = (lambda p: True) if movable is None else movable.__contains__
     if step == 1:
         for i in range(n):
             for j in range(i + 1, n):
@@ -146,12 +147,12 @@ def _candidates(course: core.Course, step: int):
                     yield {**{p: j for p in course[i]}, **{p: i for p in course[j]}}
     elif step == 2:
         for i, day in enumerate(course):
-            for p in day:
+            for p in filter(free, day):
                 for t in range(n):
                     if t != i:
                         yield {p: t}
     else:
-        placed = [(p, i) for i, day in enumerate(course) for p in day]
+        placed = [(p, i) for i, day in enumerate(course) for p in day if free(p)]
         for x, (a, da) in enumerate(placed):
             for b, db in placed[x + 1:]:
                 if da != db:
@@ -160,7 +161,7 @@ def _candidates(course: core.Course, step: int):
 
 def propose(
     trip: core.Trip, course: core.Course, hours: core.Hours, goals: Sequence[goals_mod.Goal], problem: Problem,
-    before: Optional[Sequence[Problem]] = None,
+    before: Optional[Sequence[Problem]] = None, movable: Optional[Collection[str]] = None,
 ) -> Fix:
     """이 문제 하나를 고치는 가장 덜 건드리는 안. 문제가 풀리고 이 일정에 없던 문제가 새로 생기지 않는 첫 단계에서 멈춘다.
     같은 단계에서 안이 여럿이면 (남는 하드 문제 수, 남는 문제 수, 이동 합계, 만든 순서)가 가장 작은 것."""
@@ -168,7 +169,7 @@ def propose(
     attempts: list[Attempt] = []
     for step in (1, 2, 3):
         best = None
-        for order, moves in enumerate(_candidates(course, step)):
+        for order, moves in enumerate(_candidates(course, step, movable)):
             after_course = reflect(course, moves)
             after = find_problems(trip, after_course, hours, goals)
             keys = {p.key for p in after}
@@ -188,10 +189,11 @@ def propose(
 def review(
     trip: core.Trip, course: core.Course, hours: core.Hours, goals: Sequence[goals_mod.Goal] = (), *,
     order: Optional[Callable[[Sequence[Problem]], Sequence[Problem]]] = None,
-    worth: Optional[Callable[[Problem, Fix], Optional[str]]] = None,
+    worth: Optional[Callable[[Problem, Fix], Optional[str]]] = None, movable: Optional[Collection[str]] = None,
 ) -> ReviewResult:
     """지금 일정(course: 날짜 위치별 장소, 사람이 정한 순서 그대로)을 점검하고 문제마다 고칠 안을 만든다. 일정은 바꾸지 않는다.
-    하드 문제는 늘 먼저, 그 안에서도 늘 안(또는 「크게 바꿔야 해요」)이 나온다 — worth 훅은 하드 문제의 안을 지우지 못한다."""
+    하드 문제는 늘 먼저, 그 안에서도 늘 안(또는 「크게 바꿔야 해요」)이 나온다 — worth 훅은 하드 문제의 안을 지우지 못한다.
+    movable이 있으면 ②③은 그 장소만 옮긴다(① 날 맞바꾸기는 날 전체라 늘 가능). 남은 곳 채우기(fill)가 AI가 둔 미배정 장소를 따로 옮기지 않게 한다."""
     problems = find_problems(trip, course, hours, goals)
     hard = [p for p in problems if p.strength == "hard"]
     soft = [p for p in problems if p.strength == "soft"]
@@ -200,7 +202,7 @@ def review(
         soft = ranked + [p for p in soft if p not in ranked]       # 훅이 빠뜨린 문제도 남는다
     fixes = []
     for p in (*hard, *soft):
-        fix = propose(trip, course, hours, goals, p, problems)
+        fix = propose(trip, course, hours, goals, p, problems, movable)
         reason = worth(p, fix) if worth is not None and fix.step is not None and p.strength == "soft" else None
         fixes.append(Fix(p, None, (), (), reason, fix.attempts) if reason else fix)
     found = {p.kind for p in problems}
