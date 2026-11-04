@@ -29,13 +29,6 @@ KNOWN_DRIFT: dict[tuple[str, ...], str] = {
 KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {
 }
 
-# AI 코스 계약 테스트(test_course_endpoints_match_the_openapi_spec)만의 알려진 차이. 일정 기준 모드(#1237)의 응답 칸
-# (mode, headline, fixes, checked)은 스펙에 먼저 들어갔고 서버 구현은 #1321(backend/agent/course)이 맡는다. 구현 PR이 이 항목을 지운다.
-KNOWN_COURSE_DRIFT: dict[tuple[str, ...], str] = {
-    ("GET /course-runs/{runId}", "'mode' is a required property"): "#1321 — CourseRun에 mode, headline, fixes, checked",
-    ("GET /maps/{mapId}/courses/latest", "'mode' is a required property"): "#1321 — CourseRun에 mode, headline, fixes, checked",
-}
-
 # 계약 테스트가 응답을 검증하지 못하는 엔드포인트와 이유. 스펙에 엔드포인트가 늘면 이 목록에 없는 한 실패한다.
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
@@ -866,10 +859,7 @@ def test_course_endpoints_match_the_openapi_spec(clients, app_client, db_session
     assert a.get("/course-runs/no-such-run").status_code == 404
 
     unique = list(dict.fromkeys(problems))
-    unexpected = [p for p in unique if not any(all(s in p for s in marks) for marks in KNOWN_COURSE_DRIFT)]
-    stale = [issue for marks, issue in KNOWN_COURSE_DRIFT.items() if not any(all(s in p for s in marks) for p in unique)]
-    assert not unexpected, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unexpected)
-    assert not stale, f"이미 고쳐졌으니 KNOWN_COURSE_DRIFT에서 지운다: {stale}"
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
 def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions):
