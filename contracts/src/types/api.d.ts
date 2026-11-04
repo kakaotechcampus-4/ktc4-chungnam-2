@@ -4368,7 +4368,7 @@ export interface components {
             map_title?: string;
             /** @description `pin_reaction`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다 */
             pin_id?: string;
-            /** @description 서버가 만든 문장. 예 "지우님이 내 핀에 ♥를 남겼어요". 반대 사유·메모는 싣지 않는다 */
+            /** @description 서버가 만든 문장. 예 "지우님이 내 핀에 좋음을 남겼어요". 반대 사유·메모는 싣지 않는다 */
             message: string;
             /** Format: date-time */
             created_at: string;
