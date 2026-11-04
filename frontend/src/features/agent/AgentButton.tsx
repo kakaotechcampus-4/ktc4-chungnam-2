@@ -34,7 +34,7 @@ export default function AgentButton({
         hidden={hidden}
         tabIndex={fading ? -1 : 0}
         onClick={() => setOpen(true)}
-        aria-label={dot ? '핑고 AI 조언 · 새 제안 있음' : '핑고 AI 조언'}
+        aria-label={dot ? '핑고 AI 조언, 새 제안 있음' : '핑고 AI 조언'}
         className={`absolute left-4 ${docked ? 'bottom-4' : 'bottom-[calc(100%+12px)]'} press flex h-11 items-center gap-1.5 rounded-xl bg-white pl-2 pr-3 text-sm font-bold text-brand-600 shadow-float transition-opacity ${
           fading ? 'pointer-events-none opacity-0 duration-150' : `${docked ? 'pointer-events-auto ' : ''}opacity-100 delay-800 duration-300`
         }`}

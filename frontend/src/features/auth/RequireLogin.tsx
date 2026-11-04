@@ -121,7 +121,7 @@ function LoginScreen({ notice }: { notice?: string }) {
 
         <div className="flex flex-1 flex-col lg:max-w-[400px] lg:rounded-2xl lg:border lg:border-ink-200 lg:bg-white lg:px-8 lg:py-10">
 
-        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">3초면 시작! 카카오에서 이름을 받아서 활용해요</p>
+        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">3초면 시작해요. 이름은 카카오에서 가져와요</p>
         {/* 빨강은 핀·🚫·되돌릴 수 없는 동작 전용이라(영역 분리 규칙) 로그인 실패는 주의색이다. */}
         {loginError && (
           <p role="alert" className="mt-3 text-balance break-keep rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-2.5 text-center text-sm font-semibold text-[var(--warn-text)]">
@@ -141,7 +141,7 @@ function LoginScreen({ notice }: { notice?: string }) {
         </div>
 
         <section className="mt-8 border-t border-ink-200 pt-6">
-          <h2 className="text-center text-sm font-bold text-ink-900">핑고핑고에서 누릴 수 있는 기능이에요</h2>
+          <h2 className="text-center text-sm font-bold text-ink-900">핑고핑고로 이런 걸 할 수 있어요</h2>
           <ul className="mt-4 space-y-3">
             {FEATURES.map(({ Icon, text }) => (
               <li key={text} className="flex items-center gap-3 text-sm text-ink-700">
@@ -201,13 +201,13 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
         친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요.
       </p>
       <ul className="mt-4 space-y-2 rounded-xl bg-ink-50 p-4 text-sm text-ink-700">
-        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />핀 찍기·의견·AI 추천은 똑같이 쓸 수 있어요</li>
-        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />새 지도를 만들려면 카카오로 로그인해야 해요</li>
+        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />핀 찍기와 의견 남기기는 똑같이 쓸 수 있어요</li>
+        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />새 지도 만들기, AI 추천, AI 코스는 카카오로 로그인해야 쓸 수 있어요</li>
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />90일 동안 쓰지 않으면 기록이 정리돼요</li>
       </ul>
       {invite && (
         <Link to={`/invites/${encodeURIComponent(invite)}`} className="btn-primary btn-lg mt-5 w-full">
-          받은 초대로 돌아가 이름 입력하기
+          받은 초대로 돌아가기
         </Link>
       )}
       <button type="button" onClick={onClose} className={`btn-neutral btn-lg w-full ${invite ? 'mt-2' : 'mt-5'}`}>

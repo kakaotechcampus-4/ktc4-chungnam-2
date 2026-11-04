@@ -65,8 +65,8 @@ export default function DayRoute({ mapId, onOpen }: { mapId: string; onOpen: (pi
           {stops.length > KAKAO_ROUTE_MAX && <span className="font-normal text-ink-500"> · 앞 {KAKAO_ROUTE_MAX}곳</span>}
         </a>
       )}
-      {stops.length < ids.length && <p className="text-xs text-ink-500">장소 정보가 없는 핀은 위치를 몰라 동선에서 빠졌어요</p>}
-      {stops.length === 1 && <p className="text-xs text-ink-500">2곳부터 선을 그어요</p>}
+      {stops.length < ids.length && <p className="text-xs text-ink-500">위치를 모르는 핀은 동선에서 빠졌어요</p>}
+      {stops.length === 1 && <p className="text-xs text-ink-500">2곳 이상이면 동선을 그려요</p>}
     </div>
   )
 }
