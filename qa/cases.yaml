@@ -131,6 +131,11 @@
 - {id: G04, layer: ui, area: agent, scenario: "따옴표·이모지·140자 사유가 있는 지도의 제안·요약", expect: "문장이 깨지지 않음", status: pass}
 - {id: G05, layer: api, area: agent, scenario: "이미 처리한 제안 accept/dismiss, 버튼 범위 밖 action_index", expect: "409 / 422 VALIDATION_ERROR, 비구성원 404", status: pass}
 - {id: G06, layer: api, area: agent, scenario: "지도 하루 모델 상한(구성원 수 × 4)", expect: "상한 넘으면 진단 안 부름, KST 자정 초기화", status: pass}
+- {id: G07, layer: ui, area: agent, scenario: "정체 제안 수락 → 30분 뒤 다른 카테고리 활동 2명, 음식점 그대로(seed_agent_demo --followup stuck, #1345)", expect: "시트에 「지켜보는 중」 줄, 다음 관찰에 다음 방법(「두 번째 방법」 칩, 해 본 것 「음식점 추천 받기」, 버튼은 해 본 것과 다른 「음식점 검색」), 작업 기록에 「후속 확인」", status: untested}
+- {id: G08, layer: ui, area: agent, scenario: "정체 제안 수락 → 음식점에 새 핀(seed_agent_demo --followup resolve, #1345)", expect: "다음 관찰에 지켜보는 곳이 「풀렸어요」, 같은 막힌 곳의 새 제안 없음", status: untested}
+- {id: G09, layer: ui, area: agent, scenario: "다음 방법도 수락 → 30분 뒤 그대로(G07에 이어서, #1345)", expect: "충돌 선언 — 버튼 없음, 해 본 것 두 줄, 「어떤 조건을 지킬지는 여러분이 정해요」, 조건을 빼자는 말 없음, 그 막힌 곳은 더 지켜보지 않음", status: untested}
+- {id: G10, layer: ui, area: agent, scenario: "확정 2곳 이상·카페 0곳이고 지도에 🚫 없는 카페 핀이 있음(#1356)", expect: "카테고리 공백 제안에 「이 핀 보기」, 문장은 이동 분·♥ 수 같은 사실만(「확정하세요」 없음), 누르면 그 핀 카드가 열림, 작업 기록에 「일정에 끼워 봤어요」", status: untested}
+- {id: G11, layer: ui, area: agent, scenario: "확정 일정에 그날 쉬는 장소를 넣음(#1356)", expect: "일정 점검 제안 「AI 코스로 고칠 안 받기」, 누르면 코스 탭에서 크레딧 확인 창부터, 일정을 고치면 풀림", status: untested}
 # ───────── 모델 비용·실패(llm) — AI-B ─────────
 - {id: M01, layer: api, area: llm, scenario: "Actions llm-cost 수동 실행(스테이징)", expect: "기능별 호출 수·토큰·비용 리포트, 실패 0", status: untested}
 - {id: M02, layer: api, area: llm, scenario: "② 🚫 짧은 불평 「주차 안됨」 지도에서 추천(#1078)", expect: "parking_available wants=true, 주차 되는 곳이 실격되지 않음", status: pass}
