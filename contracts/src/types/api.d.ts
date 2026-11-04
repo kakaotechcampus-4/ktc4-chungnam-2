@@ -5126,7 +5126,7 @@ export interface components {
             /** @enum {string} */
             value: "yes" | "no" | "unknown";
             segments: components["schemas"]["AdviceSegment"][];
-            /** @description 웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄에만, 제안마다 많아야 한 줄. 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다 */
+            /** @description 웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄마다(#1317, 줄이 많아야 2개라 제안마다 많아야 두 줄). 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다 */
             web?: components["schemas"]["AgentWebCheck"];
         };
         /**
