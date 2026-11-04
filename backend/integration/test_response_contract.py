@@ -736,7 +736,7 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     assert empty.status_code == 200
     assert empty.json() == {"settings": {"enabled": True, "updated_by": None, "updated_at": None},
                             "active_suggestion": None, "has_unseen": False, "summaries": [], "status": None,
-                            "observation": {"checked_at": None, "notice": None}}   # 관찰 전(#1297)
+                            "observation": {"checked_at": None, "notice": None}, "tracking": []}   # 관찰 전(#1297), 지켜보는 막힌 곳 없음(#1346)
 
     pin_ids = {}
     for key in ("seongsu-kalguksu", "seongsu-bunsik"):   # 음식점만 2곳 확정 → 카페·관광지 공백(6.5)

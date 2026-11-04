@@ -72,7 +72,7 @@ def test_state_without_suggestion_defaults_to_on(world, client):
 
     assert body == {"settings": {"enabled": True, "updated_by": None, "updated_at": None},
                     "active_suggestion": None, "has_unseen": False, "summaries": [], "status": None,
-                    "observation": {"checked_at": None, "notice": None}}
+                    "observation": {"checked_at": None, "notice": None}, "tracking": []}
 
 
 def test_observation_shows_last_check_and_why_nothing_is_suggested(world, client):

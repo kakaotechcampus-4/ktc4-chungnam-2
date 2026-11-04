@@ -809,7 +809,8 @@ def test_decided_within_24h_per_diagnosis(world):
         _suggest(world, map_id, "stall", category="음식점"): True,
         _suggest(world, map_id, "stall", category="관광지"): False,
         _suggest(world, map_id, "split", category="카페", pin_id=cafe): True,
-        _suggest(world, map_id, "split", category="카페", pin_id=other): False,
+        _suggest(world, map_id, "split", category="카페", pin_id=other): True,   # 같은 카테고리의 다른 핀 확정(is_decided, #1345)
+        _suggest(world, map_id, "split", category="관광지", pin_id=unseen): False,
         _suggest(world, map_id, "no_reaction", pin_ids=(unseen, food)): True,
         _suggest(world, map_id, "no_reaction", pin_ids=(unseen, other)): False,
     }

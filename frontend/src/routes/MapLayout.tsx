@@ -13,7 +13,7 @@ import { mapTapAction } from '@/features/map/mapTap'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
-import { useLivePinResolver } from '@/features/map/livePlaces'
+import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
 import { usePinFilters } from '@/features/map/usePinFilters'
@@ -346,7 +346,14 @@ export default function MapLayout() {
     setActiveControl(key)
   }
 
-  const context: ShellContext = { mapId, activeControl, onControl, connection, getCenter: () => controller.current?.getCenter() ?? null }
+  // 지도가 아직 없거나 못 띄웠으면(SDK 실패, e2e) 지도가 처음 뜰 자리 대신 핀들의 위치 기준을 쓴다 — 추천 run 은 center 가 필수다(#1331).
+  const context: ShellContext = {
+    mapId,
+    activeControl,
+    onControl,
+    connection,
+    getCenter: () => controller.current?.getCenter() ?? livePlaceAnchor(allPins, mapInfo?.regionCenter),
+  }
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.source
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
