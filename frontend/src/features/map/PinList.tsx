@@ -1,17 +1,15 @@
 import type { ReactNode } from 'react'
-import { Check } from 'lucide-react'
 
 import { useMeQuery } from '@/features/auth/queries'
-import AgainstMark from '@/ui/AgainstMark'
-import LikeMark from '@/ui/LikeMark'
+import Mark from '@/ui/Mark'
 
 import { toPinCard, type Pin, type PinCardView, type ReactionType } from './model'
 
 /** 반응 용어·기호는 고정(기획안 9절). 색은 지도 밖 UI 전용 반응 토큰(colors.md). */
 const REACTION: Record<ReactionType | 'unknown', { mark: ReactNode; label: string; color: string; chip: string }> = {
-  like: { mark: <LikeMark size={12} />, label: '좋음', color: 'text-[var(--good-line)]', chip: 'border-[var(--good-line)] bg-[var(--good-bg)] text-[var(--good-text)]' },
-  against: { mark: <AgainstMark size={12} />, label: '반대', color: 'text-[var(--bad-line)]', chip: 'border-[var(--bad-line)] bg-[var(--bad-bg)] text-[var(--bad-text)]' },
-  unknown: { mark: '?', label: '미확인', color: 'text-ink-500', chip: '' },
+  like: { mark: <Mark kind="like" size={12} />, label: '좋음', color: 'text-[var(--good-line)]', chip: 'border-[var(--good-line)] bg-[var(--good-bg)] text-[var(--good-text)]' },
+  against: { mark: <Mark kind="against" size={12} />, label: '반대', color: 'text-[var(--bad-line)]', chip: 'border-[var(--bad-line)] bg-[var(--bad-bg)] text-[var(--bad-text)]' },
+  unknown: { mark: <Mark kind="unknown" size={12} />, label: '미확인', color: 'text-ink-500', chip: '' },
 }
 const ORDER = ['like', 'against', 'unknown'] as const
 
@@ -55,7 +53,7 @@ function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }
         <p className="truncate font-bold text-ink-900">{card.name}</p>
         {card.confirmed && (
           <span className="tag tag-confirmed">
-            <Check size={12} strokeWidth={3} aria-hidden="true" /> 확정됨
+            <Mark kind="check" size={12} /> 확정됨
           </span>
         )}
         {todo && (

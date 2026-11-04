@@ -1,29 +1,32 @@
-import { CircleHelp, Star } from 'lucide-react'
+import { CircleHelp } from 'lucide-react'
 
 import MenuPopover from '@/features/shell/MenuPopover'
-import AgainstMark from '@/ui/AgainstMark'
-import LikeMark from '@/ui/LikeMark'
+import Mark from '@/ui/Mark'
 
 /** 처음 보는 사람이 묻는 말(#1030, 멘토 리뷰 #816). 용어는 기획안 9절 고정이라 바꾸지 않고 뜻만 적는다. */
 const TERMS = [
   { mark: (
       <span className="text-[var(--good-line)]">
-        <LikeMark size={14} />
+        <Mark kind="like" size={14} />
       </span>
     ), term: '좋음', text: '가고 싶은 곳이에요' },
   {
     mark: (
       <span className="text-[var(--bad-line)]">
-        <AgainstMark size={14} />
+        <Mark kind="against" size={14} />
       </span>
     ),
     term: '반대',
     text: '가기 어려운 곳이에요. 남긴 이유로 AI가 다른 곳을 찾아요',
   },
-  { mark: <span className="text-ink-500">?</span>, term: '미확인', text: '아직 의견을 남기지 않은 사람 수예요' },
+  { mark: (
+      <span className="text-ink-500">
+        <Mark kind="unknown" size={14} />
+      </span>
+    ), term: '미확인', text: '아직 의견을 남기지 않은 사람 수예요' },
   {
     mark: <span className="text-[var(--pin-confirmed-mark)]">
-        <Star size={14} fill="currentColor" className="inline-block" />
+        <Mark kind="star" size={14} />
       </span>,
     term: '확정 리스트',
     text: '가기로 정한 곳이에요. 「확정된 장소」 탭에서 들를 순서를 봐요',

@@ -1,6 +1,6 @@
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
-import { Check, ChevronDown, ChevronUp, ExternalLink, Star } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
@@ -13,8 +13,7 @@ import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
-import AgainstMark from '@/ui/AgainstMark'
-import LikeMark from '@/ui/LikeMark'
+import Mark from '@/ui/Mark'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
@@ -26,8 +25,8 @@ import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReas
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
-  like: { mark: <LikeMark />, label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
-  against: { mark: <AgainstMark />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
+  like: { mark: <Mark kind="like" />, label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
+  against: { mark: <Mark kind="against" />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
 }
 const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
@@ -89,15 +88,15 @@ export function PinDetailHeader({
           // 켜고 끄는 버튼 하나다. 한 버튼이라 눌러도 포커스가 그대로다. 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
           <button type="button" aria-pressed={confirmed} disabled={busy} onClick={toggle} className="btn-confirm btn-sm">
             {confirmed ? (
-              <><Check size={14} strokeWidth={3} aria-hidden="true" /> 확정됨</>
+              <><Mark kind="check" size={14} /> 확정됨</>
             ) : (
               <>
-                <Star size={14} fill="currentColor" aria-hidden="true" /> 확정 리스트에 넣기
+                <Mark kind="star" size={14} /> 확정 리스트에 넣기
               </>
             )}
           </button>
         ) : (
-          confirmed && <span className="btn-confirm btn-sm"><><Check size={14} strokeWidth={3} aria-hidden="true" /> 확정됨</></span>
+          confirmed && <span className="btn-confirm btn-sm"><><Mark kind="check" size={14} /> 확정됨</></span>
         )}
       </div>
     </div>
@@ -261,7 +260,7 @@ export function PinDetailBody({
             </span>
           ))}
           <span className="flex items-center gap-1 font-bold">
-            <span className="text-ink-500">?</span> <span className="text-ink-900">미확인</span>
+            <span className="text-ink-500"><Mark kind="unknown" /></span> <span className="text-ink-900">미확인</span>
             <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}명</span>
           </span>
           {/* 「미확인」이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
@@ -362,7 +361,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
             {likes.some((l) => l.chips.length || l.text) && (
               <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text inline-flex items-center gap-0.5 text-xs">
                 {showLikes ? '접기' : '펼치기'}
-                {showLikes ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+                {showLikes ? <Mark kind="chevronUp" size={14} /> : <Mark kind="chevronDown" size={14} />}
               </button>
             )}
           </div>
@@ -377,7 +376,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
       )}
       {unknown.some((m) => !m.isMe) && (
         <p className="text-body text-ink-500">
-          ? 아직 안 남겼어요 · {unknown.filter((m) => !m.isMe).map((m) => m.name).join(' · ')}
+          <Mark kind="unknown" /> 아직 안 남겼어요 · {unknown.filter((m) => !m.isMe).map((m) => m.name).join(' · ')}
         </p>
       )}
     </section>

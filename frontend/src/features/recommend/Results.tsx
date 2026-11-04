@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, ExternalLink, RotateCw } from 'lucide-react'
+import { ExternalLink, RotateCw } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import RunAdvice from '@/features/agent/RunAdvice'
@@ -11,6 +11,7 @@ import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
+import Mark from '@/ui/Mark'
 
 import { useAiStore } from './aiStore'
 import { AiChecks, AiFulfillment, AiReason } from './Evidence'
@@ -220,7 +221,7 @@ function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto;
   if (c.visibility === 'published') {
     return (
       <span className="tag tag-good">
-        <Check size={12} strokeWidth={3} aria-hidden="true" /> 지도에 올렸어요 · 모두에게 보여요
+        <Mark kind="check" size={12} /> 지도에 올렸어요 · 모두에게 보여요
       </span>
     )
   }

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Check, Share } from 'lucide-react'
+import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import EditNameDialog from '@/features/auth/EditNameDialog'
@@ -12,6 +12,7 @@ import InviteLinks from '@/features/maps/InviteLinks'
 import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm, TransferOwnerConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
 import Avatar from '@/ui/Avatar'
+import Mark from '@/ui/Mark'
 
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
@@ -108,7 +109,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
         <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-ink-100 px-3 py-2.5 text-sm">
           <span className="truncate text-ink-600">{url ?? '링크를 만드는 중…'}</span>
           <button type="button" onClick={() => void copy()} disabled={!url} className="btn-link shrink-0">
-            {copied ? <><Check size={14} aria-hidden="true" /> 복사됨</> : '복사'}
+            {copied ? <><Mark kind="check" size={14} /> 복사됨</> : '복사'}
           </button>
         </div>
       )}

@@ -5,8 +5,7 @@ import { timeAgo } from '@/features/map/model'
 import { useMembersQuery } from '@/features/maps/queries'
 import { AiHeader } from '@/features/recommend/Readiness'
 import ModalSheet from '@/features/shell/ModalSheet'
-import AgainstMark from '@/ui/AgainstMark'
-import LikeMark from '@/ui/LikeMark'
+import Mark from '@/ui/Mark'
 import PingoLoading from '@/ui/PingoLoading'
 import SheetTitle from '@/ui/SheetTitle'
 import Switch from '@/ui/Switch'
@@ -209,11 +208,11 @@ function Analysis({ analysis }: { analysis: AgentAnalysisDto }) {
               <p className="font-semibold text-ink-900">{axis.label}</p>
               <p className="flex flex-wrap gap-x-3 text-xs">
                 {axis.like_side && <span className="text-[var(--good-text)]">
-                    <LikeMark size={12} /> 좋음 쪽 · {axis.like_side}
+                    <Mark kind="like" size={12} /> 좋음 쪽 · {axis.like_side}
                   </span>}
                 {axis.against_side && (
                   <span className="text-[var(--bad-text)]">
-                    <AgainstMark size={12} /> 반대 쪽 · {axis.against_side}
+                    <Mark kind="against" size={12} /> 반대 쪽 · {axis.against_side}
                   </span>
                 )}
               </p>
