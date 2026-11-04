@@ -162,7 +162,7 @@ components:
 - **AI 물** (brand-50): AI 후보 카드, 핑고 배너, 「의견 남기기」 칩 바탕이다.
 
 ### Tertiary
-- **확정 골드** (confirmed-gold, 글자는 confirmed-mark 갈색): 확정 핀, 지도 위 동선 순서 번호, 「★ 확정 리스트에 넣기」(연골드 바탕 + 골드 테두리), 마킹된 장소 목록의 확정 카드(골드 테두리 + `tag-confirmed`)에만 쓴다.
+- **확정 골드** (confirmed-gold, 글자는 confirmed-mark 갈색): 확정 핀, 지도 위 동선 순서 번호, 「확정 리스트에 넣기」(별 아이콘, 연골드 바탕 + 골드 테두리), 마킹된 장소 목록의 확정 카드(골드 테두리 + `tag-confirmed`)에만 쓴다.
 
 ### Neutral
 - **잉크** (ink-900): 본문 글자다.
@@ -336,6 +336,7 @@ components:
 | AI가 고른 장소의 근거(이유 · 조건 체크 칩 · 구성원 충족 · 출처) — 후보 카드와 올린 핀 상세 | `AiReason` · `AiChecks` · `AiFulfillment` | `features/recommend/Evidence` |
 | 핑고 밖에서 찾는 출구 | `ExternalSearchLink` 「카카오맵에서 더 찾아보기」(새 창) + 12 ink-500 「검색어 ‘…’」. 색·크기는 놓이는 자리가 준다 | `ui/ExternalSearchLink` |
 | 반대 기호 | `AgainstMark` (lucide Ban) | `ui/AgainstMark` |
+| 좋음 기호 | `LikeMark` (lucide Heart, 채움) | `ui/LikeMark` |
 | AI 코스 작업 기록(한 줄 · 이해 카드) | `WorkLog` | `features/course/WorkLog` |
 | 작업 기록 한 줄 · 「누가」 칩(AI 코스와 「핑고가 한 일」이 같이 쓴다, #1300) | `StepRow` · `ByChip` | `ui/WorkStep` |
 | 목록에서 여러 개 고르기 | `Checkbox` (상자 20px + 옆 글자, 줄 전체가 label이라 누르는 곳 44px · 켜짐은 `--action-fill`) | `ui/Checkbox` |
@@ -375,7 +376,7 @@ components:
 | `btn-primary` | 채움 brand-600 + 흰 글자 | 화면당 하나(「의견 등록」·「지도 만들기」·「초대 링크 공유하기」) |
 | `btn-outline` | 흰 바탕 + brand-600 테두리·글자 | 두 번째 동작(「지도에 올리기」·「핀 찍기」·「조건 고치기」) |
 | `btn-neutral` | 흰 바탕 + ink-300 테두리 + ink-900 글자 | 취소·로그아웃·나가기·선택 안 함 |
-| `btn-confirm` | 연골드 + 골드 테두리 + 갈색 글자 + ★ | 「확정 리스트에 넣기」 전용. 「✓ 확정됨」도 같은 모양이고, 핀 상세에서는 둘이 켜고 끄는 버튼 하나다 |
+| `btn-confirm` | 연골드 + 골드 테두리 + 갈색 글자 + 별 아이콘(lucide Star, 채움) | 「확정 리스트에 넣기」 전용. 「확정됨」(lucide Check)도 같은 모양이고, 핀 상세에서는 둘이 켜고 끄는 버튼 하나다 |
 | `btn-danger` | 채움 빨강 | 되돌릴 수 없는 동작의 확인 창 마지막 버튼(「삭제」·「나가기」) |
 | `btn-danger-outline` | 빨강 테두리·글자 | 그 확인 창을 여는 버튼(「지도 삭제」) |
 
@@ -547,7 +548,7 @@ components:
 - **Don't** 구성원별 색을 쓰지 않는다. 아바타는 회색 면 하나다.
 - **Don't** 광고에 brand-50 면·`tag-ai`·핑고·이유 문장을 쓰지 않는다. AI 추천처럼 읽힌다(#649).
 - **Don't** "마킹됨" 배지, "내 선택: ○○" 배지, 범례 한 줄 설명을 넣지 않는다.
-- **Don't** 이모지(📅 💬 👥)를 아이콘 대신 쓰지 않는다. lucide(Calendar · MessageSquare · Users)를 쓴다. 🚫는 화면에서 lucide Ban(`ui/AgainstMark`)으로 그리고 뜻은 옆 글자 「반대」가 전한다. ♥ △ ?는 글자로 둔다.
+- **Don't** 이모지(📅 💬 👥)를 아이콘 대신 쓰지 않는다. lucide(Calendar · MessageSquare · Users)를 쓴다. 🚫는 화면에서 lucide Ban(`ui/AgainstMark`), ♥는 lucide Heart(`ui/LikeMark`)로 그리고 뜻은 옆 글자 「반대」「좋음」이 전한다. 같은 이유로 ✓ ✗ ★ ▾ → 같은 기호 글자도 화면 글에 쓰지 않는다 — lucide(Check · X · Star · ChevronDown)를 쓰거나 「10분에서 15분으로」처럼 말로 쓴다. 기호 글자는 OS·글꼴마다 모양과 굵기가 달라 아이콘 옆에서 튀고, 일부 기기는 이모지로 그린다. 미확인의 ?는 용어라서 글자로 둔다.
 - **Don't** 통통 튀는 바운스·출렁이는 스프링, 목록 항목이 하나씩 순서대로 뜨는 효과, 반짝임·떠다니기 같은 꾸밈 움직임을 넣지 않는다. 탭 전환·♥/🚫 반응처럼 자주 누르는 동작에는 등장 효과를 걸지 않는다(#595).
 - **Don't** 버튼에 `py-3`·`text-sm`·`rounded-md`를 덧써서 크기를 바꾸지 않는다. 크기는 `btn-lg`/`md`/`sm` 중 하나다.
 - **Don't** 확정 해제를 빨강으로 칠하지 않는다. 일상 동작이라 중립 글자 버튼이다. 밀어서 나오는 「빼기」도 ink-600 바탕 + 흰 글자다(#299).

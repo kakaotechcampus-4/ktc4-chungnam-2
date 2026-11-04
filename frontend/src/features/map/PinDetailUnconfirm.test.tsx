@@ -43,15 +43,15 @@ it('확정 버튼은 켜고 끄는 버튼 하나다 — 넣으면 「확정 리�
     </QueryClientProvider>,
   )
 
-  await userEvent.click(await screen.findByRole('button', { name: '★ 확정 리스트에 넣기', pressed: false }))
-  const on = await screen.findByRole('button', { name: '✓ 확정됨', pressed: true })
+  await userEvent.click(await screen.findByRole('button', { name: '확정 리스트에 넣기', pressed: false }))
+  const on = await screen.findByRole('button', { name: '확정됨', pressed: true })
   expect(on).toHaveFocus()
   expect(await fetchShortlist(MAP)).toHaveLength(1)
   expect(useToastStore.getState().toast?.action?.label).toBe('확정 리스트 보기')
 
   useToastStore.setState({ toast: null })
   await userEvent.click(on)
-  const off = await screen.findByRole('button', { name: '★ 확정 리스트에 넣기', pressed: false })
+  const off = await screen.findByRole('button', { name: '확정 리스트에 넣기', pressed: false })
   expect(off).toHaveFocus()
   expect(await fetchShortlist(MAP)).toHaveLength(0)
   expect(useToastStore.getState().toast).toBeNull()

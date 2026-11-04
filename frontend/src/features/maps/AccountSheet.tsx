@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Share } from 'lucide-react'
+import { Check, Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import EditNameDialog from '@/features/auth/EditNameDialog'
@@ -114,7 +114,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
                   disabled={invite.isPending && invite.variables === map.id}
                   className="btn-outline btn-sm"
                 >
-                  {copiedId === map.id ? '✓ 복사됨' : <><Share size={14} aria-hidden="true" /> 링크 복사</>}
+                  {copiedId === map.id ? <><Check size={14} aria-hidden="true" /> 복사됨</> : <><Share size={14} aria-hidden="true" /> 링크 복사</>}
                 </button>
               </li>
             ))}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ExternalLink, RotateCw } from 'lucide-react'
+import { Check, ExternalLink, RotateCw } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import RunAdvice from '@/features/agent/RunAdvice'
@@ -110,7 +110,7 @@ export function ResultsBody({
       {conditions}
       <button type="button" onClick={onHow} className="press flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
-          조건으로 {removed}곳 걸러냄 → 추천 {result.candidates.length}곳
+          조건으로 {removed}곳을 걸러 내고 {result.candidates.length}곳을 추천했어요
         </span>
         <span className="font-bold text-brand-600">어떻게 골랐나요 ›</span>
       </button>
@@ -218,7 +218,11 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
 function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto; c: CandidateDto }) {
   const publish = usePublishMutation(mapId, run)
   if (c.visibility === 'published') {
-    return <span className="tag tag-good">✓ 지도에 올렸어요 · 모두에게 보여요</span>
+    return (
+      <span className="tag tag-good">
+        <Check size={12} strokeWidth={3} aria-hidden="true" /> 지도에 올렸어요 · 모두에게 보여요
+      </span>
+    )
   }
   if (!c.permissions.can_publish) return null
   return (
@@ -342,7 +346,7 @@ function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendR
               <div className="flex gap-2">
                 <dt className="text-ink-500">넓혀요</dt>
                 <dd className="font-semibold text-ink-900">
-                  핀 주변 기본 반경 (도보 {now}분 → {now + 5}분)
+                  핀 주변 기본 반경 (도보 {now}분에서 {now + 5}분으로)
                 </dd>
               </div>
               <div className="flex gap-2">

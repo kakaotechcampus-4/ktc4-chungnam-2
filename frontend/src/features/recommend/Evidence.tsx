@@ -1,12 +1,17 @@
 import { useState } from 'react'
-import { MessageSquare, Users } from 'lucide-react'
+import { Check, MessageSquare, Users, X } from 'lucide-react'
 
 import type { MemberView } from '@/features/maps/model'
 
 import { fulfillmentLine, memberConditions, sourceLabel, toChecks, type AiEvidence, type CheckView } from './model'
 
 const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
-const MARK = { pass: '✓', check: '?', fail: '✗' } as const
+/** ?는 「미확인」 용어 그대로 글자로 둔다(기획안 9절). 통과·미충족은 lucide 아이콘이다(DESIGN.md Don't). */
+const MARK = {
+  pass: <Check size={12} strokeWidth={3} aria-hidden="true" />,
+  check: '?',
+  fail: <X size={12} strokeWidth={3} aria-hidden="true" />,
+} as const
 
 /**
  * AI가 고른 장소의 근거(가드레일 5) — 추천 이유, 조건별 충족 체크, 구성원 충족 집계, 출처.

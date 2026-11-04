@@ -69,8 +69,8 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
         const current = i === at
         return (
           <li key={label} className={`flex items-center gap-2 ${current ? 'font-bold text-ink-900' : 'text-ink-700'}`}>
-            <span aria-hidden="true" className={current ? 'animate-pulse' : ''}>
-              {current ? '●' : '✓'}
+            <span aria-hidden="true" className={`flex w-3.5 justify-center ${current ? 'animate-pulse' : ''}`}>
+              {current ? <span className="size-2 rounded-full bg-current" /> : <Check size={14} strokeWidth={3} />}
             </span>
             {label}
             {current && <span className="ml-auto text-xs text-brand-600">진행 중</span>}

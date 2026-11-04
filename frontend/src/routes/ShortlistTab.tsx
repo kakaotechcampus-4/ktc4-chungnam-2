@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
@@ -112,7 +113,7 @@ export default function ShortlistTab() {
             <div className="flex shrink-0 gap-2">
               {/* AI 코스 짜기는 따로 탭이다(「AI 코스」). 「일정 짜기」 패널은 넓은 화면에만 있다 — 휴대폰은 체크박스로 넣고 동선 보기로 고친다. */}
               <button type="button" aria-pressed={routeOn} aria-disabled={!routeOn && scheduled === 0} onClick={toggleRoute} className="chip">
-                동선 보기{routeOn && ' ✓'}
+                동선 보기{routeOn && <Check size={14} strokeWidth={3} aria-hidden="true" />}
               </button>
               {desktop && (
                 // 다시 누르면 닫힌다(패널의 ✕·Esc와 같다).

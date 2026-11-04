@@ -114,7 +114,7 @@ export function evidenceLimitMessage(err: unknown): string | null {
 /** docs/errors.md — run 시작·실행 실패 문구. */
 export function runErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 ♥나 반대 의견을 남기면 다시 눌러 주세요'
+    if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 좋음이나 반대 의견을 남기면 다시 눌러 주세요'
     if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요'
     if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 남긴 의견은 그대로 있고 크레딧도 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
     if (err.code === 'REQUEST_IN_PROGRESS') return '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
