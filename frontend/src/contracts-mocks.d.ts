@@ -24,6 +24,9 @@ declare module '@pingo/contracts/mocks/scenarios' {
     | 'withdrawn-relogin'
     | 'credits-empty'
     | 'credits-full'
+    | 'agent-declared'
+    | 'agent-linked'
+    | 'agent-schedule'
 }
 
 declare module '@pingo/contracts/mocks/browser' {

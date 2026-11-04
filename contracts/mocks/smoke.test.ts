@@ -342,11 +342,28 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
 
   it("지도 응답에 요청자 기준 permissions가 붙고, 상세에서만 next_owner가 온다", async () => {
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true, can_manage_invites: true, can_transfer_owner: true });
     expect(detail.next_owner.user_id).toBe("u_2");
     const list = (await (await fetch(`${BASE}/maps`)).json()).items;
     expect(list[0].permissions.can_delete).toBe(true);
     expect(list[0].next_owner).toBeUndefined();
+  });
+
+  it("#1371 GET /maps에 trip_max_days 90, 90일 초과 기간은 만들기·날짜 수정에서 422 TRIP_TOO_LONG", async () => {
+    expect((await (await fetch(`${BASE}/maps`)).json()).trip_max_days).toBe(90);
+    const create = (end: string) => fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "긴 여행", start_date: "2026-01-01", end_date: end }) });
+    expect((await create("2026-03-31")).status).toBe(201); // 90일(포함)
+    const tooLong = await create("2026-04-01"); // 91일
+    expect(tooLong.status).toBe(422);
+    const err = await tooLong.json();
+    expect(err.code).toBe("TRIP_TOO_LONG");
+    expect(err.detail).toEqual({ limit: 90 });
+    const patch = (b: object) => fetch(`${BASE}/maps/map_1`, { method: "PATCH", body: JSON.stringify(b) });
+    const start = store.maps["map_1"].start_date;
+    expect((await patch({ end_date: "2099-01-01" })).status).toBe(422);
+    store.maps["map_1"].end_date = "2099-01-01"; // 이미 90일을 넘는 지도
+    store.maps["map_1"].start_date = start;
+    expect((await patch({ title: "제목만" })).status).toBe(200); // 제목만 고치는 것은 막지 않는다
   });
 
   it("방장이 나가면 다음 사람이 방장이 되고 member.left에 실린다", async () => {
@@ -361,7 +378,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
   it("넘길 사람이 없는 방장은 409 OWNER_CANNOT_LEAVE, can_leave=false", async () => {
     store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me");
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true, can_manage_invites: true, can_transfer_owner: true });
     const r = await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" });
     expect(r.status).toBe(409);
     expect((await r.json()).code).toBe("OWNER_CANNOT_LEAVE");
@@ -375,7 +392,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
     expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(204);
     expect((await fetch(`${BASE}/maps/map_1`)).status).toBe(404);
     expect((await (await fetch(`${BASE}/invites/${invite.token}/accept`, { method: "POST" })).json()).code).toBe("INVITE_NOT_FOUND");
-    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT });
+    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT, trip_max_days: 90 });
   });
 });
 
@@ -933,19 +950,71 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
     expect(bad.status).toBe(422);
   });
 
-  it("반경 넓히기는 +5분씩, 도보 30분 상한에서 409 WIDEN_LIMIT", async () => {
+  it("반경 넓히기는 +1000m씩, 5000m 상한에서 409 WIDEN_LIMIT (#1385)", async () => {
     resetScenario("region-conflict");
     const runId = "run_region_conflict";
     const radii: number[] = [];
-    for (let i = 0; i < 3; i++) {
+    const nexts: Array<number | null> = [];
+    for (let i = 0; i < 2; i++) {
       const res = await post(`/runs/${runId}/widen`);
       expect(res.status).toBe(202);
-      radii.push((await res.json()).default_radius_walk_min);
+      const body = await res.json();
+      radii.push(body.default_radius_m);
+      nexts.push(body.next_default_radius_m);
     }
-    expect(radii).toEqual([20, 25, 30]);
+    expect(radii).toEqual([4000, 5000]);
+    expect(nexts).toEqual([5000, null]); // #1370 상한이면 null
     const over = await post(`/runs/${runId}/widen`);
     expect(over.status).toBe(409);
     expect((await over.json()).code).toBe("WIDEN_LIMIT");
+  });
+});
+
+describe("#1385·#1370·#1164 — 추천 반경(m)과 여행 지역 밖 오류", () => {
+  const createRun = (body: object) => fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점", execute: true, ...body }) });
+
+  it("readiness가 카테고리별 기본 반경 radius_m: 3000을 준다", async () => {
+    resetScenario("happy-path");
+    const res = await fetch(`${BASE}/maps/map_1/recommend/readiness`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body["음식점"].radius_m).toBe(3000);
+    expect(body["관광지"].radius_m).toBe(3000);
+  });
+
+  it("run 생성은 default_radius_m 3000·next 4000을 주고, 지난 추천(RunSummary)에도 같은 칸이 있다", async () => {
+    resetScenario("happy-path");
+    const res = await createRun({});
+    expect(res.status).toBe(202);
+    const run = await res.json();
+    expect(run.default_radius_m).toBe(3000);
+    expect(run.next_default_radius_m).toBe(4000);
+    const widened = await (await fetch(`${BASE}/runs/${run.id}/widen`, { method: "POST" })).json();
+    expect(widened.default_radius_m).toBe(4000);
+    const list = await (await fetch(`${BASE}/maps/map_1/runs`)).json();
+    const mine = list.find((r: { id: string }) => r.id === run.id);
+    expect(mine.default_radius_m).toBe(4000);
+    expect(mine.next_default_radius_m).toBe(5000);
+  });
+
+  it("지도가 서울이고 center가 부산이면 422 OUTSIDE_TRIP_REGION — detail.region_label, 크레딧을 쓰지 않는다", async () => {
+    resetScenario("happy-path");
+    store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };
+    const before = (await (await fetch(`${BASE}/credits/me`)).json()).balance;
+    const res = await createRun({ center: { lat: 35.1587, lng: 129.1604 } });
+    expect(res.status).toBe(422);
+    const err = await res.json();
+    expect(err.code).toBe("OUTSIDE_TRIP_REGION");
+    expect(err.detail).toEqual({ region_label: "서울" });
+    expect((await (await fetch(`${BASE}/credits/me`)).json()).balance).toBe(before);
+  });
+
+  it("지도에 여행 지역이 없거나 center가 지역 안이면 막지 않는다", async () => {
+    resetScenario("happy-path");
+    delete store.maps.map_1.region;
+    expect((await createRun({ center: { lat: 35.1587, lng: 129.1604 } })).status).toBe(202);
+    store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };
+    expect((await createRun({ center: { lat: 37.5665, lng: 126.978 } })).status).toBe(202);
   });
 });
 

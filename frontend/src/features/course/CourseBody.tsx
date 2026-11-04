@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import { CHANGED, START_PARAM } from '@/features/agent/actions'
 import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
@@ -11,6 +12,7 @@ import { useCreditsQuery } from '@/features/credits/queries'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
+import { showToast } from '@/features/shell/toast'
 import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import Notice from '@/ui/Notice'
@@ -85,6 +87,9 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
   const [asking, setAsking] = useState(false)
   // 게스트는 버튼 자리가 카카오 안내라 묻지 않는다 — 요청 칸에서 Enter 를 눌러도 확인 창을 띄우지 않는다.
   const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
+  useAgentStart(routable, () => {
+    if (!guest) setAsking(true)
+  })
 
   function submit() {
     create.mutate(text, {
@@ -163,4 +168,28 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
       )}
     </form>
   )
+}
+
+/**
+ * 「핑고 AI 조언」 버튼(open_course)으로 들어오면 손으로 「코스 짜기」를 누를 때와 같이 한 번 시작한다(#1356) — 크레딧 확인 창부터다.
+ * 추천 탭의 같은 버튼(Readiness useAgentStart)과 같은 방식이다. 그새 확정 장소가 모자라졌으면 시작하지 않고 「상황이 바뀌었어요」.
+ */
+function useAgentStart(routable: number, ask: () => void) {
+  const [params, setParams] = useSearchParams()
+  const wanted = params.has(START_PARAM)
+  // 한 번만 시작한다 — ask 는 렌더마다 새로 만들어지고, 개발 모드(StrictMode)는 효과가 두 번 돈다.
+  const started = useRef(false)
+  useEffect(() => {
+    if (!wanted || started.current) return
+    started.current = true
+    setParams(
+      (p) => {
+        p.delete(START_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    if (routable < 2) showToast(CHANGED)
+    else ask()
+  }, [wanted, routable, ask, setParams])
 }
