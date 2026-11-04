@@ -2237,7 +2237,7 @@ components:
         map_id: { type: string, description: "알림이 난 지도. 삭제된 지도이면 이동할 수 없다 — FE가 `map_deleted`는 누르면 내 지도 목록으로 보낸다" }
         map_title: { type: string, maxLength: 100, description: "알림을 만들 때의 지도 제목(그 뒤에 바뀌어도 그대로). 지도 삭제 알림을 위해 남겨 둔다" }
         pin_id: { type: string, description: "`pin_reaction`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다" }
-        message: { type: string, maxLength: 200, description: "서버가 만든 문장. 예 \"지우님이 내 핀에 ♥를 남겼어요\". 반대 사유·메모는 싣지 않는다" }
+        message: { type: string, maxLength: 200, description: "서버가 만든 문장. 예 \"지우님이 내 핀에 좋음을 남겼어요\". 반대 사유·메모는 싣지 않는다" }
         created_at: { type: string, format: date-time }
         read: { type: boolean }
 
