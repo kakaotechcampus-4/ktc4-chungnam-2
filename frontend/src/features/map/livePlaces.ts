@@ -19,13 +19,26 @@ type LivePlaceState = LivePlace | 'missing'
 
 type Store = {
   places: Record<string, LivePlaceState>
+  /** 핀마다 마지막으로 찾기 시작한 시각(ms). 핀 상세가 「오래 걸린다」를 판단한다. */
+  since: Record<string, number>
+  /** 「다시 시도」를 누른 횟수. 바뀌면 찾는 쪽(useLivePinResolver)이 못 찾은 핀을 다시 찾는다. */
+  attempts: number
   set: (pinId: string, place: LivePlaceState) => void
+  start: (pinId: string) => void
+  retry: () => void
 }
 
 export const useLivePlaceStore = create<Store>((set) => ({
   places: {},
+  since: {},
+  attempts: 0,
   set: (pinId, place) => set((s) => ({ places: { ...s.places, [pinId]: place } })),
+  start: (pinId) => set((s) => ({ since: { ...s.since, [pinId]: Date.now() } })),
+  retry: () => set((s) => ({ attempts: s.attempts + 1 })),
 }))
+
+/** 이만큼 지나도 위치를 못 찾으면 핀 상세가 「다시 시도할까요?」를 보인다. */
+export const LOCATE_SLOW_MS = 60_000
 
 export type LocationState = 'found' | 'missing' | 'loading'
 
@@ -139,7 +152,8 @@ function resolveHint(hit: kakao.maps.services.PlaceResult): PinResolveRequest {
 
 /**
  * 아직 위치를 모르는 실시간 핀을 찾는다. 지도 화면(MapLayout)에서 한 번만 쓴다.
- * 검색이 실패(키 없음·네트워크)하면 'missing'으로 박지 않고 둔다 — 다음에 핀 목록이 바뀔 때 다시 찾는다.
+ * 검색이 실패(키 없음·네트워크)하면 'missing'으로 박지 않고 둔다 — 다음에 핀 목록이 바뀌거나
+ * 핀 상세의 「다시 시도」(retry)를 누르면 다시 찾는다.
  * 찾으면 그 핀에 승격(onFound, #777)을 한 번 부른다. 확정 리스트에 든 핀도 핀 목록에 있어서 같이 부른다.
  */
 export function useLivePinResolver(
@@ -149,6 +163,8 @@ export function useLivePinResolver(
 ) {
   const places = useLivePlaceStore((s) => s.places)
   const set = useLivePlaceStore((s) => s.set)
+  const start = useLivePlaceStore((s) => s.start)
+  const attempts = useLivePlaceStore((s) => s.attempts)
 
   useEffect(() => {
     const todo = pins.filter((p) => isLive(p) && p.search_query && p.kakao_place_id && !(p.id in places) && !inflight.has(p.id))
@@ -157,6 +173,7 @@ export function useLivePinResolver(
     const anchor = livePlaceAnchor(pins, regionCenter)
     for (const pin of todo) {
       inflight.add(pin.id)
+      start(pin.id)
       findLivePlace(pin, anchor)
         .then((hit) => {
           set(pin.id, hit ? { name: hit.place_name, lat: Number(hit.y), lng: Number(hit.x) } : 'missing')
@@ -165,5 +182,5 @@ export function useLivePinResolver(
         .catch(() => undefined)
         .finally(() => inflight.delete(pin.id))
     }
-  }, [pins, places, regionCenter, set, onFound])
+  }, [pins, places, regionCenter, set, start, onFound, attempts])
 }
