@@ -77,6 +77,7 @@ class _LoadedCandidate:
     obj: Any
 
 
+CENTER_REGION_LABEL = "보던 곳 주변"   # 지도 중심(center)으로 만든 지역의 이름(#1331) — run 생성과 미리 돌려 보기가 같이 쓴다
 DEFAULT_REGION_LABEL = "기본 반경"   # 기본 지역의 이름 — run 생성과 미리 돌려 보기(#1180)가 같이 쓴다
 
 _require_publish = require("recommend.publish", loader=None)  # loader는 안 쓴다 — loaded를 직접 넘긴다
@@ -170,27 +171,35 @@ def list_runs(
     ]
 
 
-def get_readiness(db: Session, *, map_id: str, place_search: PlaceSearchGateway) -> dict[str, dict]:
+def get_readiness(
+    db: Session, *, map_id: str, place_search: PlaceSearchGateway, center: tuple[float, float] | None = None,
+) -> dict[str, dict]:
     """GET /maps/{mapId}/recommend/readiness (5-4). 카테고리마다 ♥/🚫 의견이 달린 핀이 1곳 이상이면 열린다
-    (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다). 준비 판정에 정예 장소 수(curated_nearby, #798)를 덧붙인다."""
+    (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다). 준비 판정에 정예 장소 수(curated_nearby, #798)를 덧붙인다.
+    `center`가 있으면 그 수를 run 생성의 center와 같은 원으로 센다(#1331). ready·answered_count는 위치와 무관하다."""
     result = {}
     for category in CATEGORIES:
         readiness = readiness_for_category(db, map_id=map_id, category=category)
-        result[category] = {**readiness, **_curated_nearby(db, map_id=map_id, category=category,
-                                                             readiness=readiness, place_search=place_search)}
+        result[category] = {**readiness, **_curated_nearby(db, map_id=map_id, category=category, readiness=readiness,
+                                                             place_search=place_search, center=center)}
     return result
 
 
 def _curated_nearby(
     db: Session, *, map_id: str, category: str, readiness: dict, place_search: PlaceSearchGateway,
+    center: tuple[float, float] | None = None,
 ) -> dict:
     """기본 지역(create_run과 같은 원)에서 반경 넓히기 상한 안의 정예 장소 수(#798). 풀 반경과 같은 배율이라
     (core.pool_radius_factor, #792) 실행이 끝까지 넓혀도 볼 수 있는 장소 수다. 0이면 카카오맵 검색 링크를 함께 준다.
-    의견 핀이 없거나 좌표 있는 핀이 없어 기본 지역이 없으면 둘 다 없다."""
-    default_region = _default_circle_and_anchors(db, map_id=map_id, category=category) if readiness["answered_count"] else None
-    if default_region is None:
-        return {}
-    circle, anchors = default_region
+    center가 있으면 그 점 한 곳의 원이다(`_center_region`, create_run과 같은 함수, #1331). 없으면 의견 핀이 없거나 좌표 있는 핀이
+    없어 기본 지역이 없을 때 둘 다 없다."""
+    if center is not None:
+        circle, anchors = _center_region(category, center)
+    else:
+        default_region = _default_circle_and_anchors(db, map_id=map_id, category=category) if readiness["answered_count"] else None
+        if default_region is None:
+            return {}
+        circle, anchors = default_region
     pool_radius_m = round(circle.radius_m * core.pool_radius_factor(core.radius_walk_mins(category)[0], category))
     count = place_search.count_curated(
         category=category, circles=[Circle(anchor_lat=lat, anchor_lng=lng, radius_m=pool_radius_m) for lat, lng in anchors],
@@ -300,6 +309,11 @@ def _default_circle_and_anchors(
     radius_m = core.radius_m_for_walk_min(core.radius_walk_mins(category)[0])
     circle = Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=radius_m)
     return circle, anchors
+
+
+def _center_region(category: str, center: tuple[float, float]) -> tuple[Circle, list[tuple[float, float]]]:
+    """지도 중심 한 점의 원 하나(카테고리 기본 반경, #1331). run 생성·readiness·미리 돌려 보기가 같은 함수로 지역을 만든다."""
+    return Circle(*center, core.radius_m_for_walk_min(core.radius_walk_mins(category)[0])), [center]
 
 
 def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: list[tuple[float, float]]) -> dict:
@@ -427,8 +441,7 @@ def _create_run(
     service.add_reaction_evidence(db, run_id=run.id, lines=merged)
 
     if center is not None:
-        circle = Circle(*center, core.radius_m_for_walk_min(core.radius_walk_mins(category)[0]))
-        groups = [(circle, [center])]
+        groups = [_center_region(category, center)]
     else:
         default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
         if default_region is None:
@@ -436,7 +449,7 @@ def _create_run(
         circle, anchors = default_region
         groups = _clustered_regions(circle, anchors)
     service.create_regions(db, run_id=run.id, regions_data=[
-        _region_data(group_circle, label="보던 곳 주변" if center is not None else DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
+        _region_data(group_circle, label=CENTER_REGION_LABEL if center is not None else DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
                      confirmed=True, anchor_points=group_anchors)
         for i, (group_circle, group_anchors) in enumerate(groups)
     ])
@@ -1145,6 +1158,7 @@ def _all_labels_true(labels: Sequence, fact_keys: Sequence[str]) -> bool:
 def preview_filter(
     db: Session, *, map_id: str, category: str, text_lines: Mapping[str, Sequence[Mapping[str, Any]]],
     with_keys: Sequence[str] = (), place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+    center: tuple[float, float] | None = None,
 ) -> dict:
     """미리 돌려 보기(docs/agent-v2.md 6.7, #1180) — 지금 「추천 받기」를 누르면 실격 조건까지 남는 곳의 수. run을 만들 때와
     같은 함수로 줄을 조립하고(_assembled_reaction_lines: 칩 줄, #422·#617 내리기) 같은 지역(_default_circle_and_anchors)과 같은
@@ -1164,14 +1178,17 @@ def preview_filter(
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
-    default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
-    if default_region is None:
-        raise AppError("NOT_READY")
-    circle, anchors = default_region
+    if center is not None:   # run 생성과 같은 중심 한 점의 원(#1331). 없으면 그 카테고리 핀들이 앵커다
+        groups = [_center_region(category, center)]
+    else:
+        default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
+        if default_region is None:
+            raise AppError("NOT_READY")
+        circle, anchors = default_region
+        groups = _clustered_regions(circle, anchors)
     pool_factor = core.pool_radius_factor(core.radius_walk_mins(category)[0], category)   # 새 run의 기본 반경과 같다
-    groups = _clustered_regions(circle, anchors)
     regions = [
-        _PipelineRegion(id=None, label=DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
+        _PipelineRegion(id=None, label=CENTER_REGION_LABEL if center is not None else DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
                         center_lat=c.anchor_lat, center_lng=c.anchor_lng, radius_m=c.radius_m,
                         pool_radius_m=round(c.radius_m * pool_factor), anchor_points=tuple(group_anchors))
         for i, (c, group_anchors) in enumerate(groups)
