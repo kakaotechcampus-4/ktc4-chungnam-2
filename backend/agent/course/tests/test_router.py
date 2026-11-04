@@ -26,7 +26,7 @@ def outsider(world, name="x"):
 def insert_run(world, map_id, *, user="u1", status="done", created_at=None):
     with world.factory() as db:
         r = AgentCourseRun(map_id=map_id, requested_by=world.uid(user), status=status, input={}, snapshot_at=world.now,
-                           snapshot_pin_ids=[], created_at=created_at or world.now)
+                           snapshot_version="v", created_at=created_at or world.now)
         db.add(r)
         db.commit()
         return str(r.id)
@@ -303,3 +303,52 @@ def test_get_leaves_finished_runs_alone(world, places, client):
     assert u1.get(f"/course-runs/{failed_id}").json()["failure_code"] == "ENGINE_ERROR"
     assert _db_row(world, done_id) == ("done", None, None)
     assert _db_row(world, failed_id)[:2] == ("failed", "ENGINE_ERROR")
+
+
+# ---------------------------------------------------------------- 일정 기준 모드의 응답 (#1321, #1237)
+
+def test_plan_response_has_mode_headline_and_empty_cards(world, places, client):
+    map_id, _ = confirmed_map(world, places, 4)
+    client.set_llm(CourseLlm(goals_planner, direct_planner()))
+    u1 = client("u1")
+    body = u1.get(f"/course-runs/{u1.post(f'/maps/{map_id}/courses', json={}).json()['course_run_id']}").json()
+    assert body["mode"] == "plan" and body["headline"] == "날짜별 코스를 짰어요" and body["fixes"] == [] and body["checked"] == []
+
+
+def test_fill_response_keeps_scheduled_places_and_adds_unassigned_cards(world, places, client):
+    from agent.course.tests.conftest import schedule_pins
+
+    map_id, ids = confirmed_map(world, places, 4)
+    schedule_pins(world, map_id, {ids[0]: 0, ids[1]: 2})
+    client.set_llm(CourseLlm(goals_planner, direct_planner()))
+    u1 = client("u1")
+    body = u1.get(f"/course-runs/{u1.post(f'/maps/{map_id}/courses', json={}).json()['course_run_id']}").json()
+    assert body["mode"] == "fill" and "남은 2곳" in body["headline"]
+    day_of = {s["pin_id"]: i for i, d in enumerate(body["days"]) for s in d["slots"]}
+    assert day_of[ids[0]] == 0 and day_of[ids[1]] == 2                       # 넣어 둔 장소는 그 날 그대로
+    cards = [f for f in body["fixes"] if f["kind"] == "unassigned"]
+    assert sorted(c["moves"][0]["pin_id"] for c in cards) == sorted(ids[2:4])
+    assert all(c["strength"] == "soft" and c["moves"][0]["from_date"] is None and c["not_fixed_reason"] is None for c in cards)
+    assert [f["id"] for f in body["fixes"]] == [f"fix_{i + 1}" for i in range(len(body["fixes"]))]
+    assert all(c["kind"] != "unassigned" for c in body["checked"])
+
+
+def test_review_response_shows_current_schedule_and_never_changes_it(world, places, client):
+    from agent.course.tests.conftest import schedule_pins
+    from shortlist import api as shortlist_api
+
+    map_id, ids = confirmed_map(world, places, 4)
+    schedule_pins(world, map_id, {ids[0]: 0, ids[1]: 0, ids[2]: 1, ids[3]: 2})
+    with world.factory() as db:
+        before = shortlist_api.get_schedule_for_agent(db, map_id=map_id)
+    client.set_llm(CourseLlm(goals_planner, direct_planner()))
+    u1 = client("u1")
+    body = u1.get(f"/course-runs/{u1.post(f'/maps/{map_id}/courses', json={}).json()['course_run_id']}").json()
+    assert body["mode"] == "review" and body["headline"].startswith("일정을 점검했어요")
+    assert [[s["pin_id"] for s in d["slots"]] for d in body["days"]][:3] == [ids[0:2], [ids[2]], [ids[3]]]
+    assert all(f["kind"] != "unassigned" for f in body["fixes"])
+    assert body["stale"] is False
+    with world.factory() as db:
+        assert shortlist_api.get_schedule_for_agent(db, map_id=map_id) == before            # 일정은 그대로
+    schedule_pins(world, map_id, {ids[0]: 2})                                                 # 날짜만 옮겨도 stale
+    assert u1.get(f"/course-runs/{body['id']}").json()["stale"] is True

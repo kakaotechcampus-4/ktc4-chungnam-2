@@ -100,6 +100,24 @@ def test_same_reasons_give_the_same_count_as_a_run_up_to_the_disqualify_step(db_
     assert result_count == 3
 
 
+def test_preview_with_center_gives_the_same_funnel_as_a_run_with_that_center_1331(db_session, monkeypatch):
+    """중심이 핀과 다른 곳이어도 같은 center로 돌린 미리 돌려 보기 깔때기 == 실제 run 깔때기."""
+    text_lines = _world(db_session)
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    monkeypatch.setattr(PLANNER, "plan_evidence", _planned)
+    db_session.commit()
+    center = (35.1006, 129.0)   # 핀(35.1)보다 북쪽 — 마지막 장소들은 가깝고 far(35.2)는 여전히 멀다
+    run = flows.create_run(db_session, map_id="map_1", category=CATEGORY, requested_by="user_1",
+                           evidence_planner=PLANNER, center=center)
+    flows.execute_run(db_session, run_id=str(run.id), **_gateways())
+
+    preview = _preview(db_session, text_lines, center=center)
+
+    assert preview["funnel"] == _filter_stages(run.last_funnel)
+    result_count = len(service.list_candidates(db_session, str(run.id)))
+    assert preview["passed_count"] == core.passed_count(result_count, core.keyed_funnel(run.last_funnel))
+
+
 def test_a_wanted_cuisine_in_a_against_reason_is_demoted_like_in_a_run(db_session):
     """#422 — 🚫 글의 「고기」 원함은 선호라 cuisine_bbq가 거짓인 g도 남는다. 줄 조립을 run과 같은 함수로 해서다."""
     text_lines = _world(db_session)

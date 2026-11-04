@@ -136,9 +136,7 @@ export default function ShortlistTab() {
             </Link>
           }
         >
-          마킹된 장소에서 「확정 리스트에 넣기」를 누르면 여기 모여요.
-          <br />
-          날짜에 나눠 넣으면 날짜별 동선도 볼 수 있어요
+          마킹된 장소에서 확정 리스트에 넣은 곳이 여기 모여요
         </EmptyState>
       )}
       {all.length > 0 && routeOn && <DayRoute mapId={mapId} onOpen={setOpenPin} />}
@@ -159,7 +157,7 @@ export default function ShortlistTab() {
           ) : !edit.ready ? (
             <p className="text-sm text-ink-500">일정을 불러오는 중…</p>
           ) : items.length === 0 ? (
-            <p className="break-keep text-sm text-ink-500">모든 장소를 일정에 넣었어요. 「동선 보기」에서 날짜별로 볼 수 있어요</p>
+            <p className="break-keep text-sm text-ink-500">모든 장소를 일정에 넣었어요. 동선 보기를 누르면 날짜별로 보여요</p>
           ) : (
             <ShortlistList
               items={items}

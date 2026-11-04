@@ -492,7 +492,39 @@ class CourseDirectFinish(_CourseStrict):
     candidate_id: str
 
 
-CourseDirectCall = Union[CourseOptimize, CourseLockCall, CourseDirectFinish]   # 되묻기(ask_requester)는 #1131에서 뺐다
+# 점검(review) 판단(#1326, 결정 #1237 4절 「모델의 몫」). 입력에 review.problems가 있는 지휘 턴에서만 낸다 — 새 호출이 아니라 지휘 턴 한 번이다.
+# 이유는 고정 목록에서 고른다(모델이 문장을 짓지 않는다, #717). 별칭 검증과 하드 문제 무시는 service.verify_course_review가 한다.
+CourseReviewReason = Literal[
+    "FIXES_REQUEST", "FIXES_MEMBER_NEED", "SMALL_CHANGE",          # 고침: 요청 목표를 지킴 · 구성원 조건을 지킴 · 옮김이 적고 남는 문제가 없음
+    "TOO_MANY_MOVES", "LEAVES_PROBLEMS", "MINOR_GAIN",             # 그대로: 옮길 곳이 많음 · 따라도 문제가 남음 · 얻는 것이 작음
+    "FEWER_MOVES", "FEWER_REMAINING", "SOLVES_MORE",               # 안 고르기: 옮김이 적음 · 남는 문제가 적음 · 푸는 문제가 많음
+]
+COURSE_REVIEW_FIX_REASONS = ("FIXES_REQUEST", "FIXES_MEMBER_NEED", "SMALL_CHANGE")
+COURSE_REVIEW_KEEP_REASONS = ("TOO_MANY_MOVES", "LEAVES_PROBLEMS", "MINOR_GAIN")
+COURSE_REVIEW_PICK_REASONS = ("FEWER_MOVES", "FEWER_REMAINING", "SOLVES_MORE")
+
+
+class CourseReviewVerdict(_CourseStrict):
+    problem: str                                  # 문제 별칭(q1 …)
+    worth: Literal["fix", "keep"]                 # 고침 / 그대로
+    reason: CourseReviewReason
+
+
+class CourseReviewPick(_CourseStrict):
+    problem: str
+    option: int                                   # 그 문제의 안 번호(입력 options[].no)
+    reason: CourseReviewReason
+
+
+class CourseReviewCall(_CourseStrict):
+    """점검 판단. order는 선호 문제 별칭을 먼저 볼 순서로, verdicts는 문제별 고침/그대로, picks는 안이 여럿인 문제의 안 번호다."""
+    tool: Literal["review"]
+    order: list[str]
+    verdicts: list[CourseReviewVerdict]
+    picks: list[CourseReviewPick]
+
+
+CourseDirectCall = Union[CourseOptimize, CourseLockCall, CourseDirectFinish, CourseReviewCall]   # 되묻기(ask_requester)는 #1131에서 뺐다
 
 
 class CourseDirectTurn(_CourseStrict):

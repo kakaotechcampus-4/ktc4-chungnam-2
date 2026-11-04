@@ -30,7 +30,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
   return (
     <ConfirmDialog
       title="지도 정보 수정"
-      body="바꾼 내용은 모든 구성원에게 바로 보여요. 이미 받은 AI 추천은 그대로 남아요."
+      body="바꾼 내용은 모든 구성원에게 바로 보여요."
       ok="저장"
       pending={update.isPending || !body || !tripReady(draft) || !scheduleQuery.data || scheduleQuery.isError}
       onCancel={onCancel}
@@ -49,13 +49,13 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       </div>
       {scheduleQuery.isError && (
         <div className="space-y-2">
-          <Notice>일정을 확인하지 못했어요. 빠지는 날에 넣은 장소가 있는지 알 수 없어 저장할 수 없어요</Notice>
+          <Notice>일정을 불러오지 못해서 지금은 저장할 수 없어요</Notice>
           <button type="button" onClick={() => void scheduleQuery.refetch()} className="btn-outline btn-sm">
-            다시 확인하기
+            다시 불러오기
           </button>
         </div>
       )}
-      {dropped > 0 && <Notice>빠지는 날에 넣은 {dropped}곳은 일정에서 빠져 확정된 장소로 돌아가요</Notice>}
+      {dropped > 0 && <Notice>기간이 줄어 빠지는 날에 넣은 {dropped}곳은 확정된 장소로 돌아가요</Notice>}
       {update.error && <ErrorText message="지도 정보를 고치지 못했어요" error={update.error} />}
     </ConfirmDialog>
   )
@@ -90,7 +90,7 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
       }
     >
       {cannotLeave ? (
-        <p className="text-sm font-semibold text-warn-text">혼자 남은 방장은 나갈 수 없어요. 나가는 대신 지도를 삭제해 주세요.</p>
+        <p className="text-sm font-semibold text-warn-text">혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요</p>
       ) : (
         leave.error && <ErrorText message="지도에서 나가지 못했어요" error={leave.error} />
       )}

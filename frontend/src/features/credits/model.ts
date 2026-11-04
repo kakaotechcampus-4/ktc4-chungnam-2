@@ -43,7 +43,7 @@ export const balanceText = ({ balance, max_balance }: Pick<CreditBalanceDto, 'ba
  * 상한 근처라 덜 받는 경우는 따로 알리지 않는다(2026-11-01 결정). 가득 차 0을 받는 경우는 줄을 숨긴다(showsReviewReward).
  */
 export const reviewRewardText = (reviewReward?: number) =>
-  reviewReward === undefined ? '후기를 작성하면 크레딧이 충전돼요' : `후기를 작성하면 ${reviewReward} 크레딧이 충전돼요`
+  reviewReward === undefined ? '후기를 쓰면 크레딧을 드려요' : `후기를 쓰면 ${reviewReward} 크레딧을 드려요`
 
 /**
  * 새 후기 작성 시트에 보상 한 줄을 보일지(docs/credits-reviews.md 5절 「화면 문구」, #982).
@@ -63,14 +63,14 @@ export const insufficientText = (reviewReward?: number) =>
 
 /** 버튼 위 고지 한 줄(구글 보상형 광고 정책상 필수). 남은 횟수는 받은 두 숫자의 차를 적을 뿐 판단에 쓰지 않는다. */
 export const adOfferText = ({ reward, daily_max, used_today }: Pick<CreditAdDto, 'reward' | 'daily_max' | 'used_today'>) =>
-  `광고를 끝까지 보면 ${reward} 크레딧을 드려요 · 오늘 ${Math.max(0, daily_max - used_today)}번 남음`
+  `광고를 끝까지 보면 ${reward} 크레딧을 드려요. 오늘 ${Math.max(0, daily_max - used_today)}번 남았어요`
 
 export const adButtonText = ({ reward }: Pick<CreditAdDto, 'reward'>) => `광고 보고 ${reward} 크레딧 받기`
 
 export const adCreditedText = (credited: number) => `${credited} 크레딧을 받았어요`
 
 export const AD_TEXT = {
-  dismissed: '광고를 끝까지 보면 크레딧을 받을 수 있어요',
+  dismissed: '광고를 끝까지 봐야 크레딧을 받아요',
   loadFailed: '광고를 불러오지 못했어요',
   expired: '광고를 다시 봐 주세요',
   failed: '크레딧을 받지 못했어요. 잠시 뒤 다시 시도해 주세요',

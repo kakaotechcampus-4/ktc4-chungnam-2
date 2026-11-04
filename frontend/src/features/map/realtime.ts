@@ -125,7 +125,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       // 내 의견은 이미 캐시에 반영했다 — 알리지 않는다. 사유는 이벤트에 없다.
       if (pin && user_id !== myUserId) {
         const who = `${display_name ?? '구성원'}님이 ${pin.place_name ?? '핀'}`
-        showToast(type ? `${who}에 ${REACTION_WORD[type]} 의견을 남겼어요` : `${who} 의견을 거뒀어요`)
+        showToast(type ? `${who}에 ${REACTION_WORD[type]} 의견을 남겼어요` : `${who}에 남긴 의견을 취소했어요`)
       }
       update((pins) => pins.map((p) => (p.id === pin_id ? { ...p, reaction_summary } : p)))
       // 열려 있는 핀 상세의 의견 목록 — 키가 페이로드의 핀이라 표에 두지 않는다.

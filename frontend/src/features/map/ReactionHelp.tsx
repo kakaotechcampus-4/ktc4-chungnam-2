@@ -29,7 +29,7 @@ const TERMS = [
         <Mark kind="star" size={14} />
       </span>,
     term: '확정 리스트',
-    text: '가기로 정한 곳이에요. 「확정된 장소」 탭에서 들를 순서를 봐요',
+    text: '가기로 정한 곳이에요. 확정된 장소 탭에서 들를 순서를 봐요',
   },
 ]
 
@@ -42,7 +42,7 @@ export default function ReactionHelp() {
     <MenuPopover
       label="의견 표시 설명"
       trigger={
-        <button type="button" aria-label="좋음·반대·미확인이 무엇인지 보기" className="btn-text inline-flex shrink-0 items-center">
+        <button type="button" aria-label="좋음, 반대, 미확인 설명 보기" className="btn-text inline-flex shrink-0 items-center">
           <CircleHelp size={16} aria-hidden="true" />
         </button>
       }

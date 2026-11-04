@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router'
 import ErrorText from '@/ErrorText'
 import { timeAgo } from '@/features/map/model'
 import { CHANGED, START_PARAM } from '@/features/agent/actions'
+import { useSheetStore } from '@/features/shell/sheetStore'
 import { showToast } from '@/features/shell/toast'
 import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
@@ -39,9 +40,9 @@ export function ReadinessHeader({ mapId }: { mapId: string }) {
   const readiness = useReadinessQuery(mapId)
   const short = readiness.data !== undefined && !toReadinessCards(readiness.data).some((c) => c.ready)
   return short ? (
-    <AiHeader title="의견이 부족해요" sub="핀에 좋음·반대 의견이 모이면 추천할 수 있어요" mood="alert" />
+    <AiHeader title="의견이 부족해요" sub="핀에 좋음이나 반대 의견이 모이면 추천할 수 있어요" mood="alert" />
   ) : (
-    <AiHeader title="AI 추천" sub="준비된 카테고리를 골라 주세요" />
+    <AiHeader title="AI 추천" sub="추천받을 카테고리를 골라 주세요" />
   )
 }
 
@@ -90,6 +91,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const setPicked = useAiStore((s) => s.setPicked)
   const chosen = chosenCategory(cards, picked)
   const search = cards.find((c) => c.category === chosen)?.externalSearch
+  useRecountOnMapMove(readiness.refetch)
   useAgentStart(cards, (category) => {
     setPicked(mapId, category)
     // 크레딧 때문이면(게스트·잔액 부족) 「상황이 바뀌었어요」가 아니다 — 버튼 자리의 안내가 말한다.
@@ -112,16 +114,17 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           />
         ))}
       </div>
-      <p className="text-label text-ink-500">* 카테고리마다 좋음·반대 의견이 달린 핀이 1곳 이상이면 추천을 받을 수 있어요.</p>
+      <p className="text-label text-ink-500">지금 보고 있는 지도 가운데 주변에서 찾아요. 다른 동네는 지도를 옮겨 주세요</p>
+      <p className="text-label text-ink-500">좋음이나 반대 의견이 달린 핀이 카테고리마다 1곳 이상 있어야 추천받을 수 있어요</p>
       {/* 사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
-      <p className="text-label text-ink-500">* 핀에 의견을 많이 남길수록 추천이 더 정확해져요.</p>
+      <p className="text-label text-ink-500">의견이 많을수록 추천이 정확해져요</p>
       {/* 사유 정리(②)와 첫 검색을 한 요청에서 끝낸다(#845) — 몇 초 걸린다. 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={START_STEPS} />}
       {/* 실패하면 run 이 생기지 않고 크레딧도 쓰지 않는다 — 같은 버튼을 다시 누르면 새 시도다. 크레딧 오류는 CreditGate 가 보인다. */}
       {create.error && !creditBlock(create.error) && <ErrorText message={runErrorMessage(create.error)} error={create.error} />}
-      {/* 의견 핀 근처에 정예 장소가 없으면 추천해도 0곳이다 — 막지 않고 밖에서 찾는 길을 같이 둔다(#798). */}
+      {/* 보고 있는 곳 근처에 정예 장소가 없으면 추천해도 0곳이다 — 막지 않고 밖에서 찾는 길을 같이 둔다(#798, #1331). */}
       {search && (
-        <Notice action={<ExternalSearchLink search={search} className="btn-outline btn-sm" />}>이 지역은 아직 핑고 추천 장소가 없어요</Notice>
+        <Notice action={<ExternalSearchLink search={search} className="btn-outline btn-sm" />}>보고 있는 곳 주변에는 아직 추천할 장소가 없어요</Notice>
       )}
       <CreditGate feature="recommend_run" mapId={mapId} error={create.error} onCharged={create.reset}>
         <button
@@ -136,6 +139,22 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       <RunHistory mapId={mapId} />
     </div>
   )
+}
+
+/**
+ * 「근처 정예 수」는 보이는 지도 가운데로 센다(#1331). 지도를 끌어 옮기고 멈추면 다시 센다.
+ * mapMoving 은 끌기를 시작할 때 켜지고 멈추면(idle) 꺼진다 — 꺼지는 순간이 다시 셀 때다.
+ */
+function useRecountOnMapMove(recount: () => unknown) {
+  const moving = useSheetStore((s) => s.mapMoving)
+  const moved = useRef(false)
+  useEffect(() => {
+    if (moving) moved.current = true
+    else if (moved.current) {
+      moved.current = false
+      void recount()
+    }
+  }, [moving, recount])
 }
 
 /**

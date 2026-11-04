@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Ban, Check, Clock, Plus, Undo2, X } from 'lucide-react'
 
 import { showToast } from '@/features/shell/toast'
+import { josa } from '@/ui/josa'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import TextField from '@/ui/TextField'
@@ -48,7 +49,7 @@ export default function EvidenceGroups({
       {
         onSuccess: () =>
           !active &&
-          showToast(`‘${evidenceLabel(target[0])}’을(를) 뺐어요`, { label: '되돌리기', onClick: () => toggle(target, true) }),
+          showToast(`‘${evidenceLabel(target[0])}’${josa(evidenceLabel(target[0]), '을', '를')} 뺐어요`, { label: '되돌리기', onClick: () => toggle(target, true) }),
         onError: () => showToast('조건을 바꾸지 못했어요'),
       },
     )
@@ -83,7 +84,7 @@ export default function EvidenceGroups({
     </section>
   )
   // 쓰이지 않는 줄의 이유는 칩마다 적지 않고 묶음 아래 한 번만(이유가 같으면 한 줄).
-  const unusedNotes = [...new Set(groups.unused.map(notEnforcedNote))].join(' · ')
+  const unusedNotes = [...new Set(groups.unused.map(notEnforcedNote))].join('. ')
 
   return (
     <div className="space-y-4">
@@ -127,7 +128,7 @@ export default function EvidenceGroups({
 
       {removed.length > 0 &&
         group(
-          '뺀 조건 · 다시 추천 때 반영',
+          '뺀 조건',
           removed.map((line) => (
             <li key={line.id} className="flex items-center gap-1 rounded-full border border-dashed border-ink-300 py-1 pl-2.5 pr-1 text-body text-ink-500">
               <span className="line-through">{evidenceLabel(line)}</span>
@@ -138,6 +139,7 @@ export default function EvidenceGroups({
               )}
             </li>
           )),
+          '다시 추천할 때 반영돼요',
         )}
 
       {groups.reference.length > 0 && (
@@ -202,8 +204,8 @@ export default function EvidenceGroups({
       {askRemove && (
         <ConfirmDialog
           title="꼭 지켜야 하는 조건을 뺄까요?"
-          body={`‘${evidenceLabel(askRemove)}’을(를) 빼면 다음 추천부터 이 조건으로 거르지 않아요.`}
-          note="내가 쓴 조건만 뺄 수 있어요. 다른 구성원의 조건은 그대로 남아요."
+          body={`빼면 다음 추천부터 ‘${evidenceLabel(askRemove)}’ 조건으로 거르지 않아요.`}
+          note="다른 구성원이 쓴 조건은 그대로 남아요."
           cancel="그대로 두기"
           ok="빼기"
           danger

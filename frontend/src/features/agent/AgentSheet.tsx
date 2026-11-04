@@ -72,7 +72,7 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
         )}
         {state && !enabled && (
           <p className="text-body text-ink-600">
-            꺼져 있어요{changer && ` · ${changer.isMe ? '내가' : `${changer.name}님이`} 껐어요`}. 켜면 지도가 막힌 곳을 찾아 구성원 모두에게 제안해요
+            {changer ? `${changer.isMe ? '내가' : `${changer.name}님이`} 껐어요` : '꺼져 있어요'}. 켜면 의견이 막힌 곳을 찾아 구성원 모두에게 제안해요
           </p>
         )}
         {state && enabled && observation?.checked_at && <p className="text-xs text-ink-500">{checkedLabel(observation.checked_at)}</p>}

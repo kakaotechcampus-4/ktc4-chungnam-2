@@ -2524,7 +2524,12 @@ export interface paths {
         /** 카테고리별 추천 버튼 활성화 판정 (5-4). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145) */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 지도 중심 앵커로 계산하려면 `center_lat`·`center_lng`를 **함께** 보낸다(#1331). 있으면 근처 정예 수(`curated_nearby`)를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다(중심이 없는 호출용). 하나만 보내거나 위도 33~39·경도 124~132 밖이면 422 VALIDATION_ERROR */
+                    center_lat?: number;
+                    /** @description center_lat과 함께 보낸다 */
+                    center_lng?: number;
+                };
                 header?: never;
                 path: {
                     mapId: components["parameters"]["MapId"];
@@ -2542,6 +2547,15 @@ export interface paths {
                         "application/json": {
                             [key: string]: components["schemas"]["Readiness"];
                         };
+                    };
+                };
+                /** @description 검증 실패 (VALIDATION_ERROR) — `center_lat`·`center_lng` 중 하나만 보냈거나 범위 밖 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
                     };
                 };
             };
@@ -5017,10 +5031,10 @@ export interface components {
             map_id: string;
         };
         /**
-         * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리 (docs/agent-v2.md 6절)
+         * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리, schedule=확정 일정에 쉬는 날 방문·이동 과다가 있음(#1356) (docs/agent-v2.md 6절, 6.10)
          * @enum {string}
          */
-        AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap";
+        AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap" | "schedule";
         /**
          * @description 서버가 렌더한 문장 한 줄(#717). 에이전트의 말과 구성원이 쓴 글을 한 문자열에 섞지 않고 조각으로 나눠 내린다.
          *     FE는 조각을 차례로 이어 그리되, quote는 구성원 의견(인용 모양), pin은 핀 이름 모양으로 따로 그린다. 조각 text의 합은 300자 이하.
@@ -5048,18 +5062,19 @@ export interface components {
          * @description 버튼 하나. 사람이 원래 하던 동작으로만 이어진다(확정, 삭제, 반응 변경, 근거 줄 빼기는 없다). FE가 하는 일은 docs/agent-v2.md 16.3 표.
          *     open_recommend → AI 추천 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/runs`. show_pins → 지도 탭 필터. search_place → 장소 검색 시트.
          *     open_route → 리스트 탭 동선. widen_radius → 기존 반경 넓히기. open_evidence → 근거 확인 화면.
+         *     open_pin(#1356) → 지도 탭에서 params.pin_ids[0] 핀 카드를 연다(확정은 사람이 한다). open_course(#1356) → AI 코스 짜기를 시작한다 — 확정 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/courses`(크레딧 1, 게스트·잔액 부족은 그 API의 오류 그대로).
          */
         AgentAction: {
             /** @description accept 요청의 action_index */
             index: number;
             /** @enum {string} */
-            type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence";
-            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기" */
+            type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence" | "open_pin" | "open_course";
+            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기", "이 핀 보기", "AI 코스로 고칠 안 받기" */
             label: string;
             /** @description type마다 쓰는 것만 채운다 */
             params: {
                 category?: components["schemas"]["Category"];
-                /** @description show_pins: 보여 줄 핀 */
+                /** @description show_pins: 보여 줄 핀. open_pin: 열 핀 하나 */
                 pin_ids?: string[];
                 /** @description show_pins: 내가 아직 반응하지 않은 핀만 */
                 unseen_only?: boolean;
@@ -5101,11 +5116,18 @@ export interface components {
             facts?: components["schemas"]["AgentFactLine"][];
             /**
              * @description 작업 기록 — 이 제안을 만들 때 핑고가 거친 단계(#1297, docs/agent-v2.md 11.3). AI 코스의 작업 기록과 같은 모양이다.
-             *     순서: 감지 → 순위(신호가 2개 이상일 때만) → 조사(모델이 고른 도구마다 한 줄) → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인. 있는 단계만 온다. 코드 유형(no_reaction, category_gap)은 감지·순위·재확인뿐이다.
+             *     순서: 감지 → 후속 확인(attempt ≥ 1, #1345) → 순위(신호가 2개 이상일 때만) → 조사(모델이 고른 도구마다 한 줄) → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인. 있는 단계만 온다. 코드 유형(no_reaction, category_gap)과 충돌 선언은 조사·웹 확인·검증이 없다.
              *     문장은 서버 고정 문구와 숫자뿐이다 — 사유 글, 핀·장소 이름, 구성원, URL은 들어가지 않는다.
              *     선택 필드 — 서버 구현 전에는 없고, 기록이 지워진 제안(탈퇴, 30일 정리)은 빈 목록이다. FE는 없거나 빈 목록이면 「핑고가 한 일」을 그리지 않는다.
              */
             steps?: components["schemas"]["WorkStep"][];
+            /**
+             * @description 막힌 곳 한 살이의 몇 번째 제안인가(#1345, docs/agent-v2.md 6.9). 0=첫 제안, 1=다음 방법(앞 제안을 수락했는데 그대로라 이미 해 본 것과 다른 방법),
+             *     2=충돌 선언(최후 — 해 본 것을 남기고 결정은 사람에게. actions는 빈 목록). 선택 필드 — 서버 구현(#1346) 전에는 없고, FE는 없으면 0으로 본다.
+             */
+            attempt?: number;
+            /** @description attempt ≥ 1일 때 이 막힌 곳에서 이미 해 본 것(수락한 앞 제안의 버튼), 오래된 것부터. attempt 0이면 빈 목록. 선택 필드 */
+            tried?: components["schemas"]["AgentTried"][];
             /** Format: date-time */
             created_at: string;
             /**
@@ -5113,6 +5135,37 @@ export interface components {
              * @description 만들고 24시간 뒤. 지나면 만료(agent.resolved, status=expired)
              */
             expires_at: string;
+        };
+        /** @description 막힌 곳에서 이미 해 본 것 하나(#1345) — 수락한 제안의 버튼. 누가 눌렀는지와 추천 결과(비공개 run)는 싣지 않는다 */
+        AgentTried: {
+            /** @enum {string} */
+            action_type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence" | "open_pin" | "open_course";
+            /** @description 그때 버튼 문구(서버 렌더). 예: "음식점 추천 받기" */
+            label: string;
+            /** Format: date-time */
+            accepted_at: string;
+        };
+        /**
+         * @description 핑고가 지켜보는 막힌 곳 하나(#1345, docs/agent-v2.md 6.9). 수락한 제안이 풀렸는지 매 관찰마다 코드가 본다(모델 호출 없음).
+         *     지금 활성 제안인 막힌 곳과, 닫기·만료로 끝난 막힌 곳은 들어가지 않는다. 최근 48시간만.
+         *     watching=수락 뒤 지켜보는 중, resolved=풀림(text에 무엇으로 풀렸는지), declared=충돌 선언을 냈고 더 지켜보지 않음.
+         *     text는 서버 고정 문구다. 구성원 글과 이름은 없다. 예: "음식점 · 추천 받기 뒤로 지켜보는 중", "카페 · 풀렸어요 — 새 핀이 올라왔어요".
+         *     경과 시간은 FE가 since로 그린다(예: 「2시간째」).
+         */
+        AgentTracking: {
+            /** @description 그 막힌 곳의 마지막 제안 */
+            suggestion_id: string;
+            diagnosis: components["schemas"]["AgentDiagnosis"];
+            category: components["schemas"]["Category"] | null;
+            /** @enum {string} */
+            status: "watching" | "resolved" | "declared";
+            text: string;
+            /**
+             * Format: date-time
+             * @description watching이면 마지막 수락 시각, resolved면 풀린 것을 본 시각, declared면 충돌 선언 시각
+             */
+            since: string;
+            tried: components["schemas"]["AgentTried"][];
         };
         /**
          * @description 우리 데이터 확인 한 줄(#1152, docs/agent-v2.md 6.6). 서버가 그 핀 장소의 라벨로 렌더한 고정 문구다. 모델이 쓰지 않는다.
@@ -5126,7 +5179,7 @@ export interface components {
             /** @enum {string} */
             value: "yes" | "no" | "unknown";
             segments: components["schemas"]["AdviceSegment"][];
-            /** @description 웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄에만, 제안마다 많아야 한 줄. 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다 */
+            /** @description 웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄마다(#1317, 줄이 많아야 2개라 제안마다 많아야 두 줄). 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다 */
             web?: components["schemas"]["AgentWebCheck"];
         };
         /**
@@ -5233,6 +5286,8 @@ export interface components {
             status?: components["schemas"]["AgentMapStatus"] | null;
             /** @description 살펴본 상태(#1297). 선택 필드 — 서버 구현 전에는 없고, FE는 없으면 자리를 두지 않는다 */
             observation?: components["schemas"]["AgentObservation"];
+            /** @description 핑고가 지켜보는 막힌 곳(#1345). 최근 것부터. 모드가 꺼져 있으면 빈 목록. 선택 필드 — 서버 구현(#1346) 전에는 없고, FE는 없거나 빈 목록이면 자리를 두지 않는다 */
+            tracking?: components["schemas"]["AgentTracking"][];
         };
         /**
          * @description 핑고가 이 지도를 마지막으로 살펴본 시각과, 지금 제안이 없는 이유(#1297, docs/agent-v2.md 21.3).
@@ -5363,7 +5418,7 @@ export interface components {
             /**
              * @description 단계 이름. 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243).
              *     AI 코스: 이해(목표 세우기) · 확인(목표가 데이터로 되는지) · 짜기 · 다시 짜기 · 점검 · 재계획(AI가 결과를 보고 다음 수) · 고정 · 찾기 · 옮겨 보기(쉬는 날·이동 과다를 코드가 찾아 옮겨 봄) · 대행(모델 실패를 코드가 이어받음) · 검증(모델 문장을 코드 문장으로 바꿈) · 가정(모르는 영업시간을 여는 것으로 봄) · 비교(후보끼리 견줌) · 결정(코드가 고름) · 끝(지휘가 고름) · 결과. 되묻지 않으므로 질문·답 단계는 없다(#1131).
-             *     핑고 AI 조언(#1297): 감지(막힌 곳을 찾음) · 순위(여러 곳 중 먼저 볼 곳) · 조사(모델이 고른 도구로 지도 데이터를 읽음) · 미리 찾기(지금 조건으로 남는 곳 수) · 우리 데이터(장소 라벨 확인) · 웹 확인(모델이 웹을 찾고 코드가 출처를 대조) · 검증(모델 출력을 지도와 대조) · 재확인(저장 직전 지도가 그대로인지)
+             *     핑고 AI 조언(#1297): 감지(막힌 곳을 찾음) · 순위(여러 곳 중 먼저 볼 곳) · 조사(모델이 고른 도구로 지도 데이터를 읽음) · 미리 찾기(지금 조건으로 남는 곳 수) · 우리 데이터(장소 라벨 확인) · 웹 확인(모델이 웹을 찾고 코드가 출처를 대조) · 검증(모델 출력을 지도와 대조) · 재확인(저장 직전 지도가 그대로인지) · 후속 확인(#1345, 수락한 앞 제안 뒤로 막힌 곳이 그대로인지 — 다음 방법과 충돌 선언에만, 감지 다음)
              */
             stage: string;
             /**

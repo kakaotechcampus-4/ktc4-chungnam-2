@@ -1,4 +1,4 @@
-"""core.decided_within_24h(#613, 명세 12.9) — 제안 created_at부터 24시간 안에 확정이 생겼는가. 유형별 참과 거짓, 경계."""
+"""core.decided_within_24h(#613, 명세 12.9) — 제안 created_at부터 24시간 안에 확정이 생겼는가. 유형별 참과 거짓, 경계. 판정은 core.is_decided(#1345)."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -38,10 +38,12 @@ def test_category_types_cannot_count_a_pin_without_category():
     assert core.decided_within_24h(target("category_gap", category="카페"), [confirmed(category=None)]) is False
 
 
-def test_split_counts_only_its_pin():
+def test_split_counts_its_pin_or_another_pin_of_the_same_category():
+    """갈림은 그 핀이나 같은 카테고리의 다른 핀이 확정되면 풀린 것이다 — 후속 관찰(6.9)의 실시간 판정과 같은 규칙(core.is_decided, #1345)."""
     sug = target("split", category="카페", pin_id="p1")
     assert core.decided_within_24h(sug, [confirmed("p1")]) is True
-    assert core.decided_within_24h(sug, [confirmed("p2", category="카페")]) is False   # 같은 카테고리의 다른 핀
+    assert core.decided_within_24h(sug, [confirmed("p2", category="카페")]) is True    # 같은 카테고리의 다른 핀
+    assert core.decided_within_24h(sug, [confirmed("p2", category="음식점")]) is False  # 다른 카테고리
 
 
 def test_no_reaction_counts_any_pointed_pin():
