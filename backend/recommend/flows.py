@@ -355,6 +355,11 @@ def create_run(
        아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS, 처리 기한(90초)이 지났으면 이어받는다.
     3) run_id 연결은 run을 만든 트랜잭션의 **맨 끝**에서 한다 — 자기 세대일 때만 성공하고(늦게 끝난 쪽은 거절),
        실패 정리가 이 행의 잠금과 부딪치지 않는다. run을 못 만들면 자기 세대의 예약만 지워 재시도를 허용한다."""
+    # center 검사는 키를 예약하기 전에 한다(#1331) — 예약을 만들었다 지우는 사이에 같은 키가 409 REQUEST_IN_PROGRESS를 받지 않게.
+    # 같은 키의 기록이 이미 있으면(center가 없던 때 만든 옛 키) 통과시켜 reuse가 그 run을 돌려준다. 기록이 없을 때만 422다.
+    if center is None and (idempotency_key is None or not service.idempotency_key_exists(
+            db, requested_by=requested_by, key=idempotency_key)):
+        raise AppError("VALIDATION_ERROR", "center가 필요합니다", detail={"field": "center"})
     traces: list[uuid.UUID] = []   # ②를 부른 trace — run이 저장되지 못하면 버려진 비용으로 표시한다(#848)
 
     def create() -> RecommendRun:

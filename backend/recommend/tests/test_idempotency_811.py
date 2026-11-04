@@ -376,7 +376,7 @@ def test_center_idempotency_replay_and_conflict(env):
 
 
 @pytest.mark.no_center_shim
-def test_old_key_without_center_still_replays_its_run_but_a_new_key_without_center_is_422_1331(env):
+def test_old_key_without_center_still_replays_its_run_but_a_new_key_without_center_is_422_1331(env, monkeypatch):
     """center가 필수가 되기 전에 만든 키(해시에 center 없음)의 재시도는 그 run을 그대로 돌려준다(24시간 보관). 새 키는 422이고 예약이 남지 않는다."""
     Session, create = env
     planner = _Planner()
@@ -388,9 +388,13 @@ def test_old_key_without_center_still_replays_its_run_but_a_new_key_without_cent
     session.close()
 
     assert create(planner, map_id="idem_legacy", center=None) == first
+    reservations = []
+    real_reserve = service.reserve_idempotency_key
+    monkeypatch.setattr(service, "reserve_idempotency_key", lambda *a, **kw: reservations.append(kw["key"]) or real_reserve(*a, **kw))
     with pytest.raises(AppError) as exc:
         create(planner, map_id="idem_legacy", center=None, key="key-00000002")
     assert exc.value.code == "VALIDATION_ERROR"
+    assert reservations == []   # 예약을 만들었다 지우지 않는다 — 그 사이 같은 키가 409를 받는 구간이 없다
     session = Session()
     assert session.execute(select(func.count()).select_from(IdempotencyKey).where(
         IdempotencyKey.key == "key-00000002")).scalar_one() == 0

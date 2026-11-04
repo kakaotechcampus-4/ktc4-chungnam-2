@@ -77,6 +77,26 @@ def test_a_successful_run_spends_one(text_reason_map, db_session, llm_usage_rows
     assert [row["feature"] for row in llm_usage_rows] == ["recommend_run"]
 
 
+@pytest.mark.no_center_shim
+def test_run_without_center_is_422_and_spends_nothing_1331(text_reason_map, db_session, llm_usage_rows):
+    """#1331 — 지도 중심이 앵커다. 준비된 지도에서 center 없는 「추천 받기」는 실제 HTTP에서 422 VALIDATION_ERROR이고 ②도 불리지 않으며,
+    크레딧 원장·잔액(GET /credits/me)·run 목록이 그대로다. 테스트 보조(conftest._run_center_from_pins)를 끄고 본다."""
+    _a, b, map_id = text_reason_map
+    db_session.add(CreditAccount(user_id="user_b", balance=INITIAL_CREDITS))
+    db_session.commit()
+    before = b.get("/credits/me").json()
+
+    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+    assert b.get("/credits/me").json() == before
+    assert before["balance"] == INITIAL_CREDITS
+    assert _ledger(db_session, "user_b") == []
+    assert _runs(db_session, map_id) == []
+    assert b.get(f"/maps/{map_id}/runs").json() == []
+    assert llm_usage_rows == []
+
+
 def test_not_ready_spends_nothing(members, db_session, llm_usage_rows):
     """11 — run 생성 중 예외(NOT_READY: 반응이 없다)면 차감도 없다. 계정 행도 만들지 않는다."""
     _a, b, map_id = members
