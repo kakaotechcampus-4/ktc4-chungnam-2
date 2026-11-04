@@ -462,6 +462,15 @@ def test_center_run_readiness_and_private_result(app_client, db_session, monkeyp
     assert result.status_code == 403
 
 
+@pytest.mark.no_center_shim
+def test_run_without_center_is_422_and_charges_nothing_1331(app_client, db_session):
+    """지도 중심이 앵커다(#1331). 준비된 지도여도 center 없는 「추천 받기」는 422 VALIDATION_ERROR이고 run도 차감도 남지 않는다."""
+    _seed_ready_map(db_session)
+    response = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1"))
+    assert response.status_code == 422 and response.json()["code"] == "VALIDATION_ERROR"
+    assert app_client.get("/maps/map_1/runs", cookies=_auth("user_1")).json() == []
+
+
 def test_center_with_unknown_sido_returns_422(app_client, db_session, monkeypatch):
     from recommend import flows
     _seed_ready_map(db_session)

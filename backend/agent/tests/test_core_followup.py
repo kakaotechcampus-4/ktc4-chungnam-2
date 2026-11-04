@@ -255,7 +255,7 @@ def test_model_action_check_rejects_a_tried_action():
 
 def test_followup_signals_are_ranked_first():
     policy = core.PriorityPolicy(version=1, urgent_dday=3, never_first=(), always_first=("category_gap",),
-                                 weights={"stall": 3, "split": 4, "no_reaction": 1, "category_gap": 2})
+                                 weights={"stall": 3, "split": 4, "no_reaction": 1, "category_gap": 2, "schedule": 2})
     gap = core.make_signal("category_gap", category="카페", evidence=[], features={"dday": 30})
     split = core.make_signal("split", category="음식점", evidence=[], features={"affected_members": 3})
     follow = replace(_followup(), id="s3")
@@ -290,6 +290,7 @@ def test_diagnosis_input_carries_attempts_and_allowed_actions_but_no_run():
     assert inp["attempt"] == 1
     assert inp["attempts"] == [{"action": "open_recommend", "label": "open_recommend"}]
     assert inp["allowed_actions"] == ["search_place"]
+    assert inp["followup_check"] == core.followup_check_result(sig)   # f1과 같은 값(#1347)
     dumped = json.dumps(inp, ensure_ascii=False, default=str)
     for leak in ("run", "resolved_by", "last_run_at", "funnel"):
         assert leak not in dumped
@@ -298,7 +299,7 @@ def test_diagnosis_input_carries_attempts_and_allowed_actions_but_no_run():
 def test_first_suggestion_input_is_unchanged():
     [sig] = core.detect_stall(stall_snap(), A + TH, TH)
     inp = core.diagnosis_input(replace(sig, id="s1"), stall_snap())
-    assert not {"attempt", "attempts", "allowed_actions"} & set(inp)
+    assert not {"attempt", "attempts", "allowed_actions", "followup_check"} & set(inp)
 
 
 # ---------------------------------------------------------------- 충돌 선언 템플릿

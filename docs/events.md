@@ -77,7 +77,7 @@ FE는 이벤트를 받으면 아래 표대로 화면 데이터를 다시 받는�
 | `map.updated` | 지도 상세(페이로드로 갱신), `GET /maps`(내 지도 목록의 제목과 날짜, #465) |
 | `map.deleted` | 지도 화면을 닫고 내 지도 목록(`GET /maps`)으로 |
 | `map.restored` | 내 지도 목록(`GET /maps`)과 휴지통(`GET /maps/trash`)을 다시 받는다 |
-| `shortlist.changed` | `GET /maps/{mapId}/shortlist`, `GET /maps/{mapId}/pins`(확정 핀 표시) |
+| `shortlist.changed` | `GET /maps/{mapId}/shortlist`, `GET /maps/{mapId}/pins`(확정 핀 표시), AI 코스의 `GET /maps/{mapId}/courses/latest`와 보고 있는 `GET /course-runs/{id}`(일정이 바뀌면 `stale`이 되어 고칠 점 카드의 「반영」을 막는다, #1322). 일정 저장(`PUT .../shortlist/schedule`)도 항목마다 `reordered`로 이 이벤트를 보낸다 |
 | `route.recalculated` | 동선(페이로드 `Route[]`로 갱신, 또는 `GET /maps/{mapId}/route`) |
 | `agent.suggested` | 에이전트 상태의 지금 제안(페이로드로 갱신). 시트가 열려 있으면 `POST /agent/suggestions/{id}/view`, 닫혀 있으면 점을 켠다 |
 | `agent.resolved` | 지금 제안의 id가 같으면 비우고 점을 끈다(페이로드로 갱신) |

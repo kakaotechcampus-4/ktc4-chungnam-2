@@ -157,7 +157,7 @@ def run_case(case, verbose=True):
             rx = c.put(f"/pins/{p.json()['id']}/reaction", json=body)
             if rx.status_code != 200:
                 log.append(f"반응 {rx.status_code} {rx.text[:80]}")
-    run = a.post(f"/maps/{mid}/runs", json={"category": case["category"]})
+    run = a.post(f"/maps/{mid}/runs", json={"category": case["category"], "center": {"lat": lat, "lng": lng}})   # 지도 중심(#1331)
     if run.status_code != 202:
         return {"id": case["id"], "note": f"run {run.status_code} {run.json().get('code')}", "members": len(users)}
     rid = run.json()["id"]
@@ -363,7 +363,7 @@ def run_keys():
                 if p.status_code == 201:
                     break
             a.put(f"/pins/{p.json()['id']}/reaction", json={"type": rtype, "reason_text": text})
-        run = a.post(f"/maps/{mid}/runs", json={"category": cat})
+        run = a.post(f"/maps/{mid}/runs", json={"category": cat, "center": {"lat": lat, "lng": lng}})   # 지도 중심(#1331)
         if run.status_code != 202:
             print(f"[keys {cat}] run {run.status_code} {run.text[:100]}"); continue
         ev = a.get(f"/runs/{run.json()['id']}/evidence").json()

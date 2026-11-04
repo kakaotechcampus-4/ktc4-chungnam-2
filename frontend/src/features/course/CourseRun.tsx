@@ -18,6 +18,8 @@ import {
   dayTitle,
   FAILURE_TEXT,
   goalState,
+  modeOf,
+  stalePrompt,
   legLabel,
   outcomeText,
   transitLink,
@@ -26,6 +28,7 @@ import {
   type CourseRunDto,
 } from './model'
 import { useCourseRunQuery } from './queries'
+import FixCards from './FixCards'
 import WorkLog from './WorkLog'
 
 /**
@@ -121,10 +124,12 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
   const name = (pinId: string) => names.get(pinId) ?? '이 장소'
   const hoursTag = showHoursKnown(run)
   const unchecked = uncheckedPlaceCount(run)
+  const mode = modeOf(run)
 
   return (
     <div className="space-y-4">
-      <AiHeader title={run.outcome ? outcomeText(run.outcome) : '코스를 짰어요'} sub="날짜별 순서와 이동 시간이에요" mood="proud" />
+      {/* 머리 문구는 서버 headline 그대로(#1237). 없으면(실서버 구현 전) 예전 outcome 문구. */}
+      <AiHeader title={run.headline ?? (run.outcome ? outcomeText(run.outcome) : '코스를 짰어요')} sub={mode === 'review' ? undefined : '날짜별 순서와 이동 시간이에요'} mood="proud" />
 
       {run.stale && (
         <Notice
@@ -134,7 +139,7 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
             </button>
           }
         >
-          이 코스를 짠 뒤에 확정 리스트가 바뀌었어요
+          {stalePrompt}
         </Notice>
       )}
 
@@ -158,21 +163,26 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
         <p className="break-keep text-body text-ink-700">반영하지 못한 요청: {run.unmatched.join(', ')}</p>
       )}
 
-      <Section title="날짜별 순서">
-        <div className="space-y-2">
-          {run.days.map((day, i) => (
-            <DayCard key={day.date} day={day} index={i} names={names} points={points} hoursTag={hoursTag} />
-          ))}
-        </div>
-        <p className="text-label text-ink-500">이동 시간은 직선거리로 어림한 값이에요. 정확한 길은 카카오맵에서 확인하세요</p>
-        {/* 장소마다 붙이지 않고 한 줄로 — 서버 작업 기록 「가게에 확인해야 하는 곳이 남았어요」와 맞춘다(루트 검수 #1127). */}
-        {unchecked > 0 && <p className="text-label text-ink-500">영업시간을 모르는 {unchecked}곳은 가게에 확인해 주세요</p>}
-        {drawings.length > 0 && (
-          <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
-            <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
-          </button>
-        )}
-      </Section>
+      {mode !== 'plan' && <FixCards mapId={mapId} run={run} names={names} onRetry={onRetry} />}
+
+      {/* review 의 days 는 지금 일정 그대로라 확정 탭과 겹친다 — 카드만 보인다. */}
+      {mode !== 'review' && (
+        <Section title="날짜별 순서">
+          <div className="space-y-2">
+            {run.days.map((day, i) => (
+              <DayCard key={day.date} day={day} index={i} names={names} points={points} hoursTag={hoursTag} />
+            ))}
+          </div>
+          <p className="text-label text-ink-500">이동 시간은 직선거리로 어림한 값이에요. 정확한 길은 카카오맵에서 확인하세요</p>
+          {/* 장소마다 붙이지 않고 한 줄로 — 서버 작업 기록 「가게에 확인해야 하는 곳이 남았어요」와 맞춘다(루트 검수 #1127). */}
+          {unchecked > 0 && <p className="text-label text-ink-500">영업시간을 모르는 {unchecked}곳은 가게에 확인해 주세요</p>}
+          {drawings.length > 0 && (
+            <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
+              <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
+            </button>
+          )}
+        </Section>
+      )}
 
       {run.violations.length > 0 && (
         <Section title="지키지 못한 조건">

@@ -39,6 +39,11 @@ function renderSheet() {
   )
 }
 
+/** 크레딧을 쓰는 실행은 확인 창을 거친다 — 그 창의 「코스 짜기」를 누른다. */
+async function confirmCourse(user: ReturnType<typeof userEvent.setup> | typeof userEvent = userEvent) {
+  await user.click(within(await screen.findByRole('alertdialog', { name: '코스를 짤까요?' })).getByRole('button', { name: '코스 짜기' }))
+}
+
 const error = (status: number, code: string, detail?: Record<string, unknown>) =>
   HttpResponse.json({ code, message: code, ...(detail ? { detail } : {}) }, { status })
 
@@ -56,6 +61,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(await screen.findByText(/10\.\d+ \(.\) ~ /)).toBeInTheDocument() // 지도 여행 날짜
     await user.type(screen.getByLabelText(/요청 사항/), '덜 걷게 해 주세요')
     await user.click(screen.getByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
 
     // 진행: 첫 조회는 단계 2개 — 첫 줄 「이해」는 카드
     const log = await screen.findByRole('list', { name: '작업 기록' })
@@ -111,6 +117,7 @@ describe('AI 코스 짜기 시트', () => {
     )
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
     expect(await screen.findByText('코스를 짜고 있어요')).toBeInTheDocument()
 
     await vi.advanceTimersByTimeAsync(2000 + 1000 + 2000) // 두 번째 조회와 재시도 둘이 실패
@@ -133,6 +140,8 @@ describe('AI 코스 짜기 시트', () => {
     expect(await screen.findByText(`${before.prices.course} 크레딧 사용 · 남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '코스 짜기' }))
+
+    await confirmCourse(user)
     await screen.findByRole('list', { name: '작업 기록' })
     const after = await credits()
     expect(after.balance).toBe(before.balance - before.prices.course)
@@ -147,6 +156,7 @@ describe('AI 코스 짜기 시트', () => {
     const user = userEvent.setup({ delay: null })
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
 
     expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
     expect(screen.queryByText(/코스를 요청하지 못했어요/)).not.toBeInTheDocument()
@@ -165,6 +175,10 @@ describe('AI 코스 짜기 시트', () => {
     expect(await screen.findByText(`카카오로 로그인하면 ${detail.initial_credits} 크레딧을 드려요`)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /카카오로 계정 만들기/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
+
+    // 버튼이 없어도 요청 칸에서 Enter 를 누르면 제출된다 — 크레딧 확인 창을 띄우지 않는다.
+    await userEvent.type(screen.getByLabelText(/요청 사항/), '덜 걷게{Enter}')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   it('422 는 장소 부족 안내', async () => {
@@ -172,6 +186,7 @@ describe('AI 코스 짜기 시트', () => {
     const user = userEvent.setup({ delay: null })
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
     expect(await screen.findByRole('alert')).toHaveTextContent('2곳 이상')
   })
 
@@ -190,6 +205,7 @@ describe('AI 코스 짜기 시트', () => {
     const view = renderSheet()
     await user.type(await screen.findByLabelText(/요청 사항/), '실내 위주로')
     await user.click(screen.getByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
     expect(await screen.findByText('코스를 요청하지 못했어요')).toBeInTheDocument()
 
     // 탭을 떠났다 오면(화면이 새로 붙어도) 실패가 남는다.
@@ -199,6 +215,7 @@ describe('AI 코스 짜기 시트', () => {
 
     fail = false
     await user.click(screen.getByRole('button', { name: '다시 시도' }))
+    await confirmCourse(user) // 다시 보내기도 크레딧을 쓰니 먼저 묻는다
     expect(await screen.findByRole('list', { name: '작업 기록' })).toBeInTheDocument()
     expect(sent).toEqual(['실내 위주로', '실내 위주로'])
   })
@@ -209,6 +226,7 @@ describe('AI 코스 짜기 시트', () => {
     renderSheet()
     await user.type(await screen.findByLabelText(/요청 사항/), '덜 걷게')
     await user.click(screen.getByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
     await user.click(await screen.findByRole('button', { name: '요청 고치기' }))
     expect(screen.getByLabelText(/요청 사항/)).toHaveValue('덜 걷게')
   })
@@ -227,6 +245,7 @@ describe('AI 코스 짜기 시트', () => {
     const user = userEvent.setup({ delay: null })
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
     expect(await screen.findByText('코스를 만들지 못했어요')).toBeInTheDocument()
     expect(screen.getByText('코스 짜기가 중간에 끊겼어요')).toBeInTheDocument()
     expect(screen.getByText('이미 짜고 있는 코스를 보여 드려요')).toBeInTheDocument()
@@ -251,7 +270,7 @@ describe('AI 코스 짜기 시트', () => {
     const user = userEvent.setup({ delay: null })
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
-    expect(await screen.findByText(/확정 리스트가 바뀌었어요/)).toBeInTheDocument()
+    expect(await screen.findByText(/일정이 바뀌었어요/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '다시 짜기' })).toBeInTheDocument()
     expect(screen.getByText(/반영하지 못한 요청: 아무거나/)).toBeInTheDocument()
     expect(screen.getAllByText('도보 5분')).toHaveLength(2) // 구간 + 하루 합계

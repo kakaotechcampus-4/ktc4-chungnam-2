@@ -3,8 +3,10 @@ import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 
+import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
+import { useCreditsQuery } from '@/features/credits/queries'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
@@ -83,6 +85,10 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
   const create = useCreateCourseMutation(mapId)
   const error = failure?.error ?? null
   const known = createErrorMessage(error)
+  // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧). 확인해야 요청한다.
+  const [asking, setAsking] = useState(false)
+  // 게스트는 버튼 자리가 카카오 안내라 묻지 않는다 — 요청 칸에서 Enter 를 눌러도 확인 창을 띄우지 않는다.
+  const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
 
   // 만든 run 을 여는 것(이미 짜는 중이면 그 run 으로)은 요청 훅이 한다.
   const submit = () => create.mutate(text)
@@ -105,7 +111,7 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (!create.isPending) submit()
+        if (!create.isPending && !guest) setAsking(true)
       }}
       className="space-y-4"
     >
@@ -140,12 +146,28 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
           </div>
         )}
       </div>
+      {asking && (
+        <CreditConfirm
+          feature="course"
+          title="코스를 짤까요?"
+          ok="코스 짜기"
+          onOk={() => {
+            setAsking(false)
+            submit()
+          }}
+          onCancel={() => setAsking(false)}
+        />
+      )}
     </form>
   )
 }
 
-/** 코스 요청이 실패했다(장소 부족·크레딧 밖). 당황한 핑고 + 같은 요청 다시 보내기 · 요청 고치기. */
+/**
+ * 코스 요청이 실패했다(장소 부족·크레딧 밖). 당황한 핑고 + 같은 요청 다시 보내기 · 요청 고치기.
+ * 다시 보내기도 크레딧을 쓰는 요청이라 입력 화면처럼 먼저 묻는다.
+ */
 function RequestFailed({ pending, onRetry, onEdit }: { pending: boolean; onRetry: () => void; onEdit: () => void }) {
+  const [asking, setAsking] = useState(false)
   return (
     <div className="space-y-3">
       <AiHeader title="코스를 요청하지 못했어요" sub="잠깐 문제가 생겼어요. 다시 눌러 주세요" mood="flustered" />
@@ -153,10 +175,22 @@ function RequestFailed({ pending, onRetry, onEdit }: { pending: boolean; onRetry
         <button type="button" onClick={onEdit} disabled={pending} className="btn-neutral btn-lg">
           요청 고치기
         </button>
-        <button type="button" onClick={onRetry} disabled={pending} className="btn-primary btn-lg">
+        <button type="button" onClick={() => setAsking(true)} disabled={pending} className="btn-primary btn-lg">
           {pending ? '요청하는 중…' : '다시 시도'}
         </button>
       </div>
+      {asking && (
+        <CreditConfirm
+          feature="course"
+          title="코스를 짤까요?"
+          ok="코스 짜기"
+          onOk={() => {
+            setAsking(false)
+            onRetry()
+          }}
+          onCancel={() => setAsking(false)}
+        />
+      )}
     </div>
   )
 }

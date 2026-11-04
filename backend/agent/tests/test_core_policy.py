@@ -201,7 +201,7 @@ def test_policy_file_matches_spec_draft():
     policy = core.load_policy()
 
     assert policy.version == 2
-    assert dict(policy.weights) == {"stall": 3, "split": 3, "category_gap": 2, "no_reaction": 1}
+    assert dict(policy.weights) == {"stall": 3, "split": 3, "category_gap": 2, "schedule": 2, "no_reaction": 1}
     assert (policy.urgent_dday, policy.never_first, policy.always_first) == (3, (), ())
     assert not hasattr(policy, "principles")   # version 2에서 지웠다(#582)
 
@@ -215,7 +215,7 @@ def test_policy_file_matches_spec_draft():
 ])
 def test_policy_rejects_missing_weight_unknown_rule_or_bad_urgent_dday(change):
     base = {"version": 2, "rules": {"urgent_dday": 3},
-            "weights": {"stall": 3, "split": 3, "category_gap": 2, "no_reaction": 1}}
+            "weights": {"stall": 3, "split": 3, "category_gap": 2, "schedule": 2, "no_reaction": 1}}
     with pytest.raises(ValueError):
         core.parse_policy({**base, **change})
 

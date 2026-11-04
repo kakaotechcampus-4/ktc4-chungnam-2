@@ -101,7 +101,7 @@
 - **지도**: 카카오맵 JS SDK를 명령형으로 쓴다(공식 React 래퍼 없음, `features/map/kakaoMap.ts`). 타입 선언은 직접 쓴 `kakao.d.ts`. 키 환경변수는 `VITE_KAKAO_MAP_KEY`.
 - **API 호출**: `src/api.ts` 한 곳. `fetch` + `credentials: 'include'`, 에러 봉투 `{code, message, detail?}`를 `ApiError`로 감싸 **status가 아니라 `code`로 분기**한다. `VITE_API_BASE_URL`이 비면 개발 모드에서 msw 목 서버를 쓴다.
 - **빌드·서빙**: Docker 멀티스테이지(`node:22-alpine`에서 빌드 → `caddy:2.8-alpine`이 정적 파일 서빙), SPA fallback, `/assets`만 immutable 캐시, 빌드 시 `VITE_API_BASE_URL=/api`.
-- **Node**: `.nvmrc`·`engines` 고정 없음, CI는 `node-version: 22`. npm(`package-lock.json` v3)이고 워크스페이스는 쓰지 않는다 — `contracts`는 경로 alias로 참조한다.
+- **Node**: 루트 `.nvmrc`(22)와 `frontend`·`contracts`의 `engines.node >=22.19.0`(jsdom의 undici 요구, `frontend/package-lock.json`), CI는 `node-version: 22`, Dockerfile은 `node:22-alpine`. npm(`package-lock.json` v3)이고 워크스페이스는 쓰지 않는다 — `contracts`는 경로 alias로 참조한다.
 
 ## 6. API 계약
 
@@ -182,7 +182,6 @@
 | 항목 | 상태 | 추적 |
 |---|---|---|
 | `redis` 패키지와 로컬 compose의 redis | 코드에서 쓰지 않는다(정리 대기) | #1229 |
-| Node 버전 고정 파일 없음 | CI만 22 | #1230 |
 | FE 60초 무수신 재연결 | PR #1135 병합 대기 | #832 |
 | 개인 SSE 채널 | 스펙·목에는 있고 FE 구독 확인 못 함 | #13 |
 | 운영 LLM 제공자 전환 | 서버 env 확인 필요(확인 못 함) | #1203 |

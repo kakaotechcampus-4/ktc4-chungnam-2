@@ -36,3 +36,9 @@ export const useCourseViewStore = create<{
   fail: (mapId, error, text) => set((s) => ({ failed: { ...s.failed, [mapId]: { error, text } } })),
   clearFail: (mapId) => set((s) => ({ failed: { ...s.failed, [mapId]: undefined } })),
 }))
+
+/** 이미 반영한 고칠 점 카드(run id → 카드 id). 탭을 오가도 「반영됨」이 남게 화면 메모리에 둔다. */
+export const useAppliedFixStore = create<{ applied: Record<string, string[] | undefined>; mark: (runId: string, fixId: string) => void }>((set) => ({
+  applied: {},
+  mark: (runId, fixId) => set((s) => ({ applied: { ...s.applied, [runId]: [...(s.applied[runId] ?? []), fixId] } })),
+}))
