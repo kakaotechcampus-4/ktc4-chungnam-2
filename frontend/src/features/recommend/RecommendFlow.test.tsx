@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { useState, type ReactNode } from 'react'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+
+import { START_PARAM } from '@/features/agent/actions'
 
 import { useSheetStore } from '@/features/shell/sheetStore'
 
@@ -13,6 +15,7 @@ import { createRun, fetchResult, retryRun } from './api'
 import ConditionsCard from './ConditionsCard'
 import type { RecommendResultDto, RecommendRunDto } from './model'
 import { ReadinessBody } from './Readiness'
+import { ResultsHeader } from './Results'
 
 const MAP = 'map_1'
 
@@ -37,6 +40,11 @@ function renderWithClient(ui: ReactNode) {
 function Card({ run, result }: { run: RecommendRunDto; result: RecommendResultDto }) {
   const [open, setOpen] = useState(false)
   return <ConditionsCard run={run} applied={result.applied_evidence} noApplied={result.no_applied_conditions} open={open} onOpenChange={setOpen} />
+}
+
+/** 크레딧을 쓰는 실행은 확인 창을 거친다(쓸 크레딧·남은 크레딧) — 그 창의 확인 버튼을 누른다. */
+async function confirmCredit(ok = '추천받기') {
+  await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: ok }))
 }
 
 async function doneRun() {
@@ -65,6 +73,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
       </Routes>,
     )
     await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
+    await confirmCredit()
 
     await waitFor(() => expect(useAiStore.getState().runs[MAP]?.status).toBe('done'))
     expect(readinessQuery[0]).toBe(`?center_lat=${center.lat}&center_lng=${center.lng}`)
@@ -121,6 +130,8 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+
+    await confirmCredit()
     const left = before.balance - before.prices.recommend_run
     expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${left}/${before.max_balance}`)).toBeInTheDocument()
   })
@@ -130,6 +141,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     const { review_reward } = await fetch(`http://localhost/credits/me`).then((r) => r.json())
     renderWithClient(<ReadinessBody mapId={MAP} />)
     await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
+    await confirmCredit()
 
     expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '후기 쓰러 가기' })).toHaveAttribute('href', `/maps/${MAP}/shortlist`)
@@ -156,5 +168,61 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     await userEvent.click(screen.getByRole('button', { name: /조건 .*찾았어요/ }))
     expect(await screen.findByRole('button', { name: '매운맛 전문 빼기' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '조건 더하기' })).toBeInTheDocument()
+  })
+})
+
+describe('크레딧을 쓰기 전에 묻기, 다시 추천 버튼(#1363)', () => {
+  it('「추천받기」는 확인 창에 쓸 크레딧과 남은 크레딧을 보이고, 취소하면 요청하지 않는다', async () => {
+    let runs = 0
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === `/maps/${MAP}/runs`) runs += 1
+    })
+    const before = await fetch(`http://localhost/credits/me`).then((r) => r.json())
+    renderWithClient(<ReadinessBody mapId={MAP} />)
+    await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
+
+    const dialog = within(await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' }))
+    expect(dialog.getByText(`${before.prices.recommend_run} 크레딧을 써요`)).toBeInTheDocument()
+    expect(dialog.getByText(`남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
+    await userEvent.click(dialog.getByRole('button', { name: '취소' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(runs).toBe(0)
+    expect(useAiStore.getState().runs[MAP]).toBeUndefined()
+    server.events.removeAllListeners()
+  })
+
+  it('핑고 조언에서 「추천 받아 보기」로 들어와도 바로 시작하지 않고 확인 창을 먼저 띄운다', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/maps/${MAP}/recommend?${START_PARAM}=${encodeURIComponent('음식점')}`]}>
+          <ReadinessBody mapId={MAP} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' })).toBeInTheDocument()
+    expect(useAiStore.getState().runs[MAP]).toBeUndefined()
+    await confirmCredit()
+    await waitFor(() => expect(useAiStore.getState().runs[MAP]?.status).toBe('done'))
+  })
+
+  it('다시 추천은 크레딧을 쓰지 않아 확인 창 없이 바로 가고, 버튼 옆에 남은 크레딧을 보인다', async () => {
+    let retries = 0
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/retry')) retries += 1
+    })
+    // 머리의 「‹ AI 추천」이 넓은 화면인지 본다 — jsdom 에는 matchMedia 가 없다.
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }))
+    const { run } = await doneRun()
+    const credits = await fetch(`http://localhost/credits/me`).then((r) => r.json())
+    renderWithClient(<ResultsHeader mapId={MAP} run={run} count={3} />)
+
+    expect(await screen.findByText(`남은 크레딧 ${credits.balance}/${credits.max_balance}`)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '다시 추천' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(retries).toBe(1))
+    server.events.removeAllListeners()
+    vi.unstubAllGlobals()
   })
 })
