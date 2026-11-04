@@ -20,6 +20,7 @@ import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
@@ -36,7 +37,8 @@ from llm.prompts import (
     WEB_CHECK_MAX_STATEMENTS, WEB_STATEMENT_MAX_CHARS, diagnosis_tools,
 )
 from llm.schemas import (
-    AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
+    AgentCallFailed, AgentReply, AgentUsage, COURSE_REVIEW_FIX_REASONS, COURSE_REVIEW_KEEP_REASONS, COURSE_REVIEW_PICK_REASONS,
+    CourseDirectTurn, CourseGoalSet, CourseReviewCall, CourseTurn, DiagnosisOutput, EvidenceLine,
     FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, StatusCategory, StatusOutput,
     VerifiedStatement, WebAnswer, WebCheckOutput, WebCheckResult,
 )
@@ -744,3 +746,76 @@ def course_direct_turn(turn_input: Mapping[str, Any], *, planner: CourseDirectPl
             return AgentReply(planner(turn_input), usage)
         except (LlmCallError, ValueError) as exc:
             return AgentReply(_failed("course_direct_turn", exc, f"turn={turn_input.get('turn', 0)}"), usage)
+
+
+# ---- 점검(review) 판단 검증 (#1326, 결정 #1237 4절) ----
+
+@dataclass(frozen=True)
+class CourseReviewDecision:
+    """모델의 점검 판단 중 입력과 맞는 것만. 비면 코드 기본(입력 순서, 모두 고침)이다.
+    order: 선호 문제 별칭(먼저 볼 순서). worth: 별칭 → (fix|keep, 이유 코드). picks: 별칭 → (안 번호, 이유 코드)."""
+    order: tuple[str, ...] = ()
+    worth: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+    picks: Mapping[str, tuple[int, str]] = field(default_factory=dict)
+
+
+def _reason_fits(reason: str, kind: str, options: Sequence[Mapping[str, Any]]) -> bool:
+    """이유 코드가 입력의 사실과 모순되지 않는가. 모델이 낸 코드가 입력으로 설명되지 않으면 그 판단은 버린다."""
+    moved = [o.get("moved", 0) for o in options]
+    leftovers = [o.get("remaining") or [] for o in options]
+    if reason == "FIXES_REQUEST":
+        return kind == "goal"
+    if reason == "FIXES_MEMBER_NEED":
+        return kind == "condition"
+    if reason == "SMALL_CHANGE":
+        return any(m <= 1 and not left for m, left in zip(moved, leftovers))
+    if reason == "TOO_MANY_MOVES":
+        return min(moved) >= 2
+    if reason == "LEAVES_PROBLEMS":
+        return all(leftovers)
+    return True
+
+
+def _pick_fits(reason: str, chosen: Mapping[str, Any], options: Sequence[Mapping[str, Any]]) -> bool:
+    """고른 안이 그 기준에서 다른 안보다 나쁘지 않고 적어도 하나보다 낫다."""
+    metric = {
+        "FEWER_MOVES": lambda o: -o.get("moved", 0),
+        "FEWER_REMAINING": lambda o: -len(o.get("remaining") or []),
+        "SOLVES_MORE": lambda o: len(o.get("solves") or []),
+    }.get(reason)
+    if metric is None:
+        return False
+    values = [metric(o) for o in options]
+    return metric(chosen) == max(values) and metric(chosen) > min(values)
+
+
+def verify_course_review(review_input: Mapping[str, Any], call: CourseReviewCall) -> CourseReviewDecision:
+    """모델의 review 출력을 입력과 대조한다. 순수 함수이고 모델을 부르지 않는다(재요청 없음).
+    review_input은 지휘 턴 입력의 `review`: {"problems": [{alias, kind, strength, options: [{no, moved, solves, remaining}]}]}.
+    - 하드 문제(strength=hard)와 입력에 없는 별칭은 무시한다 — 순서도 판단도 안 지우기도 모델 몫이 아니다.
+    - 안이 없는 문제(「크게 바꿔야 해요」)는 판단할 것이 없어 무시한다.
+    - 같은 문제의 둘째 판단은 무시한다. 이유 코드는 판단 종류의 목록에 있고 입력의 사실과 맞아야 한다.
+    - 그대로(keep)로 정한 문제의 안 고르기는 무시한다.
+    걸러진 자리는 코드 기본이 이어받는다."""
+    soft = {p["alias"]: p for p in review_input.get("problems", []) if p.get("strength") == "soft" and p.get("options")}
+    order: list[str] = []
+    for alias in call.order:
+        if alias in soft and alias not in order:
+            order.append(alias)
+    worth: dict[str, tuple[str, str]] = {}
+    for v in call.verdicts:
+        p = soft.get(v.problem)
+        allowed = COURSE_REVIEW_FIX_REASONS if v.worth == "fix" else COURSE_REVIEW_KEEP_REASONS
+        if p is None or v.problem in worth or v.reason not in allowed or not _reason_fits(v.reason, p["kind"], p["options"]):
+            continue
+        worth[v.problem] = (v.worth, v.reason)
+    picks: dict[str, tuple[int, str]] = {}
+    for c in call.picks:
+        p = soft.get(c.problem)
+        if p is None or len(p["options"]) < 2 or c.problem in picks or worth.get(c.problem, ("fix",))[0] == "keep":
+            continue
+        chosen = next((o for o in p["options"] if o.get("no") == c.option), None)
+        if chosen is None or c.reason not in COURSE_REVIEW_PICK_REASONS or not _pick_fits(c.reason, chosen, p["options"]):
+            continue
+        picks[c.problem] = (c.option, c.reason)
+    return CourseReviewDecision(tuple(order), worth, picks)

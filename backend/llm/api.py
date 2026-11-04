@@ -15,6 +15,10 @@
   forbidden으로 넘긴다(목록의 정본은 agent.core). 실패는 예외가 아니라 failed다.
 - agent.course(v2 동선 에이전트, #334): agent_course_turn(턴 하나 → 다음 행동, CourseTurn), course_set_goals(요청 한 줄 → 목표),
   course_direct_turn(지휘 턴). 실패는 AgentCallFailed.
+  점검(review) 판단(#1326): 입력에 `review: {"problems": [{alias, kind, strength, options: [{no, moved, solves, remaining}]}]}`를 담아
+  course_direct_turn을 부르면 모델은 action.tool="review"(order, verdicts, picks)로 답한다. 새 호출이 아니라 지휘 턴 한 번이다(상한 그대로).
+  verify_course_review(review["…"], call)가 입력과 대조해 CourseReviewDecision(order, worth, picks)을 낸다 — 하드 문제와 입력에 없는
+  별칭, 입력과 모순되는 이유는 버린다. 비면 코드 기본(입력 순서, 모두 고침). review.review의 order·worth 훅에 연결하는 것은 agent/course 몫.
 
 고정 응답 스텁(dev)과 실제 모델(real) 중 무엇을 쓸지는 이 모듈이 아니라 받는 쪽의 Gateway(recommend/deps.py,
 agent/deps.py)가 planner 인자로 고른다.
@@ -38,7 +42,7 @@ from sqlalchemy.orm import Session
 from llm import usage as _usage
 from llm.prompts import DIAGNOSIS_TOOLS, PLAN_EVIDENCE_PROMPT
 from llm.schemas import (
-    AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
+    AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseReviewCall, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
     PlanningOutput, StatusCategory, StatusOutput, VerifiedStatement, WebAnswer, WebCheckOutput, WebCheckResult,
 )
 from llm.service import (
@@ -60,7 +64,9 @@ from llm.service import (
     web_check,
     agent_course_turn,
     agent_status,
+    CourseReviewDecision,
     course_direct_turn,
+    verify_course_review,
     course_set_goals,
     fixed_course_goals_planner,
     real_course_direct_planner,
@@ -89,6 +95,7 @@ __all__ = [
     "CourseTurn", "CourseTurnPlanner", "agent_course_turn", "real_course_turn_planner",
     "CourseGoalSet", "CourseGoalsPlanner", "course_set_goals", "fixed_course_goals_planner", "real_course_goals_planner",
     "CourseDirectTurn", "CourseDirectPlanner", "course_direct_turn", "real_course_direct_planner",
+    "CourseReviewCall", "CourseReviewDecision", "verify_course_review",
     "usage_context", "mark_discarded", "plan_deadline", "anonymize_by_user", "reassign_user", "purge_old",
 ]
 
