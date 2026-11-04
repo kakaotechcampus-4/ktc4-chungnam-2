@@ -345,8 +345,12 @@ def _text(line) -> str:
 
 
 def _later(hours: float) -> datetime:
-    """관찰 시각. 반대 뒤 기준 시간(이벤트가 적으면 3시간 × D-day 계수 1.0, 명세 6.1)을 넘기려고 앞으로 당긴다."""
-    return datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=hours)
+    """관찰 시각. 반대 뒤 기준 시간(이벤트가 적으면 3시간 × D-day 계수 1.0, 명세 6.1)을 넘기려고 앞으로 당긴다.
+
+    KST 자정 전 한 시간에 걸리면 한 시간 더 민다. 뒤따르는 관찰(+10분)이 자정을 넘으면 현황 칸의 dday가 바뀌어
+    「칸이 그대로면 문단을 다시 부르지 않는다」를 보는 단언이 저녁 8시 무렵 CI에서만 깨진다."""
+    t = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=hours)
+    return t + timedelta(hours=1) if kst_date(t) != kst_date(t + timedelta(hours=1)) else t
 
 
 def _stall_map(e2e, *, against):
