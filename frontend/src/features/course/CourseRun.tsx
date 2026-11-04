@@ -163,7 +163,7 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
         <p className="break-keep text-body text-ink-700">반영하지 못한 요청: {run.unmatched.join(', ')}</p>
       )}
 
-      {mode !== 'plan' && <FixCards mapId={mapId} run={run} names={names} />}
+      {mode !== 'plan' && <FixCards mapId={mapId} run={run} names={names} onRetry={onRetry} />}
 
       {/* review 의 days 는 지금 일정 그대로라 확정 탭과 겹친다 — 카드만 보인다. */}
       {mode !== 'review' && (

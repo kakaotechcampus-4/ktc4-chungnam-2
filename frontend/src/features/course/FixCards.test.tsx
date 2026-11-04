@@ -100,6 +100,7 @@ describe('AI 코스 — 모드별 결과(#1322)', () => {
     await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
     await user.click(await screen.findByRole('button', { name: '둘째 날에 넣기' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('일정이 바뀌었어요')
+    expect(screen.getByRole('button', { name: '다시 점검' })).toBeInTheDocument()
     expect(screen.queryByText('반영했어요')).not.toBeInTheDocument()
   })
 })

@@ -13,7 +13,7 @@ import { checkedOf, dayOrdinal, fixesOf, hasMoves, isFill, sortFixes, stalePromp
  * 고칠 점 카드와 「괜찮아요」(#1322, 결정 #1237). 문장은 모두 서버가 만든 것을 그대로 보인다.
  * 「반영」은 카드마다 사람이 누른다 — 서버에 반영 API가 없어 지금 일정을 읽어 moves대로 옮기고 일정 API로 저장한다.
  */
-export default function FixCards({ mapId, run, names }: { mapId: string; run: CourseRunDto; names: Map<string, string> }) {
+export default function FixCards({ mapId, run, names, onRetry }: { mapId: string; run: CourseRunDto; names: Map<string, string>; onRetry: () => void }) {
   const fixes = sortFixes(fixesOf(run))
   const checked = checkedOf(run)
   // 날짜 → 「첫째 날」. 지도의 날짜 순서는 run.days 와 같다.
@@ -28,7 +28,7 @@ export default function FixCards({ mapId, run, names }: { mapId: string; run: Co
         <ul aria-label="고칠 점" className="space-y-2">
           {fixes.map((fix) => (
             <li key={fix.id}>
-              <FixCard mapId={mapId} runId={run.id} fix={fix} names={names} dayName={dayName} />
+              <FixCard mapId={mapId} runId={run.id} fix={fix} names={names} dayName={dayName} onRetry={onRetry} />
             </li>
           ))}
         </ul>
@@ -55,12 +55,14 @@ function FixCard({
   fix,
   names,
   dayName,
+  onRetry,
 }: {
   mapId: string
   runId: string
   fix: CourseFixDto
   names: Map<string, string>
   dayName: (date: string | null) => string
+  onRetry: () => void
 }) {
   const queryClient = useQueryClient()
   const applied = useAppliedFixStore((s) => s.applied[runId]?.includes(fix.id) ?? false)
@@ -117,9 +119,14 @@ function FixCard({
             </button>
           )}
           {stale && (
-            <p role="alert" className="break-keep text-body text-warn-text">
-              {stalePrompt}. 다시 점검해 주세요
-            </p>
+            <div className="space-y-2">
+              <p role="alert" className="break-keep text-body text-warn-text">
+                {stalePrompt}
+              </p>
+              <button type="button" onClick={onRetry} className="btn-outline btn-md">
+                다시 점검
+              </button>
+            </div>
           )}
           {state.error != null && !stale && <ErrorText message="일정에 반영하지 못했어요" error={state.error} />}
         </>
