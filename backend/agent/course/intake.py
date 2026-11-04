@@ -55,6 +55,8 @@ class TripBuild:
     excluded: tuple[Excluded, ...]
     locks: Mapping[str, str] = field(default_factory=dict)    # 사람이 날짜에 넣은 장소 별칭 → 날짜 별칭. AI는 옮기지 못한다
     schedule: Optional[Course] = None      # mode가 review일 때만: 사람이 정한 일정 그대로(날짜 위치별 장소 별칭, 그날 순서는 visit_order)
+    placed: Course = ()                    # 모드와 상관없이 사람이 날짜에 넣은 장소만(날짜 위치별, 그날 순서는 visit_order). 미배정은 없다.
+                                           # 조언의 끼워 보기(agent.core.schedule_fits, #1356)가 읽는다. review면 schedule과 같다
 
     @property
     def mode(self) -> Optional[str]:
@@ -90,10 +92,10 @@ def build_trip(
         f"p{i + 1}": day_alias(day_index[p.scheduled_date])
         for i, p in enumerate(routable) if p.scheduled_date in day_index
     }
-    schedule = None
-    if locks and len(locks) == len(routable):               # 모두 넣은 일정(review) — 점검이 그대로 읽는다. 순서 없는 장소는 확정 순서대로 뒤에
-        order = {f"p{i + 1}": (p.visit_order is None, p.visit_order or 0, i) for i, p in enumerate(routable)}
-        schedule = tuple(
-            tuple(sorted((a for a, d in locks.items() if d == day_alias(k)), key=order.__getitem__)) for k in range(len(days))
-        )
-    return TripBuild(Trip(places, tuple(days), tuple(member_constraints), unknown_hours), excluded, locks, schedule)  # type: ignore[arg-type]
+    order = {f"p{i + 1}": (p.visit_order is None, p.visit_order or 0, i) for i, p in enumerate(routable)}   # 순서 없는 장소는 확정 순서대로 뒤에
+    placed = tuple(
+        tuple(sorted((a for a, d in locks.items() if d == day_alias(k)), key=order.__getitem__)) for k in range(len(days))
+    )
+    schedule = placed if locks and len(locks) == len(routable) else None   # 모두 넣은 일정(review) — 점검이 그대로 읽는다
+    trip = Trip(places, tuple(days), tuple(member_constraints), unknown_hours)  # type: ignore[arg-type]
+    return TripBuild(trip, excluded, locks, schedule, placed)

@@ -20,7 +20,9 @@ from sqlalchemy import text
 from agent import constants, core, flows, service
 from agent.models import AgentCursor, AgentReasonSummary, AgentRun, AgentSettings, AgentSuggestion
 from agent.schemas import AgentSuggestion as AgentSuggestionSchema
+from agent.schemas import DiagnosisOutput
 from agent.tests import rows
+from agent.tests.test_flows_model import FakeGateway
 from agent.tests.world import World, fake_places, real_now
 from maps import api as maps_api
 from places import api as places_api
@@ -275,8 +277,20 @@ def test_no_signal_outcome(world):
 
 # ---------------------------------------------------------------- 7. 재확인으로 stale
 
+def _search_cafe(inp, call_tool):
+    """카페 공백(후보 핀이 있어 모델 진단, #1356)에 「카페 검색」을 내는 진단 대역."""
+    pin_id = inp["candidates"][0]["pin_id"]
+    return DiagnosisOutput.model_validate({
+        "decision": "suggest", "diagnosis": inp["diagnosis"], "signal_id": inp["signal_id"],
+        "claims": [{"id": "c1", "kind": "ref", "object": "pin", "ref_id": pin_id}],
+        "advice": [{"text": "{c1} 핀이 지도에 있어요", "basis": ["c1"], "is_guess": False}],
+        "actions": [{"type": "search_place", "category": None, "pin_ids": None, "basis": ["c1"]}],
+    })
+
+
 def test_state_change_before_save_makes_it_stale(world, monkeypatch):
-    """관찰(읽기) 뒤 저장 전에 카페가 확정되면 카페 공백 초안을 버린다 — outcome=stale, 제안 없음."""
+    """관찰(읽기) 뒤 저장 전에 카페가 확정되면 카페 공백 초안을 버린다 — outcome=stale, 제안 없음. 카페 핀이 후보라 공백은 모델
+    진단이다(#1356) — 대역이 제안을 낸다."""
     map_id = world.gap_map()
     cafe = world.pin(map_id, category="카페")
     world.event(map_id)
@@ -292,7 +306,7 @@ def test_state_change_before_save_makes_it_stale(world, monkeypatch):
 
     monkeypatch.setattr(maps_api, "lock_map_if_alive", confirm_then_lock)
 
-    tick(world)
+    flows.run_tick(world.now, session_factory=world.factory, gateway=FakeGateway(diagnose=_search_cafe))
 
     assert map_run(world, map_id).outcome == "stale"
     assert world.rows(AgentSuggestion, map_id=map_id) == []

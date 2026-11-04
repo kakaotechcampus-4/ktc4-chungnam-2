@@ -128,6 +128,7 @@ def test_accept_activity_followup_accept_then_declaration(world):
     run = world.rows(AgentRun, id=second.run_id)[0]
     assert [c["call_id"] for c in run.tool_calls][0] == "f1"
     assert run.tool_calls[0]["result"] == {"since_minutes": 49, "new_pins": 0}
+    assert inp["followup_check"] == run.tool_calls[0]["result"]   # 모델 입력과 f1이 같은 값(#1347)
     assert run.priority["final_order"][0] == next(s["id"] for s in run.signals if s["features"].get("attempt") == 1)
 
     shown = _state(world, map_id, t1).active_suggestion

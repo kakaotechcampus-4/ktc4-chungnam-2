@@ -26,10 +26,14 @@ from places import api as places_api
 
 class PlacesOpeningHours:
     """places.api가 읽은 place_hours로 요일별 상태를 돌려준다. 행이 없는 장소는 None(모름) — 값을 지어내지 않는다.
-    판정 규칙은 places.core가 한 곳에서 정한다. 호출마다 짧은 세션을 places.api가 연다."""
+    판정 규칙은 places.core가 한 곳에서 정한다. db가 없으면 호출마다 짧은 세션을 places.api가 연다. 「핑고 AI 조언」의 관찰은 스냅샷
+    세션(db)을 넘겨 같은 시점으로 읽는다(#1356)."""
+
+    def __init__(self, db: Optional[Session] = None):
+        self._db = db
 
     def get_opening_hours(self, place_ids: Sequence[str]) -> Mapping[str, Optional[Mapping[int, DayStatus]]]:
-        found = places_api.get_week_open_status(list(place_ids))
+        found = places_api.get_week_open_status(list(place_ids), db=self._db)
         return {pid: found.get(pid) for pid in place_ids}
 
 
