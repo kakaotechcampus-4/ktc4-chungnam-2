@@ -26,6 +26,27 @@ function town(mapId: string | undefined) {
   return (mapId && store.maps[mapId]?.region?.label) || "제주시";
 }
 
+// #1385 — 추천 반경(m). 모든 카테고리 기본 3000, 넓히기 +1000, 상한 5000(docs/constraints.md 「반경 넓히기 상수」). 실서버 정본은 recommend.core.
+const RADIUS_DEFAULT_M = 3000;
+const RADIUS_STEP_M = 1000;
+const RADIUS_LIMIT_M = 5000;
+
+/** run의 현재 반경과 넓히면 바뀔 반경(상한이면 null). 시드로 만든 run에는 칸이 없어 기본값으로 본다. */
+function radiusFields(run: { default_radius_m?: number }) {
+  const m = run.default_radius_m ?? RADIUS_DEFAULT_M;
+  return { default_radius_m: m, next_default_radius_m: m >= RADIUS_LIMIT_M ? null : m + RADIUS_STEP_M };
+}
+
+// #1385 OUTSIDE_TRIP_REGION — 실서버는 places가 시·도 경계로 「center 기준 3km 원 전체가 여행 지역 밖」을 판정한다.
+// 목 서버는 지도의 지역을 시·도 경계로 알지 못한다(지도 region은 label뿐). 그래서 마법 값을 쓴다:
+// center가 부산(35.1587, 129.1604)이고 지도의 지역 label이 서울이면 지역 밖이다. 지도에 지역이 없으면 막지 않는다.
+const BUSAN_CENTER = { lat: 35.1587, lng: 129.1604 };
+function isOutsideTripRegion(mapId: string, center: { lat: number; lng: number } | null) {
+  const label = store.maps[mapId]?.region?.label;
+  if (!center || !label) return null;
+  return label.includes("서울") && center.lat === BUSAN_CENTER.lat && center.lng === BUSAN_CENTER.lng ? label : null;
+}
+
 // 지역 이름에 "춘천"이 들어간 지도는 정예 장소가 없는 지역으로 흉내 낸다(curated_nearby 0)
 function curatedNearby(mapId: string) {
   return town(mapId).includes("춘천") ? 0 : 12;
@@ -77,7 +98,7 @@ export const recommendHandlers = [
     const result: Record<string, Record<string, unknown>> = {};
     for (const category of RECOMMEND_CATEGORIES) {
       const answered = opinionPinCount(mapId, category);
-      result[category] = { ready: answered >= REQUIRED_OPINION_PINS, answered_count: answered, required_count: REQUIRED_OPINION_PINS };
+      result[category] = { ready: answered >= REQUIRED_OPINION_PINS, answered_count: answered, required_count: REQUIRED_OPINION_PINS, radius_m: RADIUS_DEFAULT_M };
       if (answered > 0) { // 의견 핀이 있어야 기본 지역이 있다(#798)
         const curated = curatedNearby(mapId);
         result[category].curated_nearby = curated;
@@ -106,6 +127,7 @@ export const recommendHandlers = [
         created_at: runCreatedAt[r.id] ?? new Date(0).toISOString(),
         candidate_count: r.status === "done" ? (store.candidates[r.id] ?? []).length : 0,
         published_count: (store.candidates[r.id] ?? []).filter((c) => c.published_pin_id).length, // 실서버처럼 candidates.published_pin_id로 센다(#469, #761)
+        ...radiusFields(r), // #1164 지난 추천에서도 지금 반경
       }))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
     return HttpResponse.json(list.slice(0, limit));
@@ -120,6 +142,9 @@ export const recommendHandlers = [
       return apiError(422, "VALIDATION_ERROR", "추천을 받을 수 없는 위치예요");
     }
     const centerKey = center ? `${center.lat},${center.lng}` : "";
+    // #1385 — 원 전체가 여행 지역 밖이면 422(걸치기만 하면 막지 않는다). 크레딧·run을 쓰기 전에 거절한다
+    const outsideLabel = isOutsideTripRegion(mapId, center);
+    if (outsideLabel) return apiError(422, "OUTSIDE_TRIP_REGION", "여행 지역 밖이에요", { region_label: outsideLabel });
     // #811 — 같은 Idempotency-Key는 첫 요청이 만든 run을 그대로 돌려준다. 마법 키 in-progress-key는 첫 요청이 아직 모델을 기다리는 중인 상태를 낸다
     const idemKey = request.headers.get("Idempotency-Key");
     if (idemKey === "in-progress-key") return apiError(409, "REQUEST_IN_PROGRESS", "같은 요청을 처리하고 있어요. 잠시 뒤 다시 확인할게요");
@@ -129,7 +154,7 @@ export const recommendHandlers = [
       return apiError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 키로 다른 요청을 보냈어요");
     }
     // 같은 키의 재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다
-    if (seen && store.runs[seen.runId]) return HttpResponse.json({ ...store.runs[seen.runId] }, { status: 202 });
+    if (seen && store.runs[seen.runId]) return HttpResponse.json({ ...store.runs[seen.runId], ...radiusFields(store.runs[seen.runId]) }, { status: 202 });
     const answered = opinionPinCount(mapId, body.category);
     if (answered < REQUIRED_OPINION_PINS) {
       return apiError(409, "NOT_READY", `의견 핀 ${answered}곳 · ${REQUIRED_OPINION_PINS - answered}곳 더 필요`, {
@@ -143,7 +168,7 @@ export const recommendHandlers = [
     if (blocked) return blocked;
     const runId = nextId("run");
     chargeCredit("recommend_run", runId); // 실서버는 run 저장과 같은 트랜잭션. 같은 Idempotency-Key의 재사용은 위에서 돌아가 다시 빠지지 않는다
-    store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
+    store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1, ...radiusFields({}) };
     store.runRequestedBy[runId] = ME_USER_ID;
     if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = { runId, mapId, category: body.category, execute: Boolean(body.execute), center: centerKey };
     runCreatedAt[runId] = new Date().toISOString();
@@ -158,7 +183,7 @@ export const recommendHandlers = [
       store.runs[runId].status = "done";
       if (found === 0) refundCredit("recommend_run", runId); // #1015 첫 실행이 0곳이면 같은 트랜잭션에서 돌려준다
     }
-    return HttpResponse.json({ ...store.runs[runId] }, { status: 202 });
+    return HttpResponse.json({ ...store.runs[runId], ...radiusFields(store.runs[runId]) }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/evidence", ({ params }) => {
@@ -244,7 +269,7 @@ export const recommendHandlers = [
     snapshotRun(runId, found);
     run.status = "done";
     if (firstExecution && found === 0) refundCredit("recommend_run", runId); // #1015 첫 실행만(재추천·반경 넓히기는 차감이 없다)
-    return HttpResponse.json({ ...run }, { status: 202 });
+    return HttpResponse.json({ ...run, ...radiusFields(run) }, { status: 202 });
   }),
 
   http.get("*/runs/:runId/result", ({ params }) => {
@@ -282,16 +307,18 @@ export const recommendHandlers = [
     const runId = params.runId as string;
     const run = store.runs[runId];
     if (!run) return apiError(404, "RUN_NOT_FOUND", "run을 찾을 수 없습니다");
-    const radius = run.default_radius_walk_min ?? 15;
-    if (radius >= 30) return apiError(409, "WIDEN_LIMIT", "더 넓히면 여행지를 벗어나요");
-    run.default_radius_walk_min = radius + 5; // docs/constraints.md: +5분/회, 상한 30분
+    const radius = run.default_radius_m ?? RADIUS_DEFAULT_M;
+    if (radius >= RADIUS_LIMIT_M) return apiError(409, "WIDEN_LIMIT", "더 넓히면 여행지를 벗어나요");
+    run.default_radius_m = radius + RADIUS_STEP_M; // docs/constraints.md: +1000m/회, 상한 5000m(#1385)
+    run.next_default_radius_m = radiusFields(run).next_default_radius_m;
+    run.default_radius_walk_min = Math.round(run.default_radius_m / 80); // 호환용(곧 없앤다) — 80m/분 근사
     run.status = "executing";
     // 가드레일 4·5-6-1: 기본값 원만 넓힌다 — 목 서버는 재계산 결과로 후보를 다시 채워 넣는다
     const regionLabel = store.regions[runId]?.[0]?.label ?? "제주시 권역";
     store.candidates[runId] = buildCandidates(regionLabel);
     snapshotRun(runId, store.candidates[runId].length);
     run.status = "done";
-    return HttpResponse.json({ ...run }, { status: 202 });
+    return HttpResponse.json({ ...run, ...radiusFields(run) }, { status: 202 });
   }),
 
   http.post("*/runs/:runId/retry", ({ params }) => {
@@ -310,7 +337,7 @@ export const recommendHandlers = [
     const fresh = buildCandidates(regionLabel).filter((c) => !keptNames.has(c.place_name));
     store.candidates[runId] = [...kept, ...fresh];
     snapshotRun(runId, fresh.length);
-    return HttpResponse.json({ ...run }, { status: 202 });
+    return HttpResponse.json({ ...run, ...radiusFields(run) }, { status: 202 });
   }),
 
   http.post("*/candidates/:candidateId/publish", ({ params }) => {

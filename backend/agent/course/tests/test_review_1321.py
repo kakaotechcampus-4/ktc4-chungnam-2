@@ -27,7 +27,7 @@ def test_clean_schedule_has_no_problems_and_lists_checked_kinds():
     spread = (("p1", "p3"), ("p4", "p2"), ("p5", "p6"))       # 식당 2곳을 서로 다른 날에 — 식당을 더 고르게 나눌 수 없다
     result = review.review(trip(), spread, HOURS)
     assert result.problems == () and result.fixes == ()
-    assert result.checked == ("closed", "travel", "cluster", "meal")
+    assert result.checked == ("closed", "travel", "cluster")      # 식당이 날짜 수보다 적어 비는 날이 있으면 식사 줄은 「괜찮아요」에 없다(#1392, 작업 기록의 식사 줄과 같은 기준)
     assert "member" not in result.checked and "goal" not in result.checked      # 대상이 없는 종류는 「괜찮아요」를 내지 않는다
 
 
@@ -172,3 +172,38 @@ def test_generated_schedules_invariants(seed):
         assert fix.problem.key not in {p.key for p in after}
         assert {p.key for p in after} <= before
         assert fix.moved == len(fix.moves) <= (len(course[0]) + len(course[1]) if fix.step == 1 else fix.step) or fix.step == 1
+
+
+def test_meal_checked_only_when_no_day_lacks_a_restaurant_1392():
+    t = trip()
+    meals = [p.alias for p in t.places if p.category == core.MEAL_CATEGORY]
+    assert len(meals) < len(t.days)                                        # 이 지도는 식당이 날짜 수보다 적다
+    result = review.review(t, (("p1", "p3"), ("p4", "p2"), ("p5", "p6")), HOURS)
+    assert "meal" not in result.checked and core.meal_less_days(t, (("p1", "p3"), ("p4", "p2"), ("p5", "p6")))
+
+
+def test_day_swap_sentence_uses_final_consonant_josa_1392():
+    t = trip()
+    fix = review.Fix(review.Problem("closed", ("closed", "p4"), "d2", ("p4",)), 1,
+                     (review.Move("p1", 0, 2), review.Move("p5", 2, 0)))     # 첫째 날 (월) ↔ 셋째 날 (수)
+    assert worklog._move_text(t, fix) == "첫째 날 (월)과 셋째 날 (수)를 통째로 바꿔 보는 중이에요"
+    travel = review.Problem("travel", ("travel", "d2"), "d2")
+    assert worklog.problem_text(t, (), travel) == "둘째 날 (화)는 이동이 상한을 넘어요"
+    assert worklog.problem_text(t, (), review.Problem("member", ("member", "d1"), "d1")).startswith("첫째 날 (월)은 ")
+
+
+def test_closing_skips_cannot_solve_line_when_a_card_solves_it_1392():
+    from types import SimpleNamespace as NS
+    from agent.course import direct
+    from agent.course.core import Trip
+    from agent.course.tests.test_walk_repair import TestInfeasible, _NoLookup, far_line, state_of
+    t = Trip(places=far_line(5), days=TestInfeasible.TWO_DAYS)
+    s = state_of(t, (("p1", "p2", "p3"), ("p4", "p5")))
+    result = direct.run_direct(s, decide=None, hours=_NoLookup(), unmatched_count=0)
+    assert result.chosen.walk_infeasible
+    marker = "모든 경우를 따져"
+    solved, unsolved = NS(fixes=[NS(step=1)]), NS(fixes=[NS(step=None)])
+    text = lambda reviewed: " ".join(r.text for r in worklog.Narrator(t, (), ()).closing(result, reviewed=reviewed))
+    assert marker in text(None) and "넣어 둔 날 그대로는" not in text(None)       # plan 모드는 그대로
+    assert marker not in text(solved)                                              # 옮기면 풀리는 카드가 있으면 「풀 수 없다」를 내지 않는다
+    assert marker in text(unsolved) and "넣어 둔 날 그대로는" in text(unsolved)    # 카드가 없으면 고정 기준임을 밝힌다
