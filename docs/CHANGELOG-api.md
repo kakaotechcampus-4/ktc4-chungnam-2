@@ -2,6 +2,49 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-04, `GET /maps/{mapId}/recommend/readiness` — 선택 쿼리 `center_lat`·`center_lng` 추가 (#1331)
+
+- 지도 중심 앵커 추천이 기존 핀 기반 위치 기준을 **run 생성에서 대체**한다(#1331, 사용자 결정 2026-11-04). 이 요청에는 상위 호환 선택 쿼리를 더했다: `center_lat`·`center_lng`(함께, 위도 33~39·경도 124~132). 있으면 `curated_nearby`를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다.
+- 하나만 보내거나 범위 밖이면 422 `VALIDATION_ERROR`. 응답 모양은 그대로다. `ready`·`answered_count`(의견 핀 수)는 위치와 무관하다.
+- FE: 추천 시작 화면이 readiness를 부를 때 run 생성에 보낼 중심과 같은 값을 보내면 「근처 정예 수」가 실제 추천 범위와 일치한다. 안 보내도 동작한다.
+- 정책: `POST /maps/{mapId}/runs`의 `center`는 **필수가 된다** — 계약 필수화는 FE가 `center`를 보내기 시작한 뒤에 별도 PR로 한다(그때까지 선택). 중심이 없는 호출(readiness·미리 돌려 보기·AI 조언)에서만 기존 핀 기반 로직이 남는다. 교체 전 로직 보존: 태그 `legacy/recommend-pin-anchor`.
+
+## 2026-11-04, 「핑고 AI 조언」 버튼에서 「핀 보기」 빼기, 웹 확인은 「모름」 줄마다 (#1317)
+
+- 스키마는 그대로다(`AgentAction.type` enum도 그대로). 서버가 내리는 값만 바뀐다.
+- 정체·갈림 제안의 버튼은 「{카테고리} 추천 받기」(`open_recommend`) 또는 「{카테고리} 검색」(`search_place`) 하나다. 카테고리 공백도 버튼 하나다. 이 셋에서 `show_pins`는 더 오지 않는다. 반응 공백의 「미확인 핀 보기」(`show_pins`)는 그대로다.
+- `AgentFactLine.web`: 전에는 제안마다 첫 「모름」 줄 하나에만 왔다. 이제 value가 unknown인 줄마다 올 수 있다(줄이 많아야 2개라 많아야 두 줄). 모양은 그대로다.
+- `AgentSuggestion.steps`: 웹 확인 줄이 줄마다 하나씩, 많아야 두 줄이다.
+- FE: 바꿀 것 없음. `show_pins` 처리는 반응 공백 때문에 남겨 둔다. 서버 구현은 #1318(PR #1320), 지시문은 #1319(PR #1338).
+
+## 2026-11-04, `POST /maps/{mapId}/runs` — 선택 필드 `center`(지도 중심에서 추천) 추가 (#1331)
+
+- 요청 본문에 선택 필드 `center: {lat, lng} | null`을 더했다. **상위 호환** — 없으면 지금 동작(그 카테고리 핀들이 앵커)이다.
+- 있으면 그 run의 앵커는 이 점 하나다: 후보를 찾는 원의 중심(카테고리 기본 반경, 넓히기도 같은 점에서), 동점 거리 비교, 지도 여행 지역이 없을 때의 시·도 판정. 시작 조건(그 카테고리 의견 핀 1곳 이상, 미충족 409 `NOT_READY`)·크레딧·멱등·결과 가시성은 그대로다. 서버가 중심을 run에 저장해 `retry`·`widen`이 같은 점을 쓰고, 응답에 좌표는 없다.
+- 새 에러: **422 `VALIDATION_ERROR`** — `center`가 위도 33~39·경도 124~132 밖이거나 시·도를 정할 수 없는 곳. 멱등키의 요청 동일성에 `center`가 들어간다(같은 키로 다른 중심은 409 `IDEMPOTENCY_CONFLICT`).
+- FE 사용: 카테고리 버튼(「여기서 음식점」 등)을 누른 순간 보이는 영역의 중심(모바일은 하단 시트에 가린 부분을 뺀 중심)을 `center`로 보낸다. 시작 조건 미충족 안내 문구는 FE가 만든다: 「장소 핀을 찍고 최소 1개의 의사 표시(♥ 또는 🚫)를 해야 추천 기능이 시작돼요」. 정본 이슈 #1331.
+- 목 서버는 범위 밖 `center`에 422를 내고 키의 동일성에 `center`를 포함한다. 서버 구현은 backend/recommend 후속이다.
+
+## 2026-11-04, `CourseRun`에 일정 기준 모드와 고칠 점 카드 추가, stale는 일정 version 기준으로 (#1237)
+
+- 결정(#1237, 2026-11-04): AI 코스 버튼은 하나이고 확정 리스트의 일정 상태에 따라 하는 일이 다르다. 서버가 요청 때 정하고 응답의 `mode`로 알려 준다 — `plan`(날짜에 넣은 장소 없음, 짜기) · `fill`(일부만 넣음, 남은 곳 채우기) · `review`(다 넣음, 점검과 최소 수정). 사람이 날짜에 넣은 장소는 AI가 바꾸지 않고, 일정은 사람이 카드마다 「반영」을 누를 때만 바뀐다.
+- `CourseRun`에 필수 칸 4개를 더했다: `mode`, `headline`(결과 화면 머리 문구, 모드별 서버 템플릿, 진행 중·failed는 null), `fixes[]`(고칠 점 카드), `checked[]`(점검했고 문제 없는 항목 — 「괜찮아요」). `plan`은 `fixes`·`checked`가 빈 배열이다. 새 스키마는 `CourseFix`, `CourseMove`, `CourseChecked`다.
+- `CourseFix`: `id`, `kind`(`closed`·`travel`·`member`·`condition`·`goal`·`cluster`·`meal`·`unassigned` — `member`는 요청 때 넣은 구성원 도보 상한 위반으로 기존 `CourseViolation.kind`와 같고 hard, `condition`은 우리 조건 요약에서 온 목표와 어긋남으로 soft), `strength`(`hard`·`soft`), `text`(문제 문장), `moves[]`(`{pin_id, from_date, to_date}` — 날 맞바꾸기는 두 날의 모든 장소, 1곳 옮기기는 1개, 2곳 맞바꾸기는 2개, `from_date` null은 아직 날짜에 안 넣은 장소), `resolved_text`(풀리는 것), `remaining_text`(남는 것), `not_fixed_reason`(고치지 않은 이유). 고치지 않기로 한 카드는 `moves`가 비고 `not_fixed_reason`만 있다. 반영은 서버 API가 아니다 — FE가 `GET /maps/{mapId}/shortlist/schedule`로 지금 일정을 읽어 `moves`대로 옮기고 같은 응답의 `version`과 함께 `PUT`으로 저장한다. 그동안 일정이 바뀌어 409 `SHORTLIST_STALE`이 오면 「일정이 바뀌었어요」 + 「다시 점검」이다. 날 맞바꾸기에서 첫날·마지막 날을 빼지 않는다(도착·출발 데이터가 없다).
+- `CourseRun.stale`: 요청 때 저장한 일정 `version`과 지금 `version`이 다르면 true다(이전에는 확정 핀 집합만 비교). 장소를 더하거나 빼도, 날짜나 순서를 옮겨도, 여행 기간이 바뀌어도 true다. 화면 문구는 「일정이 바뀌었어요」(기존 「확정 리스트가 바뀌었어요」). `POST /maps/{mapId}/courses` 요약에도 모드를 적었다.
+- 요청·에러 코드는 그대로다. 크레딧은 모드와 상관없이 코스 1번에 1이다.
+- FE: `CourseRun`의 새 칸은 필수라 목 서버가 모든 run에 싣는다. 목 서버는 확정 리스트의 일정 상태로 모드를 정하고(`contracts/mocks/handlers/course.ts`), review는 날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1 카드를 예시로 낸다. 카드를 반영해 일정 PUT을 하면 목 서버의 코스는 stale이 된다.
+- 구현 이슈: 서버 backend/agent/course #1321, 화면 frontend #1322. 서버 구현 전에는 실서버 응답에 `mode`, `headline`, `fixes`, `checked`가 모두 없을 수 있다(계약 테스트 `KNOWN_COURSE_DRIFT`에 #1321로 적었고 구현 PR이 지운다) — FE가 먼저 붙으면 `mode`가 없을 때 plan으로, `fixes`·`checked`가 없을 때 빈 배열로 그린다.
+
+## 2026-11-04, 「핑고 AI 조언」 작업 기록(`AgentSuggestion.steps`)과 살펴본 상태(`AgentState.observation`) (#1297)
+
+- `AgentSuggestion`에 선택 필드 `steps: WorkStep[]`를 더했다. 이 제안을 만들 때 핑고가 거친 단계(감지 → 순위 → 조사 → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인, 있는 것만)다. 문장은 서버 고정 문구와 숫자뿐이고 사유 글·핀 이름·URL은 없다. `agent.suggested` 페이로드에도 같은 값이 실린다. 정본 설명은 `docs/agent-v2.md` 11.3.
+- AI 코스의 작업 기록과 같은 모양이라 스키마를 `WorkStep`으로 옮기고 `CourseStep`은 그것을 가리킨다. **`CourseStep` 이름과 모양은 그대로라 코스 화면은 바꿀 것이 없다.** `role` enum도 그대로다(조언의 단계는 계산·결정·지휘·검증 중 하나).
+- `AgentState`에 선택 필드 `observation: AgentObservation {checked_at, notice}`를 더했다. `checked_at`은 마지막 관찰 시각(관찰 전이면 null), `notice`는 지금 제안이 없을 때 그 이유를 말하는 서버 고정 문구다(진단 실패, 검증에서 걸러짐, 그날 진단 횟수를 다 씀, 여행이 끝남). 제안이 있거나 모드가 꺼져 있으면 null, 낼 제안이 없었을 뿐이어도 null이다. 이벤트로 갱신하지 않고 시트를 열 때 받는다. #1072의 「장애를 따로 보여 주지 않는다」 결정을 바꿨다(`docs/agent-v2.md` 21.3).
+- 둘 다 상위 호환이다 — 서버 구현 전에는 필드가 없고, FE는 없거나 빈 목록이면 자리를 두지 않는다. 테이블 변경은 없다(렌더 때 `agent_runs`와 `agent_cursors`에서 읽는다).
+- 목 서버: 시드 제안(카테고리 공백)에 감지·순위·재확인 세 줄, 지도 `map_1`에 `observation`(시드는 제안이 있어 notice가 null). `store.agentObservation[mapId].notice`를 넣고 제안을 닫으면 문구가 실린다.
+- FE 할 일(구현 이슈): 제안 카드 아래 「핑고가 한 일 보기」 토글(코스 `WorkLog`의 줄을 공용으로), 「핑고가 n분 전에 지도를 살펴봤어요」, 제안이 없을 때 notice 한 줄, 추천 막힘 조언 500이면 「조언을 불러오지 못했어요」.
+- 서버 구현은 backend/agent 이슈.
+
 ## 2026-11-03, AI 코스 작업 기록 단계와 목표 설명을 지금 서버에 맞춤 (#1131, #1243)
 
 - `CourseStep.stage` 설명을 서버가 실제로 내는 값으로 바꿨다: 찾기·옮겨 보기·비교·결정·가정을 더하고 질문·답을 뺐다(#1131에서 되묻기를 없앴다). 값은 자유 문자열 그대로라 응답 모양은 바뀌지 않는다. 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243).

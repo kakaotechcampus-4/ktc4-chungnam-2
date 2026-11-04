@@ -237,7 +237,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
               const label = foundLabel(e.row)
               return (
                 <li key={e.row.share.url} className="flex items-center gap-2">
-                  <Checkbox checked={e.row.picked} onChange={() => imp.toggle(e.i)} disabled={Boolean(e.row.outcome) || busy}>
+                  <Checkbox checked={e.row.picked} onChange={() => imp.toggle(e.row.share.url)} disabled={Boolean(e.row.outcome) || busy}>
                     <span className="block truncate font-bold text-ink-900">{rowTitle(e.row)}</span>
                     <span className="block truncate text-xs text-ink-500">{[place?.category, place?.address].filter(Boolean).join(' · ')}</span>
                     {label && <span className="mt-0.5 block text-xs font-semibold text-[var(--good-text)]">{label}</span>}
@@ -261,7 +261,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
               const on = e.row.picked && e.row.choice?.place_id === candidate.place_id
               return (
                 <li key={e.row.share.url} className="flex items-center gap-2">
-                  <Checkbox checked={on} onChange={() => imp.choose(e.i, on ? null : candidate)} disabled={Boolean(e.row.outcome) || busy}>
+                  <Checkbox checked={on} onChange={() => imp.choose(e.row.share.url, on ? null : candidate)} disabled={Boolean(e.row.outcome) || busy}>
                     <span className="block truncate font-bold text-ink-900">{candidate.place_name}</span>
                     <span className="block truncate text-xs text-ink-500">{candidate.address}</span>
                     <span className="block truncate text-xs text-ink-500">
@@ -301,7 +301,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
           <h3 className="text-sm font-bold text-ink-900">이름 확인 필요 {needsName.length}</h3>
           <p className="text-xs text-ink-500">링크만으로는 어떤 곳인지 알 수 없어요. 같이 보낸 메시지를 보고 하나씩 찍어 주세요</p>
           <ul className="mt-1 divide-y divide-ink-100">
-            {needsName.map(({ row, i }) => (
+            {needsName.map(({ row }) => (
               <li key={row.share.url} className={`flex min-h-11 items-center gap-2 py-1.5 ${row.opened ? 'opacity-60' : ''}`}>
                 <span className="min-w-0 flex-1 space-y-0.5">
                   {/* 같은 메시지의 말은 사람이 알아보는 데만 — 화면 메모리에만 있고 보내지 않는다(#1046). */}
@@ -315,7 +315,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
                 <button
                   type="button"
                   onClick={() => {
-                    imp.markOpened(i)
+                    imp.markOpened(row.share.url)
                     onOpenOne(row.share.url)
                   }}
                   className="btn-outline btn-sm"
@@ -416,7 +416,7 @@ function SearchRow({ e, imp, busy, sameAsAbove, onSearchName }: { e: Entry; imp:
       {s?.status === 'done' && s.results.length > 0 && (
         <div role="radiogroup" aria-label={`${name} 후보`}>
           {s.results.map((p) => (
-            <Radio key={p.place_id} name={group} checked={chosen === p.place_id} onChange={() => imp.choose(e.i, p)} disabled={busy || Boolean(e.row.outcome) || !pickable(p)}>
+            <Radio key={p.place_id} name={group} checked={chosen === p.place_id} onChange={() => imp.choose(e.row.share.url, p)} disabled={busy || Boolean(e.row.outcome) || !pickable(p)}>
               <span className="block truncate text-body font-semibold text-ink-900">
                 {p.place_name}
                 {e.row.auto && chosen === p.place_id && <span className="tag tag-good ml-1.5 align-middle">{foundLabel(e.row)}</span>}
@@ -426,7 +426,7 @@ function SearchRow({ e, imp, busy, sameAsAbove, onSearchName }: { e: Entry; imp:
               </span>
             </Radio>
           ))}
-          <Radio name={group} checked={!chosen} onChange={() => imp.choose(e.i, null)} disabled={busy || Boolean(e.row.outcome)}>
+          <Radio name={group} checked={!chosen} onChange={() => imp.choose(e.row.share.url, null)} disabled={busy || Boolean(e.row.outcome)}>
             <span className="text-body text-ink-700">여기 없어요</span>
           </Radio>
         </div>

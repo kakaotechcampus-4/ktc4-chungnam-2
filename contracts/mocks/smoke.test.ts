@@ -1338,6 +1338,28 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     store.runRequestedBy["run_no_results"] = "u_2";
     expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(403);
   });
+
+  it("#1297 작업 기록: 제안에 WorkStep 모양의 단계가 붙고, 코드 유형은 감지로 시작해 재확인으로 끝난다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    const steps = state.active_suggestion.steps;
+    expect(steps.map((s: { stage: string }) => s.stage)).toEqual(["감지", "순위", "재확인"]);
+    for (const s of steps) expect(Object.keys(s).sort()).toEqual(["by", "by_detail", "role", "stage", "text"]);
+  });
+
+  it("#1297 살펴본 상태: 제안이 있으면 안내 문구가 없고, 제안이 없을 때만 최근 관찰의 문구가 실린다", async () => {
+    const notice = "이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요";
+    store.agentObservation["map_1"] = { checked_at: "2026-10-15T00:00:00.000Z", notice };
+    const withSuggestion = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(withSuggestion.observation).toEqual({ checked_at: "2026-10-15T00:00:00.000Z", notice: null });
+
+    await fetch(`${BASE}/agent/suggestions/sug_1/dismiss`, { method: "POST" });
+    const quiet = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(quiet.observation.notice).toBe(notice);
+
+    await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(off.observation.notice).toBeNull(); // 모드가 꺼져 있으면 스위치만 보인다
+  });
 });
 
 describe("#623 지도 목록에 상한을 함께", () => {
@@ -1488,6 +1510,96 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
     expect(res.status).toBe(202);
     expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(SEED_BALANCE - 6);
+  });
+});
+
+describe("#1237 AI 코스 — 일정 상태에 따라 plan·fill·review", () => {
+  const confirm = (pinId: string) =>
+    fetch(`${BASE}/maps/map_1/shortlist`, { method: "POST", body: JSON.stringify({ pin_id: pinId }) });
+  const schedule = () => fetch(`${BASE}/maps/map_1/shortlist/schedule`).then((r) => r.json());
+  /** 날짜 → 핀 id 목록으로 일정을 저장한다(나머지는 미배정). */
+  async function setSchedule(byDate: Record<string, string[]>) {
+    const cur = await schedule();
+    const itemOf = (pinId: string) => cur.items.find((i: { pin: { id: string } }) => i.pin.id === pinId).id as string;
+    const placed = Object.values(byDate).flat();
+    const rest = cur.items.map((i: { pin: { id: string } }) => i.pin.id).filter((id: string) => !placed.includes(id));
+    const groups = [...Object.entries(byDate).map(([date, pins]) => ({ date, item_ids: pins.map(itemOf) })), ...(rest.length ? [{ date: null, item_ids: rest.map(itemOf) }] : [])];
+    const res = await fetch(`${BASE}/maps/map_1/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: cur.version, groups }) });
+    expect(res.status).toBe(200);
+  }
+  async function runDone() {
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" })).json();
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    return (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+  }
+  const [d1, d2] = [store.maps["map_1"].start_date, store.maps["map_1"].end_date];
+
+  it("일정이 비어 있으면 plan — fixes·checked는 빈 배열이고 진행 중에는 headline이 null이다", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" })).json();
+    const running = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(running.mode).toBe("plan");
+    expect(running.headline).toBeNull();
+    expect(running.fixes).toEqual([]);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    const final = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(final.mode).toBe("plan");
+    expect(final.headline).toEqual(expect.any(String));
+    expect(final.fixes).toEqual([]);
+    expect(final.checked).toEqual([]);
+  });
+
+  it("일부만 넣었으면 fill — 넣은 장소는 그 날에 그대로, 미배정마다 「넣기」 카드(from_date null)", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    await setSchedule({ [d1]: ["pin_1"] });
+    const done = await runDone();
+    expect(done.mode).toBe("fill");
+    expect(done.days.find((d: { date: string }) => d.date === d1).slots[0].pin_id).toBe("pin_1");
+    expect(done.fixes).toHaveLength(2);
+    for (const fix of done.fixes) {
+      expect(fix.kind).toBe("unassigned");
+      expect(fix.strength).toBe("soft");
+      expect(fix.moves).toHaveLength(1);
+      expect(fix.moves[0].from_date).toBeNull();
+      expect(["pin_2", "pin_3"]).toContain(fix.moves[0].pin_id);
+    }
+    expect(done.steps.map((s: { stage: string }) => s.stage)).toContain("고정");
+  });
+
+  it("모두 넣었으면 review — 고칠 점 카드(날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1)와 괜찮은 항목", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    await setSchedule({ [d1]: ["pin_1"], [d2]: ["pin_2", "pin_3"] });
+    const done = await runDone();
+    expect(done.mode).toBe("review");
+    expect(done.days.find((d: { date: string }) => d.date === d1).slots.map((s: { pin_id: string }) => s.pin_id)).toEqual(["pin_1"]);
+    const [swap, move, skipped] = done.fixes;
+    expect(swap.strength).toBe("hard");
+    expect(swap.moves.map((m: { pin_id: string }) => m.pin_id).sort()).toEqual(["pin_1", "pin_2", "pin_3"]); // 두 날을 통째로
+    expect(swap.moves.find((m: { pin_id: string }) => m.pin_id === "pin_1")).toEqual({ pin_id: "pin_1", from_date: d1, to_date: d2 });
+    expect(move.moves).toHaveLength(1);
+    expect(move.moves[0].to_date).not.toBe(move.moves[0].from_date);
+    expect(skipped.moves).toEqual([]);
+    expect(skipped.not_fixed_reason).toEqual(expect.any(String));
+    expect(skipped.resolved_text).toBeNull();
+    expect(done.checked.map((c: { kind: string }) => c.kind)).toEqual(["member", "condition", "goal", "cluster"]);
+    expect(done.headline).toContain("고칠 점 3개");
+  });
+
+  it("일정이 바뀌면 stale — 날짜만 옮겨도(장소는 그대로) 낡은 코스가 된다", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await setSchedule({ [d1]: ["pin_1"], [d2]: ["pin_2"] });
+    const done = await runDone();
+    expect(done.stale).toBe(false);
+    await setSchedule({ [d1]: ["pin_2"], [d2]: ["pin_1"] });
+    const latest = await (await fetch(`${BASE}/maps/map_1/courses/latest`)).json();
+    expect(latest.stale).toBe(true);
   });
 });
 

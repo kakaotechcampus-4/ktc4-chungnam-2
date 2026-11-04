@@ -1,6 +1,7 @@
 """#811 — 「추천 받기」 멱등 키(Idempotency-Key). 예약은 모델 호출 전에 독립 트랜잭션으로 커밋되므로 실제 커밋과 연결
 둘 이상이 필요하다 — db_session(롤백 전용)이 아니라 test_engine에 직접 연결한다."""
 
+import hashlib
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -86,13 +87,15 @@ def env(test_engine, monkeypatch):
         lambda db, **kw: [{"user_id": USER, "type": "against", "reason_text": "너무 매워요", "chips": []}],
     )
 
-    def create(planner, *, map_id, category="음식점", key="key-00000001", user=USER):
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+
+    def create(planner, *, center=None, map_id, category="음식점", key="key-00000001", user=USER):
         map_ids.add(map_id)
         session = Session()
         try:
             run = flows.create_run(
                 session, map_id=map_id, category=category, requested_by=user, evidence_planner=planner,
-                idempotency_key=key,
+                idempotency_key=key, center=center,
             )
             session.commit()
             return run.id
@@ -350,3 +353,23 @@ def test_withdraw_keeps_completed_keys_and_pending_reservations(db_session):
 
 def _count_in(db, model, *conditions):
     return db.execute(select(func.count()).select_from(model).where(*conditions)).scalar_one()
+
+
+def test_center_changes_idempotency_identity():
+    a = core.idempotency_request_hash("map", "cafe", center=(35.0, 129.0))
+    assert a == core.idempotency_request_hash("map", "cafe", center=(35, 129))
+    assert a != core.idempotency_request_hash("map", "cafe", center=(35.1, 129.0))
+    assert a != core.idempotency_request_hash("map", "cafe")
+    legacy = hashlib.sha256(b"mapcafe0").hexdigest()   # 이 PR 이전의 해시 — center 없는 요청은 그대로여야 한다
+    assert core.idempotency_request_hash("map", "cafe") == legacy
+
+
+def test_center_idempotency_replay_and_conflict(env):
+    Session, create = env
+    planner = _Planner()
+    first = create(planner, map_id="idem_center", center=(35.0, 129.0))
+    assert create(planner, map_id="idem_center", center=(35.0, 129.0)) == first
+    with pytest.raises(AppError) as exc:
+        create(planner, map_id="idem_center", center=(35.1, 129.0))
+    assert exc.value.code == "IDEMPOTENCY_CONFLICT"
+    assert planner.calls == 1

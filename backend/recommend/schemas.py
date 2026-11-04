@@ -36,8 +36,14 @@ class Readiness(BaseModel):
     external_search: ExternalSearch | None = None  # curated_nearby가 0일 때만
 
 
+class RunCenter(BaseModel):
+    lat: float = Field(ge=33, le=39)
+    lng: float = Field(ge=124, le=132)
+
+
 class RunCreateRequest(BaseModel):
     category: Category
+    center: RunCenter | None = None
     execute: bool = False   # true면 근거 조립 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다(#845, #847). 생략은 false
 
 

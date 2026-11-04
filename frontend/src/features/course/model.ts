@@ -23,13 +23,6 @@ export const requestBody = (text: string): { request_text?: string } => {
   return trimmed ? { request_text: trimmed } : {}
 }
 
-/** 작업 기록의 「누가」 칩 — 색(tag-*)과 글자를 함께 쓴다. AI 파랑 · 코드 회색 · 사람 회색+사람 아이콘(주의 색은 조건 체크용이라 쓰지 않는다). */
-export const BY: Record<CourseStepDto['by'], { label: string; tag: string }> = {
-  ai: { label: 'AI', tag: 'tag-ai' },
-  code: { label: '코드', tag: 'tag-neutral' },
-  human: { label: '사람', tag: 'tag-neutral' },
-}
-
 /** 첫 줄 「이해」는 카드의 제목이 "이렇게 이해했어요"라서, 문장 앞에 같은 말이 오면 한 번만 보이게 뗀다. */
 export function understandBody(text: string): string {
   return text.replace(/^이렇게 이해했어요\s*[:：]?\s*/, '')

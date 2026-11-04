@@ -317,3 +317,54 @@ def render(
 ) -> list[str]:
     """평가·시연 스크립트용 글 줄 `[단계] 역할(누가) 내용`."""
     return [r.line() for r in records(trip, goals, unmatched, result, understood_by=understood_by, candidates=candidates)]
+
+
+# ---- 일정 점검(review, #1321) ----
+# 찾기 → 옮겨 보기 → 결정 순서로 문제마다 줄을 붙인다. 전부 코드 템플릿이다 — 장소 이름(DB)과 날짜 말(코드 표)만 들어가고 사용자가 쓴 글은 섞지 않는다(#717).
+
+_REVIEW_STEP_TRY = {1: "두 날을 통째로 바꿔 보는 중이에요", 2: "1곳만 다른 날로 옮겨 보는 중이에요", 3: "2곳을 서로 바꿔 보는 중이에요"}
+
+
+def problem_text(trip: core.Trip, goals: Sequence[goals_mod.Goal], p: Any) -> str:
+    """점검이 찾은 문제 한 줄(`review.Problem`). 카드의 text도 같은 문장을 쓴다(응답은 다음 PR)."""
+    if p.kind == "closed":
+        place = trip.place(p.places[0]).name
+        return f"{attach(place, '은/는')} {core.day_label(trip, p.day)}에 쉬어요"
+    if p.kind == "travel":
+        return f"{core.day_label(trip, p.day)}은 이동이 상한을 넘어요"
+    if p.kind == "member":
+        return f"{core.day_label(trip, p.day)}은 걷는 시간이 구성원이 고른 상한을 넘어요"
+    if p.kind in ("condition", "goal"):
+        goal = next(g for g in goals if g.id == p.goal_id)
+        return f"{goals_mod.label(trip, goal)} 목표를 지키지 못했어요"
+    if p.kind == "cluster":
+        return f"같은 동네 {len(p.places)}곳이 여러 날로 갈려 있어요"
+    label = core.day_label(trip, p.day)
+    return f"{label}에 식당이 없어요" if p.variant == "none" else f"{label}에 식당이 너무 많아요"
+
+
+def _move_text(trip: core.Trip, fix: Any) -> str:
+    names = [trip.place(m.place).name for m in fix.moves]
+    if fix.step == 1:
+        days = sorted({m.from_day for m in fix.moves} | {m.to_day for m in fix.moves})
+        a, b = (core.day_label(trip, core.day_alias(i)) for i in days)
+        return f"{a}와 {b}를 통째로 바꿔 보는 중이에요"
+    if fix.step == 2:
+        return f"{names[0]}만 {core.day_label(trip, core.day_alias(fix.moves[0].to_day))}로 옮겨 보는 중이에요"
+    return f"{attach(names[0], '와/과')} {attach(names[1], '을/를')} 서로 바꿔 보는 중이에요"
+
+
+def review_records(trip: core.Trip, goals: Sequence[goals_mod.Goal], result: Any) -> list[StepRecord]:
+    """`review.ReviewResult` → 작업 기록. 문제가 없으면 한 줄, 있으면 문제마다 찾기 → (시도마다 옮겨 보기 → 결정) 줄이 붙는다."""
+    if not result.problems:
+        return [_rec("찾기", VERIFY, CODE, "일정을 점검했어요. 고칠 점이 없어요")]
+    out = []
+    for fix in result.fixes:
+        out.append(_rec("찾기", VERIFY, CODE, problem_text(trip, goals, fix.problem)))
+        for attempt in fix.attempts:
+            last = attempt.ok
+            out.append(_rec("옮겨 보기", COMPUTE, CODE, _move_text(trip, fix) if last else _REVIEW_STEP_TRY[attempt.step]))
+            out.append(_rec("결정", DECIDE, CODE, f"풀려요(옮김 {fix.moved}곳)" if last else "안 돼요"))
+        if fix.step is None:
+            out.append(_rec("결정", DECIDE, CODE, "고치지 않기로 했어요" if fix.not_fixed != "BIG_CHANGE" else "크게 바꿔야 해요"))
+    return out

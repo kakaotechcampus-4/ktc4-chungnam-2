@@ -106,9 +106,10 @@ def test_settings_reject_unknown_provider_and_fake_in_prod():
     assert _settings(credit_ad_provider="fake").credit_ad_provider == "fake"
     with pytest.raises(ConfigError, match="CREDIT_AD_PROVIDER"):
         _settings(credit_ad_provider="admob")
-    prod = dict(environment="prod", cors_allow_origins=("https://pingo.example",), session_secret="real-secret",
+    prod = dict(environment="prod", cors_allow_origins=("https://pingo.example",), session_secret="r" * 40,   # 운영 가드(#1210): 비밀값 32자 이상, DB TLS, https 주소
+                database_url="postgresql://x/y?sslmode=require", cookie_secure=True,
                 frontend_base_url="https://pingo.example", places_mode="real", llm_mode="real",
-                kakao_client_id="k", kakao_client_secret="k", kakao_redirect_uri="k",
+                kakao_client_id="k", kakao_client_secret="k", kakao_redirect_uri="https://pingo.example/cb",
                 elice_ml_api_base_url="e", elice_ml_api_key="e")
     with pytest.raises(ConfigError, match="CREDIT_AD_PROVIDER=fake"):
         _settings(**prod, credit_ad_provider="fake")

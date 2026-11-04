@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
+import { http, HttpResponse } from 'msw'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -294,5 +295,59 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
   it('목 서버 시드 지도는 현황 문단을 보낸다', async () => {
     setup()
     expect(await screen.findByRole('region', { name: '지금 지도 현황' })).toBeInTheDocument()
+  })
+})
+
+describe('핑고가 한 일과 살펴본 상태(#1300)', () => {
+  const steps = [
+    { stage: '감지', role: '계산', by: 'code', by_detail: null, text: '의견이 갈린 핀 1곳을 찾았어요' },
+    { stage: '조사', role: '지휘', by: 'ai', by_detail: '모델 → 코드', text: '반대 사유 3개를 읽었어요' },
+  ] satisfies AgentSuggestionDto['steps']
+
+  it('제안 아래 「핑고가 한 일 보기」를 누르면 단계 · 누가 칩 · 문장이 한 줄씩 펼쳐진다', async () => {
+    setup(state({ ...split, steps }))
+    const toggle = screen.getByRole('button', { name: '핑고가 한 일 보기' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('list', { name: '핑고가 한 일' })).not.toBeInTheDocument()
+    await userEvent.click(toggle)
+    const log = screen.getByRole('list', { name: '핑고가 한 일' })
+    expect(log.querySelectorAll('li')).toHaveLength(2)
+    expect(screen.getByText('의견이 갈린 핀 1곳을 찾았어요')).toBeInTheDocument()
+    expect(screen.getByText('모델 → 코드')).toBeInTheDocument()
+    expect(within(log).getByText('AI')).toHaveClass('tag-ai')
+    expect(within(log).getByText('코드')).toHaveClass('tag-neutral')
+    expect(screen.getByRole('button', { name: '핑고가 한 일 접기' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('steps가 없거나 비면 토글을 그리지 않는다', () => {
+    setup(state({ ...split, steps: [] }))
+    expect(screen.queryByRole('button', { name: /핑고가 한 일/ })).not.toBeInTheDocument()
+  })
+
+  it('살펴본 시각을 상대 시각으로, 제안이 없으면 서버 notice 를 그대로 보인다', () => {
+    const checked = new Date(Date.now() - 12 * 60_000).toISOString()
+    setup({ ...state(null), observation: { checked_at: checked, notice: '오늘은 자세히 살펴보는 횟수를 다 썼어요. 내일 다시 볼게요' } })
+    expect(screen.getByText('핑고가 12분 전에 지도를 살펴봤어요')).toBeInTheDocument()
+    expect(screen.getByText('지금은 따로 드릴 제안이 없어요')).toBeInTheDocument()
+    expect(screen.getByText('오늘은 자세히 살펴보는 횟수를 다 썼어요. 내일 다시 볼게요')).toBeInTheDocument()
+  })
+
+  it('관찰한 적이 없으면(checked_at null) 시각 줄을 두지 않는다', () => {
+    setup({ ...state(null), observation: { checked_at: null, notice: null } })
+    expect(screen.queryByText(/지도를 살펴봤어요/)).not.toBeInTheDocument()
+  })
+
+  it('시트 조회가 실패하면 「다시 시도」로 다시 받는다', async () => {
+    let calls = 0
+    server.use(
+      http.get('*/maps/:mapId/agent', () => {
+        calls += 1
+        return calls === 1 ? HttpResponse.json({ code: 'INTERNAL', message: 'x' }, { status: 500 }) : HttpResponse.json(state(null))
+      }),
+    )
+    setup()
+    await userEvent.click(await screen.findByRole('button', { name: '다시 시도' }))
+    expect(await screen.findByText('지금은 따로 드릴 제안이 없어요')).toBeInTheDocument()
+    expect(screen.queryByText('조언을 불러오지 못했어요')).not.toBeInTheDocument()
   })
 })

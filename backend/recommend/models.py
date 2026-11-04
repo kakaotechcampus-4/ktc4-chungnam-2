@@ -65,6 +65,8 @@ class RecommendRun(Base):
     requested_by: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(RunStatus, nullable=False)
     attempt_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    origin_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    origin_lng: Mapped[float | None] = mapped_column(Float, nullable=True)
     # data-model.md recommend_runs.last_funnel(#108) — GET /runs/{runId}/result(깔때기 표)가 매번 재계산하지
     # 않도록 마지막 execute/widen/retry 결과를 저장해둔다. funnel은 파생값이라 정본은 항상 마지막 실행 결과다.
     # 반경 넓히기 누적 상태(docs/constraints.md "반경 넓히기 상수") — 기본값 원의 현재 도보

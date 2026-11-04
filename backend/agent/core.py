@@ -73,6 +73,7 @@ from agent.schemas import (
     AgentFactLine,
     AgentMapStatus,
     AgentNotFiltered,
+    AgentObservation,
     AgentSettings,
     AgentSplitPref,
     AgentState,
@@ -90,6 +91,7 @@ from agent.schemas import (
     RunAdvice,
     StatusOutput,
     ToolClaim,
+    WorkStep,
 )
 from common import categories
 from common.events import Event
@@ -754,7 +756,8 @@ def _no_reaction_draft(sig: Signal) -> Draft:
 
 def _category_gap_draft(sig: Signal) -> Draft:
     """카테고리 공백(6.5). 제목 "확정 리스트에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳".
-    버튼은 추천 대상이면 추천 받기와 핀 보기, 아니면 검색과 핀 보기(숙소가 다시 핀이 될 때 쓴다)."""
+    버튼은 하나다 — 추천 대상이면 추천 받기, 아니면 검색(숙소가 다시 핀이 될 때 쓴다). 「핀 보기」는 카테고리 필터만 걸어 누른 사람이
+    할 일이 생기지 않아 뺐다(#1317)."""
     c = sig.category
     confirmed = CountClaim(id="c1", kind="count", subject="map", subject_id=None, metric="confirmed",
                            value=len(sig.evidence_ids))
@@ -764,7 +767,7 @@ def _category_gap_draft(sig: Signal) -> Draft:
         title=f"확정 리스트에 {c}{_josa(c, '이', '가')} 아직 없어요",
         claims=[confirmed.model_dump(), in_category.model_dump()],
         advice=[{"slot_text": f"확정 {{c1.value}}곳 중 {c} {{c2.value}}곳", "is_guess": False}],
-        actions=_actions((*first, {"category": c}), ("show_pins", f"{c} 핀 보기", {"category": c})),
+        actions=_actions((*first, {"category": c})),
     )
 
 
@@ -789,13 +792,14 @@ def compromise_keys(comparison: Mapping[str, Any] | None) -> list[str]:
 
 
 def preview_target(top: Signal, comparison: Mapping[str, Any] | None) -> tuple[str, list[str]] | None:
-    """미리 돌려 보기(6.7)를 할지와 (카테고리, with_keys). stall은 그 카테고리 근거 전부, split은 충돌 종류가 different_axes일 때만
-    ♥ 쪽이 원한 키를 더해 돌린다. same_axis·unclear는 돌리지 않는다 — 같은 특징을 반대로 원하면 둘 다 만족하는 곳이 정의상 없다.
-    split의 비교가 없으면(② 실패) 돌리지 않는다."""
+    """미리 돌려 보기(6.7)를 할지와 (카테고리, with_keys). stall과 split 모두 그 카테고리 근거 전부로 돌린다(split은 충돌 종류와
+    상관없이, #1317). split의 different_axes만 ♥ 쪽이 원한 키를 with_keys로 더한다 — same_axis·unclear는 두 쪽을 다 맞추는 곳이
+    정의상 없거나 알 수 없어 반대 사유를 지키는 후보 수만 센다. split의 비교가 없으면(② 실패) 돌리지 않는다."""
     if top.diagnosis == "stall":
         return top.category, []
-    if top.diagnosis == "split" and comparison and comparison.get("conflict_type") == "different_axes":
-        return top.category, compromise_keys(comparison)
+    if top.diagnosis == "split" and comparison:
+        keys = compromise_keys(comparison) if comparison.get("conflict_type") == "different_axes" else []
+        return top.category, keys
     return None
 
 
@@ -924,7 +928,8 @@ def _side_text(key: Mapping[str, Any], side: str) -> str | None:
 # ---------------------------------------------------------------- 모델 진단 검증 (11.2)
 
 # 6절 표의 유형별 허용 행동
-MODEL_ACTIONS = {"stall": ("open_recommend", "search_place", "show_pins"), "split": ("open_recommend", "show_pins")}
+# 「핀 보기」(show_pins)는 없다 — 결정이 막힌 사람에게 필요한 것은 새 후보다(#1317). 0곳이면 open_recommend가 빠져 장소 검색이 남는다
+MODEL_ACTIONS = {"stall": ("open_recommend", "search_place"), "split": ("open_recommend", "search_place")}
 # 초안. 확정이나 결정을 지시하는 표현을 막는다(11.2). 공백을 뺀 문장과 비교한다. 검증(슬롯 문장)과 렌더(text 조각을 이어
 # 붙인 것, #717) 두 곳에서 본다. 목록은 빠지는 말이 있는 마지막 확인이고, 구성원 글은 quote 조각으로만 내려 여기 걸리지 않는다
 FORBIDDEN_PHRASES = ("확정하세요", "확정해", "확정하라", "결정하세요", "결정하라", "여기로 가세요", "여기로 정하세요")
@@ -1119,25 +1124,23 @@ def _check_line(
 
 
 def _model_action(
-    action: Any, top: Signal, snap: Snapshot, kept: Mapping[str, Any], preview: Mapping[str, Any] | None = None,
+    action: Any, top: Signal, kept: Mapping[str, Any], preview: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[str, str, dict[str, Any]] | None, str | None]:
     """행동 하나(11.2 6단계) → ((type, label, params), None) 또는 (None, 이유). 버튼 이름은 코드가 정한다. 미리 돌려 본
     passed_count가 0이면 open_recommend를 뺀다(6.7) — 0곳인 추천을 권해 크레딧을 쓰게 하지 않는다. 미리 돌려 보지 못했으면(② 실패
-    등, preview=None) 이 검사를 하지 않는다."""
+    등, preview=None) 이 검사를 하지 않는다. split의 버튼은 그 핀의 카테고리만 가리킨다 — 다른 카테고리면 뺀다."""
     if action.type not in MODEL_ACTIONS[top.diagnosis]:
         return None, "type"
     if action.type == "open_recommend" and preview is not None and preview.get("passed_count") == 0:
         return None, "preview_empty"
     if not action.basis or any(b not in kept for b in action.basis):
         return None, "basis"
-    if action.type == "show_pins" and action.pin_ids:
-        if any(snap.pin(pid) is None for pid in action.pin_ids):
-            return None, "pin"
-        return ("show_pins", "핀 보기", {"pin_ids": list(dict.fromkeys(action.pin_ids))}), None
     c = action.category or top.category
     if c not in categories.pinnable() or (action.type == "open_recommend" and c not in categories.recommendable()):
         return None, "category"
-    label = {"open_recommend": f"{c} 추천 받기", "search_place": f"{c} 검색", "show_pins": f"{c} 핀 보기"}[action.type]
+    if top.diagnosis == "split" and c != top.category:
+        return None, "category"
+    label = {"open_recommend": f"{c} 추천 받기", "search_place": f"{c} 검색"}[action.type]
     return (action.type, label, {"category": c}), None
 
 
@@ -1191,7 +1194,7 @@ def verify_diagnosis(
 
     specs, removed_actions = [], []
     for i, action in enumerate(out.actions):
-        spec, reason = _model_action(action, top, snap, kept, preview)
+        spec, reason = _model_action(action, top, kept, preview)
         if reason is not None:
             removed_actions.append({"index": i, "reason": reason})
         elif spec not in specs:
@@ -1315,9 +1318,10 @@ def _advice_lines(lines: Sequence[Mapping[str, Any]], claims: Mapping[str, Mappi
     return [AgentAdviceLine(segments=segments, is_guess=is_guess) for segments, is_guess in rendered if segments]
 
 
-def render_suggestion(sug: Any, refs: RenderRefs) -> AgentSuggestion | None:
+def render_suggestion(sug: Any, refs: RenderRefs, run: Any | None = None) -> AgentSuggestion | None:
     """agent_suggestions 한 행 → API·이벤트의 AgentSuggestion. 서버 내부 값(claims, 슬롯 원문, fingerprint,
-    resolved_by)은 싣지 않는다(명세 14절). 제목을 채울 수 없으면 None(보여 줄 제안이 없다)."""
+    resolved_by)은 싣지 않는다(명세 14절). 제목을 채울 수 없으면 None(보여 줄 제안이 없다).
+    run은 그 제안을 만든 agent_runs 행이다(작업 기록 11.3). 없으면(30일 정리) steps가 빈 목록이다."""
     claims = {c["id"]: c for c in sug.claims}
     title = render_title(sug.title, claims, refs)
     if title is None:
@@ -1327,6 +1331,7 @@ def render_suggestion(sug: Any, refs: RenderRefs) -> AgentSuggestion | None:
         analysis=render_analysis(sug.analysis, refs.fact_labels),
         advice=_advice_lines(sug.advice, claims, refs), actions=[AgentAction.model_validate(a) for a in sug.actions],
         facts=render_fact_lines(getattr(sug, "facts", None) or (), refs),
+        steps=render_steps(run, sug),
         created_at=sug.created_at, expires_at=sug.expires_at,
     )
 
@@ -1335,6 +1340,160 @@ def action_at(actions: Sequence[Mapping[str, Any]], index: int) -> AgentAction |
     """accept의 action_index가 가리키는 버튼. 범위 밖이면 None(422)."""
     found = next((a for a in actions if a["index"] == index), None)
     return None if found is None else AgentAction.model_validate(found)
+
+
+# ---------------------------------------------------------------- 작업 기록 (11.3, #1297)
+# 문장은 아래 고정 문구와 기록의 숫자뿐이다. 사유 글, 핀·장소 이름, 별칭, URL, 웹 문장은 넣지 않는다(2절 11·13번, #717).
+# 카테고리 이름은 코드의 고정 목록(common.categories)이라 쓴다.
+
+STEP_DETECT = {   # 감지. n은 stall 🚫 반응 수, no_reaction 핀 수, category_gap 확정 수, split 반응한 사람 수
+    "stall": lambda c, n: f"{c}에 반대 의견 {n}개가 남은 뒤로 새 후보가 없어요",
+    "split": lambda c, n: f"{c} 핀 하나에서 {n}명의 의견이 ♥와 🚫로 갈렸어요",
+    "no_reaction": lambda c, n: f"아직 확인되지 않은 핀이 {n}개 있어요",
+    "category_gap": lambda c, n: f"확정한 {n}곳 중 {c}{_josa(c, '이', '가')} 없어요",
+}
+STEP_RANK = "살펴볼 곳 {n}개 중 이것부터 골랐어요"
+# 조사 — 모델이 고른 도구 이름마다 (수를 넣은 문구, 수가 없을 때, 멈췄을 때). 수는 모델이 받은 목록의 길이다
+STEP_TOOLS: dict[str, tuple[str | None, str, str]] = {
+    "get_map_overview": ("지도 현황을 봤어요 · 핀 {n}개", "지도 현황을 봤어요", "지도 현황을 보려다 멈췄어요"),
+    "get_activity": (None, "최근 활동을 봤어요", "최근 활동을 보려다 멈췄어요"),
+    "get_reaction_matrix": ("핀 {n}개의 반응 표를 봤어요", "반응 표를 봤어요", "반응 표를 보려다 멈췄어요"),
+    "get_reasons": ("{kind} {n}개를 읽었어요", "{kind}를 읽었어요", "사유를 읽으려다 멈췄어요"),
+    "structure_reasons": ("사유 {n}개를 조건으로 나눠 봤어요", "사유를 조건으로 나눠 봤어요", "사유를 조건으로 나누려다 멈췄어요"),
+    "compare_reasons": (None, "♥ 쪽과 🚫 쪽 조건을 견줘 봤어요", "♥ 쪽과 🚫 쪽 조건을 견주려다 멈췄어요"),
+    "get_place_facts": ("장소 정보 {n}개를 우리 데이터에서 읽었어요", "장소 정보를 우리 데이터에서 읽었어요",
+                        "장소 정보를 읽으려다 멈췄어요"),
+    "get_readiness": (None, "추천 준비를 확인했어요", "추천 준비를 확인하려다 멈췄어요"),
+}
+STEP_TOOL_OTHER = (None, "지도 데이터를 읽었어요", "지도 데이터를 읽으려다 멈췄어요")
+STEP_REASON_KINDS = {("against",): "반대 사유", ("like",): "좋음 사유"}   # get_reasons의 types 인자. 그 밖은 「사유」
+STEP_TOOL_LISTS = {   # 모델이 받은 목록 칸(그 길이가 수다)
+    "get_reaction_matrix": "pins", "get_reasons": "reasons", "structure_reasons": "reasons", "get_place_facts": "facts",
+}
+STEP_PREVIEW = "지금 조건으로 미리 찾아봤어요 · {n}곳 남아요"
+STEP_PREVIEW_BOTH = " · 두 의견을 다 맞추는 곳 {n}곳"
+STEP_FACTS = "가게 정보 {n}개를 우리 데이터에서 확인했어요"
+STEP_WEB = {   # (status, 다시 씀) → (문구, by, by_detail). paused와 다시 쓴 결과는 모델을 부르지 않았다
+    ("found", False): ("웹에서 찾아봤어요 · 출처 {n}개", "ai", "모델 → 코드"),
+    ("not_found", False): ("웹에서 찾아봤지만 확인되는 내용이 없었어요", "ai", "모델 → 코드"),
+    ("failed", False): ("웹에서 찾아보다 멈췄어요", "ai", "모델 → 코드"),
+    ("paused", False): ("오늘은 웹 확인을 쉬어요", "code", None),
+    ("found", True): ("하루 안에 웹에서 찾은 결과를 다시 썼어요 · 출처 {n}개", "code", None),
+    ("not_found", True): ("하루 안에 웹에서 찾아본 결과를 다시 썼어요 · 확인되는 내용이 없었어요", "code", None),
+}
+STEP_VERIFY = "숫자와 인용 {n}개를 지도와 대조했어요"
+STEP_VERIFY_EMPTY = "모델이 쓴 제안을 지도와 대조했어요"
+STEP_VERIFY_REMOVED = {"claims": " · 맞지 않은 {n}개는 뺐어요", "lines": " · 문장 {n}개는 뺐어요", "actions": " · 버튼 {n}개는 뺐어요"}
+STEP_RECHECK = "저장 직전에 지도가 그대로인지 다시 봤어요"
+
+_MODEL_TOOL_CALL = re.compile(r"t\d+")   # llm이 매기는 t1, t2 … (p1 미리 돌려 보기, w1·w2 웹 확인은 코드가 부른 것)
+_WEB_CALL = re.compile(r"w\d+")
+
+
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _step(stage: str, role: str, by: str, text: str, by_detail: str | None = None) -> WorkStep:
+    return WorkStep(stage=stage, role=role, by=by, by_detail=by_detail, text=text)
+
+
+def _detect_step(signal: Mapping[str, Any] | None) -> WorkStep | None:
+    if not signal or signal.get("diagnosis") not in STEP_DETECT:
+        return None
+    diagnosis, category = signal["diagnosis"], signal.get("category")
+    if diagnosis != "no_reaction" and not category:
+        return None
+    features = signal.get("features") or {}
+    n = _int(features.get("affected_members")) if diagnosis == "split" else len(signal.get("evidence_ids") or ())
+    if n is None:
+        return None
+    return _step("감지", "계산", "code", STEP_DETECT[diagnosis](category, n))
+
+
+def _tool_count(name: str, result: Mapping[str, Any]) -> int | None:
+    if name == "get_map_overview":
+        pins = [_int(c.get("pins")) for c in result.get("categories") or () if isinstance(c, Mapping)]
+        return sum(pins) if pins and None not in pins else None
+    items = result.get(STEP_TOOL_LISTS.get(name, ""))
+    return len(items) if isinstance(items, list) else None
+
+
+def _tool_step(call: Mapping[str, Any]) -> WorkStep:
+    """모델이 부른 도구 한 번(t1 …). 오류 결과(NOT_FOUND, UNAVAILABLE)는 「…하려다 멈췄어요」."""
+    name = call.get("name")
+    counted, plain, stopped = STEP_TOOLS.get(name, STEP_TOOL_OTHER)
+    result = call.get("result")
+    if not isinstance(result, Mapping) or "error" in result:
+        return _step("조사", "지휘", "ai", stopped)
+    types = (call.get("args") or {}).get("types") or ()
+    kind = STEP_REASON_KINDS.get(tuple(sorted(set(types))), "사유")
+    n = _tool_count(name, result)
+    text = (counted if counted and n is not None else plain).format(n=n, kind=kind)
+    return _step("조사", "지휘", "ai", text)
+
+
+def _preview_step(result: Mapping[str, Any]) -> WorkStep | None:
+    passed = _int(result.get("passed_count"))
+    if passed is None:
+        return None
+    text = STEP_PREVIEW.format(n=passed)
+    both = _int(result.get("with_keys_count"))
+    if both is not None:
+        text += STEP_PREVIEW_BOTH.format(n=both)
+    return _step("미리 찾기", "계산", "code", text)
+
+
+def _web_step(result: Mapping[str, Any]) -> WorkStep | None:
+    found = STEP_WEB.get((result.get("status"), bool(result.get("reused"))))
+    if found is None:
+        return None
+    text, by, by_detail = found
+    return _step("웹 확인", "검증", by, text.format(n=_int(result.get("statements")) or 0), by_detail)
+
+
+def _verify_step(verification: Mapping[str, Any] | None) -> WorkStep | None:
+    """출력 검증(11.2) — claim 대조까지 간 기록만 낸다(침묵 결정, 2단계 실패에는 없다). 무엇이 걸렸는지는 싣지 않고 수만."""
+    claims = (verification or {}).get("claims")
+    if not isinstance(claims, Mapping):
+        return None
+    checked = len(claims.get("kept") or ()) + len(claims.get("removed") or ())
+    text = STEP_VERIFY.format(n=checked) if checked else STEP_VERIFY_EMPTY
+    for part, suffix in STEP_VERIFY_REMOVED.items():
+        record = verification.get(part)
+        removed = len(record.get("removed") or ()) if isinstance(record, Mapping) else 0
+        if removed:
+            text += suffix.format(n=removed)
+    return _step("검증", "검증", "code", text)
+
+
+def render_steps(run: Any | None, sug: Any) -> list[WorkStep]:
+    """작업 기록(11.3, #1297) — 제안을 만든 agent_runs 행(signals, priority, tool_calls, verification)과 제안의 facts로 만든다.
+    저장하지 않는다. 순서는 감지 → 순위 → 조사(t1 …) → 미리 찾기(p1) → 우리 데이터 → 웹 확인(w1, w2 — 줄마다 하나) → 검증 → 재확인이고 있는
+    단계만 낸다. 코드 유형은 도구 기록과 검증이 없어 감지·순위·재확인뿐이다. run이 없으면(30일 정리) 빈 목록, 탈퇴로
+    tool_calls와 verification이 비었으면 그 단계가 빠진다. 감지할 신호는 제안의 fingerprint로 찾는다."""
+    if run is None:
+        return []
+    priority = run.priority or {}
+    fingerprint = getattr(sug, "fingerprint", None)
+    signal = next((s for s in run.signals or () if isinstance(s, Mapping) and s.get("fingerprint") == fingerprint), None)
+    calls = [c for c in run.tool_calls or () if isinstance(c, Mapping)]
+    results = {c.get("call_id"): c.get("result") for c in calls}
+
+    steps = [_detect_step(signal)]
+    if priority.get("source") == "rules":
+        steps.append(_step("순위", "결정", "code", STEP_RANK.format(n=len(priority.get("final_order") or ()))))
+    steps += [_tool_step(c) for c in calls if _MODEL_TOOL_CALL.fullmatch(str(c.get("call_id")))]
+    preview = results.get("p1")
+    webs = sorted((c for c in calls if _WEB_CALL.fullmatch(str(c.get("call_id")))), key=lambda c: int(str(c["call_id"])[1:]))
+    steps.append(_preview_step(preview) if isinstance(preview, Mapping) else None)
+    facts = getattr(sug, "facts", None) or ()
+    if facts:
+        steps.append(_step("우리 데이터", "검증", "code", STEP_FACTS.format(n=len(facts))))
+    steps += [_web_step(c["result"]) if isinstance(c.get("result"), Mapping) else None for c in webs]
+    steps.append(_verify_step(run.verification))
+    steps.append(_step("재확인", "검증", "code", STEP_RECHECK))
+    return [st for st in steps if st is not None]
 
 
 # ---------------------------------------------------------------- 우리 데이터 확인 (6.6, #1168)
@@ -1461,13 +1620,14 @@ WEB_STORED = ("found", "not_found", "paused")   # 저장하는 status. failed는
 WEB_REUSED = ("found", "not_found")             # 24시간 안이면 다시 쓰는 status. paused는 다시 쓰지 않는다
 
 
-def web_check_target(facts: Sequence[Mapping[str, Any]], values: Mapping[str, Mapping[str, Any]]) -> int | None:
-    """웹 확인할 줄의 위치 — 값이 「모름」인 첫 줄(6.6 순서) 하나. 제안 하나에 많아야 1번이다. values는 핀 → {키: 지금 라벨, 모르면
-    None}(flows._fact_values). 자체 DB 장소가 아닌 핀(값을 못 읽은 핀)은 대상이 아니다 — 6.6 줄이 이미 그런 핀을 뺐다."""
-    for i, f in enumerate(facts):
-        if f["pin_id"] in values and fact_value(values[f["pin_id"]].get(f["fact_key"])) == "unknown":
-            return i
-    return None
+def web_check_targets(facts: Sequence[Mapping[str, Any]], values: Mapping[str, Mapping[str, Any]]) -> list[int]:
+    """웹 확인할 줄의 위치 — 값이 「모름」인 줄 모두(6.6 순서, #1317). 줄이 많아야 FACT_LINES_MAX(2)라 제안 하나에 많아야 2번이다.
+    values는 핀 → {키: 지금 라벨, 모르면 None}(flows._fact_values). 자체 DB 장소가 아닌 핀(값을 못 읽은 핀)은 대상이 아니다 — 6.6
+    줄이 이미 그런 핀을 뺐다."""
+    return [
+        i for i, f in enumerate(list(facts)[:FACT_LINES_MAX])
+        if f["pin_id"] in values and fact_value(values[f["pin_id"]].get(f["fact_key"])) == "unknown"
+    ]
 
 
 def _checked_at(web: Mapping[str, Any]) -> datetime | None:
@@ -1507,7 +1667,7 @@ def web_record(status: str, statements: Sequence[Any], now: datetime) -> dict[st
 
 
 def web_tool_record(status: str, statements: int, *, reused: bool) -> dict[str, Any]:
-    """도구 기록 w1의 결과 — status와 문장 수만(6.8). 문장, URL, 장소 이름은 남기지 않는다."""
+    """도구 기록 w1, w2의 결과 — status와 문장 수만(6.8). 문장, URL, 장소 이름은 남기지 않는다."""
     return {"status": status, "statements": statements, "reused": reused}
 
 
@@ -2214,15 +2374,46 @@ def settings_view(row: Any | None) -> AgentSettings:
     return AgentSettings(enabled=row.enabled, updated_by=row.updated_by, updated_at=row.updated_at)
 
 
+# 살펴본 상태의 안내 문구(21.3, #1297). 서버 고정 문구이고 상한 값 같은 숫자는 쓰지 않는다. FE는 문구를 적지 않는다
+OBSERVATION_NOTICES = {
+    "failed": "이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요",
+    "invalid_claims": "핑고가 쓴 제안이 확인을 통과하지 못해 내보내지 않았어요",
+    "model_cap": "오늘은 자세히 살펴보는 횟수를 다 썼어요. 내일 다시 볼게요",
+    "trip_ended": "여행이 끝나 더 살펴보지 않아요",
+}
+OBSERVATION_FAILED = ("model_failed", "invalid_schema", "error")
+OBSERVATION_TRIGGERS = ("activity", "time")   # notice가 보는 관찰 행. 요약·현황·조언 행은 보지 않는다
+
+
+def observation_notice(run: Any | None) -> str | None:
+    """가장 최근 지도 관찰 행(trigger가 activity·time)의 outcome·blocked → 안내 문구(21.3). 낼 제안이 없었을 뿐이면
+    (no_signal, silent, unknown, stale, 다른 이유의 blocked, suggested) None이다. 무엇이 걸렸는지는 싣지 않는다."""
+    if run is None:
+        return None
+    if run.outcome in OBSERVATION_FAILED:
+        return OBSERVATION_NOTICES["failed"]
+    if run.outcome in ("invalid_claims", "trip_ended"):
+        return OBSERVATION_NOTICES[run.outcome]
+    if run.outcome == "blocked" and any(
+            isinstance(b, Mapping) and b.get("reason") == "model_cap" for b in run.blocked or ()):
+        return OBSERVATION_NOTICES["model_cap"]
+    return None
+
+
 def agent_state(
     settings: AgentSettings, active: AgentSuggestion | None, *, viewed: bool, summaries: Sequence[AgentSummary] = (),
-    status: AgentMapStatus | None = None,
+    status: AgentMapStatus | None = None, checked_at: datetime | None = None, latest_observation: Any | None = None,
 ) -> AgentState:
     """모드가 꺼져 있으면 제안은 늘 null이고 점도 없다. 요약과 현황 문단은 모드와 상관없이 만들어진 것을 싣는다(api-spec
-    AgentState.summaries, status — 끄면 관찰이 멈춰 더 갱신되지 않을 뿐이다. 꺼져 있을 때 화면은 스위치만 그린다, 16.2)."""
+    AgentState.summaries, status — 끄면 관찰이 멈춰 더 갱신되지 않을 뿐이다. 꺼져 있을 때 화면은 스위치만 그린다, 16.2).
+    살펴본 상태(21.3): checked_at은 agent_cursors.last_observed_at이고, notice는 보여 줄 제안이 없고 모드가 켜져 있을 때만
+    가장 최근 지도 관찰 행(latest_observation)으로 정한다."""
     shown = active if settings.enabled else None
+    quiet = settings.enabled and shown is None
+    observation = AgentObservation(checked_at=checked_at,
+                                   notice=observation_notice(latest_observation) if quiet else None)
     return AgentState(settings=settings, active_suggestion=shown, has_unseen=shown is not None and not viewed,
-                      summaries=list(summaries), status=status)
+                      summaries=list(summaries), status=status, observation=observation)
 
 
 # ---------------------------------------------------------------- 이벤트 (15절)

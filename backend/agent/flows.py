@@ -57,10 +57,12 @@ outcome(agent_runs.outcome)
 저장 트랜잭션 맨 앞에서 지도가 삭제된 것을 보면(모델 호출 중 삭제 대역) 아무것도 쓰지 않는다 — agent_runs 행도 없다.
 """
 
+import contextvars
 import logging
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
@@ -509,41 +511,71 @@ def _facts(ctx: tools.ToolContext, top: core.Signal, comparison: dict[str, Any] 
 
 
 def _web_checked(ctx: tools.ToolContext, facts: list[dict[str, Any]], gateway: deps.AgentLlmGateway) -> list[dict[str, Any]]:
-    """웹 확인(6.8, #1216). 값이 「모름」인 첫 줄 하나(core.web_check_target)에 web을 붙인 facts를 돌려준다. 대상이 없으면 그대로.
+    """웹 확인(6.8, #1216, #1317). 값이 「모름」인 줄 모두(core.web_check_targets, 많아야 2줄)에 web을 붙인 facts를 돌려준다. 대상이
+    없으면 그대로.
 
-    같은 지도에서 24시간 안에 같은 (핀, 키)를 확인했으면(found, not_found) 부르지 않고 그 결과를 쓴다(core.reusable_web). 아니면 짧은
-    읽기 세션으로 장소 이름, 동네, 특징 이름만 읽고 세션을 닫은 뒤 llm을 부른다(2절 6번). 모델 입력은 그 셋뿐이다 — 구성원 글, 이름,
-    지도 id가 들어갈 칸이 없다. 예산은 llm이 본다(agent는 따로 보지 않는다). 실패(failed)는 저장하지 않고 제안은 그대로 나간다.
-    지도 하루 상한과 도구 상한에 세지 않는다 — 진단을 부른 같은 관찰이고, 기록은 도구 기록 w1이다."""
+    줄마다 같은 지도에서 24시간 안에 같은 (핀, 키)를 확인했으면(found, not_found) 부르지 않고 그 결과를 쓴다(core.reusable_web). 남은
+    줄은 짧은 읽기 세션으로 장소 이름, 동네, 특징 이름만 읽고 세션을 닫은 뒤 llm을 동시에 부른다(스레드, 2절 6번). 호출마다 타임아웃은
+    llm이 정한 30초다. 모델 입력은 그 셋뿐이다 — 구성원 글, 이름, 지도 id가 들어갈 칸이 없다. 예산은 llm이 본다(agent는 따로 보지
+    않는다). 실패(failed)는 저장하지 않고 제안은 그대로 나간다. 지도 하루 상한과 도구 상한에 세지 않는다 — 진단을 부른 같은 관찰이고,
+    기록은 줄 순서대로 도구 기록 w1, w2다."""
     started = time.monotonic()
     with ctx.read() as db:
         pins = _pins(db, ctx.map_id, {f["pin_id"] for f in facts})
-        index = core.web_check_target(facts, _fact_values(db, pins))
-        if index is None:
+        indexes = core.web_check_targets(facts, _fact_values(db, pins))
+        if not indexes:
             return facts
-        pin_id, key = facts[index]["pin_id"], facts[index]["fact_key"]
         earlier = service.recent_suggestion_facts(db, ctx.map_id, ctx.now - WEB_CHECK_REUSE)
+        place_ids = sorted({pins[facts[i]["pin_id"]][1] for i in indexes} - {None})
+        places = places_api.get_places(place_ids, db=db) if place_ids else {}
+    labels = recommend_api.fact_labels()
+
+    webs: dict[int, dict[str, Any] | None] = {}
+    records: dict[int, dict[str, Any]] = {}
+    asks: dict[int, dict[str, Any]] = {}
+    spent: dict[int, float] = {}   # 호출한 줄의 걸린 초 — 기록의 ms는 그 호출만 잰다(동시에 불러 전체 시간과 다르다)
+    for i in indexes:
+        pin_id, key = facts[i]["pin_id"], facts[i]["fact_key"]
+        reused = core.reusable_web(earlier, pin_id, key, ctx.now)
+        if reused is not None:
+            webs[i] = reused
+            records[i] = core.web_tool_record(reused["status"], len(reused.get("statements") or ()), reused=True)
+            continue
         name, place_id = pins[pin_id]
-        place = places_api.get_places([place_id], db=db).get(place_id) if place_id else None
-    web = core.reusable_web(earlier, pin_id, key, ctx.now)
-    if web is not None:
-        record = core.web_tool_record(web["status"], len(web.get("statements") or ()), reused=True)
-    else:
-        label = recommend_api.fact_labels().get(key)
-        if not name or not label or place is None:
-            return facts
-        with llm_api.usage_context("agent_web_check", map_id=ctx.map_id):   # #870 — 비용은 서비스 일일 예산이 본다(19절)
-            result = gateway.web_check(place_name=name, area=places_api.neighborhood(place.address), feature=label,
-                                       forbidden=core.WEB_CHECK_FORBIDDEN)
-        web = core.web_record(result.status, result.statements, ctx.now)
-        record = core.web_tool_record(result.status, len(result.statements), reused=False) | {
+        place, label = places.get(place_id) if place_id else None, labels.get(key)
+        if name and label and place is not None:
+            asks[i] = {"place_name": name, "area": places_api.neighborhood(place.address), "feature": label}
+
+    for i, (result, elapsed) in _web_check_all(ctx.map_id, asks, gateway).items():
+        webs[i] = core.web_record(result.status, result.statements, ctx.now)
+        records[i] = core.web_tool_record(result.status, len(result.statements), reused=False) | {
             "dropped": list(result.dropped), "web_searches": result.web_searches}
+        spent[i] = elapsed
         if result.status == "failed" and result.detail != "not_checked":   # not_checked는 dev 스텁(웹을 찾지 않음)
             log.warning("agent 웹 확인 실패 map_id=%s detail=%s", ctx.map_id, result.detail)
-    tools.record_web_check(ctx, pin_id=pin_id, fact_key=key, result=record, started=started)
-    if web is None:
-        return facts
-    return [f | {"web": web} if i == index else f for i, f in enumerate(facts)]
+    for n, i in enumerate(sorted(records), start=1):   # 줄 순서대로 w1, w2
+        tools.record_web_check(ctx, n, pin_id=facts[i]["pin_id"], fact_key=facts[i]["fact_key"], result=records[i],
+                               started=time.monotonic() - spent[i] if i in spent else started)
+    return [f | {"web": webs[i]} if webs.get(i) is not None else f for i, f in enumerate(facts)]
+
+
+def _web_check_all(
+    map_id: str, asks: Mapping[int, Mapping[str, Any]], gateway: deps.AgentLlmGateway,
+) -> dict[int, tuple[Any, float]]:
+    """웹 확인 호출들을 동시에 부른다(#1317). 줄 위치 → (결과, 걸린 초). 스레드마다 지금 컨텍스트를 복사해 사용량 라벨(usage_context)이
+    호출마다 붙는다. DB 세션은 열려 있지 않다(읽기는 부르기 전에 닫았다)."""
+    if not asks:
+        return {}
+
+    def one(ask: Mapping[str, Any]) -> tuple[Any, float]:
+        began = time.monotonic()
+        with llm_api.usage_context("agent_web_check", map_id=map_id):   # #870 — 비용은 서비스 일일 예산이 본다(19절)
+            result = gateway.web_check(**ask, forbidden=core.WEB_CHECK_FORBIDDEN)
+        return result, time.monotonic() - began
+
+    with ThreadPoolExecutor(max_workers=len(asks)) as pool:
+        futures = {i: pool.submit(contextvars.copy_context().run, one, ask) for i, ask in asks.items()}
+        return {i: f.result() for i, f in futures.items()}
 
 
 def _comparison(ctx: tools.ToolContext, top: core.Signal) -> dict[str, Any] | None:
@@ -708,7 +740,8 @@ def _summaries(db: Session, map_id: str) -> list[AgentSummary]:
 
 def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
     """저장된 슬롯 문장을 지금 상태로 렌더한다. 핀 이름, 사유 글, 우리 데이터 확인의 라벨 값은 여기서만 읽는다(명세 2절 13번,
-    6.6). split 분석의 축 이름과 우리 데이터 확인의 특징 이름은 recommend의 키 표시 이름이다(#564)."""
+    6.6). split 분석의 축 이름과 우리 데이터 확인의 특징 이름은 recommend의 키 표시 이름이다(#564). 작업 기록(11.3)은 제안을
+    만든 관찰 행으로 만든다 — GET과 agent.suggested가 이 함수 하나를 거친다."""
     facts = row.facts or []
     pin_ids = set(core.referenced_pin_ids(row.claims)) | {f["pin_id"] for f in facts}
     pins = _pins(db, row.map_id, pin_ids) if pin_ids else {}
@@ -719,7 +752,7 @@ def _render(db: Session, row: SuggestionRow) -> AgentSuggestion | None:
         fact_values=_fact_values(db, pins) if facts else {},
         source_name=llm_api.source_name,
     )
-    return core.render_suggestion(row, refs)
+    return core.render_suggestion(row, refs, service.get_run(db, row.run_id))
 
 
 def _pins(db: Session, map_id: str, pin_ids: set[str]) -> dict[str, tuple[str | None, str | None]]:
@@ -761,13 +794,16 @@ def _reaction_texts(db: Session, map_id: str, category: str | None) -> dict[str,
 
 def get_state(db: Session, *, map_id: str, user_id: str, now: datetime) -> AgentState:
     """GET /maps/{mapId}/agent. 지금 제안은 shadow가 아니고 만료 전인 활성 제안을 렌더한 것. 모드가 꺼져 있으면 null.
-    요약은 만들어진 카테고리만(8절). 현황 문단은 저장된 것(8.2) — 시트를 열 때 모델을 부르지 않는다."""
+    요약은 만들어진 카테고리만(8절). 현황 문단은 저장된 것(8.2) — 시트를 열 때 모델을 부르지 않는다. 살펴본 상태(21.3)는
+    커서의 마지막 관찰 시각과, 보여 줄 제안이 없을 때만 가장 최근 지도 관찰 행을 읽는다."""
     settings = core.settings_view(service.get_settings(db, map_id))
     row = service.active_suggestion(db, map_id, now) if settings.enabled else None
     active = _render(db, row) if row is not None else None
     viewed = active is not None and service.has_viewed(db, row.id, user_id)
     return core.agent_state(settings, active, viewed=viewed, summaries=_summaries(db, map_id),
-                            status=core.status_view(service.get_map_status(db, map_id)))
+                            status=core.status_view(service.get_map_status(db, map_id)),
+                            checked_at=service.last_observed_at(db, map_id),
+                            latest_observation=service.latest_observation(db, map_id) if active is None else None)
 
 
 def change_settings(db: Session, *, map_id: str, enabled: bool, user_id: str, now: datetime) -> AgentSettings:
