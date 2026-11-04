@@ -177,7 +177,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
 
     // 버튼이 없어도 요청 칸에서 Enter 를 누르면 제출된다 — 크레딧 확인 창을 띄우지 않는다.
-    await userEvent.type(screen.getByLabelText(/요청 한 줄/), '덜 걷게{Enter}')
+    await userEvent.type(screen.getByLabelText(/요청 사항/), '덜 걷게{Enter}')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
