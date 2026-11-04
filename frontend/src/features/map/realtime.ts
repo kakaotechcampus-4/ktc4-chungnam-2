@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 
 import { agentEventHandlers, agentKeys } from '@/features/agent/queries'
 import { useMeQuery } from '@/features/auth/queries'
+import { courseKeys } from '@/features/course/queries'
 import { mapKeys } from '@/features/maps/queries'
 import { recommendKeys } from '@/features/recommend/queries'
 import { showToast } from '@/features/shell/toast'
@@ -67,13 +68,17 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     'map.updated': [map, myMaps],
     'map.deleted': [myMaps],
     // 확정 리스트는 다른 구성원이 바꿀 수 있다(5-10). 동선은 이 기기의 일정 순서라(2026-11-03) 서버 동선(route.recalculated)은 받지 않는다.
-    'shortlist.changed': [{ queryKey: shortlistKeys.list(mapId) }, pins],
+    // 일정도 이 이벤트로 바뀐다. 열려 있는 AI 코스 결과는 일정이 바뀌면 stale 이 되어 「반영」을 막아야 해서 최근 코스와 run 상세도 다시 받는다(#1322).
+    'shortlist.changed': [{ queryKey: shortlistKeys.list(mapId) }, pins, { queryKey: courseKeys.latest(mapId) }, { queryKey: courseKeys.runs }],
   }
 }
 
-/** 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번). */
+/**
+ * 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번).
+ * 열려 있는 AI 코스 결과도 다시 받는다 — 그동안 일정이 바뀌었으면 stale 로 「일정이 바뀌었어요」를 보여야 해서다(#1322).
+ */
 function refreshMap(queryClient: QueryClient, mapId: string) {
-  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId)]) {
+  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId), courseKeys.latest(mapId), courseKeys.runs]) {
     void queryClient.invalidateQueries({ queryKey })
   }
 }

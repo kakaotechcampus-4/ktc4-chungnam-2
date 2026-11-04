@@ -355,6 +355,11 @@ def create_run(
        아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS, 처리 기한(90초)이 지났으면 이어받는다.
     3) run_id 연결은 run을 만든 트랜잭션의 **맨 끝**에서 한다 — 자기 세대일 때만 성공하고(늦게 끝난 쪽은 거절),
        실패 정리가 이 행의 잠금과 부딪치지 않는다. run을 못 만들면 자기 세대의 예약만 지워 재시도를 허용한다."""
+    # center 검사는 키를 예약하기 전에 한다(#1331) — 예약을 만들었다 지우는 사이에 같은 키가 409 REQUEST_IN_PROGRESS를 받지 않게.
+    # 같은 키의 기록이 이미 있으면(center가 없던 때 만든 옛 키) 통과시켜 reuse가 그 run을 돌려준다. 기록이 없을 때만 422다.
+    if center is None and (idempotency_key is None or not service.idempotency_key_exists(
+            db, requested_by=requested_by, key=idempotency_key)):
+        raise AppError("VALIDATION_ERROR", "center가 필요합니다", detail={"field": "center"})
     traces: list[uuid.UUID] = []   # ②를 부른 trace — run이 저장되지 못하면 버려진 비용으로 표시한다(#848)
 
     def create() -> RecommendRun:
@@ -411,10 +416,12 @@ def _create_run(
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다. 뒤에서 실패해도 차감이 run과 함께 롤백되므로
     실패에는 환불 경로가 없다. 환불은 한 곳뿐이다 — 그 run의 **첫 실행이 후보 0곳**일 때 `_search_and_store`가 같은 트랜잭션에서
     돌려준다(#1015, docs/credits-reviews.md 3.3). `Idempotency-Key` 재전송은 이 함수를 다시 타지 않는다."""
+    if center is None:   # 지도 중심이 앵커다(#1331) — 핀으로 지역을 만드는 길은 run 생성에 없다(readiness·미리 돌려 보기만 쓴다)
+        raise AppError("VALIDATION_ERROR", "center가 필요합니다", detail={"field": "center"})
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
-    if center is not None and places_api.sido_at(*center, db=db) is None:
+    if places_api.sido_at(*center, db=db) is None:
         raise AppError("VALIDATION_ERROR")
     credits_api.check_can_spend(db, user_id=requested_by, feature="recommend_run")   # 모델(②) 전에 막는다(#949)
 
@@ -435,23 +442,13 @@ def _create_run(
     current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
     run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1)
     # 모델을 기다리는 사이 잔액이 줄었으면 여기서 402다(모델은 이미 불렸다 — 드문 경합으로 받아들인다, credits.api.charge)
-    if center is not None:
-        run.origin_lat, run.origin_lng = center
+    run.origin_lat, run.origin_lng = center
     credits_api.charge(db, user_id=requested_by, feature="recommend_run", run_id=str(run.id))
     service.add_reaction_evidence(db, run_id=run.id, lines=merged)
 
-    if center is not None:
-        groups = [_center_region(category, center)]
-    else:
-        default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
-        if default_region is None:
-            raise AppError("NOT_READY")
-        circle, anchors = default_region
-        groups = _clustered_regions(circle, anchors)
+    circle, anchors = _center_region(category, center)
     service.create_regions(db, run_id=run.id, regions_data=[
-        _region_data(group_circle, label=CENTER_REGION_LABEL if center is not None else DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
-                     confirmed=True, anchor_points=group_anchors)
-        for i, (group_circle, group_anchors) in enumerate(groups)
+        _region_data(circle, label=CENTER_REGION_LABEL, confirmed=True, anchor_points=anchors),
     ])
 
     return run

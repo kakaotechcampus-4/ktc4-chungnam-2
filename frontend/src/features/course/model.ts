@@ -9,6 +9,16 @@ export type CourseStepDto = components['schemas']['CourseStep']
 export type CourseGoalDto = components['schemas']['CourseGoal']
 export type CourseDayDto = components['schemas']['CourseDay']
 export type CourseViolationDto = components['schemas']['CourseViolation']
+export type CourseFixDto = components['schemas']['CourseFix']
+export type CourseMoveDto = components['schemas']['CourseMove']
+export type CourseCheckedDto = components['schemas']['CourseChecked']
+export type CourseMode = CourseRunDto['mode']
+
+/** 실서버가 아직 mode 를 안 내면 plan 으로 그린다(#1322). */
+export const modeOf = (run: Pick<CourseRunDto, 'mode'>): CourseMode => run.mode ?? 'plan'
+/** fixes·checked 도 없을 수 있다고 보고 그린다. */
+export const fixesOf = (run: Pick<CourseRunDto, 'fixes'>): CourseFixDto[] => run.fixes ?? []
+export const checkedOf = (run: Pick<CourseRunDto, 'checked'>): CourseCheckedDto[] => run.checked ?? []
 
 /** 요청 한 줄의 글자 수 상한(api-spec CourseRequest.request_text). */
 export const REQUEST_MAX = 100
@@ -68,8 +78,11 @@ export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
 export function createErrorMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
   switch (error.code) {
-    case 'COURSE_NOT_ENOUGH_PLACES':
-      return '위치가 확인된 장소가 확정 리스트에 2곳 이상 있어야 해요'
+    case 'COURSE_NOT_ENOUGH_PLACES': {
+      // 몇 곳부터인지는 서버 값(detail.min)이다 — 화면에 숫자를 적지 않는다. 문구는 docs/errors.md 표.
+      const min = error.detail?.min
+      return typeof min === 'number' ? `확정 리스트에 장소를 ${min}곳 이상 담아 주세요` : '확정 리스트에 장소를 더 담아 주세요'
+    }
     default:
       return null
   }
@@ -206,3 +219,17 @@ export function courseDrawings(run: Pick<CourseRunDto, 'days'>, points: Map<stri
     return [{ title: dayTitle(day.date, i), stops: placed, legs, ...dayLine(i) }]
   })
 }
+
+/** 고칠 점 카드 순서 — 하드 문제가 먼저, 같은 세기 안에서는 서버가 준 순서 그대로. */
+export const sortFixes = (fixes: CourseFixDto[]): CourseFixDto[] => [...fixes.filter((f) => f.strength === 'hard'), ...fixes.filter((f) => f.strength !== 'hard')]
+
+/** 카드가 일정을 바꾸는 카드인지(고치지 않기로 한 카드는 moves 가 비고 「반영」이 없다). */
+export const hasMoves = (fix: CourseFixDto): boolean => fix.moves.length > 0
+
+/** 미배정 장소를 날짜에 넣는 카드는 「○일째에 넣기」다(from_date 가 null). */
+export const isFill = (fix: CourseFixDto): boolean => fix.kind === 'unassigned' || fix.moves.every((m) => m.from_date === null)
+
+export const stalePrompt = '일정이 바뀌었어요'
+
+/** 카드를 반영했거나 반영 중에 일정이 바뀌어, 남은 카드가 낡았을 때의 안내(#1322). */
+export const staleFixText = `${stalePrompt}. 다시 점검하면 이어서 고칠 수 있어요`

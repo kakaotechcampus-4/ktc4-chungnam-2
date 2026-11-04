@@ -11,6 +11,8 @@
 - 지도 현황 문단(8.2): 칸 계산(사실만), 모델 출력의 모순 검증, 응답 조립 — #1168
 - 후속 관찰과 충돌 선언(6.9): 풀림·그대로 판정(episode_state), 후속 신호(detect_followups), 다음 방법의 허용 행동, 충돌 선언 템플릿,
   지켜보는 막힌 곳(tracking) — #1346
+- AI 추천·AI 코스와 엮기(6.10): 일정 점검 탐지(schedule — 판정은 AI 코스 점검 agent.course.review.find_problems), 카테고리 공백의
+  모델 경로(후보 핀이 있을 때), 끼워 보기 계산(schedule_fits — 자리와 이동은 agent.course.core), open_pin 행동 검사 — #1357
 
 입력은 `agent.snapshot.Snapshot`(관찰 한 번의 사본)과 `History`(이 지도의 제안 이력, #515가 채운다)다.
 Signal과 features에는 사유 글을 넣지 않는다 — 근거는 reaction_id와 pin_id로만 가리킨다(명세 2절 13번).
@@ -67,9 +69,12 @@ from agent.constants import (
     TIME_MAX,
     TIME_MIN,
     TIME_MULTIPLIER,
+    TOOL_RESULT_MAX_ITEMS,
     TRACKING_WINDOW,
     WEB_CHECK_REUSE,
 )
+from agent.course import core as course_core, review as course_review
+from agent.course.intake import PinInput, TripBuild
 from agent.schemas import (
     AdviceSegment,
     AgentAction,
@@ -146,7 +151,7 @@ Evidence = tuple[str, str, datetime]
 @dataclass(frozen=True)
 class Signal:
     id: str                          # 관찰 안에서의 식별자 s1, s2 … (detect_all이 매긴다)
-    diagnosis: str                   # stall | split | no_reaction | category_gap
+    diagnosis: str                   # stall | split | no_reaction | category_gap | schedule
     category: str | None
     pin_id: str | None               # split만
     evidence_ids: tuple[str, ...]    # 정렬된 reaction_id 또는 pin_id
@@ -301,7 +306,8 @@ def detect_no_reaction(s: Snapshot, now: datetime, th: timedelta) -> list[Signal
 
 def detect_category_gap(s: Snapshot) -> list[Signal]:
     """카테고리 공백(6.5). 확정이 2곳 이상인데 관찰 대상 카테고리 중 확정이 없는 곳. 숙소와 기타는 핀을 만들 수
-    없어(pinnable 아님) 보지 않는다."""
+    없어(pinnable 아님) 보지 않는다. features.candidate_pin_ids는 그 카테고리의 미확정 핀(후보, 찍은 순, 많아야 TOOL_RESULT_MAX_ITEMS) —
+    있으면 모델 진단이다(6.10, uses_model). fingerprint와 근거는 확정 항목 그대로라 후보가 늘어도 같은 막힌 곳이다."""
     if len(s.shortlist) < CATEGORY_GAP_MIN_CONFIRMED:
         return []
     confirmed = [(i.pin_id, "confirmed", i.added_at) for i in s.shortlist]
@@ -311,17 +317,58 @@ def detect_category_gap(s: Snapshot) -> list[Signal]:
             continue   # 숙소가 다시 핀이 되면(v2): 당일치기는 숙소 공백을 보지 않는다
         if any(s.pin(i.pin_id).category == c for i in s.shortlist):
             continue
+        candidates = [p.pin_id for p in sorted(s.pins, key=lambda p: (p.created_at, p.pin_id))
+                      if p.category == c and not s.is_confirmed(p.pin_id)][:TOOL_RESULT_MAX_ITEMS]
         out.append(make_signal(
             "category_gap", category=c, evidence=confirmed,
-            features=_features(s, category=c, affected=s.member_count, elapsed_ratio=None, trigger=None),
+            features=_features(s, category=c, affected=s.member_count, elapsed_ratio=None, trigger=None)
+            | {"candidate_pin_ids": candidates},
         ))
     return out
 
 
+SCHEDULE_KINDS = ("closed", "travel")   # 일정 점검이 보는 하드 문제(6.10). member(구성원 도보 상한)는 코스 요청에만 있는 값이라 보지 않는다
+
+
+def schedule_problems(s: Snapshot) -> list[dict[str, Any]]:
+    """확정 일정의 하드 문제 [{kind, day, pin_ids}] — 판정은 AI 코스 점검과 같은 함수(agent.course.review.find_problems)다. 영업을 아는
+    장소만 closed가 된다(모르면 문제가 아니다). 순서는 점검 그대로(closed → travel, 날짜 순). 일정이 없으면 빈 목록."""
+    sch = s.schedule
+    if sch is None:
+        return []
+    return [
+        {"kind": p.kind, "day": p.day, "pin_ids": sorted(sch.trip.place(a).pin_id for a in p.places)}
+        for p in course_review.find_problems(sch.trip, sch.course, sch.hours) if p.kind in SCHEDULE_KINDS
+    ]
+
+
+def _problem_id(problem: Mapping[str, Any]) -> str:
+    return f"{problem['kind']}:{problem['day']}:{'+'.join(problem['pin_ids'])}"
+
+
+def detect_schedule(s: Snapshot) -> list[Signal]:
+    """일정 점검(6.10, #1356). 사람이 날짜에 넣은 확정 장소에 쉬는 날 방문(closed)이나 이동 과다(travel)가 하나라도 있으면 신호 하나.
+    근거 id는 문제마다 「종류:날짜:핀」이라 fingerprint가 (schedule, 문제 종류와 날짜, 핀)이다. evidence_hash는 그 문제들과 걸린 장소의
+    요일별 영업이다 — 사람이 일정을 고치거나 영업이 바뀌면 무효화된다. 문제가 없으면 내지 않는다(크레딧 1을 쓰는 버튼을 헛되이
+    권하지 않는다)."""
+    problems = schedule_problems(s)
+    if not problems:
+        return []
+    sch = s.schedule
+    ids = tuple(sorted(_problem_id(p) for p in problems))
+    alias_of = {p.pin_id: p.alias for p in sch.trip.places}
+    involved = sorted({pid for p in problems for pid in p["pin_ids"]})
+    hours = [[pid, sorted((sch.hours.get(alias_of[pid]) or {}).items())] for pid in involved]
+    features = _features(s, category=None, affected=s.member_count, elapsed_ratio=None, trigger=None) | {"problems": problems}
+    return [Signal(id="", diagnosis="schedule", category=None, pin_id=None, evidence_ids=ids, features=features,
+                   fingerprint=fingerprint("schedule", None, ids), evidence_hash=_digest([list(ids), hours]))]
+
+
 def detect_all(s: Snapshot, now: datetime, th: timedelta, followups: Sequence[Signal] = ()) -> list[Signal]:
-    """네 탐지기를 차례로 돌리고 관찰 안의 id(s1, s2 …)를 매긴다. 후속 신호(detect_followups, 6.9)가 있으면 앞에 둔다."""
+    """다섯 탐지기를 차례로 돌리고 관찰 안의 id(s1, s2 …)를 매긴다. 후속 신호(detect_followups, 6.9)가 있으면 앞에 둔다."""
     found = list(followups) + (
         detect_stall(s, now, th) + detect_split(s, now, th) + detect_no_reaction(s, now, th) + detect_category_gap(s)
+        + detect_schedule(s)
     )
     return [replace(sig, id=f"s{i}") for i, sig in enumerate(found, start=1)]
 
@@ -418,7 +465,8 @@ def check_policy(
 
     순서: 1 활성 제안(이번 관찰에서 무효화될 것은 빼고) → 2 fingerprint 중복 → 3 백오프 → 4 no_reaction 하루 1회
     → 5 모델 사용 상한(모델을 부를 신호만 — 코드 유형과 충돌 선언은 통과, uses_model). 신호 하나는 처음 걸린 이유 하나로만 막힌다.
-    통과한 신호의 features에 recent_dismissals를 채운다."""
+    통과한 신호의 features에 recent_dismissals를 채운다. 상한에 걸린 카테고리 공백(후보 핀이 있어 모델 진단일 것, 6.10)은 막지 않고
+    후보를 비워 템플릿(6.5)으로 보낸다 — 후보가 생기기 전에 나가던 제안이 상한 때문에 사라지지 않게 한다."""
     active = history.active
     if active is not None and active.id not in set(superseding):
         return [], [Blocked(sig.id, "active_exists") for sig in signals]
@@ -437,9 +485,11 @@ def check_policy(
             blocked.append(Blocked(sig.id, "backoff"))
         elif sig.diagnosis == "no_reaction" and no_reaction_today >= NO_REACTION_DAILY_LIMIT:
             blocked.append(Blocked(sig.id, "daily_limit"))
-        elif cap and uses_model(sig):
+        elif cap and uses_model(sig) and sig.diagnosis != "category_gap":
             blocked.append(Blocked(sig.id, "model_cap"))
         else:
+            if cap and uses_model(sig):
+                sig = replace(sig, features={**sig.features, "candidate_pin_ids": []})
             streak, _ = dismissal_streak(history.suggestions, sig.diagnosis, sig.category)
             passed.append(replace(sig, features={**sig.features, "recent_dismissals": streak}))
     return passed, blocked
@@ -448,6 +498,7 @@ def check_policy(
 # ---------------------------------------------------------------- 우선순위 정책과 코드 규칙 (7절)
 
 POLICY_PATH = Path(__file__).with_name("priority_policy.yaml")
+URGENT_DIAGNOSES = ("category_gap", "schedule")   # 출발이 urgent_dday일 이내면 맨 앞으로 가는 유형(7절, schedule은 #1356)
 
 
 @dataclass(frozen=True)
@@ -464,7 +515,7 @@ def _is_int(value: Any) -> bool:
 
 
 def parse_policy(raw: Mapping[str, Any]) -> PriorityPolicy:
-    """weights에 diagnosis 4종이 모두 있어야 하고, rules에는 정수 urgent_dday와 아는 diagnosis만 올 수 있다. 어긋나면
+    """weights에 diagnosis 5종이 모두 있어야 하고, rules에는 정수 urgent_dday와 아는 diagnosis만 올 수 있다. 어긋나면
     ValueError."""
     weights = dict(raw.get("weights") or {})
     if set(weights) != set(DIAGNOSES):
@@ -498,7 +549,7 @@ def rank_signals(signals: Sequence[Signal], policy: PriorityPolicy) -> tuple[lis
 
     - 같은 weight 안에서: recent_dismissals가 0인 신호 먼저(recent_dismissals) → affected_members 내림차순
       (affected_members) → elapsed_ratio 내림차순, 없으면 뒤(elapsed_ratio). 앞 기준이 같을 때만 다음 기준을 본다
-    - urgent_dday: 출발이 urgent_dday일 이내(여행 중 포함)면 category_gap을 맨 앞으로
+    - urgent_dday: 출발이 urgent_dday일 이내(여행 중 포함)면 category_gap과 schedule(#1356)을 맨 앞으로
     - always_first: 그 유형을 맨 앞으로. never_first: 1순위가 그 유형이면 아닌 첫 신호를 앞으로
     - followup_first(6.9, #1345): 후속 신호(attempt ≥ 1)를 위 모든 규칙보다 앞으로 — 사람이 이미 움직인 곳부터
 
@@ -519,7 +570,7 @@ def rank_signals(signals: Sequence[Signal], policy: PriorityPolicy) -> tuple[lis
 
     def urgent_gap(s: Signal) -> bool:
         dday = s.features.get("dday")
-        return s.diagnosis == "category_gap" and dday is not None and dday <= policy.urgent_dday
+        return s.diagnosis in URGENT_DIAGNOSES and dday is not None and dday <= policy.urgent_dday
 
     order, hits = sorted(signals, key=weight), []
 
@@ -658,6 +709,8 @@ def signal_record(sig: Signal) -> dict[str, Any]:
 # ---------------------------------------------------------------- 제안 뒤 24시간 안 확정 (12.9, #613)
 
 CATEGORY_DECIDED = ("category_gap", "stall")   # 제안 카테고리의 핀이 확정되면 참. 나머지는 가리킨 핀으로 본다
+# decided_within_24h를 채우는 유형(12.9). 일정 점검(schedule, #1356)은 확정으로 풀리는 막힌 곳이 아니라 null로 둔다
+DECIDED_DIAGNOSES = ("stall", "split", "no_reaction", "category_gap")
 
 
 @dataclass(frozen=True)
@@ -695,8 +748,10 @@ def is_decided(
     """막힌 곳이 확정으로 풀렸는가 — 확정 판정 한 곳이다(6.9 표의 confirmed, 12.9 decided_within_24h가 함께 쓴다, #1345).
     category_gap과 stall은 그 카테고리의 핀이 확정됐는가. split은 가리킨 핀이 확정됐거나, since 뒤에 같은 카테고리의 핀이 확정됐는가.
     no_reaction은 가리킨 핀이 확정됐는가. 확정 항목은 지금 남은 것이라 삭제된 핀의 항목도 들어오면 센다(분류를 모르면 카테고리로는
-    세지 못한다)."""
+    세지 못한다). schedule은 확정으로 풀리지 않는다(False — 풀림은 problem_gone, 6.9 표)."""
     found = list(confirmations)
+    if diagnosis == "schedule":
+        return False
     if diagnosis in CATEGORY_DECIDED:
         return category is not None and any(c.category == category for c in found)
     if diagnosis == "split":
@@ -810,7 +865,38 @@ def _category_gap_draft(sig: Signal) -> Draft:
     )
 
 
-_TEMPLATES = {"no_reaction": _no_reaction_draft, "category_gap": _category_gap_draft}
+SCHEDULE_TITLE = "일정에 다시 볼 곳이 있어요"
+SCHEDULE_LINES = {   # 문제마다 한 줄(많아야 SCHEDULE_LINES_MAX). day는 「n일차」의 n, 핀은 ref claim으로 렌더 때 이름을 채운다
+    "closed": "{day}일차에 쉬는 날인 곳이 있어요 · {pin}",
+    "travel": "{day}일차 이동이 길어요",
+}
+SCHEDULE_LINES_MAX = 2
+SCHEDULE_ACTION = ("open_course", "AI 코스로 고칠 안 받기")
+
+
+def _day_number(day: str | None) -> int | None:
+    return int(day[1:]) if isinstance(day, str) and re.fullmatch(r"d[1-9][0-9]*", day) else None
+
+
+def _schedule_draft(sig: Signal) -> Draft:
+    """일정 점검(6.10). 제목 「일정에 다시 볼 곳이 있어요」, 확인된 것은 문제마다 한 줄(쉬는 날은 그 핀 이름, 이동 과다는 날만), 버튼은
+    「AI 코스로 고칠 안 받기」(open_course) 하나. 사람이 넣은 일정을 바꾸지 않는다 — 고칠 안은 사람이 누른 AI 코스가 낸다."""
+    claims: list[dict[str, Any]] = []
+    lines = []
+    for problem in (sig.features.get("problems") or ())[:SCHEDULE_LINES_MAX]:
+        day = _day_number(problem.get("day"))
+        if day is None or problem.get("kind") not in SCHEDULE_LINES:
+            continue
+        pin = ""
+        if problem["kind"] == "closed" and problem.get("pin_ids"):
+            ref = RefClaim(id=f"c{len(claims) + 1}", kind="ref", object="pin", ref_id=problem["pin_ids"][0])
+            claims.append(ref.model_dump())
+            pin = f"{{{ref.id}}}"
+        lines.append({"slot_text": SCHEDULE_LINES[problem["kind"]].format(day=day, pin=pin), "is_guess": False})
+    return Draft(title=SCHEDULE_TITLE, claims=claims, advice=lines, actions=_actions((*SCHEDULE_ACTION, {})))
+
+
+_TEMPLATES = {"no_reaction": _no_reaction_draft, "category_gap": _category_gap_draft, "schedule": _schedule_draft}
 
 
 def render_template(sig: Signal) -> Draft:
@@ -824,14 +910,16 @@ def render_template(sig: Signal) -> Draft:
 # 수락한 제안을 막힌 곳 하나로 보고 풀릴 때까지 지켜본다. 판정은 코드이고 모델을 부르지 않는다. run 결과(비공개)는 쓰지 않는다 —
 # 「추천 받기가 눌렸다」는 agent.resolved로 모두에게 나간 공개 사실이고, 누가 눌렀는지(resolved_by)는 쓰지 않는다(2절 2번).
 
-FOLLOWUP_REASONS = ("new_pin", "confirmed", "pin_removed", "split_gone")   # followup.reason(resolved). 코드 값만
+FOLLOWUP_REASONS = ("new_pin", "confirmed", "pin_removed", "split_gone", "problem_gone")   # followup.reason(resolved). 코드 값만
+PREVIEW_CALL_ID = "p1"   # 미리 돌려 보기의 도구 기록 번호(6.7). llm이 매기는 t1, t2 …와 겹치지 않는다. 버튼 근거 채우기(11.2 6단계)도 본다
 FOLLOWUP_CALL_ID = "f1"   # 후속 확인의 코드 호출 기록 번호. 모델이 고르지 않아 도구 상한에 세지 않는다(p1과 같은 취급)
 ACTION_SHORT = {   # 해 본 것을 짧게 부르는 이름(작업 기록, 지켜보는 줄). 카테고리 이름은 따로 붙는다
     "open_recommend": "추천 받기", "search_place": "장소 검색", "show_pins": "핀 보기", "open_route": "동선 보기",
-    "widen_radius": "반경 바꾸기", "open_evidence": "근거 보기",
+    "widen_radius": "반경 바꾸기", "open_evidence": "근거 보기", "open_pin": "이 핀 보기", "open_course": "AI 코스 짜기",
 }
 # 충돌 선언(attempt 2) 문구 — core 상수 한 곳(6.9). 조건을 완화하자고 하지 않고 「어느 조건 때문에」도 쓰지 않는다(가드레일 4)
 DECLARE_TITLE = "{c}에서 해 본 것을 남겨 둘게요"
+SCHEDULE_SUBJECT = "일정"   # 카테고리가 없는 일정 점검(#1356)을 부르는 이름 — 충돌 선언 제목, 지켜보는 줄
 DECLARE_PREVIEW = "지금 조건으로 미리 찾아보면 {c1.value}곳이 남아요"
 DECLARE_CLOSING = "어떤 조건을 지킬지는 여러분이 정해요"
 RELAX_PHRASES = ("완화", "넓혀", "넓히", "줄여", "줄이", "낮춰", "빼고", "빼 보", "빼보", "포기", "양보")
@@ -865,6 +953,11 @@ def followup_record(status: str, now: datetime, reason: str | None = None) -> di
     return {"status": status, "at": _utc_iso(now)} | ({"reason": reason} if reason else {})
 
 
+def subject_of(diagnosis: str, category: str | None) -> str:
+    """막힌 곳을 부르는 이름 — 카테고리, 일정 점검은 「일정」."""
+    return SCHEDULE_SUBJECT if diagnosis == "schedule" else (category or "")
+
+
 def _confirmations(snap: Snapshot) -> list[Confirmation]:
     out = []
     for i in snap.shortlist:
@@ -877,7 +970,8 @@ def episode_state(target: PastSuggestion, snap: Snapshot, now: datetime, th: tim
     """수락한 제안의 막힌 곳이 풀렸는지, 그대로인지(6.9 표, 판정 한 곳). 기준 시각 a는 수락 시각(resolved_at)이다.
 
     풀림: stall(C)은 a 뒤 C에 새 핀(new_pin) 또는 C 확정(confirmed). split(P)은 P 삭제(pin_removed), P 확정이나 a 뒤 같은 카테고리
-    확정(confirmed), P의 갈림 모양이 사라짐(split_gone). category_gap(C)은 C 확정(confirmed). 확정 판정은 is_decided다.
+    확정(confirmed), P의 갈림 모양이 사라짐(split_gone). category_gap(C)은 C 확정(confirmed). schedule은 그 문제들(fingerprint)이 점검에서
+    사라짐(problem_gone — 사람이 일정을 고침, #1356). 확정 판정은 is_decided다.
     그대로: 풀리지 않았고 a + FOLLOWUP_MIN_WAIT가 지났고, 그 뒤 다른 카테고리에서 STALL_ACTIVE_MEMBERS명이 움직였거나(activity) a부터
     기준 시간이 지났다(time). 최소 대기 안의 활동은 세지 않는다. 그 밖은 waiting."""
     a, c = target.resolved_at, target.category
@@ -886,6 +980,8 @@ def episode_state(target: PastSuggestion, snap: Snapshot, now: datetime, th: tim
     split = target.diagnosis == "split"
     if split and (target.pin_id is None or snap.pin(target.pin_id) is None):
         return EpisodeState("resolved", "pin_removed")
+    if target.diagnosis == "schedule" and not any(s.fingerprint == target.fingerprint for s in detect_schedule(snap)):
+        return EpisodeState("resolved", "problem_gone")
     pointed = frozenset([target.pin_id]) if split and target.pin_id else frozenset()
     if is_decided(target.diagnosis, c, pointed, _confirmations(snap), since=a):
         return EpisodeState("resolved", "confirmed")
@@ -920,28 +1016,31 @@ def tried_of(chain: Sequence[PastSuggestion]) -> list[dict[str, str]]:
     ]
 
 
-def base_actions(diagnosis: str, category: str | None) -> tuple[str, ...]:
-    """그 유형의 허용 행동 — 모델 유형은 MODEL_ACTIONS, 카테고리 공백은 템플릿이 고를 수 있는 행동(추천 대상이면 추천 받기, 그다음 검색)."""
-    if diagnosis in MODEL_ACTIONS:
+def base_actions(diagnosis: str, category: str | None, *, by_model: bool = False) -> tuple[str, ...]:
+    """그 유형의 허용 행동 — 모델이 진단하면 MODEL_ACTIONS(정체, 갈림, 후보 핀이 있는 카테고리 공백), 카테고리 공백의 템플릿은 고를 수
+    있는 행동(추천 대상이면 추천 받기, 그다음 검색), 일정 점검은 open_course 하나(6.10). open_course는 모델 진단의 허용 행동이 아니다."""
+    if diagnosis in MODEL_TYPES or (by_model and diagnosis in MODEL_ACTIONS):
         return MODEL_ACTIONS[diagnosis]
     if diagnosis == "category_gap":
         return ("open_recommend", "search_place") if category in categories.recommendable() else ("search_place",)
+    if diagnosis == "schedule":
+        return (SCHEDULE_ACTION[0],)
     return ()
 
 
 def _remaining(diagnosis: str, category: str | None, tried: Iterable[Mapping[str, Any]],
-               preview: Mapping[str, Any] | None = None) -> tuple[str, ...]:
+               preview: Mapping[str, Any] | None = None, *, by_model: bool = False) -> tuple[str, ...]:
     done = {t.get("action_type") for t in tried}
-    out = [a for a in base_actions(diagnosis, category) if a not in done]
+    out = [a for a in base_actions(diagnosis, category, by_model=by_model) if a not in done]
     if preview is not None and preview.get("passed_count") == 0:
         out = [a for a in out if a != "open_recommend"]
     return tuple(out)
 
 
 def allowed_actions(sig: Signal, preview: Mapping[str, Any] | None = None) -> tuple[str, ...]:
-    """이 신호에 낼 수 있는 행동 — 허용 행동(base_actions)에서 이미 해 본 것(features.tried)을 빼고, 미리 돌려 본 수가 0이면
-    추천 받기를 뺀다(6.7). 첫 제안(attempt 0)은 tried가 비어 base_actions 그대로다."""
-    return _remaining(sig.diagnosis, sig.category, sig.features.get("tried") or (), preview)
+    """이 신호에 낼 수 있는 행동 — 허용 행동(base_actions, 모델이 진단하면 모델의 목록)에서 이미 해 본 것(features.tried)을 빼고, 미리
+    돌려 본 수가 0이면 추천 받기를 뺀다(6.7). 첫 제안(attempt 0)은 tried가 비어 base_actions 그대로다."""
+    return _remaining(sig.diagnosis, sig.category, sig.features.get("tried") or (), preview, by_model=uses_model(sig))
 
 
 def is_followup(sig: Signal) -> bool:
@@ -953,20 +1052,34 @@ def is_declaration(sig: Signal) -> bool:
 
 
 def uses_model(sig: Signal) -> bool:
-    """이 신호로 모델(진단)을 부르는가 — 모델 유형이고 충돌 선언이 아니다. 지도 하루 상한(12.3)은 이것만 센다."""
-    return sig.diagnosis in MODEL_TYPES and not is_declaration(sig)
+    """이 신호로 모델(진단)을 부르는가 — 모델 유형이고 충돌 선언이 아니거나, 후보 핀(features.candidate_pin_ids)이 있는 카테고리 공백의 첫
+    제안이다(6.10, #1356 — 카테고리 공백의 다음 방법은 템플릿, 6.9). 지도 하루 상한(12.3)은 이것만 센다."""
+    if is_declaration(sig):
+        return False
+    if sig.diagnosis == "category_gap":
+        return not is_followup(sig) and bool(sig.features.get("candidate_pin_ids"))
+    return sig.diagnosis in MODEL_TYPES
 
 
-def _episode_evidence(target: PastSuggestion, snap: Snapshot) -> tuple[list[Evidence], int]:
-    """후속 신호의 근거(진단 입력과 감지 문구가 쓴다)와 영향 받은 사람 수. 탐지기와 같은 모양이다."""
+def _episode_evidence(target: PastSuggestion, snap: Snapshot) -> tuple[tuple[str, ...], str, int]:
+    """후속 신호의 근거 id(진단 입력과 감지 문구가 쓴다), evidence_hash, 영향 받은 사람 수. 탐지기와 같은 모양이다. 일정 점검은 지금 점검의
+    신호 그대로다(그대로인 막힌 곳은 문제가 같다)."""
     c = target.category
-    if target.diagnosis == "stall":
+    if target.diagnosis == "schedule":
+        now_sig = next(iter(detect_schedule(snap)), None)
+        if now_sig is not None:
+            return now_sig.evidence_ids, now_sig.evidence_hash, snap.member_count
+        evidence: list[Evidence] = []
+        affected = snap.member_count
+    elif target.diagnosis == "stall":
         againsts = [r for r in snap.reactions if r.type == "against" and snap.pin(r.pin_id).category == c]
-        return _reaction_evidence(againsts), len({r.user_id for r in againsts})
-    if target.diagnosis == "split":
+        evidence, affected = _reaction_evidence(againsts), len({r.user_id for r in againsts})
+    elif target.diagnosis == "split":
         rs = snap.reactions_of(target.pin_id) if target.pin_id else []
-        return _reaction_evidence(rs), len({r.user_id for r in rs})
-    return [(i.pin_id, "confirmed", i.added_at) for i in snap.shortlist], snap.member_count
+        evidence, affected = _reaction_evidence(rs), len({r.user_id for r in rs})
+    else:
+        evidence, affected = [(i.pin_id, "confirmed", i.added_at) for i in snap.shortlist], snap.member_count
+    return tuple(sorted({eid for eid, _, _ in evidence})), evidence_hash(evidence), affected
 
 
 def _followup_signal(
@@ -978,7 +1091,7 @@ def _followup_signal(
     attempt = target.attempt + 1
     if attempt < MAX_ATTEMPT and not _remaining(target.diagnosis, target.category, tried):
         attempt = MAX_ATTEMPT
-    evidence, affected = _episode_evidence(target, snap)
+    evidence_ids, ev_hash, affected = _episode_evidence(target, snap)
     a = target.resolved_at
     features = _features(snap, category=target.category, affected=affected, elapsed_ratio=(now - a) / th,
                          trigger=trigger) | {
@@ -989,8 +1102,8 @@ def _followup_signal(
     return Signal(
         id="", diagnosis=target.diagnosis, category=target.category,
         pin_id=target.pin_id if target.diagnosis == "split" else None,
-        evidence_ids=tuple(sorted({eid for eid, _, _ in evidence})), features=features,
-        fingerprint=_digest([target.fingerprint, attempt]), evidence_hash=evidence_hash(evidence),
+        evidence_ids=evidence_ids, features=features,
+        fingerprint=_digest([target.fingerprint, attempt]), evidence_hash=ev_hash,
     )
 
 
@@ -1056,10 +1169,12 @@ def declare_draft(sig: Signal, preview: Mapping[str, Any] | None = None) -> Draf
     lines = [_tried_line(t["label"]) for t in sig.features.get("tried") or () if t.get("label")]
     passed = _int((preview or {}).get("passed_count"))
     if passed is not None:
-        claims.append(ToolClaim(id="c1", kind="tool_result", call_id="p1", path="passed_count", value=passed).model_dump())
+        claims.append(ToolClaim(id="c1", kind="tool_result", call_id=PREVIEW_CALL_ID, path="passed_count",
+                                value=passed).model_dump())
         lines.append({"slot_text": DECLARE_PREVIEW, "is_guess": False})
     lines.append({"slot_text": DECLARE_CLOSING, "is_guess": False})
-    return Draft(title=DECLARE_TITLE.format(c=sig.category), claims=claims, advice=_clean(lines), actions=[])
+    return Draft(title=DECLARE_TITLE.format(c=subject_of(sig.diagnosis, sig.category)), claims=claims, advice=_clean(lines),
+                 actions=[])
 
 
 def _category_gap_followup_draft(sig: Signal) -> Draft:
@@ -1089,7 +1204,7 @@ TRACKING_TEXTS = {
 }
 RESOLVED_WHY = {
     "new_pin": "새 핀이 올라왔어요", "confirmed": "확정했어요", "pin_removed": "갈린 핀이 지워졌어요",
-    "split_gone": "의견 갈림이 풀렸어요",
+    "split_gone": "의견 갈림이 풀렸어요", "problem_gone": "일정을 고쳤어요",
 }
 
 
@@ -1115,7 +1230,7 @@ def tracking(suggestions: Sequence[PastSuggestion], now: datetime) -> list[Agent
         at = _parse_at(h.followup.get("at")) if status in TRACKING_TEXTS else None
         if at is None or h.status == "active" or now - at > TRACKING_WINDOW:
             continue
-        c = h.category or ""
+        c = subject_of(h.diagnosis, h.category)
         if status == "watching":
             text = TRACKING_TEXTS["watching"].format(c=c, action=ACTION_SHORT.get(h.resolved_action_type or "", "제안"))
         elif status == "resolved":
@@ -1140,8 +1255,9 @@ def compromise_keys(comparison: Mapping[str, Any] | None) -> list[str]:
 def preview_target(top: Signal, comparison: Mapping[str, Any] | None) -> tuple[str, list[str]] | None:
     """미리 돌려 보기(6.7)를 할지와 (카테고리, with_keys). stall과 split 모두 그 카테고리 근거 전부로 돌린다(split은 충돌 종류와
     상관없이, #1317). split의 different_axes만 ♥ 쪽이 원한 키를 with_keys로 더한다 — same_axis·unclear는 두 쪽을 다 맞추는 곳이
-    정의상 없거나 알 수 없어 반대 사유를 지키는 후보 수만 센다. split의 비교가 없으면(② 실패) 돌리지 않는다."""
-    if top.diagnosis == "stall":
+    정의상 없거나 알 수 없어 반대 사유를 지키는 후보 수만 센다. split의 비교가 없으면(② 실패) 돌리지 않는다. 카테고리 공백의 모델
+    진단(6.10)은 stall처럼 그 카테고리 근거 전부로 돌린다(추천 대상이 아니면 tools.preview가 None)."""
+    if top.diagnosis == "stall" or (top.diagnosis == "category_gap" and uses_model(top)):
         return top.category, []
     if top.diagnosis == "split" and comparison:
         keys = compromise_keys(comparison) if comparison.get("conflict_type") == "different_axes" else []
@@ -1169,7 +1285,10 @@ def diagnosis_input(
     넣는 것은 모델이 그것을 알려고 도구를 한 번 더 부르지 않게 하려는 것이다(#534). 두 유형 모두 미리 돌려 본 결과(preview,
     6.7 — stall {passed_count}, split의 different_axes {passed_count, with_keys_count, with_labels}, 없으면 None)를 넣는다.
     같은 값이 도구 기록 p1에 있어 모델이 ToolClaim으로 가리킨다. 다음 방법(attempt 1, 6.9)이면 attempt, attempts(해 본 것의 행동과
-    버튼 문구), allowed_actions(허용 행동에서 해 본 것과 0곳인 추천 받기를 뺀 것)를 더한다 — 첫 제안의 입력은 그대로다. run 결과는 없다."""
+    버튼 문구), allowed_actions(허용 행동에서 해 본 것과 0곳인 추천 받기를 뺀 것), followup_check(f1과 같은 값 — 수락 뒤 지난 분, 그 뒤
+    그 카테고리 새 핀 수)를 더한다 — 첫 제안의 입력은 그대로다. run 결과는 없다.
+    카테고리 공백(6.10, 후보 핀이 있을 때)은 확정 수와 후보 핀 [{pin_id, like, against}](찍은 순)과 preview다 — 일정에 맞는지는 모델이
+    try_in_schedule로, 사유는 get_reasons로 본다."""
     f = top.features
     out: dict[str, Any] = {
         "signal_id": top.id, "diagnosis": top.diagnosis, "category": top.category,
@@ -1190,10 +1309,82 @@ def diagnosis_input(
         out["counts"] = {t: sum(r.type == t for r in reactions) for t in ("like", "against")}
         out["comparison"] = comparison
         out["preview"] = preview_input(preview)
+    elif top.diagnosis == "category_gap":
+        out["confirmed_count"] = len(top.evidence_ids)
+        out["candidates"] = [
+            {"pin_id": pid, **{t: sum(r.type == t for r in snap.reactions_of(pid)) for t in ("like", "against")}}
+            for pid in f.get("candidate_pin_ids") or () if snap.pin(pid) is not None
+        ]
+        out["preview"] = preview_input(preview)
     if is_followup(top):   # 다음 방법(6.9): 해 본 것과 남은 허용 행동. 숫자(지난 시간, 새 핀 수)는 도구 기록 f1에 있다
         out["attempt"] = top.features["attempt"]
         out["attempts"] = [{"action": t["action_type"], "label": t["label"]} for t in top.features.get("tried") or ()]
         out["allowed_actions"] = list(allowed_actions(top, preview))
+        out["followup_check"] = followup_check_result(top)   # 도구 기록 f1과 같은 값 — 모델이 ToolClaim(call_id="f1")으로 쓴다(#1347)
+    return out
+
+
+# ---------------------------------------------------------------- AI 코스 엔진으로 끼워 보기 (6.10, #1356)
+
+TRY_IN_SCHEDULE = "try_in_schedule"   # 도구 이름(10절). 작업 기록과 open_pin 검사가 도구 기록에서 이 이름을 찾는다
+
+
+def schedule_fits(
+    build: TripBuild, candidates: Sequence[PinInput], week: Mapping[str, Mapping[int, str]],
+    trip_open: Mapping[str, str], confirmed_categories: Collection[str],
+) -> list[dict[str, Any]]:
+    """미확정 핀을 확정 일정에 끼워 본 결과 — try_in_schedule 도구의 계산(10절). 사람이 넣은 일정은 바꾸지 않는다. 장소 이름은 없다.
+
+    build는 AI 코스의 일정 입력(agent.course.service.build_input)에 후보를 미배정으로 더한 것, week은 place_id → 요일 → 영업
+    (places.api.get_week_open_status), trip_open은 place_id → 여행 기간 영업(places.api.get_open_status_on_weekdays — 모든 날 쉬면
+    closed). 영업 판정은 places 한 곳이고, 자리와 이동은 코스와 같은 함수(best_position, day_travel, travel_minutes)다.
+
+    핀마다 {pin_id, day, added_minutes, nearest_minutes, open, fills_gap}:
+    - 날짜에 넣은 장소가 있으면 그날들 중 이동 증가가 가장 작은 날(같으면 앞날) — day(d1 …)와 added_minutes, open은 그날 영업
+    - 없으면 day·added_minutes는 null이고 nearest_minutes(확정 장소 중 가장 가까운 곳까지, 확정 장소가 없으면 null), open은 여행 기간 영업
+    - fills_gap: 그 핀의 카테고리가 확정 리스트에 없다
+    좌표가 없는 핀(실시간 핀, #382)은 {pin_id, no_coords: true}다. 코스 입력에 들지 못한 핀(확정 장소가 코스 상한을 넘음)은 자리를 재지
+    못해 day·added_minutes·nearest_minutes가 null이다."""
+    trip = build.trip
+    alias_of = {p.pin_id: p.alias for p in trip.places} if trip is not None else {}
+    asked = {c.pin_id for c in candidates}
+    confirmed = [p.alias for p in trip.places if p.pin_id not in asked] if trip is not None else []
+    placed = [(i, day) for i, day in enumerate(build.placed) if day]
+    hours = {p.alias: dict(week[p.place_id]) for p in trip.places if p.place_id in week} if trip is not None else {}
+    out = []
+    for c in candidates:
+        if not c.routable:
+            out.append({"pin_id": c.pin_id, "no_coords": True})
+            continue
+        row = {"pin_id": c.pin_id, "day": None, "added_minutes": None, "nearest_minutes": None,
+               "open": trip_open.get(c.place_id, "unknown"), "fills_gap": c.category not in confirmed_categories}
+        alias = alias_of.get(c.pin_id)
+        if alias is not None and placed:
+            added, i = min((_added_minutes(trip, day, alias), i) for i, day in placed)
+            row |= {"day": course_core.day_alias(i), "added_minutes": added,
+                    "open": course_core.status_on(hours, alias, trip.days[i])}
+        elif alias is not None and confirmed:
+            row["nearest_minutes"] = min(course_core.travel_minutes(trip, alias, other) for other in confirmed)
+        out.append(row)
+    return out
+
+
+def _added_minutes(trip: course_core.Trip, day: Sequence[str], alias: str) -> int:
+    """그날 코스의 끼울 자리(best_position — 식당·카페가 붙지 않고 이동이 가장 짧은 자리)에 넣었을 때 늘어나는 이동 분."""
+    k = course_core.best_position(trip, day, alias)
+    return course_core.day_travel(trip, [*day[:k], alias, *day[k:]]) - course_core.day_travel(trip, day)
+
+
+def schedule_fits_of(calls: Sequence[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
+    """이번 관찰의 try_in_schedule 결과, 핀 id → 그 핀의 결과(나중 호출이 앞을 덮는다). open_pin 검사(11.2 6단계)가 본다."""
+    out: dict[str, Mapping[str, Any]] = {}
+    for call in calls:
+        result = call.get("result")
+        if call.get("name") != TRY_IN_SCHEDULE or not isinstance(result, Mapping):
+            continue
+        for row in result.get("pins") or ():
+            if isinstance(row, Mapping) and isinstance(row.get("pin_id"), str):
+                out[row["pin_id"]] = row
     return out
 
 
@@ -1280,7 +1471,12 @@ def _side_text(key: Mapping[str, Any], side: str) -> str | None:
 
 # 6절 표의 유형별 허용 행동
 # 「핀 보기」(show_pins)는 없다 — 결정이 막힌 사람에게 필요한 것은 새 후보다(#1317). 0곳이면 open_recommend가 빠져 장소 검색이 남는다
-MODEL_ACTIONS = {"stall": ("open_recommend", "search_place"), "split": ("open_recommend", "search_place")}
+# 카테고리 공백(후보 핀이 있을 때, 6.10)은 「이 핀 보기」(open_pin)도 고를 수 있다 — 확정은 사람이 한다. open_course는 일정 점검 템플릿에만 있다
+MODEL_ACTIONS = {
+    "stall": ("open_recommend", "search_place"), "split": ("open_recommend", "search_place"),
+    "category_gap": ("open_pin", "open_recommend", "search_place"),
+}
+OPEN_PIN_LABEL = "이 핀 보기"
 # 초안. 확정이나 결정을 지시하는 표현을 막는다(11.2). 공백을 뺀 문장과 비교한다. 검증(슬롯 문장)과 렌더(text 조각을 이어
 # 붙인 것, #717) 두 곳에서 본다. 목록은 빠지는 말이 있는 마지막 확인이고, 구성원 글은 quote 조각으로만 내려 여기 걸리지 않는다
 FORBIDDEN_PHRASES = ("확정하세요", "확정해", "확정하라", "결정하세요", "결정하라", "여기로 가세요", "여기로 정하세요")
@@ -1300,6 +1496,7 @@ _SLOT = re.compile(r"\{(c\d+)(\.value)?\}")   # {cN.value}는 값, {cN}은 인�
 _MODEL_TITLES = {
     "stall": lambda c: f"{c} 후보가 반대 의견 뒤로 멈춰 있어요",
     "split": lambda c: "의견이 갈린 핀이 있어요",
+    "category_gap": lambda c: f"확정 리스트에 {c}{_josa(c, '이', '가')} 아직 없어요",   # 템플릿(6.5)과 같은 제목
 }
 
 
@@ -1476,25 +1673,110 @@ def _check_line(
     return None
 
 
+def _open_pin_problem(
+    action: Any, top: Signal, snap: Snapshot, fits: Mapping[str, Mapping[str, Any]],
+) -> tuple[str | None, str | None]:
+    """open_pin 검사(6.10) → (핀 id, None) 또는 (None, 이유). 핀 하나만 — 이 지도의 미확정 핀이고 신호의 카테고리이며, 🚫가 하나도 없고
+    (가드레일 9), 이번 관찰의 try_in_schedule 결과가 있고 그 결과가 쉬는 날(closed)이나 좌표 없음(no_coords)이 아니다."""
+    pin_ids = list(dict.fromkeys(action.pin_ids or ()))
+    if len(pin_ids) != 1:
+        return None, "pin"
+    pin = snap.pin(pin_ids[0])
+    if pin is None or snap.is_confirmed(pin.pin_id) or pin.category != top.category:
+        return None, "pin"
+    if any(r.type == "against" for r in snap.reactions_of(pin.pin_id)):
+        return None, "against"
+    fit = fits.get(pin.pin_id)
+    if fit is None:
+        return None, "not_tried"
+    if fit.get("no_coords") or fit.get("open") == "closed":
+        return None, "unfit"
+    return pin.pin_id, None
+
+
 def _model_action(
-    action: Any, top: Signal, kept: Mapping[str, Any], preview: Mapping[str, Any] | None = None,
+    action: Any, top: Signal, preview: Mapping[str, Any] | None = None, *,
+    snap: Snapshot | None = None, fits: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[tuple[str, str, dict[str, Any]] | None, str | None]:
     """행동 하나(11.2 6단계) → ((type, label, params), None) 또는 (None, 이유). 버튼 이름은 코드가 정한다. 미리 돌려 본
     passed_count가 0이면 open_recommend를 뺀다(6.7) — 0곳인 추천을 권해 크레딧을 쓰게 하지 않는다. 미리 돌려 보지 못했으면(② 실패
-    등, preview=None) 이 검사를 하지 않는다. split의 버튼은 그 핀의 카테고리만 가리킨다 — 다른 카테고리면 뺀다."""
+    등, preview=None) 이 검사를 하지 않는다. split과 카테고리 공백의 버튼은 그 신호의 카테고리만 가리킨다 — 다른 카테고리면 뺀다.
+    open_pin은 _open_pin_problem을 통과해야 한다(fits는 이번 관찰의 try_in_schedule 결과, 핀 id → 그 핀의 결과). basis는 여기서
+    보지 않는다 — 남는 버튼의 근거는 _button_basis가 보고 채운다(#1380)."""
     if action.type not in allowed_actions(top):   # 다음 방법(6.9)이면 이미 해 본 행동도 여기서 빠진다
         return None, "type"
     if action.type == "open_recommend" and preview is not None and preview.get("passed_count") == 0:
         return None, "preview_empty"
-    if not action.basis or any(b not in kept for b in action.basis):
-        return None, "basis"
+    if action.type == "open_pin":
+        if snap is None:
+            return None, "pin"
+        pin_id, reason = _open_pin_problem(action, top, snap, fits or {})
+        return ((action.type, OPEN_PIN_LABEL, {"pin_ids": [pin_id]}), None) if pin_id else (None, reason)
     c = action.category or top.category
     if c not in categories.pinnable() or (action.type == "open_recommend" and c not in categories.recommendable()):
         return None, "category"
-    if top.diagnosis == "split" and c != top.category:
+    if top.diagnosis in ("split", "category_gap") and c != top.category:
         return None, "category"
     label = {"open_recommend": f"{c} 추천 받기", "search_place": f"{c} 검색"}[action.type]
     return (action.type, label, {"category": c}), None
+
+
+def _button_evidence(
+    spec: tuple[str, str, Mapping[str, Any]], top: Signal, tool_results: Mapping[str, Any],
+    calls: Sequence[Mapping[str, Any]],
+) -> tuple[str, str, Any] | None:
+    """버튼의 필수 근거(#1380, 11.2 6단계) — 이번 관찰 기록에서 (call_id, path, value). 없으면 None(버튼을 뺀다).
+    open_recommend: p1(passed_count ≥ 1), p1이 없으면 그 카테고리의 get_readiness(ready). search_place: get_readiness, 없으면
+    p1(passed_count = 0). open_pin: 그 핀의 try_in_schedule 결과(나중 호출이 앞을 덮는다 — schedule_fits_of와 같다).
+    p1은 신호의 카테고리로만 돌린다(preview_target). 버튼을 남길지는 여기서 정하지 않는다 — _model_action이 이미 정했다."""
+    type_, _label, params = spec
+    if type_ == "open_pin":
+        pin_id = params["pin_ids"][0]
+        for call in reversed(calls):
+            result = tool_results.get(call.get("call_id"))
+            if call.get("name") != TRY_IN_SCHEDULE or not isinstance(result, Mapping):
+                continue
+            rows = result.get("pins") or ()
+            at = next((i for i, row in enumerate(rows) if isinstance(row, Mapping) and row.get("pin_id") == pin_id), None)
+            if at is not None:
+                return call["call_id"], f"pins.{at}.pin_id", pin_id
+        return None
+    category = params.get("category")
+    preview = tool_results.get(PREVIEW_CALL_ID) if category == top.category else None
+    passed = preview.get("passed_count") if isinstance(preview, Mapping) else None
+    p1 = (PREVIEW_CALL_ID, "passed_count", passed) if type(passed) is int else None
+    readiness = None
+    for call in reversed(calls):
+        result = tool_results.get(call.get("call_id"))
+        if (call.get("name") == "get_readiness" and isinstance(result, Mapping) and result.get("category") == category
+                and isinstance(result.get("ready"), bool)):
+            readiness = (call["call_id"], "ready", result["ready"])
+            break
+    if type_ == "open_recommend":
+        return p1 if p1 is not None and p1[2] >= 1 else readiness
+    return readiness or (p1 if p1 is not None and p1[2] == 0 else None)
+
+
+def _button_basis(
+    action: Any, spec: tuple[str, str, Mapping[str, Any]], top: Signal, kept: dict[str, Any],
+    tool_results: Mapping[str, Any], calls: Sequence[Mapping[str, Any]], taken: set[str],
+) -> str | None:
+    """버튼의 근거(#1380). 모델이 적은 basis가 모두 남은 claim이면 그대로 → "model". 비었거나 claims에 없는 id면 이번 관찰
+    기록에서 필수 근거를 tool_result claim으로 만들어 kept에 넣는다 → "filled"(같은 call_id·path의 claim이 이미 남아 있으면 그것을
+    쓴다). 기록에 근거가 없으면 None — 버튼을 뺀다. 새 id는 모델이 쓴 어느 id(제거된 것 포함, taken)와도 겹치지 않는다. 화면 문장은
+    바뀌지 않는다 — 문장의 basis는 5단계 그대로다."""
+    if action.basis and all(b in kept for b in action.basis):
+        return "model"
+    found = _button_evidence(spec, top, tool_results, calls)
+    if found is None:
+        return None
+    call_id, path, value = found
+    if not any(isinstance(c, ToolClaim) and c.call_id == call_id and c.path == path for c in kept.values()):
+        numbers = [int(t[1:]) for t in taken if _CLAIM_ID.fullmatch(t)]
+        cid = f"c{max(numbers, default=0) + 1}"
+        taken.add(cid)
+        kept[cid] = ToolClaim(id=cid, kind="tool_result", call_id=call_id, path=path, value=value)
+    return "filled"
 
 
 def _stored_claim(claim: Any, snap: Snapshot) -> dict[str, Any]:
@@ -1511,18 +1793,21 @@ def _stored_claim(claim: Any, snap: Snapshot) -> dict[str, Any]:
 def verify_diagnosis(
     out: DiagnosisOutput, top: Signal, snap: Snapshot, tool_results: Mapping[str, Any], *,
     member_names: Iterable[str] = (), comparison: Mapping[str, Any] | None = None,
-    preview: Mapping[str, Any] | None = None,
+    preview: Mapping[str, Any] | None = None, fits: Mapping[str, Mapping[str, Any]] | None = None,
+    calls: Sequence[Mapping[str, Any]] = (),
 ) -> Verified:
     """모델 진단 출력 검증(11.2). 스키마(1단계)는 llm이 이미 봤다 — 여기 오는 것은 DiagnosisOutput이다.
 
     1 decision이 silent·unknown이면 그대로 침묵 2 signal_id와 diagnosis가 1순위 신호와 같은가 3 claim 대조(실패한
     claim 제거) 4 구조 대조(요약 전용이라 진단은 건너뛴다) 5 문장(제거된 claim을 가리킴, 슬롯 밖 숫자, 구성원 이름이나
     별칭, 금지 표현, 슬롯 밖 사유 원문 옮겨 쓰기) 6 행동(유형별 허용, 미리 돌려 본 수가 0이면 open_recommend 제거, 추천 대상
-    카테고리, basis) 7 성립(split은 그 핀의
+    카테고리, 버튼 근거 — 비었거나 없는 id면 기록에서 채우고 기록에도 없으면 제거, #1380) 7 성립(split은 그 핀의
     like·against count, 문장이나 행동이 하나 이상). 2단계나 7단계에서 실패하면 invalid_claims로 침묵한다.
 
     tool_results: 이번 관찰의 도구 결과(call_id → 모델에 준 결과 그대로, 미리 돌려 보기 p1 포함). member_names: 구성원 표시
-    이름(두 글자 이상만 본다 — 한 글자 이름은 보통 낱말과 겹친다). preview: 미리 돌려 본 결과(6.7), 돌리지 않았으면 None."""
+    이름(두 글자 이상만 본다 — 한 글자 이름은 보통 낱말과 겹친다). preview: 미리 돌려 본 결과(6.7), 돌리지 않았으면 None. fits: 이번
+    관찰의 try_in_schedule 결과(schedule_fits_of, 6.10) — open_pin 검사가 본다. calls: 이번 관찰의 도구 기록(call_id, name) — 버튼
+    근거를 채울 때 get_readiness와 try_in_schedule 호출을 찾는다(값은 tool_results에서)."""
     record: dict[str, Any] = {"decision": out.decision}
     if out.decision != "suggest":
         return Verified(out.decision, None, record)
@@ -1545,14 +1830,21 @@ def verify_diagnosis(
             removed_lines.append({"index": i, "reason": reason})
     record["lines"] = {"kept": len(advice), "removed": removed_lines}
 
-    specs, removed_actions = [], []
+    specs, removed_actions, filled = [], [], 0
+    taken = {c.id for c in out.claims}
     for i, action in enumerate(out.actions):
-        spec, reason = _model_action(action, top, kept, preview)
+        spec, reason = _model_action(action, top, preview, snap=snap, fits=fits)
+        if reason is None and spec not in specs:
+            basis = _button_basis(action, spec, top, kept, tool_results, calls, taken)
+            if basis is None:
+                reason = "basis"
+            else:
+                specs.append(spec)
+                filled += basis == "filled"
         if reason is not None:
             removed_actions.append({"index": i, "reason": reason})
-        elif spec not in specs:
-            specs.append(spec)
     record["actions"] = {"kept": len(specs), "removed": removed_actions}
+    record["basis_filled"] = filled
 
     required = top.diagnosis != "split" or all(
         any(isinstance(c, CountClaim) and c.subject == "pin" and c.subject_id == top.pin_id and c.metric == m
@@ -1702,17 +1994,20 @@ def action_at(actions: Sequence[Mapping[str, Any]], index: int) -> AgentAction |
 # 문장은 아래 고정 문구와 기록의 숫자뿐이다. 사유 글, 핀·장소 이름, 별칭, URL, 웹 문장은 넣지 않는다(2절 11·13번, #717).
 # 카테고리 이름은 코드의 고정 목록(common.categories)이라 쓴다.
 
-STEP_DETECT = {   # 감지. n은 stall 🚫 반응 수, no_reaction 핀 수, category_gap 확정 수, split 반응한 사람 수
+STEP_DETECT = {   # 감지. n은 stall 🚫 반응 수, no_reaction 핀 수, category_gap 확정 수, split 반응한 사람 수, schedule 문제 수
     "stall": lambda c, n: f"{c}에 반대 의견 {n}개가 남은 뒤로 새 후보가 없어요",
     "split": lambda c, n: f"{c} 핀 하나에서 {n}명의 의견이 ♥와 🚫로 갈렸어요",
     "no_reaction": lambda c, n: f"아직 확인되지 않은 핀이 {n}개 있어요",
     "category_gap": lambda c, n: f"확정한 {n}곳 중 {c}{_josa(c, '이', '가')} 없어요",
+    "schedule": lambda c, n: f"AI 코스 점검으로 확정 일정을 봤어요 · 다시 볼 곳 {n}개",
 }
+_NO_CATEGORY = ("no_reaction", "schedule")   # 카테고리가 없는 유형
 STEP_RANK = "살펴볼 곳 {n}개 중 이것부터 골랐어요"
 STEP_FOLLOWUP = {   # 후속 확인(6.9). action은 마지막으로 해 본 것(ACTION_SHORT), time은 f1의 지난 시간
     "stall": "{action} 뒤로 {time} 동안 {c}에 새 핀이 없었어요",
     "split": "{action} 뒤로 {time} 동안 의견이 갈린 핀이 그대로예요",
     "category_gap": "{action} 뒤로 {time} 동안 확정한 {c}{josa} 없어요",
+    "schedule": "{action} 뒤로 {time} 동안 일정이 그대로예요",
 }
 # 조사 — 모델이 고른 도구 이름마다 (수를 넣은 문구, 수가 없을 때, 멈췄을 때). 수는 모델이 받은 목록의 길이다
 STEP_TOOLS: dict[str, tuple[str | None, str, str]] = {
@@ -1725,11 +2020,14 @@ STEP_TOOLS: dict[str, tuple[str | None, str, str]] = {
     "get_place_facts": ("장소 정보 {n}개를 우리 데이터에서 읽었어요", "장소 정보를 우리 데이터에서 읽었어요",
                         "장소 정보를 읽으려다 멈췄어요"),
     "get_readiness": (None, "추천 준비를 확인했어요", "추천 준비를 확인하려다 멈췄어요"),
+    TRY_IN_SCHEDULE: ("AI 코스 엔진으로 핀 {n}개를 일정에 끼워 봤어요", "AI 코스 엔진으로 핀을 일정에 끼워 봤어요",
+                      "핀을 일정에 끼워 보려다 멈췄어요"),
 }
 STEP_TOOL_OTHER = (None, "지도 데이터를 읽었어요", "지도 데이터를 읽으려다 멈췄어요")
 STEP_REASON_KINDS = {("against",): "반대 사유", ("like",): "좋음 사유"}   # get_reasons의 types 인자. 그 밖은 「사유」
 STEP_TOOL_LISTS = {   # 모델이 받은 목록 칸(그 길이가 수다)
     "get_reaction_matrix": "pins", "get_reasons": "reasons", "structure_reasons": "reasons", "get_place_facts": "facts",
+    TRY_IN_SCHEDULE: "pins",
 }
 STEP_PREVIEW = "지금 조건으로 미리 찾아봤어요 · {n}곳 남아요"
 STEP_PREVIEW_BOTH = " · 두 의견을 다 맞추는 곳 {n}곳"
@@ -1763,7 +2061,7 @@ def _detect_step(signal: Mapping[str, Any] | None) -> WorkStep | None:
     if not signal or signal.get("diagnosis") not in STEP_DETECT:
         return None
     diagnosis, category = signal["diagnosis"], signal.get("category")
-    if diagnosis != "no_reaction" and not category:
+    if diagnosis not in _NO_CATEGORY and not category:
         return None
     features = signal.get("features") or {}
     n = _int(features.get("affected_members")) if diagnosis == "split" else len(signal.get("evidence_ids") or ())
@@ -2600,6 +2898,7 @@ FIRST_REASONS = {
     "split": "의견이 갈린 핀이 있다",
     "no_reaction": "아직 의견을 안 남긴 핀이 많다",
     "category_gap": "출발이 가까운데 확정한 곳이 없다",
+    "schedule": "확정 일정에 쉬는 날 방문이나 긴 이동이 있다",
 }
 FIRST_REASON_GAP_NOT_URGENT = "확정한 곳이 아직 없다"
 # 「먼저」, 「부터」로 카테고리를 권하는 말(검증 4). "음식점부터", "음식점을 먼저", "먼저 음식점을"
@@ -2615,7 +2914,7 @@ def status_cells(snap: Snapshot, signals: Sequence[Signal], policy: PriorityPoli
       함께 있고 ♥ ≥ 🚫 — 6.3의 시간 조건과 무관), stalled(이번 관찰에서 그 카테고리 정체 신호가 났는가), unreacted_pins(확정이
       아닌 핀 중 반응이 하나도 없는 핀 수)
     - first_category, first_reason: 이번 관찰에서 탐지된 신호(정책 전)를 7절 순위 규칙으로 정렬한 1순위의 카테고리와 이유(고정
-      문구). 신호가 없으면 둘 다 null. 반응 공백은 카테고리가 없어 first_category가 null이다"""
+      문구). 신호가 없으면 둘 다 null. 반응 공백과 일정 점검은 카테고리가 없어 first_category가 null이다"""
     stalled = {s.category for s in signals if s.diagnosis == "stall"}
     cells = []
     for c in categories.pinnable():

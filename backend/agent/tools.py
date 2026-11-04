@@ -22,7 +22,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from statistics import median
 from typing import Any
@@ -30,7 +30,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from agent import core
-from agent.constants import TOOL_RESULT_MAX_ITEMS
+from agent.constants import TOOL_RESULT_MAX_ITEMS, TRY_IN_SCHEDULE_MAX_PINS
+from agent.course import service as course_service
+from agent.course.api_schemas import CourseRequest
 from agent.snapshot import Snapshot
 from common import categories
 from common.errors import AppError
@@ -376,7 +378,7 @@ def comparison(ctx: ToolContext, *, pin_id: str | None = None, category: str | N
     return core.compare_reasons(_structured(ctx, rows[:TOOL_RESULT_MAX_ITEMS]))
 
 
-PREVIEW_CALL_ID = "p1"   # 미리 돌려 보기의 도구 기록 번호(6.7). llm이 매기는 t1, t2 …와 겹치지 않는다
+PREVIEW_CALL_ID = core.PREVIEW_CALL_ID   # 미리 돌려 보기의 도구 기록 번호(6.7)
 
 
 def preview(ctx: ToolContext, *, category: str | None, with_keys: Sequence[str] = ()) -> dict[str, Any] | None:
@@ -479,6 +481,34 @@ def get_readiness(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
             "required_count": found["required_count"]}
 
 
+# ---------------------------------------------------------------- AI 코스 엔진 (6.10, #1356)
+
+def try_in_schedule(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:
+    """미확정 핀(많아야 TRY_IN_SCHEDULE_MAX_PINS개, 넘으면 앞에서 자른다)을 확정 일정에 끼워 본다 — pins[{pin_id, day, added_minutes,
+    nearest_minutes, open, fills_gap}] 또는 핀마다 {pin_id, no_coords}. 계산은 core.schedule_fits(자리와 이동은 AI 코스와 같은 함수)다.
+
+    입력은 AI 코스의 일정 입력이다: agent.course.service.read_snapshot(확정 핀과 일정), read_pins(이 핀들을 미배정으로), build_input. 영업은
+    places.api(get_week_open_status, 여행 기간은 get_open_status_on_weekdays) 한 곳이다(#747). 장소 이름은 돌려주지 않는다 — 모델은
+    pin_id로 가리킨다. 지도에 없거나 이미 확정한 핀은 not_found다. AI 코스를 돌리지 않는다(모델·크레딧 없음)."""
+    wanted = list(dict.fromkeys(args.get("pin_ids") or ()))
+    open_ids = [pid for pid in wanted if ctx.snap.pin(pid) is not None and not ctx.snap.is_confirmed(pid)]
+    pin_ids = open_ids[:TRY_IN_SCHEDULE_MAX_PINS]
+    with ctx.read() as db:
+        found = course_service.read_snapshot(db, ctx.map_id)
+        if found is None:
+            return NOT_FOUND
+        candidates = course_service.read_pins(db, ctx.map_id, pin_ids)
+        build = course_service.build_input(replace(found, pins=found.pins + candidates), CourseRequest())
+        days = course_service.trip_days(found.start_date, found.end_date)
+        routable = [p.place_id for p in (*found.pins, *candidates) if p.routable]
+        week = places_api.get_week_open_status(routable, db=db) if routable else {}
+        asked = [c.place_id for c in candidates if c.routable]
+        trip_open = places_api.get_open_status_on_weekdays(asked, sorted({d.weekday() for d in days}), db=db) if asked else {}
+    confirmed_categories = {p.category for p in ctx.snap.pins if ctx.snap.is_confirmed(p.pin_id)}
+    rows = core.schedule_fits(build, candidates, week, trip_open, confirmed_categories)
+    return {"pins": rows, "total": len(rows), "not_found": [pid for pid in wanted if pid not in open_ids]}
+
+
 TOOLS: dict[str, Callable[[ToolContext, Mapping[str, Any]], Any]] = {
     "get_map_overview": get_map_overview,
     "get_activity": get_activity,
@@ -488,4 +518,5 @@ TOOLS: dict[str, Callable[[ToolContext, Mapping[str, Any]], Any]] = {
     "compare_reasons": compare_reasons,
     "get_place_facts": get_place_facts,
     "get_readiness": get_readiness,
+    core.TRY_IN_SCHEDULE: try_in_schedule,
 }

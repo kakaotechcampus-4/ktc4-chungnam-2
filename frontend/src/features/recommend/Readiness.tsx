@@ -11,8 +11,10 @@ import Pingo, { type PingoMood } from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
 
+import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
+import { useCreditsQuery } from '@/features/credits/queries'
 import Mark from '@/ui/Mark'
 
 import { useAiStore } from './aiStore'
@@ -20,7 +22,7 @@ import { chosenCategory, runErrorMessage, runHistoryLine, summaryToRun, toReadin
 import { useCreateRunMutation, useReadinessQuery, useRunHistoryQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
-export function AiHeader({ title, sub, mood }: { title: string; sub: string; mood?: PingoMood }) {
+export function AiHeader({ title, sub, mood }: { title: string; sub?: string; mood?: PingoMood }) {
   return (
     <div className="flex items-center gap-3 rounded-xl bg-[var(--pingo-bg)] p-3">
       <Pingo size={44} mood={mood} />
@@ -29,7 +31,7 @@ export function AiHeader({ title, sub, mood }: { title: string; sub: string; moo
           <span className="tag tag-ai">AI</span>
           {title}
         </p>
-        <p className="text-xs text-ink-600">{sub}</p>
+        {sub && <p className="text-xs text-ink-600">{sub}</p>}
       </div>
     </div>
   )
@@ -92,11 +94,20 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const chosen = chosenCategory(cards, picked)
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useRecountOnMapMove(readiness.refetch)
+  // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧). 버튼과 핑고 조언의 「추천 받아 보기」가 같은 창을 거친다.
+  const [asking, setAsking] = useState<{ category: RecommendCategory; fromAgent: boolean } | null>(null)
+  // 게스트는 묻지 않는다 — 버튼 자리에 이미 카카오 안내가 있고, 실행해도 403 이다.
+  const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
   useAgentStart(cards, (category) => {
     setPicked(mapId, category)
-    // 크레딧 때문이면(게스트·잔액 부족) 「상황이 바뀌었어요」가 아니다 — 버튼 자리의 안내가 말한다.
-    create.start(category, { onError: (err) => creditBlock(err) || showToast(CHANGED) })
+    if (!guest) setAsking({ category, fromAgent: true })
   })
+  function startAsked() {
+    if (!asking) return
+    setAsking(null)
+    // 핑고 조언에서 왔으면 크레딧 때문이 아닌 실패는 「상황이 바뀌었어요」다. 크레딧 때문이면(게스트·잔액 부족) 버튼 자리의 안내가 말한다.
+    create.start(asking.category, asking.fromAgent ? { onError: (err) => creditBlock(err) || showToast(CHANGED) } : undefined)
+  }
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
   if (readiness.error) return <ErrorText message="추천 준비 상태를 불러오지 못했어요" error={readiness.error} />
@@ -130,12 +141,21 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         <button
           type="button"
           disabled={!chosen || create.isPending}
-          onClick={() => chosen && create.start(chosen)}
+          onClick={() => chosen && setAsking({ category: chosen, fromAgent: false })}
           className="btn-primary btn-lg w-full"
         >
           {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
         </button>
       </CreditGate>
+      {asking && (
+        <CreditConfirm
+          feature="recommend_run"
+          title={`${asking.category} 추천을 받을까요?`}
+          ok="추천받기"
+          onOk={startAsked}
+          onCancel={() => setAsking(null)}
+        />
+      )}
       <RunHistory mapId={mapId} />
     </div>
   )

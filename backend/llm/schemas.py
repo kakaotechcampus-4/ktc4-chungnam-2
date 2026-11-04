@@ -189,7 +189,10 @@ class PlaceFactLabel(BaseModel):
 # Stance와 모델이 내던 Conflict는 없다(2026-10-15). 키와 방향은 ②가, 충돌 종류는 코드가 정한다(명세 6.3, 8.1).
 
 AgentDecision = Literal["suggest", "silent", "unknown"]
-AgentActionType = Literal["open_recommend", "show_pins", "search_place", "open_route", "widen_radius", "open_evidence"]
+# open_pin(「이 핀 보기」)은 카테고리 공백의 후보 핀 하나를 가리킨다(#1356, 명세 6.10). open_course는 일정 점검 템플릿에만 있어 모델 행동이 아니다
+AgentActionType = Literal[
+    "open_recommend", "show_pins", "search_place", "open_route", "widen_radius", "open_evidence", "open_pin",
+]
 
 
 class CountClaim(BaseModel):
@@ -243,7 +246,7 @@ class Action(BaseModel):
 
 class DiagnosisOutput(BaseModel):
     decision: AgentDecision
-    diagnosis: Literal["stall", "split"]
+    diagnosis: Literal["stall", "split", "category_gap"]  # category_gap은 후보 핀이 있을 때만 모델 진단이다(#1356, 명세 6.10)
     signal_id: str
     claims: list[Claim]
     advice: list[AdviceLine]

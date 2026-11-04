@@ -108,3 +108,37 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "live" in item.keywords:
             item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def _run_center_from_pins(request, monkeypatch):
+    """run 생성은 지도 중심(center)이 필수다(#1331). 중심 없이 run을 만들던 기존 테스트가 center를 따로 만들지 않아도 되게,
+    flows.create_run에 center가 없으면 readiness·미리 돌려 보기가 쓰는 핀 기반 기본 지역(`_default_circle_and_anchors`, 그 카테고리 핀 좌표의
+    평균)의 중심으로 채우고 시·도 판정은 모르면 통과로 본다.
+    center 없는 요청 자체를 보는 테스트는 `@pytest.mark.no_center_shim`으로 끈다. 핀 좌표가 없으면 채우지 않는다(서버가 422)."""
+    if request.node.get_closest_marker("no_center_shim"):
+        return
+    try:
+        from places import api as places_api
+        from recommend import flows
+    except Exception:  # noqa: BLE001 — recommend를 못 읽는 환경의 테스트는 건드리지 않는다
+        return
+    real_create_run = flows.create_run
+
+    def create_run(db, *, map_id, category, center=None, **kwargs):
+        injected = False
+        if center is None:
+            default_region = flows._default_circle_and_anchors(db, map_id=map_id, category=category)
+            if default_region is not None:
+                center = (default_region[0].anchor_lat, default_region[0].anchor_lng)
+                injected = True
+        if not injected:
+            return real_create_run(db, map_id=map_id, category=category, center=center, **kwargs)
+        real_sido_at = places_api.sido_at
+        monkeypatch.setattr(places_api, "sido_at", lambda *a, **kw: real_sido_at(*a, **kw) or "sido")
+        try:
+            return real_create_run(db, map_id=map_id, category=category, center=center, **kwargs)
+        finally:
+            monkeypatch.setattr(places_api, "sido_at", real_sido_at)
+
+    monkeypatch.setattr(flows, "create_run", create_run)

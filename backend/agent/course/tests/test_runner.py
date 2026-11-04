@@ -105,13 +105,13 @@ class TestRunWithRequest:
         direct = direct_planner()
         out = run_course(build(), TEXT, goals_planner=goals_planner, direct_planner=direct, gateway=NullOpeningHours())
         v = out.view
-        assert [g["id"] for g in v.goals] == ["day_indoor:d2"] and v.goals[0]["label"] == "둘째 날 (화)은 실내 위주로"
+        assert [g["id"] for g in v.goals] == ["day_indoor:d2"] and v.goals[0]["label"] == "둘째 날 (화)는 실내 위주로"
         assert v.goals[0]["met"] in (True, False, None)
         assert v.unmatched == ["웨이팅 없는 곳으로"]
         assert out.model_turns == 2
         stages = [s["stage"] for s in v.steps]
         assert stages[0] == "이해" and "끝" in stages
-        assert (v.steps[0]["role"], v.steps[0]["by"]) == ("해석", "ai") and "둘째 날 (화)은 실내 위주로" in v.steps[0]["text"]
+        assert (v.steps[0]["role"], v.steps[0]["by"]) == ("해석", "ai") and "둘째 날 (화)는 실내 위주로" in v.steps[0]["text"]
 
     def test_goal_setting_failure_leaves_the_whole_request_unmatched(self):
         def failing(_input):
