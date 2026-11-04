@@ -1,6 +1,6 @@
 """
 agent 모듈이 소유하는 테이블 8개 — docs/data-model.md agent 절과 docs/agent-v2.md 13절이 정본이다(마이그레이션 0029,
-agent_map_status와 agent_suggestions.facts는 0056, #1168, agent_suggestions.attempt·followup_of·followup은 0062, #1346).
+agent_map_status와 agent_suggestions.facts는 0056, #1168, agent_suggestions.attempt·followup_of·followup은 0063, #1346).
 
 - `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다(docs/architecture.md 1절, #760). `agent_run_advice.run_id`도
   recommend_runs.id지만 모듈 경계라 FK가 없다.
