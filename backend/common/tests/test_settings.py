@@ -12,6 +12,9 @@ import pytest
 from common.settings import ConfigError, Settings
 
 
+_TLS_DB_URL = "postgresql://app:db-password-1@db.internal:5432/y?sslmode=require"
+_STRONG_SECRET = "s" * 40   # MIN_SESSION_SECRET_LEN(32) 이상
+
 _EXTERNAL_KEYS = {
     "KAKAO_REST_API_KEY": "rest-key",
     "ELICE_ML_API_BASE_URL": "https://ml.example", "ELICE_ML_API_KEY": "elice-key",
@@ -36,10 +39,10 @@ def _nothing_decided(monkeypatch):
 def _settings(**overrides):
     base = dict(
         environment="prod",
-        database_url="postgresql://x/y",
+        database_url=_TLS_DB_URL,
         cors_allow_origins=("https://pingo.example",),
         cors_allow_origin_regex=None,
-        session_secret="real-secret",
+        session_secret=_STRONG_SECRET,
         places_mode="real",
         llm_mode="real",
         frontend_base_url="https://app.pingo.example",
@@ -116,7 +119,7 @@ def test_from_env_defaults_to_real_mode_in_prod(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "prod")
     monkeypatch.delenv("PLACES_MODE", raising=False)
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
-    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
 
     s = Settings.from_env()
@@ -159,7 +162,7 @@ def test_from_env_prod_has_no_regex_default(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "prod")
     monkeypatch.delenv("CORS_ALLOW_ORIGIN_REGEX", raising=False)
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
-    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
     monkeypatch.setenv("PLACES_MODE", "real")
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
 
@@ -195,7 +198,7 @@ def test_from_env_llm_mode_defaults_to_real_in_prod(monkeypatch):
     monkeypatch.delenv("LLM_MODE", raising=False)
     monkeypatch.setenv("PLACES_MODE", "real")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
-    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
 
     assert Settings.from_env().llm_mode == "real"
@@ -206,7 +209,7 @@ def test_from_env_prod_with_llm_mode_dev_is_refused(monkeypatch):
     monkeypatch.setenv("LLM_MODE", "dev")
     monkeypatch.setenv("PLACES_MODE", "real")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
-    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
 
     with pytest.raises(ConfigError, match="llm"):
@@ -249,7 +252,7 @@ def test_from_env_without_pingo_env_is_prod(monkeypatch):
     monkeypatch.setenv("PLACES_MODE", "real")
     monkeypatch.setenv("LLM_MODE", "real")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
-    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
 
     s = Settings.from_env()
@@ -343,7 +346,7 @@ def test_prod_refuses_qa_login_secret():
 def test_from_env_prod_with_qa_login_secret_is_refused(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "prod")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
-    monkeypatch.setenv("SESSION_SECRET", "a-real-secret")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
     monkeypatch.setenv("QA_LOGIN_SECRET", "qa")
 
@@ -365,7 +368,8 @@ def test_qa_login_is_enabled_only_in_staging_with_a_secret(environment, secret, 
 def _staging_env(monkeypatch):
     monkeypatch.setenv("PINGO_ENV", "staging")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://staging.pingo.example")
-    monkeypatch.setenv("SESSION_SECRET", "a-staging-secret")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
+    monkeypatch.setenv("DATABASE_URL", _TLS_DB_URL)
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://staging.pingo.example")
     for name in ("CORS_ALLOW_ORIGIN_REGEX", "QA_LOGIN_SECRET"):
         monkeypatch.delenv(name, raising=False)
@@ -549,11 +553,11 @@ def test_cookie_secure_default_follows_environment(monkeypatch, environment, exp
     assert Settings.from_env().cookie_secure is expected
 
 
-def test_cookie_secure_can_be_turned_off_for_local_http_staging(monkeypatch):
-    _staging_env(monkeypatch)
+def test_cookie_secure_can_be_turned_off_outside_strict_environments(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "dev")
     monkeypatch.setenv("COOKIE_SECURE", "0")
 
-    assert Settings.from_env().cookie_secure is False
+    assert Settings.from_env().cookie_secure is False   # staging·prod는 아래 가드(#1210)가 막는다
 
 
 def test_invalid_cookie_secure_is_rejected(monkeypatch):
@@ -575,7 +579,7 @@ def test_real_mode_refuses_whitespace_only_external_key(field, blank):
 @pytest.mark.parametrize("name", list(_EXTERNAL_KEYS))
 def test_from_env_refuses_whitespace_only_external_key(monkeypatch, name):
     monkeypatch.setenv("PINGO_ENV", "prod")
-    monkeypatch.setenv("SESSION_SECRET", "real-secret")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://pingo.example")
     monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
     monkeypatch.setenv(name, " \t ")
@@ -610,3 +614,78 @@ def test_invalid_pool_pre_ping_is_rejected(monkeypatch, value):
 
     with pytest.raises(ConfigError, match="DB_POOL_PRE_PING"):
         Settings.from_env()
+
+
+# ---- 운영 설정 가드(#1210): strict에서만 막고 값은 오류에 싣지 않는다 ----
+
+_SECRET_VALUES = ("db-password-1", "pw-in-url", "short-secret-value", "kakao-redirect-secret")
+
+
+@pytest.mark.parametrize("environment", ["staging", "prod"])
+@pytest.mark.parametrize("overrides, match", [
+    ({"cookie_secure": False}, "COOKIE_SECURE"),
+    ({"database_url": "postgresql://app:pw-in-url@db.internal:5432/y"}, "DATABASE_URL"),
+    ({"database_url": "postgresql://app:pw-in-url@db.internal:5432/y?sslmode=prefer"}, "DATABASE_URL"),
+    ({"database_url": "postgresql://app:pw-in-url@db.internal:5432/y?sslmode=disable"}, "DATABASE_URL"),
+    ({"frontend_base_url": "http://app.pingo.example"}, "FRONTEND_BASE_URL"),
+    ({"kakao_redirect_uri": "http://app.pingo.example/auth/kakao/callback"}, "KAKAO_REDIRECT_URI"),
+    ({"kakao_redirect_uri": "https://api.other.example/auth/kakao/callback"}, "호스트"),
+    ({"session_secret": "short-secret-value"}, "SESSION_SECRET"),
+])
+def test_strict_environments_refuse_unsafe_transport_settings(environment, overrides, match):
+    with pytest.raises(ConfigError, match=match) as exc:
+        _settings(environment=environment, **overrides)
+
+    message = str(exc.value)
+    assert not any(secret in message for secret in _SECRET_VALUES)
+    for value in overrides.values():
+        if isinstance(value, str):
+            assert value not in message
+
+
+@pytest.mark.parametrize("environment", ["dev", "test"])
+def test_non_strict_environments_allow_the_same_settings(environment):
+    s = _settings(
+        environment=environment, cookie_secure=False,
+        database_url="postgresql://app:pw-in-url@db.internal:5432/y",
+        frontend_base_url="http://localhost:5173",
+        kakao_redirect_uri="http://localhost:8000/auth/kakao/callback",
+        session_secret="short",
+    )
+
+    assert s.cookie_secure is False
+
+
+def test_strict_accepts_tls_db_and_matching_https_redirect():
+    s = _settings(kakao_redirect_uri="https://app.pingo.example/api/auth/kakao/callback")
+
+    assert s.kakao_redirect_uri.startswith("https://app.pingo.example")
+
+
+@pytest.mark.parametrize("mode", ["require", "verify-ca", "verify-full"])
+def test_strict_accepts_every_tls_sslmode(mode):
+    assert _settings(database_url=f"postgresql://a:b@db.internal/y?sslmode={mode}")
+
+
+def test_strict_allows_loopback_db_without_tls():
+    assert _settings(database_url="postgresql://a:b@localhost:5432/y")
+
+
+def test_session_secret_boundary():
+    assert _settings(session_secret="s" * 32)
+    with pytest.raises(ConfigError, match="SESSION_SECRET"):
+        _settings(session_secret="s" * 31)
+
+
+def test_from_env_prod_refuses_cookie_secure_off_without_echoing_secrets(monkeypatch):
+    monkeypatch.setenv("PINGO_ENV", "prod")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://app.pingo.example")
+    monkeypatch.setenv("SESSION_SECRET", _STRONG_SECRET)
+    monkeypatch.setenv("DATABASE_URL", _TLS_DB_URL)
+    monkeypatch.setenv("FRONTEND_BASE_URL", "https://app.pingo.example")
+    monkeypatch.setenv("COOKIE_SECURE", "0")
+
+    with pytest.raises(ConfigError, match="COOKIE_SECURE") as exc:
+        Settings.from_env()
+
+    assert _STRONG_SECRET not in str(exc.value) and "db-password-1" not in str(exc.value)
