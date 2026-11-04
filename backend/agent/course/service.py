@@ -64,7 +64,7 @@ class Snapshot:
     start_date: date
     end_date: date
     confirmed_pin_ids: tuple[str, ...]      # 확정 항목의 핀 전부(확정 순서). 바뀌었는지(stale) 비교에 쓴다
-    pins: tuple[PinInput, ...]              # 그중 공개이고 지워지지 않은 핀
+    pins: tuple[PinInput, ...]              # 그중 공개이고 지워지지 않은 핀(scheduled_date는 사람이 일정에 넣은 날, #1237)
 
 
 def read_snapshot(db: Session, map_id: str) -> Optional[Snapshot]:
@@ -75,7 +75,10 @@ def read_snapshot(db: Session, map_id: str) -> Optional[Snapshot]:
     found = maps_api.get_map_for_agent(db, map_id)
     if found is None or found["deleted"]:
         return None
-    items = shortlist_api.list_items_for_agent(db, map_id=map_id)
+    schedule = shortlist_api.get_schedule_for_agent(db, map_id=map_id)
+    items = sorted(schedule["items"], key=lambda i: i["added_at"])      # 일정은 날짜 순으로 오므로 확정 순서(별칭·MAX_PLACES 기준)로 되돌린다
+    when = {i["pin_id"]: i["scheduled_date"] for i in items}
+    order = {i["pin_id"]: i["visit_order"] for i in items}
     matrix = {p["pin_id"]: p for p in pins_api.list_reaction_matrix(db, map_id=map_id)}
     confirmed = [matrix[i["pin_id"]] for i in items if i["pin_id"] in matrix]
     place_ids = [p["place_id"] for p in confirmed if p["place_id"]]
@@ -85,10 +88,10 @@ def read_snapshot(db: Session, map_id: str) -> Optional[Snapshot]:
     for p in confirmed:
         info = infos.get(p["place_id"]) if p["place_id"] else None
         if info is None:     # 실시간 핀, 또는 장소가 정리돼 없는 핀
-            pins.append(PinInput(p["pin_id"], None, p["search_query"] or "", p["category"]))
+            pins.append(PinInput(p["pin_id"], None, p["search_query"] or "", p["category"], scheduled_date=when[p["pin_id"]], visit_order=order[p["pin_id"]]))
             continue
         labels = frozenset(f.fact_key for f in facts.get(p["place_id"], ()) if f.confidence == "known" and f.value is True)
-        pins.append(PinInput(p["pin_id"], p["place_id"], info.name, p["category"], info.lat, info.lng, labels))
+        pins.append(PinInput(p["pin_id"], p["place_id"], info.name, p["category"], info.lat, info.lng, labels, when[p["pin_id"]], order[p["pin_id"]]))
     return Snapshot(found["start_date"], found["end_date"], tuple(i["pin_id"] for i in items), tuple(pins))
 
 
@@ -121,7 +124,7 @@ def build_input(snapshot: Snapshot, body: CourseRequest) -> TripBuild:
     pins = [p for p in snapshot.pins if not p.routable or p.pin_id in kept]
     built = build_trip(pins, days, member_constraints(body, len(days)), unknown_hours="check")
     over = tuple(Excluded(p.pin_id, p.name, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE) for p in routable[MAX_PLACES:])
-    return TripBuild(built.trip, built.excluded + over)
+    return TripBuild(built.trip, built.excluded + over, built.locks, built.schedule)
 
 
 # ---------------------------------------------------------------- 요청

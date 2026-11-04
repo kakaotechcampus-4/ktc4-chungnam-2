@@ -21,11 +21,19 @@ function exportRow(i: ShortlistItem, n: number) {
 }
 
 type ScheduledItem = ShortlistItem & { scheduled_date?: string | null };
+function sortedSchedule(mapId: string) {
+  const items = (store.shortlist[mapId] ?? []) as ScheduledItem[];
+  return [...items].sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999") || (a.visit_order ?? 1e9) - (b.visit_order ?? 1e9));
+}
+/** 일정 version — 장소 집합·날짜·순서·여행 기간이 들어 있다. AI 코스가 요청 때 저장하고 stale 판정에 쓴다(#1237). */
+export function scheduleVersion(mapId: string) {
+  const map = store.maps[mapId];
+  return JSON.stringify([map.start_date, map.end_date, sortedSchedule(mapId).map(i => [i.id, i.scheduled_date ?? null, i.visit_order ?? null])]);
+}
 function scheduleSnapshot(mapId: string) {
   const map = store.maps[mapId];
-  const items = (store.shortlist[mapId] ?? []) as ScheduledItem[];
-  const sorted = [...items].sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999") || (a.visit_order ?? 1e9) - (b.visit_order ?? 1e9));
-  const version = JSON.stringify([map.start_date, map.end_date, sorted.map(i => [i.id, i.scheduled_date ?? null, i.visit_order ?? null])]);
+  const sorted = sortedSchedule(mapId);
+  const version = scheduleVersion(mapId);
   return { start_date: map.start_date, end_date: map.end_date, version, items: sorted.map(i => ({ ...i, scheduled_date: i.scheduled_date ?? null, permissions: shortlistPermissions(i) })) };
 }
 

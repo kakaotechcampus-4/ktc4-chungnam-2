@@ -2,6 +2,24 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-04, `POST /maps/{mapId}/runs` — 선택 필드 `center`(지도 중심에서 추천) 추가 (#1331)
+
+- 요청 본문에 선택 필드 `center: {lat, lng} | null`을 더했다. **상위 호환** — 없으면 지금 동작(그 카테고리 핀들이 앵커)이다.
+- 있으면 그 run의 앵커는 이 점 하나다: 후보를 찾는 원의 중심(카테고리 기본 반경, 넓히기도 같은 점에서), 동점 거리 비교, 지도 여행 지역이 없을 때의 시·도 판정. 시작 조건(그 카테고리 의견 핀 1곳 이상, 미충족 409 `NOT_READY`)·크레딧·멱등·결과 가시성은 그대로다. 서버가 중심을 run에 저장해 `retry`·`widen`이 같은 점을 쓰고, 응답에 좌표는 없다.
+- 새 에러: **422 `VALIDATION_ERROR`** — `center`가 위도 33~39·경도 124~132 밖이거나 시·도를 정할 수 없는 곳. 멱등키의 요청 동일성에 `center`가 들어간다(같은 키로 다른 중심은 409 `IDEMPOTENCY_CONFLICT`).
+- FE 사용: 카테고리 버튼(「여기서 음식점」 등)을 누른 순간 보이는 영역의 중심(모바일은 하단 시트에 가린 부분을 뺀 중심)을 `center`로 보낸다. 시작 조건 미충족 안내 문구는 FE가 만든다: 「장소 핀을 찍고 최소 1개의 의사 표시(♥ 또는 🚫)를 해야 추천 기능이 시작돼요」. 정본 이슈 #1331.
+- 목 서버는 범위 밖 `center`에 422를 내고 키의 동일성에 `center`를 포함한다. 서버 구현은 backend/recommend 후속이다.
+
+## 2026-11-04, `CourseRun`에 일정 기준 모드와 고칠 점 카드 추가, stale는 일정 version 기준으로 (#1237)
+
+- 결정(#1237, 2026-11-04): AI 코스 버튼은 하나이고 확정 리스트의 일정 상태에 따라 하는 일이 다르다. 서버가 요청 때 정하고 응답의 `mode`로 알려 준다 — `plan`(날짜에 넣은 장소 없음, 짜기) · `fill`(일부만 넣음, 남은 곳 채우기) · `review`(다 넣음, 점검과 최소 수정). 사람이 날짜에 넣은 장소는 AI가 바꾸지 않고, 일정은 사람이 카드마다 「반영」을 누를 때만 바뀐다.
+- `CourseRun`에 필수 칸 4개를 더했다: `mode`, `headline`(결과 화면 머리 문구, 모드별 서버 템플릿, 진행 중·failed는 null), `fixes[]`(고칠 점 카드), `checked[]`(점검했고 문제 없는 항목 — 「괜찮아요」). `plan`은 `fixes`·`checked`가 빈 배열이다. 새 스키마는 `CourseFix`, `CourseMove`, `CourseChecked`다.
+- `CourseFix`: `id`, `kind`(`closed`·`travel`·`member`·`condition`·`goal`·`cluster`·`meal`·`unassigned` — `member`는 요청 때 넣은 구성원 도보 상한 위반으로 기존 `CourseViolation.kind`와 같고 hard, `condition`은 우리 조건 요약에서 온 목표와 어긋남으로 soft), `strength`(`hard`·`soft`), `text`(문제 문장), `moves[]`(`{pin_id, from_date, to_date}` — 날 맞바꾸기는 두 날의 모든 장소, 1곳 옮기기는 1개, 2곳 맞바꾸기는 2개, `from_date` null은 아직 날짜에 안 넣은 장소), `resolved_text`(풀리는 것), `remaining_text`(남는 것), `not_fixed_reason`(고치지 않은 이유). 고치지 않기로 한 카드는 `moves`가 비고 `not_fixed_reason`만 있다. 반영은 서버 API가 아니다 — FE가 `GET /maps/{mapId}/shortlist/schedule`로 지금 일정을 읽어 `moves`대로 옮기고 같은 응답의 `version`과 함께 `PUT`으로 저장한다. 그동안 일정이 바뀌어 409 `SHORTLIST_STALE`이 오면 「일정이 바뀌었어요」 + 「다시 점검」이다. 날 맞바꾸기에서 첫날·마지막 날을 빼지 않는다(도착·출발 데이터가 없다).
+- `CourseRun.stale`: 요청 때 저장한 일정 `version`과 지금 `version`이 다르면 true다(이전에는 확정 핀 집합만 비교). 장소를 더하거나 빼도, 날짜나 순서를 옮겨도, 여행 기간이 바뀌어도 true다. 화면 문구는 「일정이 바뀌었어요」(기존 「확정 리스트가 바뀌었어요」). `POST /maps/{mapId}/courses` 요약에도 모드를 적었다.
+- 요청·에러 코드는 그대로다. 크레딧은 모드와 상관없이 코스 1번에 1이다.
+- FE: `CourseRun`의 새 칸은 필수라 목 서버가 모든 run에 싣는다. 목 서버는 확정 리스트의 일정 상태로 모드를 정하고(`contracts/mocks/handlers/course.ts`), review는 날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1 카드를 예시로 낸다. 카드를 반영해 일정 PUT을 하면 목 서버의 코스는 stale이 된다.
+- 구현 이슈: 서버 backend/agent/course #1321, 화면 frontend #1322. 서버 구현 전에는 실서버 응답에 `mode`, `headline`, `fixes`, `checked`가 모두 없을 수 있다(계약 테스트 `KNOWN_COURSE_DRIFT`에 #1321로 적었고 구현 PR이 지운다) — FE가 먼저 붙으면 `mode`가 없을 때 plan으로, `fixes`·`checked`가 없을 때 빈 배열로 그린다.
+
 ## 2026-11-04, 「핑고 AI 조언」 작업 기록(`AgentSuggestion.steps`)과 살펴본 상태(`AgentState.observation`) (#1297)
 
 - `AgentSuggestion`에 선택 필드 `steps: WorkStep[]`를 더했다. 이 제안을 만들 때 핑고가 거친 단계(감지 → 순위 → 조사 → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인, 있는 것만)다. 문장은 서버 고정 문구와 숫자뿐이고 사유 글·핀 이름·URL은 없다. `agent.suggested` 페이로드에도 같은 값이 실린다. 정본 설명은 `docs/agent-v2.md` 11.3.
