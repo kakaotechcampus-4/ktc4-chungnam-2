@@ -137,7 +137,7 @@ function buildAgentDeclared(): StoreState {
       expires_at: new Date(now.getTime() + 24 * 3600 * 1000).toISOString(),
     },
   };
-  state.agentTracking[SEED_MAP_ID] = state.agentTracking[SEED_MAP_ID].filter((t) => t.category !== "음식점");
+  state.agentTracking[SEED_MAP_ID] = state.agentTracking[SEED_MAP_ID].filter((t) => t.suggestion_id !== "sug_watch"); // 지켜보던 음식점 줄이 지금 제안이 됐다
   return state;
 }
 

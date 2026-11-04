@@ -1384,7 +1384,7 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     expect(s.actions).toEqual([]);
     expect(s.tried.map((t: { action_type: string }) => t.action_type)).toEqual(["open_recommend", "search_place"]);
     expect(s.steps.map((x: { stage: string }) => x.stage)).toContain("후속 확인");
-    expect(state.tracking.some((t: { category: string }) => t.category === "음식점")).toBe(false); // 활성 제안인 막힌 곳은 tracking에 없다
+    expect(state.tracking.map((t: { suggestion_id: string }) => t.suggestion_id)).not.toContain("sug_watch"); // 활성 제안인 막힌 곳은 tracking에 없다
   });
 });
 
