@@ -294,6 +294,8 @@ def map_permissions(principal: Principal, successor: str | None) -> Permissions:
         can_delete=can(principal, "map.delete", resource),
         can_leave=can(principal, "map.leave", resource) and can_leave(principal.role, successor),
         can_edit=can(principal, "map.settings.edit", resource),
+        can_manage_invites=can(principal, "invite.revoke", resource),
+        can_transfer_owner=can(principal, "owner.transfer", resource),
     )
 
 

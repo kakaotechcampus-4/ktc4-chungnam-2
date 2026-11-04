@@ -181,9 +181,9 @@ def test_owner_successor_is_only_computed_for_the_owner():
 @pytest.mark.parametrize(
     "role, successor, expected",
     [
-        ("owner", "next", {"can_delete": True, "can_leave": True, "can_edit": True}),
-        ("owner", None, {"can_delete": True, "can_leave": False, "can_edit": True}),
-        ("member", None, {"can_delete": False, "can_leave": True, "can_edit": False}),
+        ("owner", "next", {"can_delete": True, "can_leave": True, "can_edit": True, "can_manage_invites": True, "can_transfer_owner": True}),
+        ("owner", None, {"can_delete": True, "can_leave": False, "can_edit": True, "can_manage_invites": True, "can_transfer_owner": True}),
+        ("member", None, {"can_delete": False, "can_leave": True, "can_edit": False, "can_manage_invites": False, "can_transfer_owner": False}),
     ],
 )
 def test_map_permissions(role, successor, expected):
