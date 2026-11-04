@@ -415,13 +415,21 @@ def preview(ctx: ToolContext, *, category: str | None, with_keys: Sequence[str] 
     return result
 
 
-WEB_CHECK_CALL_ID = "w1"   # 웹 확인의 도구 기록 번호(6.8, #1216). 모델이 고르지 않아 도구 상한에 세지 않는다(p1과 같은 취급)
+def record_followup_check(ctx: ToolContext, followup_of: str, result: dict[str, Any]) -> None:
+    """후속 확인(6.9, #1346)을 코드 호출 기록 f1(followup_check)로 남긴다 — 결과는 수락 뒤 지난 분과 그 카테고리 새 핀 수뿐이다
+    (core.followup_check_result). 모델이 고르지 않아 도구 상한에 세지 않고(p1과 같은 취급), 모델은 ToolClaim(call_id="f1")으로만 쓴다."""
+    _record(ctx, core.FOLLOWUP_CALL_ID, "followup_check", {"followup_of": followup_of}, result, time.monotonic())
 
 
-def record_web_check(ctx: ToolContext, *, pin_id: str, fact_key: str, result: dict[str, Any], started: float) -> None:
-    """웹 확인 한 번을 도구 기록 w1로 남긴다 — 인자는 pin_id·fact_key, 결과는 status와 문장 수만(core.web_tool_record). 문장, URL,
-    장소 이름은 남기지 않는다. 확인 자체는 flows가 llm을 불러 한다(진단 도구가 아니다)."""
-    _record(ctx, WEB_CHECK_CALL_ID, "web_check", {"pin_id": pin_id, "fact_key": fact_key}, result, started)
+WEB_CHECK_CALL_PREFIX = "w"   # 웹 확인의 도구 기록 번호 w1, w2(6.8, #1216, #1317). 모델이 고르지 않아 도구 상한에 세지 않는다(p1과 같은 취급)
+
+
+def record_web_check(
+    ctx: ToolContext, n: int, *, pin_id: str, fact_key: str, result: dict[str, Any], started: float,
+) -> None:
+    """웹 확인 한 번을 도구 기록 w{n}으로 남긴다 — 인자는 pin_id·fact_key, 결과는 status와 문장 수만(core.web_tool_record). 문장,
+    URL, 장소 이름은 남기지 않는다. 확인 자체는 flows가 llm을 불러 한다(진단 도구가 아니다)."""
+    _record(ctx, f"{WEB_CHECK_CALL_PREFIX}{n}", "web_check", {"pin_id": pin_id, "fact_key": fact_key}, result, started)
 
 
 def compare_reasons(ctx: ToolContext, args: Mapping[str, Any]) -> dict[str, Any]:

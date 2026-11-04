@@ -97,7 +97,7 @@ class World:
         agent_rows.view(db_session, self.suggestion.id, self.guest_id)
         self.course = AgentCourseRun(id=uuid.uuid4(), map_id=self.map_id, requested_by=self.guest_id, status="done",
                                      input={"request_text": "", "member_constraints": []},
-                                     snapshot_at=agent_rows.NOW, snapshot_pin_ids=[])
+                                     snapshot_at=agent_rows.NOW, snapshot_version="v")
         db_session.add(self.course)
         db_session.flush()
         assert self.guest.post("/feedback", json={"message": "좋아요", "map_id": self.map_id}).status_code == 201

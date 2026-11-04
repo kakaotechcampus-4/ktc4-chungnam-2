@@ -31,7 +31,7 @@ export function understandBody(text: string): string {
 export const GOAL_STATE = {
   met: { label: '지킴', tag: 'tag-good' },
   missed: { label: '못 지킴', tag: 'tag-bad' },
-  unknown: { label: '확인할 수 없어요', tag: 'tag-neutral' },
+  unknown: { label: '알 수 없음', tag: 'tag-neutral' },
 } as const
 
 export function goalState(goal: CourseGoalDto) {
@@ -52,9 +52,9 @@ export function outcomeText(outcome: NonNullable<CourseRunDto['outcome']>): stri
     case 'solved_with_checks':
       return '코스를 짰어요. 영업 여부는 가게에 직접 확인해 주세요'
     case 'unresolved':
-      return '코스를 짰지만 지키지 못한 조건이 남았어요'
+      return '코스를 짰지만 지키지 못한 조건이 있어요'
     case 'timeout':
-      return '시간이 다 돼서 지금까지 짠 코스예요'
+      return '시간이 부족해서 여기까지 짰어요'
   }
 }
 
@@ -69,7 +69,7 @@ export function createErrorMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
   switch (error.code) {
     case 'COURSE_NOT_ENOUGH_PLACES':
-      return '확정 리스트에 위치를 아는 장소가 2곳 이상 있어야 코스를 짤 수 있어요'
+      return '위치가 확인된 장소가 확정 리스트에 2곳 이상 있어야 해요'
     default:
       return null
   }

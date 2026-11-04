@@ -153,7 +153,7 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
   const what = [who && `${who}님이 올린`, category].filter(Boolean).join(' ')
   return (
     <EmptyState
-      title="필터에 걸리는 핀이 없어요"
+      title="필터에 맞는 핀이 없어요"
       action={
         <button type="button" onClick={onClear} className="btn-outline btn-md">
           필터 해제

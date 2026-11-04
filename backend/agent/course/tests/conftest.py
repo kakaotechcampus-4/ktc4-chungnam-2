@@ -104,3 +104,23 @@ def client(world):
         c.close()
     for dep in (get_db_session, get_session_factory, get_course_llm):
         app.dependency_overrides.pop(dep, None)
+
+
+def schedule_pins(world: World, map_id: str, by_pin: dict[str, int]) -> None:
+    """확정 탭 일정 대역 — 핀 id → 여행 몇째 날(0부터). 나머지 확정 핀은 미배정으로 둔다. 사람이 PUT /shortlist/schedule로 저장한 것과 같은 상태가 된다."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from shortlist import api as shortlist_api, service as shortlist_service
+
+    with world.factory() as db:
+        current = shortlist_api.get_schedule_for_agent(db, map_id=map_id)
+        start, end = current["start_date"], current["end_date"]
+        item_of = {str(r.pin_id): str(r.id) for r in shortlist_service.list_items(db, map_id=map_id)}
+        days: dict[int, list[str]] = {}
+        for pin_id, day in by_pin.items():
+            days.setdefault(day, []).append(item_of[pin_id])
+        groups = [SimpleNamespace(date=start + timedelta(days=d), item_ids=ids) for d, ids in sorted(days.items())]
+        groups.append(SimpleNamespace(date=None, item_ids=[i for p, i in item_of.items() if p not in by_pin]))
+        shortlist_service.replace_schedule(db, map_id=map_id, start_date=start, end_date=end, version=current["version"], groups=groups)
+        db.commit()

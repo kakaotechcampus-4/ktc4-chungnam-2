@@ -347,6 +347,8 @@ recommend_runs(
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
   default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. run을 만들 때 카테고리 기본값을 넣는다(관광지 25, 그 밖 15 — #1055, recommend.core.radius_walk_mins). regions.radius_m은 여기서 파생(분×80m).
                                          -- docs/constraints.md "반경 넓히기 상수"
+  origin_lat float null, origin_lng float null,  -- #1331: 「추천 받기」가 보낸 지도 중심. 있으면 중심 지정 run(지역은 원 하나, anchor_points=[[중심]]),
+                                         -- null이면 이전 run(핀 기준). 다시 추천·반경 넓히기가 같은 점을 쓴다. 응답에는 싣지 않는다(위치 정보 최소화)
   created_at
 )
 
@@ -391,7 +393,7 @@ regions(
                                          -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
                                          -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
                                          -- 별도 마이그레이션으로 되돌린다.
-  anchor_points jsonb default '[]',     -- #1252: 이 무리의 같은 카테고리 핀 좌표 [[lat, lng], ...]. 각 핀의 원 조회와 거리 평균에 쓴다
+  anchor_points jsonb default '[]',     -- #1252: 이 무리의 같은 카테고리 핀 좌표 [[lat, lng], ...]. 각 핀의 원 조회와 거리 평균에 쓴다. 중심 지정 run(#1331)은 [[중심 lat, lng]] 하나
   confirmed boolean, confirmed_at
 )
 
@@ -496,7 +498,8 @@ agent_runs(                           -- 관찰 한 번의 기록. 침묵으로 
 
 agent_suggestions(                    -- 바텀시트의 지도 제안
   id uuid, map_id, run_id null references agent_runs on delete set null,
-  diagnosis('stall'|'split'|'no_reaction'|'category_gap'), category null, pin_id null,
+  diagnosis('stall'|'split'|'no_reaction'|'category_gap'|'schedule'),   -- schedule: 일정 점검(#1356)
+  category null, pin_id null,
   fingerprint, evidence_hash,         -- 중복 금지(유형+카테고리+근거 id), 상태 재확인(근거 id+반응 종류+updated_at)
   title, claims jsonb, analysis jsonb null, advice jsonb, actions jsonb,   -- 슬롯 문장과 검증 통과 claim(quote는 reaction_id, 인용 범위, 범위의 다이제스트만. 원문 없음, #717). 렌더는 응답 때 조각으로
   status('active'|'accepted'|'dismissed'|'expired'|'superseded'),
@@ -506,6 +509,10 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   resolved_at null, resolved_action jsonb null, decided_within_24h boolean null,
   facts jsonb default '[]'             -- 우리 데이터 확인(#1152, agent-v2 6.6). [{pin_id, fact_key, web?}], 값은 응답 때 places에서 다시 읽는다.
                                       -- web(6.8, #1216): {status: found|not_found|paused, statements[{text, source_url}], checked_at} — 모델이 웹에서 옮긴 문장과 출처. 구성원 글 없음
+  attempt smallint not null default 0,   -- 막힌 곳 한 살이의 몇 번째 제안(#1345, agent-v2 6.9). 0 첫 제안, 1 다음 방법, 2 충돌 선언
+  followup_of uuid null references agent_suggestions on delete set null,   -- attempt ≥ 1이면 수락한 앞 제안. 해 본 것(tried)은 이 사슬의 resolved_action으로 렌더한다
+  followup jsonb null                    -- 수락한 제안을 지켜본 결과(#1345). {status: watching|resolved|declared|followed_up, at, reason?}
+                                         -- reason(resolved일 때): new_pin|confirmed|pin_removed|split_gone|problem_gone(#1356 일정 점검). 코드 값만, 구성원 글 없음. 관찰이 쓴다
 )
   unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
   index(map_id, fingerprint)
@@ -554,7 +561,9 @@ agent_course_runs(
   outcome null('solved'|'solved_with_checks'|'unresolved'|'timeout'),    -- done일 때만
   failure_code null('INTERRUPTED'|'ENGINE_ERROR'),                       -- failed일 때만
   input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
-  snapshot_at, snapshot_version text, -- 구현 전(#1321) — 요청 때 일정 version(shortlist, #1237), 지금 열은 snapshot_pin_ids(핀 id 목록)다. 지금과 다르면 응답의 stale=true
+  mode('plan'|'fill'|'review'),       -- 요청 때 서버가 확정 리스트의 일정 상태로 정한다(#1237). 진행 중에도 값이 있다
+  snapshot_at, snapshot_version text, -- 요청 때 일정 version(shortlist, #1237 — 장소 집합·날짜 배정·순서·여행 기간). 지금과 다르면 응답의 stale=true. 0062 전 run은 'legacy'(→ stale)
+  headline null, fixes jsonb, checked jsonb, -- 결과 머리 문구, 고칠 점 카드 [{id, kind, strength, text, moves:[{pin_id, from_date, to_date}], resolved_text, remaining_text, not_fixed_reason}], 점검 통과 [{kind, text}]. plan은 fixes·checked가 빈 배열
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
   steps jsonb,                        -- [{stage, role, by, by_detail, text}] 작업 기록(끝난 뒤 한꺼번에 채운다)

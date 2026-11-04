@@ -74,6 +74,18 @@ def test_readiness_endpoint_returns_all_categories(app_client, db_session):
     assert body["음식점"]["ready"] is True
 
 
+def test_readiness_with_center_is_200_and_half_or_out_of_range_center_is_422_1331(app_client, db_session):
+    """#1331 — center_lat·center_lng는 함께, 위도 33~39·경도 124~132. 하나만이거나 범위 밖이면 422 VALIDATION_ERROR."""
+    _seed_ready_map(db_session)
+    url = "/maps/map_1/recommend/readiness"
+    ok = app_client.get(url, params={"center_lat": 37.5, "center_lng": 127.0}, cookies=_auth())
+    assert ok.status_code == 200 and ok.json()["음식점"]["ready"] is True
+    for params in ({"center_lat": 37.5}, {"center_lng": 127.0}, {"center_lat": 40, "center_lng": 127.0},
+                   {"center_lat": 37.5, "center_lng": 133}, {"center_lat": 32.9, "center_lng": 127.0}):
+        response = app_client.get(url, params=params, cookies=_auth())
+        assert response.status_code == 422 and response.json()["code"] == "VALIDATION_ERROR", params
+
+
 def test_create_run_for_accommodation_is_422(app_client, db_session):
     """#146 — 숙소는 추천 대상이 아니다(RecommendCategory)."""
     _seed_ready_map(db_session)

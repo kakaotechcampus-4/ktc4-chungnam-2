@@ -258,8 +258,11 @@ export default function MapCanvas({
             }
             runMoves([panMove(liftedCenter(target)), ...zoomMoves(to, target)])
           },
+          // 보이는 영역의 가운데 — 모바일은 시트에 가린 아래쪽을 뺀다(#1331, 위 sheetLift). 추천·검색·광고가 「지금 보는 곳」으로 쓴다.
           getCenter: () => {
-            const c = map.getCenter()
+            const proj = map.getProjection()
+            const p = proj.containerPointFromCoords(map.getCenter())
+            const c = proj.coordsFromContainerPoint(new maps.Point(p.x, p.y - sheetLift()))
             return { lat: c.getLat(), lng: c.getLng() }
           },
           // 점 전체가 보이게 맞춘다. 이미 다 보이면 그대로 둔다(누른 사람이 원한 「전체 핀 보기」만 force).

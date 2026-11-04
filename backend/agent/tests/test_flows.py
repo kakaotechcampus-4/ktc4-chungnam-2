@@ -89,7 +89,6 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     assert payload["advice"] == [{"segments": [{"kind": "text", "text": "확정 2곳 중 카페 0곳"}], "is_guess": False}]
     assert payload["actions"] == [
         {"index": 0, "type": "open_recommend", "label": "카페 추천 받기", "params": {"category": "카페"}},
-        {"index": 1, "type": "show_pins", "label": "카페 핀 보기", "params": {"category": "카페"}},
     ]
     assert not {"claims", "fingerprint", "evidence_hash", "resolved_by", "shadow"} & set(payload)   # 서버 내부 값
     cur = _cursor(world, map_id)
@@ -810,7 +809,8 @@ def test_decided_within_24h_per_diagnosis(world):
         _suggest(world, map_id, "stall", category="음식점"): True,
         _suggest(world, map_id, "stall", category="관광지"): False,
         _suggest(world, map_id, "split", category="카페", pin_id=cafe): True,
-        _suggest(world, map_id, "split", category="카페", pin_id=other): False,
+        _suggest(world, map_id, "split", category="카페", pin_id=other): True,   # 같은 카테고리의 다른 핀 확정(is_decided, #1345)
+        _suggest(world, map_id, "split", category="관광지", pin_id=unseen): False,
         _suggest(world, map_id, "no_reaction", pin_ids=(unseen, food)): True,
         _suggest(world, map_id, "no_reaction", pin_ids=(unseen, other)): False,
     }

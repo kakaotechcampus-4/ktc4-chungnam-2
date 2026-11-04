@@ -63,7 +63,7 @@ STALE_AFTER = timedelta(minutes=15)
 class Snapshot:
     start_date: date
     end_date: date
-    confirmed_pin_ids: tuple[str, ...]      # 확정 항목의 핀 전부(확정 순서). 바뀌었는지(stale) 비교에 쓴다
+    version: str                            # 일정 version(shortlist) — 장소 집합·날짜 배정·순서·여행 기간. 바뀌었는지(stale) 비교에 쓴다
     pins: tuple[PinInput, ...]              # 그중 공개이고 지워지지 않은 핀(scheduled_date는 사람이 일정에 넣은 날, #1237)
 
 
@@ -92,11 +92,15 @@ def read_snapshot(db: Session, map_id: str) -> Optional[Snapshot]:
             continue
         labels = frozenset(f.fact_key for f in facts.get(p["place_id"], ()) if f.confidence == "known" and f.value is True)
         pins.append(PinInput(p["pin_id"], p["place_id"], info.name, p["category"], info.lat, info.lng, labels, when[p["pin_id"]], order[p["pin_id"]]))
-    return Snapshot(found["start_date"], found["end_date"], tuple(i["pin_id"] for i in items), tuple(pins))
+    return Snapshot(found["start_date"], found["end_date"], schedule["version"], tuple(pins))
 
 
-def current_confirmed_pin_ids(db: Session, map_id: str) -> set[str]:
-    return {i["pin_id"] for i in shortlist_api.list_items_for_agent(db, map_id=map_id)}
+def current_schedule_version(db: Session, map_id: str) -> Optional[str]:
+    """지금 일정 version. 지도가 지워졌으면 None(어느 run의 version과도 다르다 → stale)."""
+    try:
+        return shortlist_api.get_schedule_for_agent(db, map_id=map_id)["version"]
+    except AppError:
+        return None
 
 
 # ---------------------------------------------------------------- 입력 만들기 (순수)
@@ -212,7 +216,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
     text = (body.request_text or "").strip()
     row = AgentCourseRun(
         id=uuid.uuid4(), map_id=map_id, requested_by=requested_by, status="queued", created_at=now, snapshot_at=now,
-        snapshot_pin_ids=list(snapshot.confirmed_pin_ids),
+        snapshot_version=snapshot.version, mode=build.mode,
         input={"request_text": text, "member_constraints": [c.model_dump() for c in body.member_constraints]},
     )
     try:
@@ -288,7 +292,7 @@ def progress_writer(session_factory: Callable[[], Session], run_id: uuid.UUID) -
 def _done_values(c: runner.Computation) -> dict:
     v = c.view
     return {
-        "status": "done", "outcome": v.outcome, "goals": v.goals, "unmatched": v.unmatched, "steps": v.steps,
+        "status": "done", "outcome": v.outcome, "headline": v.headline, "fixes": v.fixes, "checked": v.checked, "goals": v.goals, "unmatched": v.unmatched, "steps": v.steps,
         "days": v.days, "violations": v.violations, "checks": v.checks, "excluded": v.excluded,
         "model": c.model, "prompt_version": c.prompt_version, "model_turns": c.model_turns,
         "tokens_in": c.tokens_in, "tokens_out": c.tokens_out,
@@ -328,11 +332,11 @@ def _with_leg_modes(days: list) -> list:
 
 
 def to_response(db: Session, row: AgentCourseRun) -> CourseRun:
-    stale = set(row.snapshot_pin_ids) != current_confirmed_pin_ids(db, row.map_id)
+    stale = row.snapshot_version != current_schedule_version(db, row.map_id)
     return CourseRun.model_validate({
-        "id": str(row.id), "map_id": row.map_id, "status": row.status, "outcome": row.outcome,
-        "failure_code": row.failure_code, "goals": row.goals, "unmatched": row.unmatched, "steps": row.steps,
-        "days": _with_leg_modes(row.days), "violations": row.violations, "checks": row.checks, "excluded": row.excluded,
+        "id": str(row.id), "map_id": row.map_id, "status": row.status, "mode": row.mode, "outcome": row.outcome,
+        "failure_code": row.failure_code, "headline": row.headline, "goals": row.goals, "unmatched": row.unmatched, "steps": row.steps,
+        "days": _with_leg_modes(row.days), "fixes": row.fixes, "checked": row.checked, "violations": row.violations, "checks": row.checks, "excluded": row.excluded,
         "snapshot_at": row.snapshot_at, "stale": stale, "created_at": row.created_at, "finished_at": row.finished_at,
     })
 
