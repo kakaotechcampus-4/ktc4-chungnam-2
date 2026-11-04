@@ -4,8 +4,10 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
+import { useCreditsQuery } from '@/features/credits/queries'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
@@ -79,6 +81,10 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
   const latest = latestQuery.data
   const create = useCreateCourseMutation(mapId)
   const known = createErrorMessage(create.error)
+  // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧). 확인해야 요청한다.
+  const [asking, setAsking] = useState(false)
+  // 게스트는 버튼 자리가 카카오 안내라 묻지 않는다 — 요청 칸에서 Enter 를 눌러도 확인 창을 띄우지 않는다.
+  const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
 
   function submit() {
     create.mutate(text, {
@@ -105,7 +111,7 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (!create.isPending) submit()
+        if (!create.isPending && !guest) setAsking(true)
       }}
       className="space-y-4"
     >
@@ -143,6 +149,18 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
           </div>
         )}
       </div>
+      {asking && (
+        <CreditConfirm
+          feature="course"
+          title="코스를 짤까요?"
+          ok="코스 짜기"
+          onOk={() => {
+            setAsking(false)
+            submit()
+          }}
+          onCancel={() => setAsking(false)}
+        />
+      )}
     </form>
   )
 }
