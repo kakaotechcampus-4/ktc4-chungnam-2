@@ -388,6 +388,10 @@ def execute(call, ds: DirectState, gateway: OpeningHoursGateway, by: str = "mode
         if core.hard_score(chosen.violations)[0] > least:
             return ds, _fail(tool, "WORSENS_HARD", "확정 위반이 더 적은 후보가 있다 — 그 후보를 고른다")
         return ds, ToolResult(tool, ok=True, data={"candidate_id": chosen.candidate_id, **_comparison(state, ds.candidates, chosen.candidate_id)})
+    if tool == "review":
+        # llm이 지휘 도구에 review(점검 판단)를 더했다(#1326). 연결은 따로 한다(order·worth 훅) — 그 전에 모델이 불러도 턴을 이어 간다.
+        # llm.schemas.CourseReviewCall을 import하지 않는다(이 변경이 먼저 머지된다). 다 넣은 일정을 점검하는 run에서만 쓸 수 있는 도구다.
+        return ds, _fail(tool, "NOT_REVIEW_MODE", "지금 run에서는 점검 도구를 쓸 수 없다 — optimize나 finish를 부른다")
     raise TypeError(f"실행할 수 없는 도구 {type(call).__name__}")
 
 
