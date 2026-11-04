@@ -57,6 +57,7 @@ ADVICE_MAX_RELAX_LINES = 3         # soft_relax에서 하나씩 꺼 보는 조�
 # 진단 1회의 도구 상한(DIAGNOSIS_MAX_TOOL_CALLS 5, STRUCTURE_REASONS_MAX_CALLS 1)은 llm이 강제한다(llm.prompts, #532).
 # 같은 값을 여기 두면 둘이 어긋날 수 있어 두지 않는다(#533)
 TOOL_RESULT_MAX_ITEMS = 30         # 초안
+TRY_IN_SCHEDULE_MAX_PINS = 5       # try_in_schedule 한 번에 끼워 보는 핀 수(6.10, #1356). 넘으면 앞에서 자른다
 
 BACKOFF_HOURS = (2, 6, 24)         # 연속 닫힘 1회, 2회, 3회 이상
 SUGGESTION_TTL = timedelta(hours=24)
@@ -64,13 +65,14 @@ AGENT_RUNS_RETENTION_DAYS = 30
 DECIDED_WINDOW = timedelta(hours=24)   # decided_within_24h의 24시간(12.9, 5절 밖). 제안 시각부터 이 안의 확정만 센다
 
 # 후속 관찰과 충돌 선언(6.9, #1345). 수락한 제안을 막힌 곳 하나로 보고 풀릴 때까지 지켜본다
-FOLLOWUP_DIAGNOSES = ("stall", "split", "category_gap")   # 반응 공백은 후속을 하지 않는다(하루 1회 규칙 그대로)
+FOLLOWUP_DIAGNOSES = ("stall", "split", "category_gap", "schedule")   # 반응 공백은 후속을 하지 않는다(하루 1회 규칙 그대로)
 FOLLOWUP_MIN_WAIT = timedelta(minutes=30)   # 수락 뒤 이만큼은 그대로라고 보지 않는다 — 추천을 받고 올릴지 정할 시간(초안)
 MAX_ATTEMPT = 2                    # 0 첫 제안, 1 다음 방법, 2 충돌 선언(최후, 코드 템플릿)
 TRACKING_WINDOW = timedelta(hours=48)   # AgentState.tracking에 싣는 막힌 곳의 기간(api-spec AgentTracking)
 
 MODEL_TYPES = ("stall", "split")
-CODE_TYPES = ("no_reaction", "category_gap")
+# 코드 유형. 카테고리 공백은 지도에 그 카테고리의 미확정 핀(후보)이 있으면 모델 진단이다(6.10, #1356 — core.uses_model)
+CODE_TYPES = ("no_reaction", "category_gap", "schedule")
 # shadow는 유형별이다(#531). 이 유형의 제안은 저장하되 화면과 이벤트로 내보내지 않는다. 코드 유형은 M1-1(#531)부터,
 # 모델 유형은 #534 평가 뒤 #582부터 노출한다
 SHADOW_DIAGNOSES: tuple[str, ...] = ()

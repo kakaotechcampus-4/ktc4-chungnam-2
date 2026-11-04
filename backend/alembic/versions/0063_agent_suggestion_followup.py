@@ -8,8 +8,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0062_agent_suggestion_followup"
-down_revision = "0061_recommend_run_origin"
+revision = "0063_agent_suggestion_followup"
+down_revision = "0062_course_run_modes"
 branch_labels = None
 depends_on = None
 

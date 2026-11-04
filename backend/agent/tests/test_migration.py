@@ -169,10 +169,10 @@ def test_advice_state_key_migration_is_expand_only(mig_url):
 
 
 def test_followup_columns_migration_is_expand_only(mig_url):
-    """0062는 agent_suggestions에 칸 셋만 더한다(#1346, 6.9) — 이전 서버의 INSERT가 그대로 돌고 attempt는 0이다. 앞 제안을 지우면
+    """0063은 agent_suggestions에 칸 셋만 더한다(#1346, 6.9) — 이전 서버의 INSERT가 그대로 돌고 attempt는 0이다. 앞 제안을 지우면
     followup_of는 비워진다(ON DELETE SET NULL). 내리면 칸이 빠지고 행은 남는다."""
     cfg = _config()
-    command.upgrade(cfg, "0061_recommend_run_origin")
+    command.upgrade(cfg, "0062_course_run_modes")
     engine = sa.create_engine(mig_url)
     insert = sa.text(
         "INSERT INTO agent_suggestions (id, map_id, diagnosis, fingerprint, evidence_hash, title, claims, advice,"
@@ -182,7 +182,7 @@ def test_followup_columns_migration_is_expand_only(mig_url):
     try:
         with engine.begin() as conn:
             conn.execute(insert, {"id": first, "status": "accepted"})
-        command.upgrade(cfg, "0062_agent_suggestion_followup")
+        command.upgrade(cfg, "0063_agent_suggestion_followup")
         assert {c["name"] for c in sa.inspect(engine).get_columns("agent_suggestions")} == set(
             AgentSuggestion.__table__.columns.keys())
         with engine.begin() as conn:
@@ -192,7 +192,7 @@ def test_followup_columns_migration_is_expand_only(mig_url):
                          {"f": first, "s": second})
             conn.execute(sa.text("DELETE FROM agent_suggestions WHERE id = :f"), {"f": first})
             assert conn.execute(sa.text("SELECT attempt, followup_of FROM agent_suggestions")).one() == (1, None)
-        command.downgrade(cfg, "0061_recommend_run_origin")
+        command.downgrade(cfg, "0062_course_run_modes")
         assert not {"attempt", "followup_of", "followup"} & {
             c["name"] for c in sa.inspect(engine).get_columns("agent_suggestions")}
         with engine.connect() as conn:

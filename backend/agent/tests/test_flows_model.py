@@ -344,21 +344,23 @@ def _model_runs_today(world, map_id):
 
 
 def test_model_use_counts_only_diagnosis(world):
-    """출발 임박이면 카테고리 공백이 1순위라 진단을 부르지 않는다 — 모델 유형 신호가 있어도 모델 사용 0회. 출발이
-    멀면 정체가 1순위라 진단 1회. 우선순위는 어느 쪽이든 세지 않는다."""
+    """모델 사용은 진단만 센다 — 우선순위(코드 규칙)는 어느 쪽이든 세지 않는다. 출발 임박이면 카테고리 공백이 1순위다(urgent_dday).
+    카페 공백은 반대 핀이 후보라 모델 진단이다(#1356, 6.10 — 그 전에는 템플릿이라 0회였다) — 진단 1회. 출발이 멀면 정체가
+    1순위라 진단 1회."""
     near = _gap_and_stall_map(world, days_to_start=2)
     far = _gap_and_stall_map(world, days_to_start=30)
     gateway = FakeGateway(diagnose=silent)
 
-    assert observe(world, near, gateway) == "suggested"
-    assert gateway.calls == []
+    assert observe(world, near, gateway) == "silent"
+    assert gateway.calls == ["diagnose"]
+    assert (gateway.inputs[0]["diagnosis"], gateway.inputs[0]["category"]) == ("category_gap", "카페")
     run = world.one(AgentRun, map_id=near, trigger="activity")
-    assert (run.used_model, run.priority["rule_hits"]) == (False, ["urgent_dday"])
-    assert world.one(AgentSuggestion, map_id=near).diagnosis == "category_gap"
-    assert _model_runs_today(world, near) == 0
+    assert (run.used_model, run.priority["rule_hits"]) == (True, ["urgent_dday"])
+    assert _model_runs_today(world, near) == 1
 
     assert observe(world, far, gateway) == "silent"
-    assert gateway.calls == ["diagnose"]
+    assert gateway.calls == ["diagnose", "diagnose"]
+    assert gateway.inputs[1]["diagnosis"] == "stall"
     run = world.one(AgentRun, map_id=far, trigger="activity")
     assert (run.used_model, run.priority["source"], run.priority["rule_hits"]) == (True, "rules", [])
     assert _model_runs_today(world, far) == 1

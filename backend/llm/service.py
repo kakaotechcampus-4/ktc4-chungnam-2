@@ -471,10 +471,10 @@ def real_diagnosis_planner(diagnosis_input: Mapping[str, Any], call_tool: ToolCa
 def agent_diagnose(
     diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner, planner: DiagnosisPlanner
 ) -> AgentReply[DiagnosisOutput]:
-    """모델 유형(stall, split) 진단(명세 6.2, 6.3, 11절).
+    """모델 유형(stall, split, 후보 핀이 있는 category_gap) 진단(명세 6.2, 6.3, 6.10, 11절).
 
-    diagnosis_input: agent의 core.diagnosis_input(#533)이 만든 공개 데이터만의 dict. 적어도 signal_id, diagnosis(stall|split)가
-    있고, stall은 category, split은 pin_id가 있다. 모델에는 JSON 문자열로만 넘긴다.
+    diagnosis_input: agent의 core.diagnosis_input(#533)이 만든 공개 데이터만의 dict. 적어도 signal_id, diagnosis(DIAGNOSIS_TOOLS의
+    키)가 있고, stall과 category_gap은 category, split은 pin_id가 있다. 모델에는 JSON 문자열로만 넘긴다.
     tool_runner: 도구 실행 콜백. 이 함수가 call_id(t1, t2 …)를 매겨 부른다. 진단 1회당 DIAGNOSIS_MAX_TOOL_CALLS(5)회,
     그중 structure_reasons는 STRUCTURE_REASONS_MAX_CALLS(1)회까지 실행하고, 넘는 호출은 실행하지 않고 LIMIT_EXCEEDED를,
     유형에 허용되지 않은 도구는 NOT_FOUND를 도구 결과로 돌려준다. tool_runner의 예외는 ToolRunnerError로 그대로 올라간다.

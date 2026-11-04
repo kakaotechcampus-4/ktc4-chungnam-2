@@ -34,8 +34,9 @@ Category = Literal[categories.all_categories()]  # 스펙의 Category(common/cat
 
 # ---------- API 스키마 (docs/api-spec.yaml agent 태그) ----------
 
-AgentDiagnosis = Literal["stall", "split", "no_reaction", "category_gap"]
-ActionType = Literal["open_recommend", "show_pins", "search_place", "open_route", "widen_radius", "open_evidence"]
+AgentDiagnosis = Literal["stall", "split", "no_reaction", "category_gap", "schedule"]
+ActionType = Literal["open_recommend", "show_pins", "search_place", "open_route", "widen_radius", "open_evidence", "open_pin",
+                     "open_course"]   # open_pin·open_course는 #1356
 ConflictType = Literal["same_axis", "different_axes", "unclear"]
 RunAdviceKind = Literal["radius", "soft_relax", "vague_reason", "exhausted"]
 

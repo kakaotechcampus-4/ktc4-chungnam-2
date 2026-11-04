@@ -198,7 +198,7 @@ def run(s):
     for i, pins in enumerate(s["users"]):
         for (name, *_), rtype, reason in pins:
             print(f"   사용자{i} {'♥' if rtype=='like' else '🚫'} {name} — \"{reason}\"")
-    run_r = a.post(f"/maps/{mid}/runs", json={"category": s["category"]})
+    run_r = a.post(f"/maps/{mid}/runs", json={"category": s["category"], "center": {"lat": lat, "lng": lng}})   # 지도 중심(#1331)
     assert run_r.status_code == 202, run_r.text
     rid = run_r.json()["id"]
     if s["extra"]:

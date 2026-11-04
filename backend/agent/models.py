@@ -24,7 +24,7 @@ RUN_OUTCOMES = (
     "status_updated",   # 현황 문단을 저장함(#1168)
     "error",   # 관찰이나 조언이 예외로 끝남. outcome_detail은 단계와 예외 클래스 이름뿐(#677)
 )
-DIAGNOSES = ("stall", "split", "no_reaction", "category_gap")
+DIAGNOSES = ("stall", "split", "no_reaction", "category_gap", "schedule")   # schedule: 일정 점검(#1356)
 SUGGESTION_STATUSES = ("active", "accepted", "dismissed", "expired", "superseded")
 FOLLOWUP_STATUSES = ("watching", "resolved", "declared", "followed_up")   # agent_suggestions.followup.status(6.9, #1345)
 
