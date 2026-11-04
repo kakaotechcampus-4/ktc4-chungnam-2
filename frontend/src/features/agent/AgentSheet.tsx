@@ -99,7 +99,8 @@ function Suggestion({ mapId, suggestion, onDone }: { mapId: string; suggestion: 
   const runAction = useRunAgentAction(mapId)
   const { facts, guesses } = splitAdvice(suggestion.advice)
   const busy = accept.isPending || dismiss.isPending
-  // 같은 막힌 곳의 몇 번째 제안인지(#1345). 다음 방법(1)엔 칩을, 충돌 선언(2)은 버튼이 없고(actions 빈 목록) 해 본 것과 서버 문장만 남긴다.
+  // 같은 막힌 곳의 몇 번째 제안인지(#1345). 다음 방법(1)엔 칩과 해 본 것을 붙인다.
+  // 충돌 선언(2)은 버튼이 없고(actions 빈 목록) 서버 문장만 — 그 문장이 해 본 것을 이미 나열해서 목록을 따로 두지 않는다.
   const attempt = attemptOf(suggestion)
 
   return (
@@ -138,7 +139,7 @@ function Suggestion({ mapId, suggestion, onDone }: { mapId: string; suggestion: 
           </ul>
         </section>
       )}
-      {attempt >= 1 && <TriedList tried={suggestion.tried} />}
+      {attempt === 1 && <TriedList tried={suggestion.tried} />}
       <FactLines facts={suggestion.facts} />
       <div className="space-y-2">
         {suggestion.actions.map((a, i) => (

@@ -402,11 +402,11 @@ describe('막힌 곳 지켜보기와 충돌 선언(#1348)', () => {
     expect(screen.getByRole('button', { name: '갈린 핀 보기' })).toBeInTheDocument()
   })
 
-  it('attempt 2(충돌 선언)는 버튼 없이 해 본 것과 서버 문장, 닫기는 남는다', () => {
+  it('attempt 2(충돌 선언)는 버튼 없이 서버 문장만 — 문장이 해 본 것을 나열해 목록을 따로 두지 않는다, 닫기는 남는다', () => {
     const declared = { ...split, analysis: null, attempt: 2, tried, actions: [], advice: [{ segments: [{ kind: 'text' as const, text: '어떤 조건을 지킬지는 여러분이 정해요' }], is_guess: false }] }
     setup(state(declared))
     expect(screen.queryByText('두 번째 방법')).not.toBeInTheDocument()
-    expect(triedLabels()).toEqual(['음식점 추천 받기', '음식점 검색'])
+    expect(screen.queryByRole('heading', { name: '해 본 것' })).not.toBeInTheDocument()
     expect(screen.getByText('어떤 조건을 지킬지는 여러분이 정해요')).toBeInTheDocument()
     expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(expect.not.arrayContaining(['갈린 핀 보기']))
     expect(screen.getByRole('button', { name: '이 제안 닫기' })).toBeInTheDocument()
@@ -429,7 +429,9 @@ describe('막힌 곳 지켜보기와 충돌 선언(#1348)', () => {
     resetScenario('agent-declared')
     setup()
     expect(await screen.findByText('음식점은 해 본 방법으로 풀리지 않았어요')).toBeInTheDocument()
-    expect(triedLabels()).toEqual(['음식점 추천 받기', '음식점 검색'])
+    // 해 본 것은 서버 문장이 말한다 — 목록은 없다.
+    expect(screen.getByText('추천 받기와 장소 검색을 해 봤지만 반대 의견 뒤로 음식점에 새 핀이 없어요')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '해 본 것' })).not.toBeInTheDocument()
     // 충돌 선언은 버튼이 없다(우리 조건 요약의 추천 버튼은 제안 밖이다).
     expect(screen.queryByRole('button', { name: /^음식점 (추천 받기|검색)$/ })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '핑고가 한 일 보기' }))
