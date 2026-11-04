@@ -32,7 +32,7 @@ FACT_KEY_MEANINGS: dict[str, str] = {
     "cuisine_raw_fish": "횟집 (횟집·복어) — 예: 회 못 먹어",
     "cuisine_buffet": "뷔페",
     "spacious": "넓은 곳 — 3~5명 단체 (인허가 면적 120㎡ 이상)",
-    "long_established": "30년 이상 된 가게(노포)",
+    "long_established": "20년 이상 된 가게(노포)",
     "parking_available": "주차할 수 있는가",
     "vegetarian_friendly": "채식 메뉴가 있는가",
     "franchise": "체인점인가",
