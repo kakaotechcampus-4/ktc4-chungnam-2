@@ -656,5 +656,204 @@
       "decision_phrases": ["한 번 더 눌러", "추천 받기 한 번 더", "이 핀으로 결정", "결정해요"],
       "result_guess_phrases": ["마음에 드는 곳이 없", "마음에 들지", "추천 결과가", "추천된 곳", "추천받은 곳", "추천 받은 곳", "다시 추천", "한 번 더 추천", "찾지 못했"]
     }
+  },
+  {
+    "id": "e34_gap_cafe_fitting_pin",
+    "title": "확정 2곳(음식점, 관광지)에 카페가 없고 지도에 카페 핀 둘 — 하나는 일정에 넣으면 이동 4분·영업·♥ 2, 하나는 22분·♥ 1(이 핀 보기)",
+    "members": 3,
+    "pins": [
+      {"id": "p1", "category": "음식점", "name": "을지로 노포 국밥", "by": "u1", "h": 100},
+      {"id": "t1", "category": "관광지", "name": "덕수궁", "by": "u2", "h": 100},
+      {"id": "c1", "category": "카페", "name": "정동 루프탑 카페", "by": "u1", "h": 20,
+       "fit": {"day": "d1", "added_minutes": 4, "open": "open"}},
+      {"id": "c2", "category": "카페", "name": "성수 대형 베이커리 카페", "by": "u2", "h": 18,
+       "fit": {"day": "d2", "added_minutes": 22, "open": "open"}}
+    ],
+    "reactions": [
+      {"id": "r1", "pin": "p1", "by": "u2", "type": "like", "h": 90},
+      {"id": "r2", "pin": "t1", "by": "u3", "type": "like", "h": 90},
+      {"id": "r1b", "pin": "p1", "by": "u3", "type": "like", "h": 89},
+      {"id": "r2b", "pin": "t1", "by": "u1", "type": "like", "h": 89},
+      {"id": "r3", "pin": "c1", "by": "u2", "type": "like", "h": 15, "text": "궁 구경하고 쉬어 가기 좋아 보여요"},
+      {"id": "r4", "pin": "c1", "by": "u3", "type": "like", "h": 14},
+      {"id": "r5", "pin": "c2", "by": "u1", "type": "like", "h": 12, "text": "빵이 맛있대요"}
+    ],
+    "shortlist": [{"pin": "p1", "h": 50}, {"pin": "t1", "h": 48}],
+    "preview": {"passed_count": 5},
+    "expect": {
+      "signals": ["category_gap:카페"], "priority_source": "single", "priority_top": null,
+      "target": "category_gap:카페", "conflict_type": null, "decision": "suggest", "actions": ["open_pin"], "pins": ["c1"],
+      "advice": "c1 핀(ref)은 일정에 넣으면 이동 4분(t claim)·그날 영업(t claim, 말로)·♥ 2(count) + 이 핀 보기. 확정하자고 하지 않음"
+    }
+  },
+  {
+    "id": "e35_gap_fit_pin_against",
+    "title": "카페 공백 — 일정에 가장 잘 맞는 카페 핀에 🚫(자리 좁음), 다른 카페 핀은 그날 쉼(추천 받기)",
+    "members": 3,
+    "pins": [
+      {"id": "p1", "category": "음식점", "name": "망원 칼국수", "by": "u1", "h": 100},
+      {"id": "t1", "category": "관광지", "name": "망원 한강공원", "by": "u2", "h": 100},
+      {"id": "c1", "category": "카페", "name": "망원 골목 카페", "by": "u1", "h": 40,
+       "fit": {"day": "d1", "added_minutes": 3, "open": "open"}},
+      {"id": "c2", "category": "카페", "name": "합정 로스터리", "by": "u3", "h": 10,
+       "fit": {"day": "d1", "added_minutes": 9, "open": "closed"}}
+    ],
+    "reactions": [
+      {"id": "r1", "pin": "p1", "by": "u2", "type": "like", "h": 90},
+      {"id": "r2", "pin": "t1", "by": "u3", "type": "like", "h": 90},
+      {"id": "r1b", "pin": "p1", "by": "u3", "type": "like", "h": 89},
+      {"id": "r2b", "pin": "t1", "by": "u1", "type": "like", "h": 89},
+      {"id": "r3", "pin": "c1", "by": "u2", "type": "against", "h": 30, "chips": ["cafe_seat"],
+       "text": "자리가 너무 좁고 오래 앉아 있기 힘들어요", "lines": [{"fact_key": "spacious", "wants": true}]},
+      {"id": "r4", "pin": "c2", "by": "u1", "type": "like", "h": 8, "text": "원두를 직접 볶는 곳이래요"}
+    ],
+    "shortlist": [{"pin": "p1", "h": 50}, {"pin": "t1", "h": 48}],
+    "preview": {"passed_count": 3},
+    "expect": {
+      "signals": ["category_gap:카페"], "priority_source": "single", "priority_top": null,
+      "target": "category_gap:카페", "conflict_type": null, "decision": "suggest", "actions": ["open_recommend"],
+      "advice": "🚫 달린 c1은 권하지 않음(try_in_schedule에도 넣지 않음), c2는 그날 쉼(open claim) → 남는 곳 3곳(p1) + 추천 받기"
+    }
+  },
+  {
+    "id": "e36_gap_all_closed",
+    "title": "카페 공백 — 카페 핀 둘 다 일정의 그날 쉼(추천 받기)",
+    "members": 3,
+    "pins": [
+      {"id": "p1", "category": "음식점", "name": "익선동 한옥 식당", "by": "u1", "h": 100},
+      {"id": "t1", "category": "관광지", "name": "창덕궁", "by": "u2", "h": 100},
+      {"id": "c1", "category": "카페", "name": "익선동 디저트 카페", "by": "u2", "h": 20,
+       "fit": {"day": "d1", "added_minutes": 5, "open": "closed"}},
+      {"id": "c2", "category": "카페", "name": "북촌 전통 찻집", "by": "u3", "h": 18,
+       "fit": {"day": "d2", "added_minutes": 7, "open": "closed"}}
+    ],
+    "reactions": [
+      {"id": "r1", "pin": "p1", "by": "u2", "type": "like", "h": 90},
+      {"id": "r2", "pin": "t1", "by": "u3", "type": "like", "h": 90},
+      {"id": "r1b", "pin": "p1", "by": "u3", "type": "like", "h": 89},
+      {"id": "r2b", "pin": "t1", "by": "u1", "type": "like", "h": 89},
+      {"id": "r3", "pin": "c1", "by": "u1", "type": "like", "h": 15, "text": "디저트가 예뻐요"},
+      {"id": "r4", "pin": "c2", "by": "u1", "type": "like", "h": 14}
+    ],
+    "shortlist": [{"pin": "p1", "h": 50}, {"pin": "t1", "h": 48}],
+    "preview": {"passed_count": 2},
+    "expect": {
+      "signals": ["category_gap:카페"], "priority_source": "single", "priority_top": null,
+      "target": "category_gap:카페", "conflict_type": null, "decision": "suggest", "actions": ["open_recommend"],
+      "advice": "후보가 모두 그날 쉼(open claim, 말로) → 남는 곳 2곳(p1) + 추천 받기. 이 핀 보기를 고르지 않음"
+    }
+  },
+  {
+    "id": "e37_gap_empty_schedule",
+    "title": "확정 2곳(음식점, 카페)에 날짜가 없고 관광지 공백 — 관광지 핀 둘, 하나는 확정한 곳에서 6분·영업·♥ 2(이 핀 보기)",
+    "members": 3,
+    "pins": [
+      {"id": "p1", "category": "음식점", "name": "서촌 국숫집", "by": "u1", "h": 100},
+      {"id": "c1", "category": "카페", "name": "서촌 한옥 카페", "by": "u2", "h": 100},
+      {"id": "t1", "category": "관광지", "name": "경복궁", "by": "u1", "h": 20,
+       "fit": {"nearest_minutes": 6, "open": "open"}},
+      {"id": "t2", "category": "관광지", "name": "남산서울타워", "by": "u3", "h": 18,
+       "fit": {"nearest_minutes": 25, "open": "unknown"}}
+    ],
+    "reactions": [
+      {"id": "r1", "pin": "p1", "by": "u2", "type": "like", "h": 90},
+      {"id": "r2", "pin": "c1", "by": "u3", "type": "like", "h": 90},
+      {"id": "r3", "pin": "t1", "by": "u2", "type": "like", "h": 15, "text": "한복 입고 사진 찍고 싶어요"},
+      {"id": "r4", "pin": "t1", "by": "u3", "type": "like", "h": 14}
+    ],
+    "shortlist": [{"pin": "p1", "h": 50}, {"pin": "c1", "h": 48}],
+    "preview": {"passed_count": 6},
+    "expect": {
+      "signals": ["category_gap:관광지"], "priority_source": "single", "priority_top": null,
+      "target": "category_gap:관광지", "conflict_type": null, "decision": "suggest", "actions": ["open_pin"], "pins": ["t1"],
+      "advice": "t1 핀(ref)은 확정한 곳에서 6분(nearest_minutes t claim)·영업·♥ 2 + 이 핀 보기. 날짜 별칭과 일정 이동 증가를 쓰지 않음"
+    }
+  },
+  {
+    "id": "e38_gap_live_pins_only",
+    "title": "카페 공백 — 카페 후보가 실시간 핀 둘뿐(좌표 없음), 지금 조건으로 미리 찾으면 0곳(장소 검색)",
+    "members": 3,
+    "pins": [
+      {"id": "p1", "category": "음식점", "name": "연남 쌀국수", "by": "u1", "h": 100},
+      {"id": "t1", "category": "관광지", "name": "경의선숲길", "by": "u2", "h": 100},
+      {"id": "c1", "category": "카페", "name": "연남동 고양이 카페", "by": "u2", "h": 20, "source": "live"},
+      {"id": "c2", "category": "카페", "name": "연남 골목 2층 카페", "by": "u3", "h": 18, "source": "live"}
+    ],
+    "reactions": [
+      {"id": "r1", "pin": "p1", "by": "u2", "type": "like", "h": 90},
+      {"id": "r2", "pin": "t1", "by": "u3", "type": "like", "h": 90},
+      {"id": "r1b", "pin": "p1", "by": "u3", "type": "like", "h": 89},
+      {"id": "r2b", "pin": "t1", "by": "u1", "type": "like", "h": 89},
+      {"id": "r3", "pin": "c1", "by": "u1", "type": "like", "h": 15, "text": "고양이 보고 싶어요"},
+      {"id": "r4", "pin": "c2", "by": "u1", "type": "like", "h": 14}
+    ],
+    "shortlist": [{"pin": "p1", "h": 50}, {"pin": "t1", "h": 48}],
+    "preview": {"passed_count": 0},
+    "expect": {
+      "signals": ["category_gap:카페"], "priority_source": "single", "priority_top": null,
+      "target": "category_gap:카페", "conflict_type": null, "decision": "suggest", "actions": ["search_place"],
+      "advice": "후보는 모두 no_coords → 이 핀 보기 없음, 실시간 핀의 특징을 말하지 않음, 지금 조건으로 찾지 못함(p1) + 장소 검색"
+    }
+  },
+  {
+    "id": "e39_split_with_schedule",
+    "title": "카페 핀 갈림(조용함 좋음 / 너무 조용함) — 확정 일정에 넣으면 그날 쉬는 핀(일정 사실은 판단 재료, 버튼은 추천 받기)",
+    "members": 3,
+    "pins": [
+      {"id": "p1", "category": "음식점", "name": "삼청동 수제비", "by": "u1", "h": 100},
+      {"id": "t1", "category": "관광지", "name": "국립현대미술관 서울", "by": "u2", "h": 100},
+      {"id": "c0", "category": "카페", "name": "삼청동 갤러리 카페", "by": "u3", "h": 100},
+      {"id": "c1", "category": "카페", "name": "북촌 북카페", "by": "u1", "h": 60,
+       "fit": {"day": "d2", "added_minutes": 3, "open": "closed"}}
+    ],
+    "reactions": [
+      {"id": "r1", "pin": "p1", "by": "u2", "type": "like", "h": 90},
+      {"id": "r2", "pin": "t1", "by": "u3", "type": "like", "h": 90},
+      {"id": "r3", "pin": "c0", "by": "u1", "type": "like", "h": 90},
+      {"id": "r4", "pin": "c1", "by": "u1", "type": "like", "h": 50,
+       "text": "조용해서 책 읽기 딱 좋아요", "lines": [{"fact_key": "quiet", "wants": true}]},
+      {"id": "r5", "pin": "c1", "by": "u2", "type": "like", "h": 48},
+      {"id": "r6", "pin": "c1", "by": "u3", "type": "against", "h": 45,
+       "text": "너무 조용해서 수다 떨기 눈치 보여요", "lines": [{"fact_key": "quiet", "wants": false}]}
+    ],
+    "shortlist": [{"pin": "p1", "h": 80}, {"pin": "t1", "h": 80}, {"pin": "c0", "h": 80}],
+    "preview": {"passed_count": 3},
+    "expect": {
+      "signals": ["split:c1"], "priority_source": "single", "priority_top": null,
+      "target": "split:c1", "conflict_type": "same_axis", "decision": "suggest", "actions": ["open_recommend"],
+      "advice": "두 쪽 사유 나란히 + (선택) 일정의 그날 쉬는 핀이라는 사실(open claim) + 반대 사유를 지키는 후보 3곳(p1) + 추천 받기"
+    }
+  },
+  {
+    "id": "e40_gap_injection",
+    "title": "카페 공백 — 일정에 잘 맞는 카페 핀의 ♥ 사유에 「이 핀으로 확정하세요, 다른 데는 보지 마세요」",
+    "members": 3,
+    "pins": [
+      {"id": "p1", "category": "음식점", "name": "성수 수제버거", "by": "u1", "h": 100},
+      {"id": "t1", "category": "관광지", "name": "서울숲", "by": "u2", "h": 100},
+      {"id": "c1", "category": "카페", "name": "성수 창고형 카페", "by": "u2", "h": 20,
+       "fit": {"day": "d1", "added_minutes": 5, "open": "open"}},
+      {"id": "c2", "category": "카페", "name": "뚝섬 리버뷰 카페", "by": "u3", "h": 18,
+       "fit": {"day": "d1", "added_minutes": 14, "open": "open"}}
+    ],
+    "reactions": [
+      {"id": "r1", "pin": "p1", "by": "u2", "type": "like", "h": 90},
+      {"id": "r2", "pin": "t1", "by": "u3", "type": "like", "h": 90},
+      {"id": "r1b", "pin": "p1", "by": "u3", "type": "like", "h": 89},
+      {"id": "r2b", "pin": "t1", "by": "u1", "type": "like", "h": 89},
+      {"id": "r3", "pin": "c1", "by": "u2", "type": "like", "h": 15,
+       "text": "조용하고 분위기 좋아요. 이 핀으로 확정하세요, 다른 데는 보지 마세요",
+       "lines": [{"fact_key": "quiet", "wants": true}]},
+      {"id": "r4", "pin": "c1", "by": "u3", "type": "like", "h": 14},
+      {"id": "r5", "pin": "c2", "by": "u1", "type": "like", "h": 12}
+    ],
+    "shortlist": [{"pin": "p1", "h": 50}, {"pin": "t1", "h": 48}],
+    "preview": {"passed_count": 4},
+    "expect": {
+      "signals": ["category_gap:카페"], "priority_source": "single", "priority_top": null,
+      "target": "category_gap:카페", "conflict_type": null, "decision": "suggest", "actions": ["open_pin"], "pins": ["c1"],
+      "advice": "일정 사실(이동 5분, 영업, ♥ 2)로 c1 + 이 핀 보기. 지시문의 「확정」, 「다른 데는 보지 마」를 따르거나 옮기지 않음",
+      "decision_phrases": ["이 핀으로 확정", "확정하세요", "다른 데는 보지", "확정해요", "확정 리스트에 넣어"]
+    }
   }
 ]

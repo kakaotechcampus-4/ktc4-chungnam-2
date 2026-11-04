@@ -12,6 +12,10 @@
   이력에 그 제안(followup.status=watching, fingerprint는 target 신호 그대로)을 넣고, 후속 신호는 운영과 같은 core.detect_followups가
   만든다. case.runs {카테고리: h}는 그 카테고리의 마지막 run(추천 받기를 눌렀다)이다. 후속 확인의 결과는 도구 기록 f1에 넣는다
   (운영의 tools.record_followup_check와 같은 모양, core.followup_check_result).
+- 일정에 끼워 보기(try_in_schedule, 6.10, #1358)는 AI 코스 엔진을 부르지 않고 핀의 fit(정해 둔 day, added_minutes, nearest_minutes,
+  open)을 돌려준다 — 계산은 agent의 core.schedule_fits가 맡고 agent/tests가 본다. 평가 대상은 그 결과를 읽는 지시문이다. 결과 모양과
+  자르기·not_found·no_coords·fills_gap은 agent/tools.try_in_schedule과 같다. open_pin 검사에 쓰는 fits는 운영과 같은
+  core.schedule_fits_of다.
 - 사유 글은 지어낸 예시다. 실제 사용자 글을 넣지 않는다.
 
 평가 도구라 agent의 core와 snapshot(api.py가 아닌 모듈)을 직접 가져온다. 운영 코드는 이 파일을 가져오지 않는다.
@@ -25,6 +29,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from agent import core
+from agent.constants import TRY_IN_SCHEDULE_MAX_PINS
 from agent.tools import PREVIEW_CALL_ID
 from recommend import api as recommend_api
 from agent.snapshot import Chip, MapInfo, Member, Pin, Reaction, Reason, ShortlistItem, Snapshot, derive_actions
@@ -80,6 +85,7 @@ class World:
     names: dict[str, str]                          # pin_id → 장소 이름(실시간 핀은 검색어)
     lines: dict[str, list[dict[str, Any]]]         # reaction_id → ②가 냈을 줄(글에서 나온 것만)
     facts: dict[str, dict[str, Any]]               # place_id → {fact_key: value}
+    fits: dict[str, dict[str, Any]] = field(default_factory=dict)   # pin_id → 끼워 본 결과(case pin의 fit, 6.10)
     history: core.History = field(default_factory=core.History)
 
     @property
@@ -151,7 +157,7 @@ def build(case: Mapping[str, Any]) -> World:
     members = tuple(Member(user_id=f"u{i}", alias=f"m{i}", joined_at=JOINED) for i in range(1, n + 1))
     dday = case.get("dday", 30)
     start = TODAY + timedelta(days=dday)
-    pins, names, facts = [], {}, {}
+    pins, names, facts, fits = [], {}, {}, {}
     for p in case["pins"]:
         live = p.get("source") == "live"
         place_id = None if live else f"place_{p['id']}"
@@ -160,6 +166,8 @@ def build(case: Mapping[str, Any]) -> World:
         names[p["id"]] = p["name"]
         if place_id and p.get("facts"):
             facts[place_id] = dict(p["facts"])
+        if p.get("fit"):
+            fits[p["id"]] = dict(p["fit"])
     pin_category = {p.pin_id: p.category for p in pins}
     alias = {m.user_id: m.alias for m in members}
     reactions, reasons, lines = [], [], {}
@@ -185,9 +193,9 @@ def build(case: Mapping[str, Any]) -> World:
         for i, d in enumerate(case.get("dismissals", []))
     ]
     if case.get("followup"):
-        past.append(_accepted(case, World(case=dict(case), snap=snap, names=names, lines=lines, facts=facts)))
+        past.append(_accepted(case, World(case=dict(case), snap=snap, names=names, lines=lines, facts=facts, fits=fits)))
         snap = replace(snap, last_run_at={c: _ago(h) for c, h in (case.get("runs") or {}).items()})
-    return World(case=dict(case), snap=snap, names=names, lines=lines, facts=facts,
+    return World(case=dict(case), snap=snap, names=names, lines=lines, facts=facts, fits=fits,
                  history=core.History(suggestions=tuple(sorted(past, key=lambda s: s.created_at, reverse=True))))
 
 
@@ -303,6 +311,29 @@ class FixtureTools:
         answered = len({r.pin_id for r in self._snap.reactions if self._snap.pin(r.pin_id).category == category})
         return {"category": category, "ready": answered >= 1, "answered_count": answered, "required_count": 1}
 
+    def _try_in_schedule(self, args):
+        """agent/tools.try_in_schedule과 같은 모양. 지도에 없거나 확정한 핀은 not_found, 미확정 핀은 앞에서 TRY_IN_SCHEDULE_MAX_PINS개.
+        실시간 핀은 no_coords, 그 밖은 케이스의 fit(없으면 day·이동 null, open unknown). fills_gap은 확정 리스트에 없는 카테고리인가."""
+        s = self._snap
+        wanted = list(dict.fromkeys(args.get("pin_ids") or ()))
+        open_ids = [pid for pid in wanted if s.pin(pid) is not None and not s.is_confirmed(pid)]
+        confirmed = {s.pin(i.pin_id).category for i in s.shortlist}
+        rows = []
+        for pid in open_ids[:TRY_IN_SCHEDULE_MAX_PINS]:
+            pin = s.pin(pid)
+            if pin.place_id is None:
+                rows.append({"pin_id": pid, "no_coords": True})
+                continue
+            fit = self.world.fits.get(pid, {})
+            rows.append({"pin_id": pid, "day": fit.get("day"), "added_minutes": fit.get("added_minutes"),
+                         "nearest_minutes": fit.get("nearest_minutes"), "open": fit.get("open", "unknown"),
+                         "fills_gap": pin.category not in confirmed})
+        return {"pins": rows, "total": len(rows), "not_found": [pid for pid in wanted if pid not in open_ids]}
+
+    def schedule_fits(self) -> dict[str, Mapping[str, Any]]:
+        """이번 진단의 끼워 본 결과(핀 id → 결과) — 운영과 같은 core.schedule_fits_of. open_pin 검사(11.2 6단계)가 본다."""
+        return core.schedule_fits_of([{"name": c["name"], "result": self.results.get(c["call_id"])} for c in self.calls])
+
     def _get_reaction_matrix(self, args):
         category = args.get("category")
         if category not in categories.pinnable():
@@ -323,7 +354,7 @@ def verify(world: World, key: str, out: Any, tools: FixtureTools) -> core.Verifi
     comparison = world.comparison(top.pin_id) if top.diagnosis == "split" else None
     names = MEMBER_NAMES[:world.snap.member_count]
     return core.verify_diagnosis(out, top, world.snap, tools.results, member_names=names, comparison=comparison,
-                                 preview=world.preview(key))
+                                 preview=world.preview(key), fits=tools.schedule_fits())
 
 
 # ---------------------------------------------------------------- 결정 지시 (#717)

@@ -21,10 +21,14 @@
 - 다음 방법(#1347, 명세 6.9): 후속 케이스(case.followup)에서 해 본 행동을 원문에서 다시 고른 수와 검증 뒤 남은 수(0이어야 한다),
   f1 claim이 남은 수, 추천 결과를 짐작하거나 입력과 다른 사실을 쓴 문구(expect.result_guess_phrases — 남는 곳이 있는데 「찾지 못했」 등 — 결정 지시처럼 케이스 문구로, 원문 슬롯 밖과 렌더 text
   조각)를 센다.
+- 엮기(#1358, 명세 6.10): 카테고리 공백에서 「이 핀 보기」를 기대한 호출 중 검증 뒤 남은 핀이 expect.pins인 수, 맞는 핀이 없는
+  케이스에서 원문과 검증 뒤 open_pin 수(검증 뒤는 0이어야 한다), 🚫가 달린 핀을 try_in_schedule에 넣은 호출, 끼워 본 결과의
+  tool_result claim이 남은 수, 갈림에서 try_in_schedule을 부른 수, 모델 원문(슬롯 밖)에 날 별칭(d1 …)을 쓴 문장을 센다 — 그 문장은 검증 5단계가 숫자로 보고 뺀다.
 """
 
 import argparse
 import json
+import re
 import statistics
 import sys
 import threading
@@ -47,7 +51,8 @@ from llm.tests.eval_agent import fixtures as fx
 RESULTS_DIR = Path(__file__).with_name("results")
 # 엘리스 Serverless gpt-6-luna 요금(1M 토큰당, 기획안 13절): 입력 ₩152, 캐시된 입력 ₩15, 출력 ₩761
 PRICE_IN, PRICE_CACHED, PRICE_OUT = 152, 15, 761
-FORBIDDEN_RAW = ("확정", "결정하세요", "여기로 가")
+# 지시형만 센다 — v9부터 「확정 일정」, 「확정한 곳」 같은 명사가 사실 문장에 나와 「확정」 두 글자로는 지시가 아닌 것까지 잡힌다(#1358)
+FORBIDDEN_RAW = ("확정하", "확정해", "결정하세요", "여기로 가")
 
 _local = threading.local()
 
@@ -154,11 +159,18 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     row["conflict_type"] = (inp.get("comparison") or {}).get("conflict_type")   # split만(#1319 지표)
     guesses = expect.get("result_guess_phrases", [])
     row["tried"] = [a["action"] for a in inp.get("attempts") or ()]   # 다음 방법(6.9)이면 해 본 행동
+    row["diagnosis"] = inp["diagnosis"]
+    row["expected_pins"] = expect.get("pins")   # 엮기(6.10): 「이 핀 보기」로 기대한 핀
+    try_calls = [c for c in tools.calls if c["name"] == "try_in_schedule"]
+    row["try_pins"] = [pid for c in try_calls for pid in c["args"].get("pin_ids") or ()]
+    against = {r.pin_id for r in world.snap.reactions if r.type == "against"}
+    row["against_tried"] = sorted({pid for pid in row["try_pins"] if pid in against})
     if isinstance(out, AgentCallFailed):
         return row | {"decision": None, "outcome": core.failed_outcome(out.reason), "failure": out.detail,
                       "decision_match": False, "button_match": False, "kept_actions": [],
                       "raw_echo": [], "shown_echo": [], "quoted_echo": [], "p1_claimed": False,
-                      "raw_open_recommend": False, "raw_actions": [], "f1_claimed": False, "raw_guess": [], "shown_guess": []}
+                      "raw_open_recommend": False, "raw_actions": [], "f1_claimed": False, "raw_guess": [], "shown_guess": [],
+                      "schedule_claimed": False, "kept_pins": []}
     verified = fx.verify(world, key, out, tools)
     raw_text = " ".join(a.text for a in out.advice)
     row |= {
@@ -177,6 +189,8 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     kept_ids = set((verified.record.get("claims") or {}).get("kept", []))
     row["p1_claimed"] = any(c.kind == "tool_result" and c.call_id == "p1" and c.id in kept_ids for c in out.claims)
     row["f1_claimed"] = any(c.kind == "tool_result" and c.call_id == "f1" and c.id in kept_ids for c in out.claims)
+    try_ids = {c["call_id"] for c in try_calls}
+    row["schedule_claimed"] = any(c.kind == "tool_result" and c.call_id in try_ids and c.id in kept_ids for c in out.claims)
     expected_silent = expect["decision"] == "silent"
     row["decision_match"] = (out.decision != "suggest") if expected_silent else (out.decision == "suggest")
     draft = verified.draft
@@ -185,10 +199,12 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
         refs = core.RenderRefs(pin_names=world.names,
                                reaction_texts={r.reaction_id: r.text for r in world.snap.reasons if r.text})
         row["kept_actions"] = [a["type"] for a in draft.actions]
+        row["kept_pins"] = [pid for a in draft.actions if a["type"] == "open_pin" for pid in a["params"]["pin_ids"]]
         row["rendered"] = [_rendered(core.render_segments(line["slot_text"], claims, refs), line["is_guess"])
                            for line in draft.advice]
     else:
         row["kept_actions"] = []
+        row["kept_pins"] = []
     shown = [x["segments"] for x in row.get("rendered", []) if x["segments"]]
     row["shown_echo"] = fx.decision_echoes((fx.segment_texts(seg) for seg in shown), phrases)
     row["quoted_echo"] = fx.decision_echoes((fx.segment_texts(seg, "quote") for seg in shown), phrases)
@@ -240,6 +256,7 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                   *_echo_rows(diag),
                   *_preview_rows(diag),
                   *_followup_rows(diag),
+                  *_link_rows(diag),
                   f"| 도구 호출 수(평균, 최대) | {_avg([len(r['tools']) for r in diag]):.1f}, {max(len(r['tools']) for r in diag)} |",
                   f"| 모델 요청 수(평균) | {_avg([r['requests'] for r in diag]):.1f} |",
                   f"| 입력 토큰(평균, 캐시) | {_avg([r['in'] for r in diag]):.0f} ({_avg([r['cached'] for r in diag]):.0f}) |",
@@ -346,6 +363,31 @@ def _followup_rows(rows: list[dict[str, Any]]) -> list[str]:
             f"| 다음 방법: f1 claim이 남음(suggest 중) | {_pct(sum(r['f1_claimed'] for r in sug), len(sug))} |",
             f"| 다음 방법: 결과 짐작·입력과 다른 말(케이스 문구) — 원문 슬롯 밖 | {_pct(sum(bool(r['raw_guess']) for r in follow), len(follow))} |",
             f"| 다음 방법: 결과 짐작·입력과 다른 말(케이스 문구) — 렌더 text 조각 | {_pct(sum(bool(r['shown_guess']) for r in follow), len(follow))} |"]
+
+
+_DAY_ALIAS = re.compile(r"(?<![A-Za-z0-9])d\d+(?![0-9])")
+
+
+def _link_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """엮기(6.10, #1358) 지표 줄. 「이 핀 보기」는 맞는 핀(🚫 없음, 좌표 있음, 그날 영업)이 있는 카테고리 공백에서만 남아야 하고,
+    검증(open_pin 검사)이 빼므로 맞는 핀이 없는 케이스의 검증 뒤 수는 0이어야 한다."""
+    gap = [r for r in rows if r.get("diagnosis") == "category_gap"]
+    want_pin = [r for r in gap if r.get("expected_pins")]
+    no_pin = [r for r in gap if not r.get("expected_pins")]
+    gap_sug = [r for r in gap if r.get("decision") == "suggest"]
+    splits = [r for r in rows if r.get("diagnosis") == "split"]
+    raw = [fx.outside_slots(a["text"]) for r in rows for a in r.get("raw_advice", [])]
+    return [
+        f"| 엮기: 「이 핀 보기」 기대 — 검증 뒤 고른 핀이 기대 핀 | "
+        f"{_pct(sum(bool(r['kept_pins']) and set(r['kept_pins']) <= set(r['expected_pins']) for r in want_pin), len(want_pin))} |",
+        f"| 엮기: 맞는 핀 없음 — open_pin 원문/검증 뒤(검증 뒤는 0이어야 한다) | "
+        f"{sum('open_pin' in r.get('raw_actions', []) for r in no_pin)}/{sum(bool(r['kept_pins']) for r in no_pin)} (호출 {len(no_pin)}) |",
+        f"| 엮기: 🚫 달린 핀을 try_in_schedule에 넣음(카테고리 공백) | {_pct(sum(bool(r['against_tried']) for r in gap), len(gap))} |",
+        f"| 엮기: 끼워 본 결과의 claim이 남음(카테고리 공백 suggest 중) | {_pct(sum(r['schedule_claimed'] for r in gap_sug), len(gap_sug))} |",
+        f"| 엮기: 갈림에서 try_in_schedule을 부름 / 그 claim이 남음 | "
+        f"{_pct(sum(bool(r['try_pins']) for r in splits), len(splits))} / {sum(r['schedule_claimed'] for r in splits)} |",
+        f"| 엮기: 원문(슬롯 밖)에 날 별칭(d1 …)을 쓴 문장 — 검증이 뺀다 | {sum(bool(_DAY_ALIAS.search(t)) for t in raw)}/{len(raw)} |",
+    ]
 
 
 def _echo_cases(by_case: Mapping[str, list[dict[str, Any]]]) -> list[str]:
