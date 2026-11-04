@@ -26,7 +26,7 @@ def test_reaction_notifies_the_pin_author_without_leaking_the_reason(members, pl
     pin = _pin(a, m, "K", place_ids)
     assert b.put(f"/pins/{pin}/reaction", json={"type": "like"}).status_code == 200
     mine = [i for i in _inbox(a) if i["type"] == "pin_reaction"]
-    assert len(mine) == 1 and mine[0]["pin_id"] == pin and "♥" in mine[0]["message"]
+    assert len(mine) == 1 and mine[0]["pin_id"] == pin and "좋음" in mine[0]["message"]
 
     reason = "비밀사유문장"
     assert b.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": reason}).status_code == 200
