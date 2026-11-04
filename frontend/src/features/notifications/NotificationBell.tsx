@@ -111,9 +111,11 @@ function InboxView({ currentMapId, onClose, onSettings }: { currentMapId?: strin
                     {n.message}
                   </span>
                   <span className="mt-0.5 flex items-center gap-2 text-xs text-ink-500">
-                    <span className="shrink-0">
-                      {where === 'here' ? '이 지도 · ' : where === 'all' && n.map_title ? `${n.map_title} · ` : ''}
-                      {timeAgo(n.created_at)}
+                    {/* 지도 제목은 100자까지라 줄 폭을 넘으면 자르고, 시각은 늘 보인다. */}
+                    <span className="flex min-w-0">
+                      {where === 'here' && '이 지도 · '}
+                      {where === 'all' && n.map_title && <span className="min-w-0 truncate">{n.map_title}&nbsp;·&nbsp;</span>}
+                      <span className="shrink-0">{timeAgo(n.created_at)}</span>
                     </span>
                     {where === 'other' && (
                       <span className="tag tag-neutral ml-auto min-w-0 truncate">

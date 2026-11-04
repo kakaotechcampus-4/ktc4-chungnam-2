@@ -45,10 +45,17 @@ export default function RequireLogin() {
 }
 
 function SessionGate() {
-  const { isPending, error } = useMeQuery()
+  const { isPending, error, data: me } = useMeQuery()
+  // 실패 안내는 여기서 읽는다. 게스트가 카카오 전환에 실패하면 게스트 세션은 그대로라 로그인 화면이 뜨지 않는다 —
+  // 그때는 토스트로 알린다(LoginScreen 만 읽던 때는 아무 말 없이 목록으로 돌아왔다).
+  const loginError = useLoginError()
+  const loggedIn = !!me
+  useEffect(() => {
+    if (loggedIn && loginError) showToast(loginError)
+  }, [loggedIn, loginError])
 
   if (isPending) return <PingoLoading label="로그인 상태를 확인하는 중…" className="min-h-dvh justify-center" />
-  if (isUnauthorized(error)) return <LoginScreen />
+  if (isUnauthorized(error)) return <LoginScreen notice={loginError ?? undefined} />
   if (error) {
     return (
       <div className="p-4">
@@ -94,10 +101,10 @@ function useLoginError(): string | null {
 /**
  * 로그인(랜딩) — 위에서부터 이름 → 날아가는 핑고 → 시작 버튼 둘 → 할 수 있는 일 → 약관 동의 줄.
  * 768px 이상은 종이 배경 가운데 입구 카드다(#602). 1024px 이상은 왼쪽에 이름·핑고를 크게, 오른쪽 카드에 나머지를 둔다.
- * `notice` 는 다른 화면이 넘겨 준 안내(탈퇴 계정 선택 시간 만료)다. 실패 안내와 같은 자리에 같은 모양으로 뜬다.
+ * `notice` 는 넘겨받은 안내(카카오 로그인 실패, 탈퇴 계정 선택 시간 만료)다. 실패 안내와 같은 자리에 같은 모양으로 뜬다.
  */
 function LoginScreen({ notice }: { notice?: string }) {
-  const loginError = useLoginError() ?? notice ?? null
+  const loginError = notice ?? null
   const [sheet, setSheet] = useState<'guest' | 'terms' | null>(null)
   const close = () => setSheet(null)
   return (

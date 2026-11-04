@@ -58,6 +58,12 @@ function providerOf(url: string): Provider {
   return 'google'
 }
 
+/** 글 안의 첫 지도 링크(검색창에 공유 메시지를 통째로 붙여 넣었을 때). 없으면 null. */
+export function firstMapLink(text: string): string | null {
+  const m = text.match(HAS_LINK)
+  return m ? normalizeUrl(m[0]) : null
+}
+
 export function normalizeUrl(raw: string): string {
   const url = raw.replace(TRAILING, '')
   try {

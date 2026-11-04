@@ -71,5 +71,6 @@ function saveFile(blob: Blob, name: string) {
   a.href = url
   a.download = name
   a.click()
-  URL.revokeObjectURL(url)
+  // Safari·iOS는 받기를 늦게 시작한다 — 바로 지우면 받기가 말없이 실패한다(FileSaver.js 와 같은 40초).
+  setTimeout(() => URL.revokeObjectURL(url), 40_000)
 }

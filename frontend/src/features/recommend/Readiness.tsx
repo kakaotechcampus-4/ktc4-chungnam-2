@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { Check } from 'lucide-react'
 
+import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { timeAgo } from '@/features/map/model'
 import { CHANGED, START_PARAM } from '@/features/agent/actions'
@@ -92,8 +93,8 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useAgentStart(cards, (category) => {
     setPicked(mapId, category)
-    // 크레딧 때문이면(게스트·잔액 부족) 「상황이 바뀌었어요」가 아니다 — 버튼 자리의 안내가 말한다.
-    create.start(category, { onError: (err) => creditBlock(err) || showToast(CHANGED) })
+    // 준비가 풀린 것(NOT_READY)만 「상황이 바뀌었어요」다. 크레딧·실패·네트워크는 버튼 자리의 안내가 진짜 이유를 말한다.
+    create.start(category, { onError: (err) => err instanceof ApiError && err.code === 'NOT_READY' && showToast(CHANGED) })
   })
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />

@@ -47,6 +47,21 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
     if (suggestionId && unseen) markViewed(suggestionId)
   }, [suggestionId, unseen, markViewed])
 
+  // 수락은 시트에 둔다. 서버가 수락과 함께 보내는 agent.resolved 가 응답보다 먼저 오면 제안 칸이 먼저 사라지는데,
+  // 사라진 칸의 mutate 콜백은 불리지 않아 버튼이 이어 가는 동작이 일어나지 않았다.
+  const accept = useAcceptSuggestionMutation(mapId)
+  const runAction = useRunAgentAction(mapId)
+  const onAccept = (id: string, index: number) =>
+    accept.mutate(
+      { id, index },
+      {
+        onSuccess: ({ action }) => {
+          onClose()
+          runAction(action)
+        },
+      },
+    )
+
   return (
     <ModalSheet label="핑고 AI 조언" onClose={onClose} fullWidth>
       <div className="space-y-4">
@@ -77,7 +92,7 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
         )}
         {state && enabled && observation?.checked_at && <p className="text-xs text-ink-500">{checkedLabel(observation.checked_at)}</p>}
         {state && enabled && <MapStatus status={state.status} />}
-        {state && enabled && state.active_suggestion && <Suggestion mapId={mapId} suggestion={state.active_suggestion} onDone={onClose} />}
+        {state && enabled && state.active_suggestion && <Suggestion mapId={mapId} suggestion={state.active_suggestion} accepting={accept.isPending} onAccept={onAccept} />}
         {state && enabled && !state.active_suggestion && (
           <div className="space-y-1.5">
             <AiHeader title="지금은 따로 드릴 제안이 없어요" sub="막힌 곳이 보이면 여기에 알려 드릴게요" />
@@ -91,12 +106,20 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
   )
 }
 
-function Suggestion({ mapId, suggestion, onDone }: { mapId: string; suggestion: AgentSuggestionDto; onDone: () => void }) {
-  const accept = useAcceptSuggestionMutation(mapId)
+function Suggestion({
+  mapId,
+  suggestion,
+  accepting,
+  onAccept,
+}: {
+  mapId: string
+  suggestion: AgentSuggestionDto
+  accepting: boolean
+  onAccept: (id: string, index: number) => void
+}) {
   const dismiss = useDismissSuggestionMutation(mapId)
-  const runAction = useRunAgentAction(mapId)
   const { facts, guesses } = splitAdvice(suggestion.advice)
-  const busy = accept.isPending || dismiss.isPending
+  const busy = accepting || dismiss.isPending
 
   return (
     <article className="space-y-3">
@@ -136,17 +159,7 @@ function Suggestion({ mapId, suggestion, onDone }: { mapId: string; suggestion: 
             key={a.index}
             type="button"
             disabled={busy}
-            onClick={() =>
-              accept.mutate(
-                { id: suggestion.id, index: a.index },
-                {
-                  onSuccess: ({ action }) => {
-                    onDone()
-                    runAction(action)
-                  },
-                },
-              )
-            }
+            onClick={() => onAccept(suggestion.id, a.index)}
             // 한 화면 한 채움 — 첫 버튼만 채운다.
             className={`${i === 0 ? 'btn-primary' : 'btn-outline'} btn-md w-full`}
           >

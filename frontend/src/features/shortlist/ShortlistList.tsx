@@ -65,8 +65,8 @@ function Row({
   return (
     <li className={`rounded-xl border border-ink-200 bg-white py-1.5 pl-3 pr-1.5 ${dragging ? 'opacity-40' : ''}`}>
       <div className="flex items-center gap-2">
-        {/* 상자만 보이는 칸(누르는 곳은 높이 44) — 이름은 화면 읽기용이다. 핀 이름은 옆의 상세 열기 버튼이다. */}
-        <div className="w-8 shrink-0">
+        {/* 상자만 보이는 칸(누르는 곳 44×44) — 이름은 화면 읽기용이다. 핀 이름은 옆의 상세 열기 버튼이다. */}
+        <div className="-ml-1.5 w-11 shrink-0">
           <Checkbox checked={checked} onChange={onCheck}>
             <span className="sr-only">{name} 고르기</span>
           </Checkbox>

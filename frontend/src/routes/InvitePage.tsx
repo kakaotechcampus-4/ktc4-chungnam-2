@@ -53,7 +53,10 @@ export default function InvitePage() {
   const join = () =>
     // 구성원 온보딩(Figma 2절)은 지도 화면이 이 표시를 보고 띄운다.
     accept.mutate(undefined, {
-      onSuccess: (map) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }),
+      onSuccess: (map) => {
+        clearPendingInvite()
+        navigate(`/maps/${map.id}?onboarding=member`, { replace: true })
+      },
       onError: (err) => setLateProblem(inviteProblem(err)),
     })
 
@@ -128,7 +131,12 @@ function GuestJoin({ token, onBroken }: { token: string; onBroken: (problem: Inv
         e.preventDefault()
         if (!trimmed) return
         join.mutate(trimmed, {
-          onSuccess: ({ map }) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }),
+          // 남겨 둔 초대를 여기서 지운다. 화면이 바로 넘어가 「로그인됨」 효과가 돌기 전에 사라지면,
+          // 나중에 내 지도 목록이 이 초대로 다시 보낸다.
+          onSuccess: ({ map }) => {
+            clearPendingInvite()
+            navigate(`/maps/${map.id}?onboarding=member`, { replace: true })
+          },
           onError: (err) => onBroken(inviteProblem(err)),
         })
       }}

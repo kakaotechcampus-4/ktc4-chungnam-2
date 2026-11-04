@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { dropSpot, type DropSpot } from './schedule'
 import { setDropHover } from './scheduleStore'
@@ -14,14 +14,21 @@ const START_PX = 6
 export function useScheduleDrag(pinId: string, onDrop: (spot: DropSpot) => void) {
   const [drag, setDrag] = useState<{ x0: number; y0: number; x: number; y: number; active: boolean; spot: DropSpot | null } | null>(null)
 
+  // 끄는 도중 줄이 사라지면(다른 구성원이 빼거나 확정을 해제) 놓기가 오지 않는다 — 놓을 자리 표시를 남기지 않는다.
+  const dragging = useRef(false)
   const end = () => {
+    dragging.current = false
     setDrag(null)
     setDropHover(null)
   }
+  useEffect(() => () => {
+    if (dragging.current) setDropHover(null)
+  }, [])
 
   const handlers = {
     onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
       e.currentTarget.setPointerCapture?.(e.pointerId)
+      dragging.current = true
       setDrag({ x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, active: false, spot: null })
     },
     onPointerMove: (e: React.PointerEvent<HTMLElement>) => {
@@ -36,6 +43,7 @@ export function useScheduleDrag(pinId: string, onDrop: (spot: DropSpot) => void)
       end()
     },
     onPointerCancel: end,
+    onLostPointerCapture: end,
   }
 
   return { handlers, dragging: Boolean(drag?.active), ghost: drag?.active ? { x: drag.x, y: drag.y } : null }

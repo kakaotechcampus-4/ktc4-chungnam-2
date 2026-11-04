@@ -21,5 +21,9 @@ export const useCourseViewStore = create<{
 }>((set) => ({
   runs: {},
   open: (mapId, runId, redirected = false) => set((s) => ({ runs: { ...s.runs, [mapId]: { runId, redirected } } })),
-  close: (mapId) => set((s) => ({ runs: { ...s.runs, [mapId]: undefined } })),
+  // 닫은 코스의 선·범례가 지도에 남지 않게 같이 끈다.
+  close: (mapId) => {
+    if (useCourseMapStore.getState().mapId === mapId) useCourseMapStore.getState().hide()
+    set((s) => ({ runs: { ...s.runs, [mapId]: undefined } }))
+  },
 }))

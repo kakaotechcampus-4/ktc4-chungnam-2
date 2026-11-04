@@ -86,7 +86,12 @@ function refreshMap(queryClient: QueryClient, mapId: string) {
  */
 export function useMapEvents(mapId: string): { state: ConnectionState; reconnect: () => void } {
   const queryClient = useQueryClient()
+  // navigate 는 주소가 바뀔 때마다(탭 이동) 새 함수라, effect 의존성에 두면 탭마다 연결을 끊고 다시 맺는다(그 사이 이벤트 유실).
   const navigate = useNavigate()
+  const navigateRef = useRef(navigate)
+  useEffect(() => {
+    navigateRef.current = navigate
+  }, [navigate])
   const myUserId = useMeQuery().data?.id
   const [state, setState] = useState<ConnectionState>('open')
   const [attempt, setAttempt] = useState(0)
@@ -127,7 +132,11 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
         const who = `${display_name ?? '구성원'}님이 ${pin.place_name ?? '핀'}`
         showToast(type ? `${who}에 ${REACTION_WORD[type]} 의견을 남겼어요` : `${who}에 남긴 의견을 취소했어요`)
       }
-      update((pins) => pins.map((p) => (p.id === pin_id ? { ...p, reaction_summary } : p)))
+      // 내 의견 이벤트가 HTTP 응답보다 먼저 오면, 집계(내 것 포함)만 덮고 my_reaction 은 옛것이라
+      // 뒤이은 응답 처리(withMyReaction)가 한 번 더 더한다. 내 것이면 my_reaction 의 종류도 맞춰 상쇄되게 한다.
+      const mine = (p: Pin): Pick<Pin, 'my_reaction'> =>
+        user_id === myUserId ? { my_reaction: type ? ({ ...p.my_reaction, type } as Pin['my_reaction']) : null } : {}
+      update((pins) => pins.map((p) => (p.id === pin_id ? { ...p, reaction_summary, ...mine(p) } : p)))
       // 열려 있는 핀 상세의 의견 목록 — 키가 페이로드의 핀이라 표에 두지 않는다.
       void queryClient.invalidateQueries({ queryKey: pinKeys.reactions(pin_id) })
     }
@@ -138,7 +147,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       showToast('방장이 이 지도를 삭제했어요')
       queryClient.removeQueries({ queryKey: mapKeys.detail(mapId) })
       queryClient.removeQueries({ queryKey: agentKeys.state(mapId) })
-      navigate('/', { replace: true })
+      navigateRef.current('/', { replace: true })
     }
 
     // 페이로드로 바로 고치는 것(핀 한 개, 토스트). 나머지는 refetchTable 표대로 다시 받는다.
@@ -201,7 +210,7 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       document.removeEventListener('visibilitychange', onVisible)
       source.close()
     }
-  }, [mapId, myUserId, queryClient, navigate, attempt])
+  }, [mapId, myUserId, queryClient, attempt])
 
   const reconnect = () => {
     refreshMap(queryClient, mapId)

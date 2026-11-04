@@ -18,6 +18,8 @@ const clicked = new Set<string>()
  * 추천 탭이 탭을 연 동안 이 훅을 붙잡고 있어서, 안의 화면(준비 → 근거 → 진행 → 결과)이 바뀌어도 staleTime Infinity라 다시 부르지 않는다.
  * gcTime 0이라 탭을 닫으면 캐시가 지워져, 다시 열 때 그때의 지도 중심으로 새로 부른다.
  */
+const NO_CENTER = '지도 중심을 아직 몰라요'
+
 export function useRecommendAds(mapId: string) {
   const { getCenter } = useShell()
   const run = useAiStore((s) => s.runs[mapId])
@@ -30,14 +32,17 @@ export function useRecommendAds(mapId: string) {
     queryKey: adKeys.list(mapId, category ?? null),
     queryFn: () => {
       const center = getCenter()
-      if (!center) throw new Error('지도 중심을 아직 몰라요')
+      if (!center) throw new Error(NO_CENTER)
       clicked.clear()
       return fetchAds(mapId, category ?? null, center)
     },
     enabled: category !== undefined,
     staleTime: Infinity,
     gcTime: 0,
-    retry: false,
+    // 광고 노출은 한 번만 센다(재시도 없음). 다만 지도가 아직 뜨지 않아 부르지도 못한 경우는 지도가 뜰 때까지 다시 본다 —
+    // 추천 탭 주소로 바로 들어오면 카카오맵이 늦게 떠서 탭을 연 동안 광고가 영영 없었다.
+    retry: (count, err) => err.message === NO_CENTER && count < 10,
+    retryDelay: 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })

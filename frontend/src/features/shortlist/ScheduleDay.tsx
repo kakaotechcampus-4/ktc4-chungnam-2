@@ -59,6 +59,7 @@ export function ScheduleDayList({ day, ids, nameOf, subOf, onOpen, onTakeOut, on
             <ScheduleRow
               pinId={id}
               n={i + 1}
+              last={i === ids.length - 1}
               name={nameOf(id)}
               sub={subOf?.(id)}
               onOpen={onOpen}
@@ -81,6 +82,7 @@ export function ScheduleDayList({ day, ids, nameOf, subOf, onOpen, onTakeOut, on
 function ScheduleRow({
   pinId,
   n,
+  last,
   name,
   sub,
   onOpen,
@@ -90,6 +92,7 @@ function ScheduleRow({
 }: {
   pinId: string
   n: number
+  last: boolean
   name: string
   sub?: string
   onOpen?: (pinId: string) => void
@@ -113,7 +116,7 @@ function ScheduleRow({
     </>
   )
   return (
-    <li data-pin={pinId} className={`flex items-center gap-2 rounded-lg bg-white py-0.5 pl-2 pr-0.5 ring-1 ring-ink-200 ${dragging ? 'opacity-40' : ''}`}>
+    <li data-pin={pinId} className={`flex items-center gap-2 rounded-md bg-white py-0.5 pl-2 pr-0.5 ring-1 ring-ink-200 ${dragging ? 'opacity-40' : ''}`}>
       {/* 번호 원은 AI 코스 날짜별 카드와 같다(ink-100 면). 순서는 목록(ol)이 읽어 준다. */}
       <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-100 text-xs font-bold text-ink-700">
         {n}
@@ -138,8 +141,11 @@ function ScheduleRow({
         onKeyDown={(e) => {
           if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
           e.preventDefault()
+          const up = e.key === 'ArrowUp'
+          // 맨 위에서 ↑·맨 아래에서 ↓는 옮길 곳이 없다. 표시를 남기면 나중에 순서가 바뀔 때 이 줄이 포커스를 가져간다.
+          if (up ? n === 1 : last) return
           keyMoved.current = true
-          onShift(pinId, e.key === 'ArrowUp' ? -1 : 1)
+          onShift(pinId, up ? -1 : 1)
         }}
       >
         <GripVertical size={20} aria-hidden="true" />

@@ -112,7 +112,7 @@ export function ResultsBody({
       {conditions}
       <button type="button" onClick={onHow} className="press flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
-          {removed}곳을 거르고 {result.candidates.length}곳을 추천했어요
+          {removed}곳을 거르고 {result.new_count ?? result.candidates.length}곳을 추천했어요
         </span>
         <span className="font-bold text-brand-600">어떻게 골랐나요 ›</span>
       </button>
@@ -219,10 +219,19 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
 /** 올린 뒤에는 "모두에게 보여요"로 바뀐다. */
 function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto; c: CandidateDto }) {
   const publish = usePublishMutation(mapId, run)
+  // 그사이 누가 같은 곳을 찍었으면(409 PIN_DUPLICATE) 다시 눌러도 같은 오류다 — 광고 칸처럼 버튼을 닫는다.
+  const [onMap, setOnMap] = useState(false)
   if (c.visibility === 'published') {
     return <span className="tag tag-good">지도에 올렸어요. 이제 모두에게 보여요</span>
   }
   if (!c.permissions.can_publish) return null
+  if (onMap) {
+    return (
+      <button type="button" disabled className="btn-neutral btn-sm">
+        이미 지도에 있어요
+      </button>
+    )
+  }
   return (
     <button
       type="button"
@@ -233,8 +242,11 @@ function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto;
             const name = c.place_name ?? '이 장소'
             showToast(`${name}${josa(name, '을', '를')} 지도에 올렸어요`)
           },
-          onError: (err) =>
-            showToast(err instanceof ApiError && err.code === 'PIN_DUPLICATE' ? '이미 지도에 있는 장소예요' : '지도에 올리지 못했어요'),
+          onError: (err) => {
+            const dup = err instanceof ApiError && err.code === 'PIN_DUPLICATE'
+            if (dup) setOnMap(true)
+            showToast(dup ? '이미 지도에 있는 장소예요' : '지도에 올리지 못했어요')
+          },
         })
       }
       className="btn-outline btn-sm"
@@ -328,11 +340,15 @@ export function NoResults({
 /** 「반경 넓히기」 — 기본값 원만 넓히고, 사람이 쓴 반경은 그대로 둔다고 먼저 묻는다(가드레일 4). */
 function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendRunDto; className: string }) {
   const widen = useWidenMutation(mapId)
+  // 조건을 고치는 중에 넓히면 고친 게 빠진 채 찾는다 — 「다시 추천」처럼 막는다.
+  const patching = useEvidencePatching(run.id)
   const [asking, setAsking] = useState(false)
-  const now = run.default_radius_walk_min ?? 15
+  // 지금 반경은 run 응답 값만 쓴다. 넓히는 폭은 응답에 없어 적지 않는다 — 화면이 숫자를 지어내면 서버와 어긋난다
+  // (관광지 기본 25분, 「지난 추천」에서 연 run 은 값이 없다).
+  const now = run.default_radius_walk_min
   return (
     <>
-      <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className={className}>
+      <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending || patching} className={className}>
         반경 넓히기
       </button>
       {asking && (
@@ -343,7 +359,7 @@ function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendR
               <div className="flex gap-2">
                 <dt className="text-ink-500">넓혀요</dt>
                 <dd className="font-semibold text-ink-900">
-                  핀 주변 기본 반경을 도보 {now}분에서 {now + 5}분으로
+                  핀 주변 기본 반경{now != null && ` (지금 도보 ${now}분)`}
                 </dd>
               </div>
               <div className="flex gap-2">
