@@ -347,6 +347,8 @@ recommend_runs(
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
   default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. run을 만들 때 카테고리 기본값을 넣는다(관광지 25, 그 밖 15 — #1055, recommend.core.radius_walk_mins). regions.radius_m은 여기서 파생(분×80m).
                                          -- docs/constraints.md "반경 넓히기 상수"
+  origin_lat float null, origin_lng float null,  -- #1331: 「추천 받기」가 보낸 지도 중심. 있으면 중심 지정 run(지역은 원 하나, anchor_points=[[중심]]),
+                                         -- null이면 이전 run(핀 기준). 다시 추천·반경 넓히기가 같은 점을 쓴다. 응답에는 싣지 않는다(위치 정보 최소화)
   created_at
 )
 
@@ -391,7 +393,7 @@ regions(
                                          -- 압축 논리. 실제 PostGIS 연산이 필요해지면(예: 핀-지역
                                          -- 포함 판정을 DB 레벨로 옮길 때) geom 컬럼을 추가하는
                                          -- 별도 마이그레이션으로 되돌린다.
-  anchor_points jsonb default '[]',     -- #1252: 이 무리의 같은 카테고리 핀 좌표 [[lat, lng], ...]. 각 핀의 원 조회와 거리 평균에 쓴다
+  anchor_points jsonb default '[]',     -- #1252: 이 무리의 같은 카테고리 핀 좌표 [[lat, lng], ...]. 각 핀의 원 조회와 거리 평균에 쓴다. 중심 지정 run(#1331)은 [[중심 lat, lng]] 하나
   confirmed boolean, confirmed_at
 )
 
