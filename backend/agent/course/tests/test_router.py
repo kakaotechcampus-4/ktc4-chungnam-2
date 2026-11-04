@@ -147,7 +147,7 @@ def test_not_enough_places_is_422(world, places, client):
     map_id, _ = confirmed_map(world, places, 1, live=2)
     res = client("u1").post(f"/maps/{map_id}/courses")
     assert res.status_code == 422
-    assert res.json() == {"code": "COURSE_NOT_ENOUGH_PLACES", "message": "코스를 짤 확정 장소가 부족합니다",
+    assert res.json() == {"code": "COURSE_NOT_ENOUGH_PLACES", "message": "코스를 짤 확정 장소가 부족해요",
                           "detail": {"min": 2, "count": 1}}
 
 
