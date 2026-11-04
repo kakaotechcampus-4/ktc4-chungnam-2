@@ -2569,11 +2569,11 @@ def same_category_runs(recent: Sequence[Mapping[str, Any]], created_at: datetime
 
 
 def next_radius_factor(meta: Mapping[str, Any]) -> float | None:
-    """반경 넓히기 버튼 한 번의 배율 = min(지금 도보 분 + 한 단계, 상한) / 지금 도보 분(#677). meta는 recommend.api.get_run_meta.
+    """반경 넓히기 버튼 한 번의 배율 = min(지금 반경 m + 한 단계, 상한) / 지금 반경 m(#677, #1385). meta는 recommend.api.get_run_meta.
     반올림하거나 자르지 않는다 — 이 배율로 돌린 시뮬레이션의 반경이 버튼 한 번(recommend widen) 뒤의 반경과 같아야 조언의
     숫자가 버튼 결과와 맞는다. 이미 상한이면 None(더 넓힐 수 없다)."""
-    walk, limit = meta["default_radius_walk_min"], meta["widen_limit_walk_min"]
-    return min(walk + meta["widen_step_walk_min"], limit) / walk if 0 < walk < limit else None
+    radius, limit = meta["default_radius_m"], meta["widen_limit_m"]
+    return min(radius + meta["widen_step_m"], limit) / radius if 0 < radius < limit else None
 
 
 def funnel_view(outcome: Mapping[str, Any]) -> dict[str, Any]:

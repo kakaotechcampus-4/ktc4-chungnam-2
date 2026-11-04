@@ -99,10 +99,10 @@ def test_readiness_counts_curated_within_widen_limit_of_default_region(db_sessio
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=places)
 
-    assert readiness[CATEGORY] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 4}
+    assert readiness[CATEGORY] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "curated_nearby": 4}
     [[circle]] = places.curated_circles
     assert (circle.anchor_lat, circle.anchor_lng) == (pytest.approx(37.5), pytest.approx(127.0))
-    assert circle.radius_m == core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)   # 기본 반경 × 넓히기 상한 배율
+    assert circle.radius_m == core.WIDEN_LIMIT_M   # 기본 반경 × 넓히기 상한 배율
 
 
 def test_readiness_with_center_counts_around_that_point_not_the_pins_1331(db_session):
@@ -114,10 +114,10 @@ def test_readiness_with_center_counts_around_that_point_not_the_pins_1331(db_ses
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=places, center=(35.1, 129.0))
 
-    assert readiness[CATEGORY] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 7}
+    assert readiness[CATEGORY] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "curated_nearby": 7}
     [[circle]] = places.curated_circles[:1]
     assert (circle.anchor_lat, circle.anchor_lng) == (pytest.approx(35.1), pytest.approx(129.0))
-    assert circle.radius_m == core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)
+    assert circle.radius_m == core.WIDEN_LIMIT_M
     without = flows.get_readiness(db_session, map_id="map_1", place_search=_Places(curated=7))
     assert {c: (v["ready"], v["answered_count"]) for c, v in without.items()} ==         {c: (v["ready"], v["answered_count"]) for c, v in readiness.items()}
 
@@ -148,7 +148,7 @@ def test_readiness_without_opinion_pin_has_neither(db_session):
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=places)
 
-    assert readiness[CATEGORY] == {"ready": False, "answered_count": 0, "required_count": 1}
+    assert readiness[CATEGORY] == {"ready": False, "answered_count": 0, "required_count": 1, "radius_m": 3000}
     assert places.curated_circles == []
 
 

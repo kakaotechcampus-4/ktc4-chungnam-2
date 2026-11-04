@@ -100,7 +100,7 @@ def preference_warnings(category, ev, cands, pinned_at, pinned_names, forbidden)
     if not prefs or not pinned_at:
         return []
     facts = {c["place_name"]: place_facts(c["place_name"], c["lat"], c["lng"])[1] for c in cands}
-    radius = reco_core.radius_m_for_walk_min(reco_core.radius_walk_mins(category)[0])
+    radius = reco_core.DEFAULT_RADIUS_M
     out = []
     for key, wants in sorted(prefs, key=str):
         hit = [n for n, f in facts.items() if f.get(key)]

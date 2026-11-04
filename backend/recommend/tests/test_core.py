@@ -167,31 +167,38 @@ def test_merge_circles_empty_raises_value_error():
 
 # ---------- widen_radius ----------
 
-def test_next_default_radius_walk_min_steps_five_minutes_up_to_thirty():
-    """docs/constraints.md "반경 넓히기 상수" — 15 → 20 → 25 → 30."""
-    assert core.next_default_radius_walk_min(15, "음식점") == 20
-    assert core.next_default_radius_walk_min(20, "카페") == 25
-    assert core.next_default_radius_walk_min(25, "음식점") == 30
+def test_radius_policy_is_in_meters_and_the_same_for_every_category_1385():
+    """docs/constraints.md "반경 넓히기 상수" — 기본 3,000m, 1회 +1,000m, 상한 5,000m. 모든 카테고리 같다."""
+    assert (core.DEFAULT_RADIUS_M, core.WIDEN_STEP_M, core.WIDEN_LIMIT_M) == (3000, 1000, 5000)
+    assert [core.next_default_radius_m(m) for m in (3000, 4000, 5000)] == [4000, 5000, None]   # 상한이면 null(#1370)
+    assert core.widened_radius_m(3000) == 4000 and core.widened_radius_m(4000) == 5000
+    assert core.next_default_radius_m(4500) == 5000   # 상한을 넘겨 완화하지 않는다(가드레일 4)
 
 
-def test_next_default_radius_walk_min_at_limit_raises_widen_limit():
+def test_widened_radius_m_at_limit_raises_widen_limit():
     with pytest.raises(AppError) as exc_info:
-        core.next_default_radius_walk_min(30, "음식점")
+        core.widened_radius_m(5000)
     assert exc_info.value.code == "WIDEN_LIMIT"
+    assert exc_info.value.detail["default_radius_m"] == 5000
 
 
-def test_radius_walk_mins_tourist_spot_starts_wider_and_widens_further():
-    # #1055 — 관광지만 기본 25분·상한 45분, 음식점·카페는 15/30 그대로.
-    assert core.radius_walk_mins("음식점") == core.radius_walk_mins("카페") == (15, 30)
-    assert core.radius_walk_mins("관광지") == (25, 45)
-    assert core.next_default_radius_walk_min(25, "관광지") == 30
-    assert core.pool_radius_factor(25, "관광지") == 1.8
-    with pytest.raises(AppError):
-        core.next_default_radius_walk_min(45, "관광지")
+def test_pool_radius_factor_reaches_the_limit_and_is_one_at_it():
+    assert core.pool_radius_factor(3000) == pytest.approx(5000 / 3000)
+    assert core.pool_radius_factor(5000) == 1.0 and core.pool_radius_factor(6000) == 1.0
 
 
-def test_radius_m_for_walk_min_uses_walking_speed():
-    assert core.radius_m_for_walk_min(15) == 15 * WALKING_SPEED_M_PER_MIN
+def test_radius_walk_min_is_a_compat_approximation_of_the_meter_value():
+    assert core.radius_walk_min_compat(3000) == round(3000 / WALKING_SPEED_M_PER_MIN) == 38
+
+
+def test_run_radius_reads_the_meter_column_or_falls_back_to_the_old_walk_minutes_1385():
+    from recommend.models import RecommendRun
+    old = RecommendRun(default_radius_walk_min=15, default_radius_m=None)
+    new = RecommendRun(default_radius_walk_min=38, default_radius_m=3000)
+    assert core.run_radius_m(old) == 15 * WALKING_SPEED_M_PER_MIN == 1200
+    assert core.run_radius_m(new) == 3000
+    assert core.run_radius_fields(old) == {"default_radius_m": 1200, "next_default_radius_m": 2200}
+    assert core.run_radius_fields(RecommendRun(default_radius_walk_min=62, default_radius_m=5000))["next_default_radius_m"] is None
 
 
 # ---------- is_within_any_region ----------

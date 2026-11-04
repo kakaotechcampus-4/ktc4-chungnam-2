@@ -30,6 +30,7 @@ CATALOG: dict[str, tuple[int, str]] = {
     "AI_PIN_PRIVATE": (404, "비공개 AI 핀입니다"),
     "REGION_CONFLICT": (409, "두 조건을 동시에 만족하는 곳이 없습니다"),
     "WIDEN_LIMIT": (409, "반경을 더 넓힐 수 없습니다"),
+    "OUTSIDE_TRIP_REGION": (422, "여행 지역 밖입니다"),
     "REACTION_NOT_ALLOWED": (422, "이 핀에는 반응을 남길 수 없습니다"),
     "INVITE_NOT_FOUND": (404, "유효하지 않은 초대 링크입니다"),
     "MAP_LIMIT": (409, "내 지도가 이미 상한에 도달했습니다"),

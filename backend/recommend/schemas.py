@@ -34,6 +34,7 @@ class Readiness(BaseModel):
     # 기본 지역에서 넓히기 상한 안의 정예 장소 수(#798). 의견 핀이 없어 기본 지역이 없으면 둘 다 없다
     curated_nearby: int | None = Field(default=None, ge=0)
     external_search: ExternalSearch | None = None  # curated_nearby가 0일 때만
+    radius_m: int | None = None   # 기본 추천 반경(m) — 화면이 run을 만들기 전에 원을 그린다. 모든 카테고리 같다(core.DEFAULT_RADIUS_M, #1385)
 
 
 class RunCenter(BaseModel):
@@ -53,7 +54,9 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한은 카테고리별(core.radius_walk_mins)
+    default_radius_walk_min: int  # 호환용(곧 없앤다) — round(default_radius_m / 80)
+    default_radius_m: int | None = None   # 기본값 원의 현재 반경(m) — 기본 3000, 넓히기마다 +1000, 상한 5000(core, #1385)
+    next_default_radius_m: int | None = None   # 넓히면 바뀔 반경(m). 이미 상한이면 null(#1370)
 
 
 class RunSummary(BaseModel):
@@ -66,6 +69,8 @@ class RunSummary(BaseModel):
     created_at: datetime
     candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
     published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수
+    default_radius_m: int | None = None   # RecommendRun.default_radius_m과 같은 값(#1164)
+    next_default_radius_m: int | None = None   # 넓히면 바뀔 반경(m), 이미 상한이면 null(#1370)
 
 
 class EvidenceLine(BaseModel):
