@@ -49,8 +49,10 @@ export interface CourseRunMock {
   id: string;
   map_id: string;
   status: "queued" | "running" | "done" | "failed";
+  mode: "plan" | "fill" | "review"; // #1237 — 요청 때 일정 상태로 정해진다
   outcome: "solved" | "solved_with_checks" | "unresolved" | "timeout" | null;
   failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
+  headline: string | null;
   goals: { id: string; kind: string; label: string; met: boolean | null }[];
   unmatched: string[];
   steps: { stage: string; role: "해석" | "지휘" | "계산" | "검증" | "결정"; by: "ai" | "code" | "human"; by_detail: string | null; text: string }[];
@@ -59,6 +61,17 @@ export interface CourseRunMock {
     slots: { pin_id: string; order: number; needs_check: boolean }[];
     legs: { from_pin_id: string; to_pin_id: string; mode: "walk" | "transit"; approx_minutes: number }[];
   }[];
+  fixes: {
+    id: string;
+    kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal" | "unassigned";
+    strength: "hard" | "soft";
+    text: string;
+    moves: { pin_id: string; from_date: string | null; to_date: string }[];
+    resolved_text: string | null;
+    remaining_text: string | null;
+    not_fixed_reason: string | null;
+  }[];
+  checked: { kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal"; text: string }[];
   violations: { kind: "closed" | "travel" | "member"; text: string }[];
   checks: { pin_id: string; text: string }[];
   excluded: { pin_id: string; reason: "NO_COORDINATES" | "OVER_LIMIT"; text: string }[];
@@ -71,7 +84,7 @@ export interface CourseRunEntity {
   run: CourseRunMock;
   requested_by: string;
   polls: number; // GET 횟수 — 첫 GET은 running(단계 2개), 둘째는 running(5개), 셋째부터 done(진행 화면의 폴링을 흉내)
-  snapshot_pin_ids: string[];
+  snapshot_version: string; // 요청 때 일정 version(ShortlistSchedule.version) — 지금과 다르면 stale(#1237)
 }
 
 /** 장소 후기(#432). place_key는 목 서버가 places.id 대신 쓰는 값(자체 DB 핀의 이름@좌표, handlers/credits.ts). */

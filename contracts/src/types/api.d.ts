@@ -3816,6 +3816,7 @@ export interface paths {
         /**
          * 「AI 코스 짜기」 요청 — 구성원 누구나(course.request). 확정 리스트를 지도 기간의 날짜별 방문 순서로 짠다.
          *     run을 queued로 저장하고 202를 돌려준다. 계산은 백그라운드에서 한다(보통 수 초에서 수십 초) — FE는 `GET /course-runs/{runId}`를 2초 간격으로 불러 status가 done이나 failed가 될 때까지 기다린다.
+         *     **일정 상태에 따라 하는 일이 다르다(#1237)** — 요청 본문은 같고 응답의 `mode`로 갈린다: 일정이 비어 있으면 짜기(plan), 일부만 넣었으면 남은 곳 채우기(fill), 다 넣었으면 점검과 최소 수정(review). 사람이 날짜에 넣은 장소는 AI가 바꾸지 않고, 일정 변경은 사람이 결과 카드의 「반영」을 눌러 `PUT /maps/{mapId}/shortlist/schedule`로 저장할 때만 일어난다.
          *     코스는 요청한 본인에게만 보인다(가드레일 1). 확정 장소는 좌표를 아는 것만 센다(실시간 핀은 빠지고 excluded에 남는다). 한 번에 30곳까지, 여행 기간은 앞 14일까지 짠다.
          *     지도마다 내 진행 중 run은 하나다. request_text와 member_constraints는 모두 선택이다.
          *     **크레딧(#432)**: 요청이 접수되면(202) 크레딧 `prices.course`(1)이 빠진다. 잔액은 모델을 부르기 전에 확인한다(모자라면 402 `CREDIT_INSUFFICIENT`). 코스가 결과 없이 끝나면(failed — `ENGINE_ERROR`, `INTERRUPTED`) 돌려준다(잔액 상한 `max_balance`까지만, #981). 게스트는 코스를 짤 수 없다(403 `GUEST_NOT_ALLOWED`).
@@ -5283,6 +5284,13 @@ export interface components {
             /** @enum {string} */
             status: "queued" | "running" | "done" | "failed";
             /**
+             * @description 이 코스가 하는 일(#1237). 요청을 받을 때 서버가 확정 리스트의 일정 상태로 정하고 사용자가 고르지 않는다 — 버튼은 「AI 코스」 하나다. 진행 중에도 값이 있다.
+             *     plan=아무 장소도 날짜에 넣지 않음 → 날짜별 코스를 짠다. fill=일부만 넣음 → 넣어 둔 장소는 그 날에 두고 미배정만 나눈다. review=모두 넣음 → 일정을 점검해 고칠 점(fixes)만 낸다.
+             *     사람이 날짜에 넣은 장소는 어느 모드에서도 AI가 바꾸지 않는다. 일정·확정 리스트·지도는 AI가 바꾸지 않는다 — 바뀌는 것은 사람이 카드의 「반영」을 누를 때뿐이다.
+             * @enum {string}
+             */
+            mode: "plan" | "fill" | "review";
+            /**
              * @description done일 때만. solved=위반·확인 필요 없음, solved_with_checks=확정 위반 없음·확인 필요 남음, unresolved=확정 위반이 남음(violations), timeout=시간 초과. 영업시간을 모르는 동안은 보통 solved_with_checks
              * @enum {string|null}
              */
@@ -5292,14 +5300,20 @@ export interface components {
              * @enum {string|null}
              */
             failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
+            /** @description 결과 화면 머리 문구 — mode마다 서버 템플릿이 다르다(예: review는 「일정을 점검했어요. 고칠 점 2개」). done일 때만, 진행 중·failed는 null. 버튼 이름은 모드와 관계없이 「AI 코스」다(#1237) */
+            headline: string | null;
             /** @description 요청 한 줄과 지도 근거에서 세우고 코드가 검증한 목표. 요청 목표가 먼저이고, 지도 근거(우리 조건 요약의 꼭 지킬 조건·겹치는 선호, 확정 장소의 야경 라벨)로 세운 목표는 label 끝에 「(지도에서 세운 목표)」가 붙는다(#1131). 요청도 지도 근거도 없으면 빈 배열 */
             goals: components["schemas"]["CourseGoal"][];
             /** @description 목표로 바꾸지 못한 요청 조각(요청 원문의 일부). 화면에 「반영하지 못했어요」로 보인다 */
             unmatched: string[];
             /** @description 작업 기록 — 이해에서 결과까지 단계마다 누가 했는지와 함께(단계 값은 CourseStep.stage). running 중에도 단계마다 늘어난다(앞 단계는 바뀌지 않고 뒤로만 붙는다). 그동안 goals, days 같은 결과 칸은 비어 있다 */
             steps: components["schemas"]["CourseStep"][];
-            /** @description 지도 기간의 날짜별 순서(최대 14일). 날짜 하나가 비어 있을 수 있다 */
+            /** @description 지도 기간의 날짜별 순서(최대 14일). 날짜 하나가 비어 있을 수 있다. plan=새로 짠 코스, fill=넣어 둔 장소는 그 날 그대로 두고 미배정을 채운 안, review=지금 일정 그대로(카드를 반영하기 전) */
             days: components["schemas"]["CourseDay"][];
+            /** @description 고칠 점 카드(#1237). fill과 review에서 낸다 — 하드 문제가 먼저, 그다음 선호. plan은 빈 배열. 카드 하나는 문제 하나이고, 반영은 사람이 카드마다 누른다 */
+            fixes: components["schemas"]["CourseFix"][];
+            /** @description 점검했고 문제가 없는 항목(#1237) — 화면에 「괜찮아요」로 보인다. fill과 review에서 낸다. 문제가 있는 항목은 fixes에 있고 여기에는 없다. plan은 빈 배열 */
+            checked: components["schemas"]["CourseChecked"][];
             /** @description 남은 확정 위반(쉬는 날, 도보 상한 초과). 비어 있어야 정상이다 */
             violations: components["schemas"]["CourseViolation"][];
             /** @description 그날 영업하는지 알 수 없는 장소 — 「가게에 직접 확인해 주세요」 */
@@ -5308,7 +5322,7 @@ export interface components {
             excluded: components["schemas"]["CourseExcluded"][];
             /** Format: date-time */
             snapshot_at: string;
-            /** @description 요청 뒤 확정 리스트가 바뀌었다 — 「확정 리스트가 바뀌었어요」 + 「다시 짜기」 */
+            /** @description 요청 뒤 일정이 바뀌었다 — 「일정이 바뀌었어요」 + 「다시 짜기」(#1237). 서버가 요청 때 저장한 일정 version(`ShortlistSchedule.version`)과 지금 version이 다르면 true다. version에 확정 장소 집합·날짜 배정·순서·여행 기간이 들어 있어 장소를 더하거나 빼도, 날짜를 옮겨도, 여행 기간이 바뀌어도 true가 된다 */
             stale: boolean;
             /** Format: date-time */
             created_at: string;
@@ -5381,6 +5395,61 @@ export interface components {
         CourseViolation: {
             /** @enum {string} */
             kind: "closed" | "travel" | "member";
+            text: string;
+        };
+        /**
+         * @description 고칠 점 카드 하나(#1237) — 문제 하나와 그 문제를 고치는 가장 덜 건드리는 안. 서버가 문장을 모두 코드 템플릿으로 만든다(사용자가 쓴 글은 담지 않는다, #717).
+         *     안을 찾는 순서는 ① 날 맞바꾸기 ② 1곳 옮기기 ③ 2곳 맞바꾸기이고, 그 문제가 풀리고 다른 문제가 늘지 않는 첫 단계에서 멈춘다. 셋 다 안 되면 ④ moves는 비고 not_fixed_reason에 「크게 바꿔야 해요」를 적는다.
+         *     **반영은 FE가 한다**: 서버에 반영 API가 없다. 「반영」을 누르면 FE가 `GET /maps/{mapId}/shortlist/schedule`로 지금 일정을 읽어 moves대로 `pin_id`의 항목을 `to_date`로 옮기고(항목 id는 `ShortlistItem.pin.id`가 `pin_id`인 항목) 같은 응답의 `version`과 함께 `PUT /maps/{mapId}/shortlist/schedule`로 저장한다. 그동안 일정이 바뀌어 409 `SHORTLIST_STALE`이 오면 「일정이 바뀌었어요」 + 「다시 점검」으로 안내한다.
+         *     옮겨 간 날의 순서: 그 날에 남는 장소 뒤에, 원래 일정의 순서(날짜 → 그날 순서)대로 붙는다. 날 맞바꾸기는 두 날의 모든 장소가 moves에 있고 각 날의 기존 순서가 그대로 따라간다. 순서는 AI가 고치지 않는다(일정표의 위아래 이동과 「동선 보기」가 맡는다).
+         */
+        CourseFix: {
+            /** @description run 안에서 카드를 가리키는 값(예: fix_1). 반영한 카드를 화면이 표시할 때 쓴다 */
+            id: string;
+            /**
+             * @description 문제 종류. closed=쉬는 날에 넣음(영업시간을 아는 장소만, 모르면 checks의 「가게에 확인」), travel=도보 구간·하루 도보·하루 이동 상한을 넘음, member=요청 때 넣은 구성원 도보 상한(`member_constraints`)을 넘음(`CourseViolation.kind`의 member와 같은 판정), condition=우리 조건 요약에서 온 목표와 어긋남(예: 「걷기 힘들어」 2명인데 도보가 긴 날),
+             *     goal=요청한 목표를 못 지킴, cluster=같은 동네가 두 날로 갈림, meal=식당 없는 날 또는 하루 식당 3곳 이상, unassigned=아직 날짜에 넣지 않은 장소(fill 모드에서 「○일째에 넣기」)
+             * @enum {string}
+             */
+            kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal" | "unassigned";
+            /**
+             * @description hard=확정 위반(closed, travel, member) — 의도와 상관없이 늘 알린다. soft=선호(condition, goal, cluster, meal, unassigned). 세기는 서버 코드가 정한다
+             * @enum {string}
+             */
+            strength: "hard" | "soft";
+            /** @description 문제 문장. 예: 「덕수궁은 둘째 날 (화)에 쉬어요」 */
+            text: string;
+            /** @description 고칠 안 — 무엇이 어느 날에서 어느 날로 가는지. 고치지 않기로 한 카드는 빈 배열이다(not_fixed_reason이 있다) */
+            moves: components["schemas"]["CourseMove"][];
+            /** @description 안으로 풀리는 것. 예: 「덕수궁 휴무가 풀려요」. moves가 비면 null */
+            resolved_text: string | null;
+            /** @description 안을 따라도 남는 것(없으면 null). 예: 「셋째 날 도보 90분은 그대로예요」 */
+            remaining_text: string | null;
+            /** @description 고치지 않기로 한 이유. 예: 「고치려면 2곳을 옮겨야 해서 그대로 둬요」 · 「크게 바꿔야 해요」. moves가 있으면 null */
+            not_fixed_reason: string | null;
+        };
+        /** @description 장소 하나의 날짜 이동. 날 맞바꾸기는 두 날의 모든 장소가, 1곳 옮기기는 1개가, 2곳 맞바꾸기는 2개가 들어 있다. 어느 날끼리 바꾸는지는 CourseFix.text와 resolved_text에도 적힌다(첫날·마지막 날도 뺄 수 없다 — 도착·출발 데이터가 없다, #1237) */
+        CourseMove: {
+            /** @description 확정 리스트의 핀. 이름과 좌표는 핀 응답(GET /maps/{mapId}/shortlist)에서 읽는다 */
+            pin_id: string;
+            /**
+             * Format: date
+             * @description 지금 일정의 날짜. null은 아직 날짜에 넣지 않은 장소(미배정)
+             */
+            from_date: string | null;
+            /**
+             * Format: date
+             * @description 고친 안의 날짜(여행 기간 안)
+             */
+            to_date: string;
+        };
+        /** @description 점검했고 문제가 없는 항목 하나(#1237). 예: 「쉬는 날에 넣은 곳은 없어요」 */
+        CourseChecked: {
+            /**
+             * @description CourseFix.kind와 같은 값(unassigned는 없다)
+             * @enum {string}
+             */
+            kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal";
             text: string;
         };
         CourseCheck: {
