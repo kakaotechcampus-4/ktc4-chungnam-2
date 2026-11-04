@@ -24,11 +24,13 @@ def test_compromise_keys_are_the_keys_the_like_side_wanted():
     assert core.compromise_keys(None) == []
 
 
-def test_preview_runs_for_a_stall_and_a_split_on_different_axes_only():
+def test_preview_runs_for_a_stall_and_every_split_with_a_comparison():
+    """split은 충돌 종류와 상관없이 돌린다(#1317). ♥ 쪽 키를 더하는 것은 different_axes뿐이다 — same_axis·unclear는 두 쪽을 다
+    맞추는 곳이 없거나 알 수 없어 반대 사유를 지키는 후보 수만 센다."""
     assert core.preview_target(STALL, None) == ("음식점", [])
     assert core.preview_target(SPLIT, DIFFERENT) == ("음식점", ["quiet"])
-    for conflict in ("same_axis", "unclear"):   # 같은 특징을 반대로 원하면 둘 다 만족하는 곳이 정의상 없다
-        assert core.preview_target(SPLIT, {"conflict_type": conflict, "keys": DIFFERENT["keys"]}) is None
+    for conflict in ("same_axis", "unclear"):
+        assert core.preview_target(SPLIT, {"conflict_type": conflict, "keys": DIFFERENT["keys"]}) == ("음식점", [])
     assert core.preview_target(SPLIT, None) is None   # ② 실패로 비교가 없다
 
 
@@ -51,16 +53,40 @@ def _stall_out(actions, claims=None):
 
 
 OPEN = {"type": "open_recommend", "category": "음식점", "pin_ids": None, "basis": ["c5"]}
+SEARCH = {"type": "search_place", "category": "음식점", "pin_ids": None, "basis": ["c5"]}
 SHOW = {"type": "show_pins", "category": None, "pin_ids": ["p1"], "basis": ["c4"]}
 
 
 def test_open_recommend_is_dropped_when_the_preview_found_nothing():
-    v = core.verify_diagnosis(_stall_out([OPEN, SHOW]), STALL, SNAP, TOOLS, member_names=NAMES,
+    v = core.verify_diagnosis(_stall_out([OPEN, SEARCH]), STALL, SNAP, TOOLS, member_names=NAMES,
                               preview={"passed_count": 0, "funnel": []})
 
     assert v.outcome == "suggested"
-    assert [a["type"] for a in v.draft.actions] == ["show_pins"]
+    assert [(a["type"], a["label"]) for a in v.draft.actions] == [("search_place", "음식점 검색")]
     assert _removed(v, "actions") == {0: "preview_empty"}
+
+
+def test_show_pins_from_the_model_is_dropped_for_both_types():
+    """모델 유형의 허용 버튼에 「핀 보기」가 없다(#1317). 정체·갈림 모두 추천 받기와 장소 검색만 남는다."""
+    stall = core.verify_diagnosis(_stall_out([SHOW, OPEN]), STALL, SNAP, TOOLS, member_names=NAMES)
+    split = core.verify_diagnosis(_out(actions=[SHOW, SEARCH | {"basis": ["c1"]}, SEARCH | {"basis": ["c1"], "category": "카페"}]),
+                                  SPLIT, SNAP, TOOLS, member_names=NAMES, comparison=DIFFERENT)
+
+    assert [a["type"] for a in stall.draft.actions] == ["open_recommend"] and _removed(stall, "actions") == {0: "type"}
+    assert [(a["type"], a["label"]) for a in split.draft.actions] == [("search_place", "음식점 검색")]
+    assert _removed(split, "actions") == {0: "type", 2: "category"}   # split의 검색은 그 핀의 카테고리만
+
+
+def test_same_axis_split_previews_and_drops_recommend_at_zero():
+    """same_axis 갈림도 미리 센 수가 0이면 「추천 받기」가 빠지고 장소 검색이 남는다."""
+    same = {"conflict_type": "same_axis", "keys": DIFFERENT["keys"]}
+    zero = {"passed_count": 0, "funnel": []}
+    actions = [GOOD_ACTIONS[0], SEARCH | {"basis": GOOD_ACTIONS[0]["basis"]}]
+    v = core.verify_diagnosis(_out(actions=actions), SPLIT, SNAP, {**TOOLS, "p1": zero}, member_names=NAMES,
+                              comparison=same, preview=zero)
+
+    assert core.preview_target(SPLIT, same) == ("음식점", [])
+    assert [a["type"] for a in v.draft.actions] == ["search_place"] and _removed(v, "actions") == {0: "preview_empty"}
 
 
 def test_a_lone_open_recommend_dropped_for_zero_leaves_the_sentence():

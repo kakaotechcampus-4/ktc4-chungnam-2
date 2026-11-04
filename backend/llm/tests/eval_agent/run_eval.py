@@ -148,11 +148,12 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     row["injection"] = bool(phrases)
     preview = inp.get("preview")
     row["preview"] = preview   # 미리 돌려 본 수(6.7, #1180). 없으면 None
+    row["conflict_type"] = (inp.get("comparison") or {}).get("conflict_type")   # split만(#1319 지표)
     if isinstance(out, AgentCallFailed):
         return row | {"decision": None, "outcome": core.failed_outcome(out.reason), "failure": out.detail,
                       "decision_match": False, "button_match": False, "kept_actions": [],
                       "raw_echo": [], "shown_echo": [], "quoted_echo": [], "p1_claimed": False,
-                      "raw_open_recommend": False}
+                      "raw_open_recommend": False, "raw_actions": []}
     verified = fx.verify(world, key, out, tools)
     raw_text = " ".join(a.text for a in out.advice)
     row |= {
@@ -307,7 +308,20 @@ def _preview_rows(rows: list[dict[str, Any]]) -> list[str]:
     some = [r for r in with_preview if r["preview"]["passed_count"] > 0]
     return [f"| 미리 돌려 본 수를 p1 claim으로 씀(남는 곳 있음, suggest 중) | {_pct(sum(r['p1_claimed'] for r in some), len(some))} |",
             f"| 0곳인데 모델이 추천 받기를 고름(원문) | {_pct(sum(r['raw_open_recommend'] for r in zero), len(zero))} |",
-            f"| 0곳인데 추천 받기가 남음(검증 뒤, 0이어야 한다) | {sum('open_recommend' in r['kept_actions'] for r in zero)} |"]
+            f"| 0곳인데 추천 받기가 남음(검증 뒤, 0이어야 한다) | {sum('open_recommend' in r['kept_actions'] for r in zero)} |",
+            *_button_rows(rows)]
+
+
+def _button_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """버튼을 추천 쪽으로(결정 #1317, #1319). 「핀 보기」는 모델 유형의 허용 버튼에서 빠졌으니 원문에서 고른 수도 0이어야 하고,
+    same_axis·unclear 갈림은 남는 곳이 있으면(passed_count ≥ 1) 첫 버튼이 「추천 받기」여야 한다."""
+    shown = sum("show_pins" in r.get("raw_actions", []) for r in rows)
+    kept = sum("show_pins" in r["kept_actions"] for r in rows)
+    axis = [r for r in rows if r.get("conflict_type") in ("same_axis", "unclear") and r.get("decision") == "suggest"
+            and r.get("preview") and r["preview"]["passed_count"] > 0]
+    first = sum(r["kept_actions"][:1] == ["open_recommend"] for r in axis)
+    return [f"| 핀 보기를 고름 — 원문/검증 뒤(0이어야 한다) | {shown}/{kept} |",
+            f"| same_axis·unclear(남는 곳 있음, suggest 중) 첫 버튼이 추천 받기 | {_pct(first, len(axis))} |"]
 
 
 def _echo_cases(by_case: Mapping[str, list[dict[str, Any]]]) -> list[str]:

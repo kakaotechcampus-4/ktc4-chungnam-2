@@ -7,8 +7,8 @@ v2 계획 보조 에이전트. **구현 명세 `docs/agent-v2.md`를 먼저 끝�
 - 지도를 주기적으로 관찰해 막힌 곳을 찾고(탐지 4종), 사람이 누를 버튼이 붙은 지도 제안을 낸다
 - 카테고리별 우리 조건 요약, 추천 막힘 조언
 - 우리 데이터 확인(6.6, 모델 없음)과 지도 현황 문단(8.2, 칸은 코드, 상태와 문장은 모델, 모순은 코드가 막음) — #1168
-- 미리 돌려 보기와 절충안(6.7, 모델 없음) — 진단 전에 `recommend.api.preview_filter`로 남는 수를 세어 진단 입력과 도구 기록 p1에 넣고, 0곳이면 「추천 받기」를 뺀다(#1180). 거르기와 줄 조립은 recommend가 한다
-- 웹 확인(6.8, #1216) — 진단 제안의 「모름」 첫 줄 하나를 `llm.api.web_check`(Gateway `web_check`)로 찾아 `facts` 항목의 `web`에 저장한다. 같은 지도 24시간 안의 found·not_found는 다시 쓴다(`core.reusable_web`). 예산은 llm이 보고 agent는 따로 세지 않는다. 금지 표현 목록의 정본은 `core.WEB_CHECK_FORBIDDEN`이고 llm에 넘긴다. 렌더는 값이 지금도 unknown일 때만, 도구 기록은 w1
+- 미리 돌려 보기와 절충안(6.7, 모델 없음) — 진단 전에 `recommend.api.preview_filter`로 남는 수를 세어(정체, 그리고 갈림은 충돌 종류와 상관없이, #1317) 진단 입력과 도구 기록 p1에 넣고, 0곳이면 「추천 받기」를 뺀다(#1180). 거르기와 줄 조립은 recommend가 한다
+- 웹 확인(6.8, #1216) — 진단 제안의 「모름」 줄 모두(많아야 2줄, 동시 호출, #1317)를 `llm.api.web_check`(Gateway `web_check`)로 찾아 `facts` 항목의 `web`에 저장한다. 같은 지도 24시간 안의 found·not_found는 줄마다 다시 쓴다(`core.reusable_web`). 예산은 llm이 보고 agent는 따로 세지 않는다. 금지 표현 목록의 정본은 `core.WEB_CHECK_FORBIDDEN`이고 llm에 넘긴다. 렌더는 값이 지금도 unknown일 때만, 도구 기록은 줄 순서대로 w1, w2
 - agent_* 테이블 8개의 쓰기와 정리(`purge_map_data`, `delete_by_user`)
 
 ## 하지 않는 것

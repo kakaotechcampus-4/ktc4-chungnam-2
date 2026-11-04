@@ -89,7 +89,6 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     assert payload["advice"] == [{"segments": [{"kind": "text", "text": "확정 2곳 중 카페 0곳"}], "is_guess": False}]
     assert payload["actions"] == [
         {"index": 0, "type": "open_recommend", "label": "카페 추천 받기", "params": {"category": "카페"}},
-        {"index": 1, "type": "show_pins", "label": "카페 핀 보기", "params": {"category": "카페"}},
     ]
     assert not {"claims", "fingerprint", "evidence_hash", "resolved_by", "shadow"} & set(payload)   # 서버 내부 값
     cur = _cursor(world, map_id)

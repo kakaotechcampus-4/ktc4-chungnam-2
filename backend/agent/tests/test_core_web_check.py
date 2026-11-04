@@ -17,12 +17,16 @@ def _web(status="found", *, hours_ago=1, statements=None):
 
 # ---------------------------------------------------------------- 대상
 
-def test_target_is_the_first_unknown_line():
+def test_targets_are_every_unknown_line():
+    """「모름」인 줄 모두(#1317). 줄은 많아야 FACT_LINES_MAX(2)라 웹 확인도 많아야 2번이다."""
     facts = [{"pin_id": "p1", "fact_key": "quiet"}, {"pin_id": "p1", "fact_key": "parking_available"}]
-    assert core.web_check_target(facts, {"p1": {"quiet": True}}) == 1                   # 참은 건너뛴다
-    assert core.web_check_target(facts, {"p1": {"quiet": None}}) == 0                   # 모름(confidence unknown)
-    assert core.web_check_target(facts, {"p1": {"quiet": False, "parking_available": False}}) is None
-    assert core.web_check_target(facts, {}) is None                                     # 자체 DB 장소가 아닌 핀(값을 못 읽음)
+    assert core.web_check_targets(facts, {"p1": {}}) == [0, 1]                          # 둘 다 모름
+    assert core.web_check_targets(facts, {"p1": {"quiet": True}}) == [1]                # 참은 건너뛴다
+    assert core.web_check_targets(facts, {"p1": {"quiet": None, "parking_available": True}}) == [0]
+    assert core.web_check_targets(facts, {"p1": {"quiet": False, "parking_available": False}}) == []
+    assert core.web_check_targets(facts, {}) == []                                      # 자체 DB 장소가 아닌 핀(값을 못 읽음)
+    third = facts + [{"pin_id": "p1", "fact_key": "spacious"}]
+    assert core.web_check_targets(third, {"p1": {}}) == [0, 1]                          # 상한 밖 줄은 보지 않는다
 
 
 # ---------------------------------------------------------------- 24시간 재사용

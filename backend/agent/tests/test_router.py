@@ -176,16 +176,16 @@ def test_accept_returns_action_and_announces_resolved(world, client):
     map_id = world.map()
     sid = suggest(world, map_id)
 
-    r = client("u2").post(f"/agent/suggestions/{sid}/accept", json={"action_index": 1})
+    r = client("u2").post(f"/agent/suggestions/{sid}/accept", json={"action_index": 0})
 
     assert r.status_code == 200
-    assert r.json() == {"action": {"index": 1, "type": "show_pins", "label": "카페 핀 보기",
+    assert r.json() == {"action": {"index": 0, "type": "open_recommend", "label": "카페 추천 받기",
                                    "params": {"category": "카페"}}}
     row = world.one(AgentSuggestion, map_id=map_id)
     assert (row.status, row.resolved_by, row.resolved_action) == ("accepted", world.uid("u2"),
-                                                                    {"index": 1, "type": "show_pins"})
+                                                                    {"index": 0, "type": "open_recommend"})
     assert world.agent_events(map_id) == [("agent.resolved", {
-        "suggestion_id": sid, "status": "accepted", "resolved_action_type": "show_pins"})]   # resolved_by 없음
+        "suggestion_id": sid, "status": "accepted", "resolved_action_type": "open_recommend"})]   # resolved_by 없음
 
 
 def test_action_index_out_of_range_is_422_and_changes_nothing(world, client):
