@@ -3,9 +3,9 @@
  * FE에서: import { resetScenario } from "@pingo/contracts/mocks/scenarios"; resetScenario("no-results");
  */
 import { ME_USER_ID, nextId, resetIdCounter, resetStore, type StoreState } from "./store";
-import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID } from "./seed";
+import { buildBaseState, buildCandidates, buildEvidenceLines, buildRegions, SEED_MAP_ID, SEED_PIN_CAFE_1, SEED_SUGGESTION_ID } from "./seed";
 
-export type ScenarioName = "empty" | "happy-path" | "no-results" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty" | "credits-full" | "agent-declared";
+export type ScenarioName = "empty" | "happy-path" | "no-results" | "region-conflict" | "guest" | "withdrawn-relogin" | "credits-empty" | "credits-full" | "agent-declared" | "agent-linked" | "agent-schedule";
 
 /** 6절 "핀이 하나도 없음" 화면 — 지도만 있고 핀은 0개 */
 function buildEmpty(): StoreState {
@@ -141,6 +141,59 @@ function buildAgentDeclared(): StoreState {
   return state;
 }
 
+/**
+ * #1356 — 조언이 AI 코스 엔진(try_in_schedule)으로 지도의 카페 핀을 확정 일정에 끼워 보고 「이 핀 보기」(open_pin)로 넘긴다.
+ * 시드의 카테고리 공백 제안(sug_1)을 모델 진단 결과로 바꾼다. 확정은 사람이 한다.
+ */
+function buildAgentLinked(): StoreState {
+  const state = buildBaseState();
+  const s = state.agentSuggestions[SEED_SUGGESTION_ID].suggestion;
+  s.advice = [
+    { segments: [{ kind: "text", text: "확정 2곳 중 카페 0곳" }], is_guess: false },
+    {
+      segments: [
+        { kind: "pin", pin_id: SEED_PIN_CAFE_1, text: "카페 한라" },
+        { kind: "text", text: "은 ♥ 2이고, 2일차 동선에 넣으면 이동이 6분 늘어요" },
+      ],
+      is_guess: false,
+    },
+  ];
+  s.actions = [{ index: 0, type: "open_pin", label: "이 핀 보기", params: { pin_ids: [SEED_PIN_CAFE_1] } }];
+  s.steps = [
+    { stage: "감지", role: "계산", by: "code", by_detail: null, text: "확정한 2곳 중 카페가 없어요" },
+    { stage: "미리 찾기", role: "계산", by: "code", by_detail: null, text: "지금 조건으로 미리 찾아봤어요 · 12곳 남아요" },
+    { stage: "조사", role: "지휘", by: "ai", by_detail: null, text: "의견 사유 2개를 읽었어요" },
+    { stage: "조사", role: "지휘", by: "ai", by_detail: null, text: "AI 코스 엔진으로 핀 2개를 일정에 끼워 봤어요" },
+    { stage: "검증", role: "검증", by: "code", by_detail: null, text: "숫자와 인용 3개를 지도와 대조했어요" },
+    { stage: "재확인", role: "검증", by: "code", by_detail: null, text: "저장 직전에 지도가 그대로인지 다시 봤어요" },
+  ];
+  return state;
+}
+
+/** #1356 — 사람이 넣은 일정에 쉬는 날 방문이 있어 조언이 「AI 코스로 고칠 안 받기」(open_course)로 넘긴다. 코드 유형이다. */
+function buildAgentSchedule(): StoreState {
+  const state = buildBaseState();
+  const s = state.agentSuggestions[SEED_SUGGESTION_ID].suggestion;
+  s.diagnosis = "schedule";
+  s.category = null;
+  s.title = "일정에 다시 볼 곳이 있어요";
+  s.advice = [
+    {
+      segments: [
+        { kind: "text", text: "2일차에 쉬는 날인 곳이 있어요 · " },
+        { kind: "pin", pin_id: SEED_PIN_CAFE_1, text: "카페 한라" },
+      ],
+      is_guess: false,
+    },
+  ];
+  s.actions = [{ index: 0, type: "open_course", label: "AI 코스로 고칠 안 받기", params: {} }];
+  s.steps = [
+    { stage: "감지", role: "계산", by: "code", by_detail: null, text: "AI 코스 점검으로 일정을 살펴봤어요 · 고칠 곳 1곳" },
+    { stage: "재확인", role: "검증", by: "code", by_detail: null, text: "저장 직전에 지도가 그대로인지 다시 봤어요" },
+  ];
+  return state;
+}
+
 const BUILDERS: Record<ScenarioName, () => StoreState> = {
   empty: buildEmpty,
   "happy-path": buildHappyPath,
@@ -151,6 +204,8 @@ const BUILDERS: Record<ScenarioName, () => StoreState> = {
   "credits-empty": buildCreditsEmpty,
   "credits-full": buildCreditsFull,
   "agent-declared": buildAgentDeclared,
+  "agent-linked": buildAgentLinked,
+  "agent-schedule": buildAgentSchedule,
 };
 
 export function resetScenario(name: ScenarioName) {

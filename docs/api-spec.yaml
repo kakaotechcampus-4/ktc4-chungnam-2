@@ -2957,8 +2957,8 @@ components:
     # ---------- agent (v2 계획 보조 에이전트, docs/agent-v2.md) ----------
     AgentDiagnosis:
       type: string
-      enum: [stall, split, no_reaction, category_gap]
-      description: "제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리 (docs/agent-v2.md 6절)"
+      enum: [stall, split, no_reaction, category_gap, schedule]
+      description: "제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리, schedule=확정 일정에 쉬는 날 방문·이동 과다가 있음(#1356) (docs/agent-v2.md 6절, 6.10)"
 
     AgentAdviceLine:
       type: object
@@ -2991,16 +2991,17 @@ components:
         버튼 하나. 사람이 원래 하던 동작으로만 이어진다(확정, 삭제, 반응 변경, 근거 줄 빼기는 없다). FE가 하는 일은 docs/agent-v2.md 16.3 표.
         open_recommend → AI 추천 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/runs`. show_pins → 지도 탭 필터. search_place → 장소 검색 시트.
         open_route → 리스트 탭 동선. widen_radius → 기존 반경 넓히기. open_evidence → 근거 확인 화면.
+        open_pin(#1356) → 지도 탭에서 params.pin_ids[0] 핀 카드를 연다(확정은 사람이 한다). open_course(#1356) → AI 코스 짜기를 시작한다 — 확정 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/courses`(크레딧 1, 게스트·잔액 부족은 그 API의 오류 그대로).
       properties:
         index: { type: integer, minimum: 0, description: "accept 요청의 action_index" }
-        type: { type: string, enum: [open_recommend, show_pins, search_place, open_route, widen_radius, open_evidence] }
-        label: { type: string, maxLength: 40, description: "버튼 문구(서버 렌더). 예: \"음식점 추천 받기\", \"미확인 핀 보기\"" }
+        type: { type: string, enum: [open_recommend, show_pins, search_place, open_route, widen_radius, open_evidence, open_pin, open_course] }
+        label: { type: string, maxLength: 40, description: "버튼 문구(서버 렌더). 예: \"음식점 추천 받기\", \"미확인 핀 보기\", \"이 핀 보기\", \"AI 코스로 고칠 안 받기\"" }
         params:
           type: object
           description: "type마다 쓰는 것만 채운다"
           properties:
             category: { $ref: "#/components/schemas/Category" }
-            pin_ids: { type: array, items: { type: string }, description: "show_pins: 보여 줄 핀" }
+            pin_ids: { type: array, items: { type: string }, description: "show_pins: 보여 줄 핀. open_pin: 열 핀 하나" }
             unseen_only: { type: boolean, description: "show_pins: 내가 아직 반응하지 않은 핀만" }
             run_id: { type: string, description: "widen_radius, open_evidence: 대상 run" }
             evidence_line_ids: { type: array, items: { type: string }, description: "open_evidence: 강조할 근거 줄. 요청자 본인이 쓴 줄만 들어간다(근거 줄 빼기는 쓴 사람만, docs/permissions.md)" }
@@ -3073,7 +3074,7 @@ components:
       required: [action_type, label, accepted_at]
       description: "막힌 곳에서 이미 해 본 것 하나(#1345) — 수락한 제안의 버튼. 누가 눌렀는지와 추천 결과(비공개 run)는 싣지 않는다"
       properties:
-        action_type: { type: string, enum: [open_recommend, show_pins, search_place, open_route, widen_radius, open_evidence] }
+        action_type: { type: string, enum: [open_recommend, show_pins, search_place, open_route, widen_radius, open_evidence, open_pin, open_course] }
         label: { type: string, maxLength: 40, description: "그때 버튼 문구(서버 렌더). 예: \"음식점 추천 받기\"" }
         accepted_at: { type: string, format: date-time }
 

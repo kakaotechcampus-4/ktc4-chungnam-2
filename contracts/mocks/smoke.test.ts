@@ -1376,6 +1376,19 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     expect(off.tracking).toEqual([]);
   });
 
+  it("#1356 엮기: open_pin은 핀 하나, open_course는 일정 점검에만 — 수락하면 동작만 돌려준다", async () => {
+    resetScenario("agent-linked");
+    const linked = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(linked.active_suggestion.actions).toEqual([{ index: 0, type: "open_pin", label: "이 핀 보기", params: { pin_ids: ["pin_3"] } }]);
+
+    resetScenario("agent-schedule");
+    const sched = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(sched.active_suggestion.diagnosis).toBe("schedule");
+    expect(sched.active_suggestion.actions.map((a: { type: string }) => a.type)).toEqual(["open_course"]);
+    const res = await fetch(`${BASE}/agent/suggestions/sug_1/accept`, { method: "POST", body: JSON.stringify({ action_index: 0 }) });
+    expect(res.status).toBe(200);
+  });
+
   it("#1345 충돌 선언(시나리오 agent-declared): attempt 2, 버튼 없음, 해 본 것 두 줄, 후속 확인 단계", async () => {
     resetScenario("agent-declared");
     const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
