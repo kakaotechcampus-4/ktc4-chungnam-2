@@ -3,12 +3,12 @@ import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 
-import ErrorText from '@/ErrorText'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
+import { AiHeader } from '@/features/recommend/Readiness'
 import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import Notice from '@/ui/Notice'
@@ -17,7 +17,7 @@ import TextField from '@/ui/TextField'
 
 import { useCourseViewStore } from './courseMapStore'
 import CourseRun from './CourseRun'
-import { createErrorMessage, inProgressRunId, pinNames, pinPoints, REQUEST_MAX } from './model'
+import { createErrorMessage, pinNames, pinPoints, REQUEST_MAX } from './model'
 import { courseKeys, useCreateCourseMutation, useLatestCourseQuery } from './queries'
 
 /**
@@ -72,13 +72,17 @@ function NotEnough({ mapId }: { mapId: string }) {
 }
 
 function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; onRun: (runId: string, fromInProgress?: boolean) => void }) {
-  const [text, setText] = useState('')
+  // 실패는 요청 훅이 지도별로 남긴다 — 탭을 오가 이 화면이 새로 붙어도 보인다. 고치러 돌아오면 보냈던 글이 그대로 있다.
+  const failure = useCourseViewStore((s) => s.failed[mapId])
+  const clearFail = useCourseViewStore((s) => s.clearFail)
+  const [text, setText] = useState(() => failure?.text ?? '')
   const queryClient = useQueryClient()
   const map = useMapQuery(mapId).data
   const latestQuery = useLatestCourseQuery(mapId)
   const latest = latestQuery.data
   const create = useCreateCourseMutation(mapId)
-  const known = createErrorMessage(create.error)
+  const error = failure?.error ?? null
+  const known = createErrorMessage(error)
 
   // 만든 run 을 여는 것(이미 짜는 중이면 그 run 으로)은 요청 훅이 한다.
   const submit = () => create.mutate(text)
@@ -92,6 +96,10 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
   // 최근 코스를 받기 전에 안내 화면을 먼저 띄우면 받은 뒤 입력 화면으로 바뀌며 깜빡인다(#1127 리뷰).
   if (routable < 2 && latestQuery.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
   if (routable < 2 && !latest) return <NotEnough mapId={mapId} />
+  // 장소 부족(known)과 크레딧은 입력 화면에서 바로 고친다. 그 밖의 실패는 핑고가 알리고 같은 요청을 다시 보낸다.
+  if (failure && !known && !creditBlock(error)) {
+    return <RequestFailed pending={create.isPending} onRetry={() => create.mutate(failure.text)} onEdit={() => clearFail(mapId)} />
+  }
 
   return (
     <form
@@ -115,12 +123,9 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
         <TextField id="course-request" value={text} onChange={setText} maxLength={REQUEST_MAX} placeholder="둘째 날은 실내 위주로" clearLabel="요청 지우기" />
       </div>
       {known && <p role="alert" className="text-sm text-warn-text">{known}</p>}
-      {create.error && !known && !inProgressRunId(create.error) && !creditBlock(create.error) && (
-        <ErrorText message="코스를 요청하지 못했어요" error={create.error} />
-      )}
       <div className="space-y-1">
         {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭으로 간다). 확정 장소가 모자라면 막는다. */}
-        <CreditGate feature="course" mapId={mapId} error={create.error} onCharged={create.reset}>
+        <CreditGate feature="course" mapId={mapId} error={error} onCharged={() => clearFail(mapId)}>
           <button type="submit" disabled={create.isPending || routable < 2} className="btn-primary btn-lg w-full">
             {create.isPending ? '요청하는 중…' : '코스 짜기'}
           </button>
@@ -136,5 +141,22 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
         )}
       </div>
     </form>
+  )
+}
+
+/** 코스 요청이 실패했다(장소 부족·크레딧 밖). 당황한 핑고 + 같은 요청 다시 보내기 · 요청 고치기. */
+function RequestFailed({ pending, onRetry, onEdit }: { pending: boolean; onRetry: () => void; onEdit: () => void }) {
+  return (
+    <div className="space-y-3">
+      <AiHeader title="코스를 요청하지 못했어요" sub="잠깐 문제가 생겼어요. 다시 눌러 주세요" mood="flustered" />
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={onEdit} disabled={pending} className="btn-neutral btn-lg">
+          요청 고치기
+        </button>
+        <button type="button" onClick={onRetry} disabled={pending} className="btn-primary btn-lg">
+          {pending ? '요청하는 중…' : '다시 시도'}
+        </button>
+      </div>
+    </div>
   )
 }

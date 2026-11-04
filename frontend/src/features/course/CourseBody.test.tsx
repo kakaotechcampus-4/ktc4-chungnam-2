@@ -17,7 +17,7 @@ afterEach(() => {
   server.resetHandlers()
   server.events.removeAllListeners()
   resetScenario('happy-path')
-  useCourseViewStore.setState({ runs: {} })
+  useCourseViewStore.setState({ runs: {}, failed: {} })
 })
 afterAll(() => server.close())
 
@@ -173,6 +173,44 @@ describe('AI 코스 짜기 시트', () => {
     renderSheet()
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('2곳 이상')
+  })
+
+  it('요청이 실패하면 당황한 핑고 화면 — 다른 탭에 다녀와도 남고, 「다시 시도」는 같은 글로 다시 보낸다', async () => {
+    const sent: string[] = []
+    let fail = true
+    server.use(
+      http.post('*/maps/:mapId/courses', async ({ request }) => {
+        const body = (await request.json()) as { request_text?: string }
+        sent.push(body.request_text ?? '')
+        if (fail) return error(500, 'INTERNAL')
+        return undefined // 목 서버 기본 처리로 넘긴다
+      }),
+    )
+    const user = userEvent.setup({ delay: null })
+    const view = renderSheet()
+    await user.type(await screen.findByLabelText(/요청 사항/), '실내 위주로')
+    await user.click(screen.getByRole('button', { name: '코스 짜기' }))
+    expect(await screen.findByText('코스를 요청하지 못했어요')).toBeInTheDocument()
+
+    // 탭을 떠났다 오면(화면이 새로 붙어도) 실패가 남는다.
+    view.unmount()
+    renderSheet()
+    expect(await screen.findByText('코스를 요청하지 못했어요')).toBeInTheDocument()
+
+    fail = false
+    await user.click(screen.getByRole('button', { name: '다시 시도' }))
+    expect(await screen.findByRole('list', { name: '작업 기록' })).toBeInTheDocument()
+    expect(sent).toEqual(['실내 위주로', '실내 위주로'])
+  })
+
+  it('실패 화면의 「요청 고치기」는 보냈던 글을 그대로 둔 입력 화면으로 돌아간다', async () => {
+    server.use(http.post('*/maps/:mapId/courses', () => error(500, 'INTERNAL')))
+    const user = userEvent.setup({ delay: null })
+    renderSheet()
+    await user.type(await screen.findByLabelText(/요청 사항/), '덜 걷게')
+    await user.click(screen.getByRole('button', { name: '코스 짜기' }))
+    await user.click(await screen.findByRole('button', { name: '요청 고치기' }))
+    expect(screen.getByLabelText(/요청 사항/)).toHaveValue('덜 걷게')
   })
 
   it('409 는 진행 중인 run 으로 이동하고, 실패한 run 은 「다시 짜기」', async () => {
