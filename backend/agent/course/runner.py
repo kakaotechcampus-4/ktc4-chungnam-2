@@ -107,7 +107,7 @@ def run_course(
         records.extend(new)
         emit(new)
 
-    state = initial_state(trip, start_hours(trip, gateway), core.draft_course(trip), goals)
+    state = initial_state(trip, start_hours(trip, gateway), goals=goals, locks=build.locks)
     result = direct.run_direct(state, decide=decider, hours=gateway, unmatched_count=len(unmatched),
                               on_step=on_direct_step)
     closing = narrator.closing(result)
