@@ -16,7 +16,8 @@ import AdviceText from './AdviceText'
 import FactLines from './FactLines'
 import MapStatus from './MapStatus'
 import SummarySection from './SummarySection'
-import { CONFLICT_LABEL, splitAdvice, type AgentAnalysisDto, type AgentSuggestionDto } from './model'
+import { TrackingList, TriedList } from './Tracking'
+import { attemptOf, CONFLICT_LABEL, splitAdvice, type AgentAnalysisDto, type AgentSuggestionDto } from './model'
 import {
   useAcceptSuggestionMutation,
   useAgentQuery,
@@ -26,7 +27,7 @@ import {
 } from './queries'
 
 /**
- * 「핑고 AI 조언」 바텀시트(agent-v2 16.2). 위에서부터 모드 스위치 → 살펴본 시각 → 지도 현황 문단 → 지금 제안(0개 또는 1개) → 우리 조건 요약.
+ * 「핑고 AI 조언」 바텀시트(agent-v2 16.2). 위에서부터 모드 스위치 → 살펴본 시각 → 지켜보는 곳 → 지도 현황 문단 → 지금 제안(0개 또는 1개) → 우리 조건 요약.
  * 제안은 지도 단위라 구성원 모두에게 같다. 에이전트는 아무것도 직접 하지 않고, 버튼은 사람이 하던 동작의 지름길이다.
  */
 export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose: () => void }) {
@@ -76,6 +77,7 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
           </p>
         )}
         {state && enabled && observation?.checked_at && <p className="text-xs text-ink-500">{checkedLabel(observation.checked_at)}</p>}
+        {state && enabled && <TrackingList tracking={state.tracking} />}
         {state && enabled && <MapStatus status={state.status} />}
         {state && enabled && state.active_suggestion && <Suggestion mapId={mapId} suggestion={state.active_suggestion} onDone={onClose} />}
         {state && enabled && !state.active_suggestion && (
@@ -97,10 +99,17 @@ function Suggestion({ mapId, suggestion, onDone }: { mapId: string; suggestion: 
   const runAction = useRunAgentAction(mapId)
   const { facts, guesses } = splitAdvice(suggestion.advice)
   const busy = accept.isPending || dismiss.isPending
+  // 같은 막힌 곳의 몇 번째 제안인지(#1345). 다음 방법(1)엔 칩을, 충돌 선언(2)은 버튼이 없고(actions 빈 목록) 해 본 것과 서버 문장만 남긴다.
+  const attempt = attemptOf(suggestion)
 
   return (
     <article className="space-y-3">
-      <AiHeader title={suggestion.title} sub="구성원 모두에게 같은 제안이 보여요" />
+      <AiHeader title={suggestion.title} sub="구성원 모두에게 같은 제안이 보여요" mood={attempt >= 2 ? 'thinking' : undefined} />
+      {attempt === 1 && (
+        <p>
+          <span className="tag tag-neutral">두 번째 방법</span>
+        </p>
+      )}
       {facts.length > 0 && (
         <section className="space-y-1.5">
           <h3 className="text-sm font-bold text-ink-900">확인된 것</h3>
@@ -129,6 +138,7 @@ function Suggestion({ mapId, suggestion, onDone }: { mapId: string; suggestion: 
           </ul>
         </section>
       )}
+      {attempt >= 1 && <TriedList tried={suggestion.tried} />}
       <FactLines facts={suggestion.facts} />
       <div className="space-y-2">
         {suggestion.actions.map((a, i) => (
