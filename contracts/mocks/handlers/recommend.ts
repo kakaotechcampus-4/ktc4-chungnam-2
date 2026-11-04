@@ -106,13 +106,19 @@ export const recommendHandlers = [
 
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
     const mapId = params.mapId as string;
-    const body = (await request.json()) as { category: string; execute?: boolean };
+    const body = (await request.json()) as { category: string; execute?: boolean; center?: { lat: number; lng: number } | null };
+    // #1331 — 중심 지정 run: 위도 33~39·경도 124~132 밖은 422
+    const center = body.center ?? null;
+    if (center && !(center.lat >= 33 && center.lat <= 39 && center.lng >= 124 && center.lng <= 132)) {
+      return apiError(422, "VALIDATION_ERROR", "추천을 받을 수 없는 위치예요");
+    }
+    const centerKey = center ? `${center.lat},${center.lng}` : "";
     // #811 — 같은 Idempotency-Key는 첫 요청이 만든 run을 그대로 돌려준다. 마법 키 in-progress-key는 첫 요청이 아직 모델을 기다리는 중인 상태를 낸다
     const idemKey = request.headers.get("Idempotency-Key");
     if (idemKey === "in-progress-key") return apiError(409, "REQUEST_IN_PROGRESS", "같은 요청을 처리하고 있어요. 잠시 뒤 다시 확인할게요");
     const seen = idemKey ? store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] : undefined;
     // 요청의 동일성 = (지도, category, execute — 생략은 false). 다르면 IDEMPOTENCY_CONFLICT — 키를 재사용한 화면의 버그 신호
-    if (seen && (seen.mapId !== mapId || seen.category !== body.category || seen.execute !== Boolean(body.execute))) {
+    if (seen && (seen.mapId !== mapId || seen.category !== body.category || seen.execute !== Boolean(body.execute) || (seen.center ?? "") !== centerKey)) {
       return apiError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 키로 다른 요청을 보냈어요");
     }
     // 같은 키의 재사용은 최초 응답의 복제가 아니라 같은 run의 지금 상태다
@@ -132,7 +138,7 @@ export const recommendHandlers = [
     chargeCredit("recommend_run", runId); // 실서버는 run 저장과 같은 트랜잭션. 같은 Idempotency-Key의 재사용은 위에서 돌아가 다시 빠지지 않는다
     store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1 };
     store.runRequestedBy[runId] = ME_USER_ID;
-    if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = { runId, mapId, category: body.category, execute: Boolean(body.execute) };
+    if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = { runId, mapId, category: body.category, execute: Boolean(body.execute), center: centerKey };
     runCreatedAt[runId] = new Date().toISOString();
     // ② 사유 → 실격/선호/반경 구조화 (목 서버에서는 시드 데이터로 대체 — 실제 구조화는 backend/llm 담당)
     store.evidenceLines[runId] = buildEvidenceLines(runId);
