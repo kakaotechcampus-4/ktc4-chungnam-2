@@ -1360,6 +1360,32 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
     expect(off.observation.notice).toBeNull(); // 모드가 꺼져 있으면 스위치만 보인다
   });
+
+  it("#1345 지켜보는 막힌 곳: 첫 제안은 attempt 0이고, tracking은 서버 문구와 since를 싣고, 모드를 끄면 빈 목록이다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.active_suggestion.attempt).toBe(0);
+    expect(state.active_suggestion.tried).toEqual([]);
+    expect(state.tracking.map((t: { status: string }) => t.status)).toEqual(["watching", "resolved"]);
+    for (const t of state.tracking) {
+      expect(Object.keys(t).sort()).toEqual(["category", "diagnosis", "since", "status", "suggestion_id", "text", "tried"]);
+      expect(t.text).not.toMatch(/\d/); // 경과 시간은 FE가 since로 그린다
+    }
+
+    await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(off.tracking).toEqual([]);
+  });
+
+  it("#1345 충돌 선언(시나리오 agent-declared): attempt 2, 버튼 없음, 해 본 것 두 줄, 후속 확인 단계", async () => {
+    resetScenario("agent-declared");
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    const s = state.active_suggestion;
+    expect(s.attempt).toBe(2);
+    expect(s.actions).toEqual([]);
+    expect(s.tried.map((t: { action_type: string }) => t.action_type)).toEqual(["open_recommend", "search_place"]);
+    expect(s.steps.map((x: { stage: string }) => x.stage)).toContain("후속 확인");
+    expect(state.tracking.some((t: { category: string }) => t.category === "음식점")).toBe(false); // 활성 제안인 막힌 곳은 tracking에 없다
+  });
 });
 
 describe("#623 지도 목록에 상한을 함께", () => {

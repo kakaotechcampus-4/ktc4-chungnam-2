@@ -506,6 +506,10 @@ agent_suggestions(                    -- 바텀시트의 지도 제안
   resolved_at null, resolved_action jsonb null, decided_within_24h boolean null,
   facts jsonb default '[]'             -- 우리 데이터 확인(#1152, agent-v2 6.6). [{pin_id, fact_key, web?}], 값은 응답 때 places에서 다시 읽는다.
                                       -- web(6.8, #1216): {status: found|not_found|paused, statements[{text, source_url}], checked_at} — 모델이 웹에서 옮긴 문장과 출처. 구성원 글 없음
+  attempt smallint not null default 0,   -- 막힌 곳 한 살이의 몇 번째 제안(#1345, agent-v2 6.9). 0 첫 제안, 1 다음 방법, 2 충돌 선언
+  followup_of uuid null references agent_suggestions on delete set null,   -- attempt ≥ 1이면 수락한 앞 제안. 해 본 것(tried)은 이 사슬의 resolved_action으로 렌더한다
+  followup jsonb null                    -- 수락한 제안을 지켜본 결과(#1345). {status: watching|resolved|declared|followed_up, at, reason?}
+                                         -- reason(resolved일 때): new_pin|confirmed|pin_removed|split_gone. 코드 값만, 구성원 글 없음. 관찰이 쓴다
 )
   unique(map_id) where status = 'active'   -- 지도당 활성 제안 하나
   index(map_id, fingerprint)
