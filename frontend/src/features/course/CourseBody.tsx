@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
+import { CHANGED, START_PARAM } from '@/features/agent/actions'
 import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
@@ -11,6 +12,7 @@ import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
 import { AiHeader } from '@/features/recommend/Readiness'
+import { showToast } from '@/features/shell/toast'
 import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import Notice from '@/ui/Notice'
@@ -41,6 +43,9 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   const points = pinPoints(all)
   // 코스는 위치를 아는 확정 장소가 2곳부터다 — 확정 탭 「동선 보기」와 같은 함수로 센다.
   const routable = routableCount(items)
+  // 요청 한 줄은 여기 둔다 — 결과의 「다시 점검」·「다시 짜기」로 입력에 돌아와도 쓴 글이 남는다.
+  // 요청이 실패한 뒤 탭을 오가 새로 붙으면 실패한 요청의 글로 시작한다(「요청 고치기」).
+  const [text, setText] = useState(() => useCourseViewStore.getState().failed[mapId]?.text ?? '')
 
   if (viewing) {
     return (
@@ -51,7 +56,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
     )
   }
   if (shortlist.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
-  return <Entry mapId={mapId} routable={routable} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
+  return <Entry mapId={mapId} routable={routable} text={text} setText={setText} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
 }
 
 /** 코스는 위치를 아는 확정 장소가 2곳부터다 — 안내 화면 제목과 버튼 아래 이유가 같은 말이다. */
@@ -73,22 +78,36 @@ function NotEnough({ mapId }: { mapId: string }) {
   )
 }
 
-function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; onRun: (runId: string, fromInProgress?: boolean) => void }) {
-  // 실패는 요청 훅이 지도별로 남긴다 — 탭을 오가 이 화면이 새로 붙어도 보인다. 고치러 돌아오면 보냈던 글이 그대로 있다.
-  const failure = useCourseViewStore((s) => s.failed[mapId])
-  const clearFail = useCourseViewStore((s) => s.clearFail)
-  const [text, setText] = useState(() => failure?.text ?? '')
+function Entry({
+  mapId,
+  routable,
+  text,
+  setText,
+  onRun,
+}: {
+  mapId: string
+  routable: number
+  text: string
+  setText: (text: string) => void
+  onRun: (runId: string, fromInProgress?: boolean) => void
+}) {
   const queryClient = useQueryClient()
   const map = useMapQuery(mapId).data
   const latestQuery = useLatestCourseQuery(mapId)
   const latest = latestQuery.data
   const create = useCreateCourseMutation(mapId)
+  // 실패는 요청 훅이 지도별로 남긴다 — 탭을 오가 이 화면이 새로 붙어도 보인다.
+  const failure = useCourseViewStore((s) => s.failed[mapId])
+  const clearFail = useCourseViewStore((s) => s.clearFail)
   const error = failure?.error ?? null
   const known = createErrorMessage(error)
   // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧). 확인해야 요청한다.
   const [asking, setAsking] = useState(false)
   // 게스트는 버튼 자리가 카카오 안내라 묻지 않는다 — 요청 칸에서 Enter 를 눌러도 확인 창을 띄우지 않는다.
   const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
+  useAgentStart(routable, () => {
+    if (!guest) setAsking(true)
+  })
 
   // 만든 run 을 여는 것(이미 짜는 중이면 그 run 으로)은 요청 훅이 한다.
   const submit = () => create.mutate(text)
@@ -160,6 +179,30 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
       )}
     </form>
   )
+}
+
+/**
+ * 「핑고 AI 조언」 버튼(open_course)으로 들어오면 손으로 「코스 짜기」를 누를 때와 같이 한 번 시작한다(#1356) — 크레딧 확인 창부터다.
+ * 추천 탭의 같은 버튼(Readiness useAgentStart)과 같은 방식이다. 그새 확정 장소가 모자라졌으면 시작하지 않고 「상황이 바뀌었어요」.
+ */
+function useAgentStart(routable: number, ask: () => void) {
+  const [params, setParams] = useSearchParams()
+  const wanted = params.has(START_PARAM)
+  // 한 번만 시작한다 — ask 는 렌더마다 새로 만들어지고, 개발 모드(StrictMode)는 효과가 두 번 돈다.
+  const started = useRef(false)
+  useEffect(() => {
+    if (!wanted || started.current) return
+    started.current = true
+    setParams(
+      (p) => {
+        p.delete(START_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    if (routable < 2) showToast(CHANGED)
+    else ask()
+  }, [wanted, routable, ask, setParams])
 }
 
 /**

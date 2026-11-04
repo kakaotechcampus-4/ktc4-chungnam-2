@@ -508,7 +508,7 @@ export interface paths {
                 };
                 403: components["responses"]["GuestNotAllowed"];
                 409: components["responses"]["MapLimit"];
-                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락. 또는 TRIP_TOO_LONG — 시작일·종료일을 포함한 기간이 MapList.trip_max_days(지금 90일)를 넘음, detail: { limit } (#1371) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -657,7 +657,7 @@ export interface paths {
                 };
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
-                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락. 또는 TRIP_TOO_LONG — 날짜(start_date·end_date)를 바꾸는 요청에서 합친 기간이 MapList.trip_max_days(지금 90일)를 넘음, detail: { limit }. 제목·지역만 고치는 요청은 기간을 검사하지 않는다(이미 90일을 넘는 지도의 제목 수정은 허용) (#1371) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -2643,7 +2643,7 @@ export interface paths {
                          * @default false
                          */
                         execute?: boolean;
-                        /** @description 지금 보고 있는 지도의 중심에서 추천받는다(#1331). 화면이 「여기서 음식점」 같은 버튼을 누른 순간 보이는 영역의 중심을 보낸다. 있으면 이 run의 **앵커는 이 점 하나**다 — 후보를 찾는 원의 중심(카테고리 기본 반경, 넓히기는 이 점에서 반경만 키운다), 동점일 때 거리 비교, 지도 여행 지역이 없을 때의 시·도 판정이 모두 이 점을 따른다. 지도의 핀들은 근거(의견·구성원 충족)와 시작 조건(그 카테고리에 ♥/🚫 의견이 달린 핀 1곳 이상, 미충족이면 409 NOT_READY)에만 쓰이고 위치 기준에서는 빠진다. 추천 로직(거르기·점수·상위 3곳)·크레딧·멱등·결과가 요청자에게만 보이는 것은 그대로다. 서버는 중심을 run에 저장해 `retry`·`widen`에서 같은 점을 쓰며, 응답에는 좌표를 싣지 않는다. 없으면 지금처럼 그 카테고리 핀들이 앵커다. 위도 33~39·경도 124~132 밖이거나 시·도를 정할 수 없는 곳이면 422 VALIDATION_ERROR */
+                        /** @description 지금 보고 있는 지도의 중심에서 추천받는다(#1331). **이 점을 중심으로 한 반경 3km 원이 기본 추천 범위다**(#1385, 모든 카테고리) — 원 전체가 여행 지역 밖이면 422 `OUTSIDE_TRIP_REGION`. 화면이 「여기서 음식점」 같은 버튼을 누른 순간 보이는 영역의 중심을 보낸다. 있으면 이 run의 **앵커는 이 점 하나**다 — 후보를 찾는 원의 중심(카테고리 기본 반경, 넓히기는 이 점에서 반경만 키운다), 동점일 때 거리 비교, 지도 여행 지역이 없을 때의 시·도 판정이 모두 이 점을 따른다. 지도의 핀들은 근거(의견·구성원 충족)와 시작 조건(그 카테고리에 ♥/🚫 의견이 달린 핀 1곳 이상, 미충족이면 409 NOT_READY)에만 쓰이고 위치 기준에서는 빠진다. 추천 로직(거르기·점수·상위 3곳)·크레딧·멱등·결과가 요청자에게만 보이는 것은 그대로다. 서버는 중심을 run에 저장해 `retry`·`widen`에서 같은 점을 쓰며, 응답에는 좌표를 싣지 않는다. 없으면 지금처럼 그 카테고리 핀들이 앵커다. 위도 33~39·경도 124~132 밖이거나 시·도를 정할 수 없는 곳이면 422 VALIDATION_ERROR */
                         center?: {
                             lat: number;
                             lng: number;
@@ -2672,7 +2672,7 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description 검증 실패 (VALIDATION_ERROR) — `center`가 범위 밖이거나 시·도를 정할 수 없는 곳 */
+                /** @description VALIDATION_ERROR(`center`가 범위 밖이거나 시·도를 정할 수 없는 곳) · OUTSIDE_TRIP_REGION(#1385 — 요청 `center` 기준 반경 3km 원 **전체**가 그 지도의 여행 지역(시·도) 밖이다. 걸치기만 하면 막지 않고, 지도에 여행 지역이 없으면 막지 않는다. `detail`은 `{ region_label }`(여행 지역 이름). 크레딧·모델·run 모두 쓰지 않는다. 지역 경계 판정은 서버(places)가 시·도 경계 데이터로 한다). `code`로 구분한다 */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -2916,8 +2916,8 @@ export interface paths {
         put?: never;
         /**
          * 반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1).
-         *     한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다. 기본·상한은 카테고리별이다(#1055) — 음식점·카페 15분 → 30분, 관광지 25분 → 45분. 상한을 넘으면 409 WIDEN_LIMIT.
-         *     폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_walk_min)을 실어 화면이 "다음은 몇 분"을 안내한다.
+         *     한 번 누를 때마다 기본값 원의 반경을 1,000m씩 늘린다. 기본 3,000m, 상한 5,000m이고 모든 카테고리가 같다(#1385) — 3000 → 4000 → 5000. 상한(5,000m)에서 더 넓히면 409 WIDEN_LIMIT.
+         *     폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_m)과 넓히면 바뀔 반경(next_default_radius_m, 상한이면 null)을 실어 화면이 "다음은 몇 m"를 안내한다.
          */
         post: {
             parameters: {
@@ -4127,6 +4127,10 @@ export interface components {
             can_publish?: boolean;
             /** @description map: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465). pin: 핀 메모·분류 수정(pin.edit), 그 핀을 찍은 사람만 true이고 AI 추천·확정 핀은 false (#466) */
             can_edit?: boolean;
+            /** @description map 전용: 초대 링크 목록 보기·끄기(invite.revoke), 방장만 true (#467, #1154). 선택 필드 — 구버전 서버는 보내지 않는다 */
+            can_manage_invites?: boolean;
+            /** @description map 전용: 방장 직접 넘기기(owner.transfer), 방장만 true (#468, #1154). 선택 필드 — 구버전 서버는 보내지 않는다 */
+            can_transfer_owner?: boolean;
         };
         User: {
             id: string;
@@ -4283,6 +4287,8 @@ export interface components {
             items: components["schemas"]["Map"][];
             /** @description 만들거나 참여할 수 있는 지도 수 상한(만든 지도와 참여한 지도 합산, 삭제한 지도와 나간 지도는 세지 않음, #369). 화면은 이 값으로 "n / limit"을 그리고, items 수가 limit이면 「새 지도」를 막는다. 409 MAP_LIMIT의 detail.limit과 같은 값이다 */
             limit: number;
+            /** @description 여행 기간 상한 일수(시작일·종료일 포함, 지금 90, #1371). 화면은 이 값으로 날짜 칸의 고를 수 있는 끝을 막는다. 422 TRIP_TOO_LONG의 detail.limit과 같은 값이다. 선택 필드 — 구버전 서버는 보내지 않는다(없으면 화면이 막지 않고 서버 검사에 맡긴다) */
+            trip_max_days?: number;
         };
         MapCreateRequest: {
             /** @description 여행 제목 (#22) */
@@ -4782,7 +4788,9 @@ export interface components {
             answered_count?: number;
             /** @description 항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다 */
             required_count?: number;
-            /** @description 추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(음식점·카페 도보 30분, 관광지 45분, #1055) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다 */
+            /** @description 그 카테고리의 기본 추천 반경(m). 지금은 모든 카테고리 3000(#1385). 화면이 run을 만들기 전에 지도에 원을 그리는 데 쓴다 — 정책 값은 응답으로 받는다. 선택 필드(구버전 서버에는 없다) */
+            radius_m?: number;
+            /** @description 추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(5000m, #1385) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다 */
             curated_nearby?: number;
             /** @description curated_nearby가 0일 때만 */
             external_search?: components["schemas"]["ExternalSearch"];
@@ -4843,8 +4851,12 @@ export interface components {
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 없다(#432 — 크레딧으로 센다) */
             attempt_no: number;
-            /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (음식점·카페 기본 15·상한 30, 관광지 기본 25·상한 45, #1055) */
+            /** @description 호환용이다 — 곧 없앤다. 화면은 default_radius_m를 쓴다(#1385). 도보 분 정본은 폐기됐고 값은 default_radius_m를 80m/분으로 나눈 근사다 */
             default_radius_walk_min?: number;
+            /** @description 기본값 원의 현재 반경(m). 모든 카테고리 기본 3000, 반경 넓히기마다 +1000, 상한 5000(#1385, docs/constraints.md). 선택 필드 — 구버전 서버에는 없다 */
+            default_radius_m?: number;
+            /** @description 넓히면 바뀔 반경(m). 이미 상한(5000)이면 null — 화면은 「반경 넓히기」를 막고 안내한다(#1370). 선택 필드 */
+            next_default_radius_m?: number | null;
         };
         /** @description 지난 추천 기록 한 건 (#469). 내가 요청한 run만 온다 */
         RunSummary: {
@@ -4864,6 +4876,10 @@ export interface components {
             candidate_count: number;
             /** @description 그 run에서 「지도에 올리기」로 게시한 후보 수 */
             published_count: number;
+            /** @description 그 run의 현재 기본값 원 반경(m). `RecommendRun.default_radius_m`과 같은 값(#1164, #1385). 선택 필드 */
+            default_radius_m?: number;
+            /** @description 넓히면 바뀔 반경(m). 이미 상한이면 null. `RecommendRun.next_default_radius_m`과 같은 값(#1370). 선택 필드 */
+            next_default_radius_m?: number | null;
         };
         /** @description 구성원 충족 집계 (가드레일 5). 게시 뒤에도 유지된다 */
         MemberFulfillment: {
@@ -5832,7 +5848,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 기본값 원이 이미 상한(음식점·카페 도보 30분, 관광지 45분, */
+        /** @description 기본값 원이 이미 상한(5,000m, 모든 카테고리, */
         WidenLimit: {
             headers: {
                 [name: string]: unknown;

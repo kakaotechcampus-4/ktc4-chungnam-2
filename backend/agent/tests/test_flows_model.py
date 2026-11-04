@@ -246,7 +246,7 @@ def test_failed_verification_is_invalid_claims(world):
     def made_up(inp, call):
         out = good_stall(inp, call)
         claim = out.claims[0].model_copy(update={"value": False})   # 도구 결과와 다른 값
-        return out.model_copy(update={"claims": [claim]})
+        return out.model_copy(update={"claims": [claim], "actions": []})   # 버튼이 있으면 근거를 코드가 채운다(#1380)
 
     assert observe(world, map_id, FakeGateway(diagnose=made_up)) == "invalid_claims"
 
@@ -254,6 +254,26 @@ def test_failed_verification_is_invalid_claims(world):
     assert run.verification["claims"]["removed"] == [{"id": "c1", "reason": "tool_mismatch"}]
     assert run.verification["failed_step"] == 7
     assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "decision": "suggest"}
+
+
+def test_button_basis_is_filled_from_this_run_when_the_model_claim_fails(world):
+    """모델 claim이 틀려 버튼 basis가 가리킬 곳이 없어도, 이번 관찰 기록(p1이나 get_readiness)으로 근거를 채워 버튼을 남긴다(#1380).
+    문장은 그 claim에 기대므로 빠진다."""
+    map_id, _, _ = _stall_map(world)
+
+    def wrong_claim(inp, call):
+        out = good_stall(inp, call)
+        return out.model_copy(update={"claims": [out.claims[0].model_copy(update={"value": False})]})
+
+    assert observe(world, map_id, FakeGateway(diagnose=wrong_claim)) == "suggested"
+
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
+    assert run.verification["basis_filled"] == 1 and run.verification["lines"]["kept"] == 0
+    sug = world.one(AgentSuggestion, map_id=map_id)
+    assert [a["type"] for a in sug.actions] == ["open_recommend"] and sug.advice == []
+    [filled] = sug.claims
+    assert filled["kind"] == "tool_result" and filled["id"] == "c2"
+    assert filled["call_id"] in {c["call_id"] for c in run.tool_calls}
 
 
 def test_fixed_gateway_reads_reasons_and_stays_silent(world):

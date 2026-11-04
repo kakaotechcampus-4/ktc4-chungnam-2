@@ -11,6 +11,7 @@
 - 결과는 results/(커밋하지 않는다, .gitignore)에 JSON(호출마다 원본)과 Markdown(요약표)으로 남긴다. 사유 글은 평가셋의
   지어낸 예시뿐이다.
 - 모델 출력 검증은 운영과 같은 agent.core.verify_diagnosis다. "검증 통과"는 decision=suggest였던 호출 중 초안이 남은 비율이다.
+  버튼 근거를 검증이 이번 관찰 기록에서 채운 수(verification.basis_filled, #1380)도 센다.
 - 결정 지시(#717): expect.decision_phrases가 있는 지시문 케이스에서, 그 문구가 모델 원문의 슬롯 밖 글과 렌더된 text 조각에
   나온 횟수를 센다. 금지어 목록이 아니라 케이스마다 적은 문구로 본다. 인용 조각(구성원 글)에 들어간 것도 따로 센다 —
   화면에서 구성원 의견으로 그려지는 데이터라 실패가 아니다.
@@ -251,6 +252,7 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                   f"| 결정(suggest/silent) 일치 | {_pct(sum(r['decision_match'] for r in diag), len(diag))} |",
                   f"| 검증 통과(suggest 중 초안이 남음) | {_pct(len(passed), len(suggest_rows))} |",
                   f"| 고른 버튼 일치(첫 버튼, 침묵 기대는 침묵) | {_pct(sum(r['button_match'] for r in diag), len(diag))} |",
+                  *_basis_filled_rows(suggest_rows),
                   *_bracket_rows(diag),
                   f"| 원문에 결정 지시 표현 | {sum(bool(r.get('raw_forbidden')) for r in diag)} |",
                   *_echo_rows(diag),
@@ -305,6 +307,13 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                 texts = " / ".join(f"{x['text']}{' (짐작)' if x['is_guess'] else ''}" for x in good["rendered"])
                 lines.append(f"- {cid}: [{', '.join(good['kept_actions'])}] {texts}")
     return "\n".join(lines) + "\n"
+
+
+def _basis_filled_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """버튼 근거를 코드가 채운 것(#1380, 11.2 6단계) — 모델이 basis를 비우거나 claims에 없는 id를 적어, 검증이 이번 관찰 기록에서
+    근거를 채운 버튼 수와 그런 호출 수. 분모는 suggest 호출. 이전 결과 파일(basis_filled 없음)은 0으로 센다."""
+    filled = [int((r.get("verification") or {}).get("basis_filled") or 0) for r in rows]
+    return [f"| 버튼 근거를 코드가 채움(#1380) — 호출, 버튼 수 | {_pct(sum(n > 0 for n in filled), len(rows))}, {sum(filled)} |"]
 
 
 def _bracket_rows(rows: list[dict[str, Any]]) -> list[str]:
