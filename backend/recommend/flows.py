@@ -328,7 +328,7 @@ def _clustered_regions(circle: Circle, anchors: Sequence[tuple[float, float]]) -
 
 def create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
-    idempotency_key: str | None = None, execute: bool = False,
+    idempotency_key: str | None = None, execute: bool = False, center: tuple[float, float] | None = None,
     place_search: PlaceSearchGateway | None = None, place_facts: PlaceFactsGateway | None = None,
 ) -> RecommendRun:
     """POST /maps/{mapId}/runs. `Idempotency-Key`가 없으면 `_create_run` 그대로(구FE). 있으면 같은 키의 연타·재전송을
@@ -347,7 +347,7 @@ def create_run(
         with llm_api.plan_deadline():   # create 시작에서 한 번 정한 deadline — ② 묶음 호출 전체가 30초 안에 끝난다(#848)
             run = _create_run(
                 db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner,
-                traces=traces,
+                traces=traces, center=center,
             )
         if execute:   # #845, #847 — 근거 조립 뒤 같은 요청·같은 트랜잭션에서 첫 검색까지. 어디서 실패하든 run·횟수·크레딧 차감이 함께 되돌아간다
             assert place_search is not None and place_facts is not None   # 호출부(라우터) 계약
@@ -361,7 +361,7 @@ def create_run(
         except BaseException:
             llm_api.mark_discarded(traces)
             raise
-    request_hash = core.idempotency_request_hash(map_id, category, execute)
+    request_hash = core.idempotency_request_hash(map_id, category, execute, center)
     with Session(bind=db.get_bind()) as reservation_db:   # 요청 세션과 다른 연결 — 요청의 커밋·롤백과 무관하게 바로 보인다
         reservation = service.reserve_idempotency_key(
             reservation_db, requested_by=requested_by, key=idempotency_key, request_hash=request_hash,
@@ -388,7 +388,7 @@ def create_run(
 
 def _create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
-    traces: list[uuid.UUID] | None = None,
+    traces: list[uuid.UUID] | None = None, center: tuple[float, float] | None = None,
 ) -> RecommendRun:
     """run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 크레딧 확인(읽기, 게스트 403·부족 402, #432)
@@ -400,6 +400,8 @@ def _create_run(
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
+    if center is not None and places_api.sido_at(*center, db=db) is None:
+        raise AppError("VALIDATION_ERROR")
     credits_api.check_can_spend(db, user_id=requested_by, feature="recommend_run")   # 모델(②) 전에 막는다(#949)
 
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
@@ -419,16 +421,22 @@ def _create_run(
     current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
     run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1)
     # 모델을 기다리는 사이 잔액이 줄었으면 여기서 402다(모델은 이미 불렸다 — 드문 경합으로 받아들인다, credits.api.charge)
+    if center is not None:
+        run.origin_lat, run.origin_lng = center
     credits_api.charge(db, user_id=requested_by, feature="recommend_run", run_id=str(run.id))
     service.add_reaction_evidence(db, run_id=run.id, lines=merged)
 
-    default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
-    if default_region is None:
-        raise AppError("NOT_READY")
-    circle, anchors = default_region
-    groups = _clustered_regions(circle, anchors)
+    if center is not None:
+        circle = Circle(*center, core.radius_m_for_walk_min(core.radius_walk_mins(category)[0]))
+        groups = [(circle, [center])]
+    else:
+        default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
+        if default_region is None:
+            raise AppError("NOT_READY")
+        circle, anchors = default_region
+        groups = _clustered_regions(circle, anchors)
     service.create_regions(db, run_id=run.id, regions_data=[
-        _region_data(group_circle, label=DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
+        _region_data(group_circle, label="보던 곳 주변" if center is not None else DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
                      confirmed=True, anchor_points=group_anchors)
         for i, (group_circle, group_anchors) in enumerate(groups)
     ])

@@ -22,10 +22,6 @@ KEYS = ("maxItems", "minItems", "maxLength", "minLength", "maximum", "minimum")
 # (메서드, 경로, 필드.제약) -> 추적 이슈. 비어 가는 것이 정상이다.
 KNOWN_DRIFT: dict[tuple[str, str, str], str] = {
     # #1331 단계 0(계약 PR) — 서버 요청 모델(RunCreateRequest.center)이 들어오면 백엔드 PR이 이 네 줄을 지운다.
-    ("POST", "/maps/{mapId}/runs", ".center.lat.minimum"): "#1331",
-    ("POST", "/maps/{mapId}/runs", ".center.lat.maximum"): "#1331",
-    ("POST", "/maps/{mapId}/runs", ".center.lng.minimum"): "#1331",
-    ("POST", "/maps/{mapId}/runs", ".center.lng.maximum"): "#1331",
 }
 
 
