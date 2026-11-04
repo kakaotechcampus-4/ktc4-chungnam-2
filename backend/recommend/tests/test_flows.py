@@ -575,7 +575,8 @@ def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_sessi
 def test_create_run_raises_not_ready_when_readiness_fails(db_session):
     _make_members(db_session, user_ids=["user_1", "user_2"])  # required = 1, 아무도 반응 안 함
     with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER,
+                         center=(35.1, 129.0))
     assert exc_info.value.code == "NOT_READY"
 
 
@@ -891,15 +892,32 @@ def test_readiness_counts_a_live_pin_with_an_opinion(db_session):
     }
 
 
-def test_create_run_with_only_live_pins_has_no_anchor_so_not_ready(db_session):
-    """live 핀만 있으면 기준 원을 만들 좌표가 없다 — 준비 판정은 통과해도 run 생성은 409 NOT_READY(스펙 갭, 루트 보고)."""
+@pytest.mark.no_center_shim
+def test_create_run_without_center_is_a_validation_error_1331(db_session):
+    """지도 중심이 앵커다(#1331) — center 없는 run 생성은 422다. 준비 판정을 통과한 지도여도, 핀에서 지역을 만들어 주지 않는다."""
     _make_members(db_session, user_ids=["user_1"])
-    live_pin = _make_live_pin(db_session)
-    _react(db_session, live_pin, user_id="user_1", type="like")
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="like")
+    db_session.commit()
 
     with pytest.raises(AppError) as exc_info:
         flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
-    assert exc_info.value.code == "NOT_READY"
+    assert exc_info.value.code == "VALIDATION_ERROR"
+    assert db_session.query(RecommendRun).count() == 0
+
+
+def test_create_run_with_only_live_pins_works_with_a_center_1331(db_session, monkeypatch):
+    """live 핀(좌표 없음)만 있어도 지도 중심이 앵커라 run을 만들 수 있다 — 핀 좌표는 시작 조건(의견 핀 1곳)에만 쓰인다."""
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    _make_members(db_session, user_ids=["user_1"])
+    live_pin = _make_live_pin(db_session)
+    _react(db_session, live_pin, user_id="user_1", type="like")
+    db_session.commit()
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER,
+                           center=(35.1, 129.0))
+    assert (run.origin_lat, run.origin_lng) == (35.1, 129.0)
+    assert [(r.center_lat, r.center_lng) for r in service.list_regions(db_session, str(run.id))] == [(35.1, 129.0)]
 
 
 def test_create_run_passes_after_the_old_attempt_limit(db_session):

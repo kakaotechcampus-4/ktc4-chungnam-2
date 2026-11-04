@@ -28,8 +28,16 @@ def _extra_place(db, sid, name, lat, lng, facts):
     db.flush()
 
 
-def _run(a, map_id):
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+def _run(a, map_id, center=None, monkeypatch=None):
+    """center를 주면 run 생성 동안만 시·도 판정을 통과로 본다(테스트 DB에는 시·도 경계가 없다). 실행의 시·도 제한은 그대로다."""
+    body = {"category": "음식점", **({"center": {"lat": center[0], "lng": center[1]}} if center else {})}
+    if monkeypatch is not None:
+        from recommend import flows
+        with monkeypatch.context() as patch:
+            patch.setattr(flows.places_api, "sido_at", lambda *args, **kwargs: "sido")
+            run_id = a.post(f"/maps/{map_id}/runs", json=body).json()["id"]
+    else:
+        run_id = a.post(f"/maps/{map_id}/runs", json=body).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     return run_id
@@ -56,9 +64,9 @@ def test_d6_hearted_places_shape_the_preference_profile(members, place_ids, fake
 
 # ───────────────────────── D10 — 검색 원 ─────────────────────────
 
-def test_d10_pins_far_apart_still_yield_candidates_around_each_pin(members, place_ids, fake_planner, db_session):
-    """스펙 5-6-1: 핀마다 원을 그린다. 성수 핀 하나와 8km 떨어진 홍대 핀 하나 — 성수 일대 후보가 나와야 한다.
-    카테고리 핀의 중심점 하나로 원을 그리면 두 곳 사이 빈 땅이 중심이 되어 후보가 0이 된다."""
+def test_d10_run_circle_is_the_map_center_not_the_pins_midpoint_1331(members, place_ids, fake_planner, db_session, monkeypatch):
+    """#1331 — run의 검색 원은 지도 중심 한 점이다. 성수 핀 하나와 8km 떨어진 홍대 핀 하나가 있어도, 중심을 성수에 두면 성수 일대
+    후보가 나온다(핀들의 중간 빈 땅이 중심이 되지 않는다). 핀마다 원을 그리던 옛 방식은 readiness·미리 돌려 보기(중심 없는 호출)에만 남았다."""
     a, b, map_id = members
     _extra_place(db_session, "H", "홍대 라멘집", 37.5563, 126.9236, {"cuisine_korean": False, "spicy_focused": False})
     _pin(a, map_id, "K", place_ids)
@@ -66,7 +74,7 @@ def test_d10_pins_far_apart_still_yield_candidates_around_each_pin(members, plac
                                             "place_name": "홍대 라멘집", "lat": 37.5563, "lng": 126.9236})
     assert h.status_code == 201, h.text
     assert a.put(f"/pins/{h.json()['id']}/reaction", json={"type": "like"}).status_code == 200
-    run_id = _run(a, map_id)
+    run_id = _run(a, map_id, center=(PLACES["K"][1], PLACES["K"][2]), monkeypatch=monkeypatch)
     result = a.get(f"/runs/{run_id}/result")
     assert result.status_code == 200, f"{result.status_code} {result.text}"
     assert result.json()["candidates"]

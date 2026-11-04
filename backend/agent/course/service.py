@@ -81,18 +81,30 @@ def read_snapshot(db: Session, map_id: str) -> Optional[Snapshot]:
     order = {i["pin_id"]: i["visit_order"] for i in items}
     matrix = {p["pin_id"]: p for p in pins_api.list_reaction_matrix(db, map_id=map_id)}
     confirmed = [matrix[i["pin_id"]] for i in items if i["pin_id"] in matrix]
-    place_ids = [p["place_id"] for p in confirmed if p["place_id"]]
+    return Snapshot(found["start_date"], found["end_date"], schedule["version"], _pin_inputs(db, confirmed, when, order))
+
+
+def read_pins(db: Session, map_id: str, pin_ids: list[str]) -> tuple[PinInput, ...]:
+    """이 지도의 핀(확정하지 않은 핀도)을 일정에 넣지 않은 PinInput으로 — 「핑고 AI 조언」이 확정 일정에 끼워 볼 때 쓴다(agent-v2 6.10,
+    #1356). 공개이고 지워지지 않은 핀만, pin_ids 순서로. 좌표 규칙은 read_snapshot과 같다(실시간 핀은 좌표 없음). 읽기 전용."""
+    matrix = {p["pin_id"]: p for p in pins_api.list_reaction_matrix(db, map_id=map_id)}
+    return _pin_inputs(db, [matrix[i] for i in pin_ids if i in matrix], {}, {})
+
+
+def _pin_inputs(db: Session, rows: list[dict], when: dict, order: dict) -> tuple[PinInput, ...]:
+    """핀 행(pins.api.list_reaction_matrix) → PinInput. 장소 이름·좌표·라벨은 places.api에서 한 번에 읽는다. when·order는 일정의 날짜와 순서."""
+    place_ids = [p["place_id"] for p in rows if p["place_id"]]
     infos = places_api.get_places(place_ids, db=db) if place_ids else {}
     facts = places_api.get_facts(place_ids, db=db) if place_ids else {}
     pins = []
-    for p in confirmed:
+    for p in rows:
         info = infos.get(p["place_id"]) if p["place_id"] else None
         if info is None:     # 실시간 핀, 또는 장소가 정리돼 없는 핀
-            pins.append(PinInput(p["pin_id"], None, p["search_query"] or "", p["category"], scheduled_date=when[p["pin_id"]], visit_order=order[p["pin_id"]]))
+            pins.append(PinInput(p["pin_id"], None, p["search_query"] or "", p["category"], scheduled_date=when.get(p["pin_id"]), visit_order=order.get(p["pin_id"])))
             continue
         labels = frozenset(f.fact_key for f in facts.get(p["place_id"], ()) if f.confidence == "known" and f.value is True)
-        pins.append(PinInput(p["pin_id"], p["place_id"], info.name, p["category"], info.lat, info.lng, labels, when[p["pin_id"]], order[p["pin_id"]]))
-    return Snapshot(found["start_date"], found["end_date"], schedule["version"], tuple(pins))
+        pins.append(PinInput(p["pin_id"], p["place_id"], info.name, p["category"], info.lat, info.lng, labels, when.get(p["pin_id"]), order.get(p["pin_id"])))
+    return tuple(pins)
 
 
 def current_schedule_version(db: Session, map_id: str) -> Optional[str]:
@@ -128,7 +140,7 @@ def build_input(snapshot: Snapshot, body: CourseRequest) -> TripBuild:
     pins = [p for p in snapshot.pins if not p.routable or p.pin_id in kept]
     built = build_trip(pins, days, member_constraints(body, len(days)), unknown_hours="check")
     over = tuple(Excluded(p.pin_id, p.name, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE) for p in routable[MAX_PLACES:])
-    return TripBuild(built.trip, built.excluded + over, built.locks, built.schedule)
+    return TripBuild(built.trip, built.excluded + over, built.locks, built.schedule, built.placed)
 
 
 # ---------------------------------------------------------------- 요청
