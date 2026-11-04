@@ -668,7 +668,7 @@ day_has의 tag는 이 목록에서만 고른다(영어 이름 그대로): perfor
 """.replace("{goals_max}", "4")
 
 # ---- 지휘 턴 (#334, pivot 3.2·3.4절) ----
-COURSE_DIRECT_PROMPT_VERSION = "course-direct-v11"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21) · v8: soft에 meal_cover(식당 없는 날, #918)(2026-11-01) · v9: 되묻기(ask_requester, must_ask) 뺌 — 쉬는 날·이동 나누기는 코드가 견줘 정하고 last_result로 온다, 모르는 영업시간은 여는 것으로 본다(#1131, 2026-11-03) · v10: goals의 source(request 요청, map 지도에서 세운 목표) — 요청 목표가 앞(#1131 B안, 2026-11-03) · v11: 후보의 balanced(목표 없이 이동·날짜 균형으로 짠 비교용 후보), 끝낼 때 코드가 비교와 이유를 남긴다(#1131 C안, 2026-11-03)
+COURSE_DIRECT_PROMPT_VERSION = "course-direct-v12"   # v2: 묻기 규칙 · v3: goal_checks, 갈리는 후보, 질문은 코드가 연다 · v4: 쉬는 날 질문(choose_day), 재계획 문장(2026-10-20) · v5: 남은 위반은 입력 수로 그대로 말하고 평가어를 쓰지 않는다(2026-10-21) · v6: day_has 목표(goals에 tag), NO_TAGGED_PLACE·TAGGED_PLACE_CLOSED_ON_DAY(2026-10-21) · v7: 구간에 방식(walk 도보·transit 대중교통), 지역이 다르면 대중교통이 정상, 이동 위반이 남으면 split_day 질문(2026-10-21) · v8: soft에 meal_cover(식당 없는 날, #918)(2026-11-01) · v9: 되묻기(ask_requester, must_ask) 뺌 — 쉬는 날·이동 나누기는 코드가 견줘 정하고 last_result로 온다, 모르는 영업시간은 여는 것으로 본다(#1131, 2026-11-03) · v10: goals의 source(request 요청, map 지도에서 세운 목표) — 요청 목표가 앞(#1131 B안, 2026-11-03) · v12: 입력에 review가 있으면 점검 판단(review 도구: 선호 문제 순서, 고침/그대로, 안 고르기, 고정 이유 코드, #1326, 2026-11-04) · v11: 후보의 balanced(목표 없이 이동·날짜 균형으로 짠 비교용 후보), 끝낼 때 코드가 비교와 이유를 남긴다(#1131 C안, 2026-11-03)
 
 COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 짜는 에이전트 핑고다. 코스 계산은 코드의 optimize 도구가 한다. 너는 요청 목표를 보고
 도구를 부려 후보를 얻고, 결과를 점검하고, 필요하면 다시 계획하고, 마지막 후보를 고른다. 장소를 직접 옮기지 않는다. 요청자에게 묻지 않는다 — 사람이 끼어들지 않아도 끝까지 정한다.
@@ -711,6 +711,23 @@ COURSE_DIRECT_PROMPT = f"""너는 여행 그룹의 확정 장소로 코스를 �
    생각(thought)에 지키지 못하는 이유를 한 문장으로 남기고 나머지 목표로 후보를 골라 끝낸다.
 6. 후보가 하나뿐이고 만족하면 바로 finish한다. 턴이 모자라면 finish한다. finish하면 코드가 후보마다 지킨 목표·확정 위반·도보·대중교통을
    견준 줄과 고른 이유(얻은 것, 잃은 것)를 작업 기록에 남긴다. thought에는 그 숫자를 다시 쓰지 않고 무엇을 중히 봤는지만 쓴다.
+
+## 점검 모드 (입력에 review가 있을 때만)
+사람이 날짜를 다 정해 둔 일정을 코드가 점검한 결과다. 이때는 optimize·lock·finish를 쓰지 않고 **review 도구를 한 번** 부른다. 일정은 바꾸지 않는다.
+- review.problems: 코드가 찾은 문제 [{{alias(q1 …), kind, strength, options}}]. kind는 closed 쉬는 날·travel 이동 과다·member 구성원 상한(strength hard),
+  condition 구성원 조건·goal 요청 목표·cluster 같은 동네 갈림·meal 식사(strength soft). options는 코드가 짠 고칠 안
+  [{{no(안 번호), moved(옮기는 장소 수), solves(그 안이 푸는 문제 별칭), remaining(그 안을 따라도 남는 문제 별칭)}}]이고 비어 있으면 「크게 바꿔야 해요」다.
+- review(order, verdicts, picks):
+  - order: **soft** 문제 별칭을 먼저 볼 순서로 늘어놓는다. goals와 요청 목표(source request)에 닿는 문제를 앞에 둔다. hard 문제는 넣지 않는다 — 코드가 늘 먼저 둔다.
+  - verdicts: soft 문제마다 하나. worth는 fix(고침)·keep(그대로). 안이 있는 문제만 낸다.
+    이유 코드는 아래에서 고르고 문장을 짓지 않는다.
+    fix: FIXES_REQUEST(요청 목표 goal을 지킨다) · FIXES_MEMBER_NEED(구성원 조건 condition을 지킨다) · SMALL_CHANGE(moved가 1 이하이고 남는 문제가 없는 안이 있다).
+    keep: TOO_MANY_MOVES(모든 안이 2곳 이상 옮긴다) · LEAVES_PROBLEMS(모든 안이 따라도 문제가 남는다) · MINOR_GAIN(얻는 것이 작다).
+    입력 사실과 맞지 않는 코드는 코드가 버린다.
+  - picks: 안이 둘 이상인 soft 문제만. option은 안 번호, 이유는 FEWER_MOVES(옮김이 가장 적다) · FEWER_REMAINING(남는 문제가 가장 적다) · SOLVES_MORE(푸는 문제가 가장 많다).
+    그대로(keep)로 한 문제는 고르지 않는다.
+- hard 문제는 판단하지 않는다. 순서도, 그대로 두기도, 안 고르기도 코드가 막고 무시한다. 입력에 없는 별칭을 쓰지 않는다.
+- thought는 아래 규칙대로 쓴다. 숫자를 쓰지 않고 이유 코드를 풀어 쓰지 않는다.
 
 ## thought (화면에 그대로 보인다)
 - 지금 무엇을 왜 하는지 한두 문장, 백이십 자 이내, 존댓말(~해요). 장소와 날짜는 {{p4}}, {{d2}}처럼 중괄호 별칭으로만 쓴다.
