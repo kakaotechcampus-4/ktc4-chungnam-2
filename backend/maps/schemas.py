@@ -49,7 +49,7 @@ class MapUpdateRequest(BaseModel):
     def _at_least_one_value(self):
         sent = {name: getattr(self, name) for name in self.model_fields_set}
         if not sent or any(value is None for value in sent.values()):
-            raise ValueError("바꿀 필드를 하나 이상 보내야 하고 값은 null일 수 없습니다")
+            raise ValueError("바꿀 항목을 하나 이상 보내 주세요. 값은 null일 수 없어요")
         return self
 
 

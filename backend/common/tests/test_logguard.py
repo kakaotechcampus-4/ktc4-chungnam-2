@@ -27,6 +27,7 @@ FAKE_PARAM = "synthetic-sql-param-1Pw"
     ("/auth/kakao/callback?code=C&state=S", "/auth/kakao/callback?[redacted]"),
     ("/places/search?q=Q&lat=37.5&lng=127.0", "/places/search?[redacted]"),
     ("/places/nearest?lat=37.5&lng=127.0", "/places/nearest?[redacted]"),
+    ("/places/external-search?q=Q", "/places/external-search?[redacted]"),   # #1155
     ("/invites/TOKEN", "/invites/{token}"),
     ("/invites/TOKEN/accept", "/invites/{token}/accept"),
     ("/api/invites/TOKEN?x=1", "/api/invites/{token}?[redacted]"),   # --root-path /api

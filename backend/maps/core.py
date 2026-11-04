@@ -85,19 +85,19 @@ def validate_map_create(
     검증과 같은 기준으로 검사한다(가드레일과 무관한 단순 입력 검증)."""
     normalized_title = title.strip()
     if not normalized_title:
-        raise AppError("VALIDATION_ERROR", "제목이 비어 있습니다")
+        raise AppError("VALIDATION_ERROR", "제목을 입력해 주세요")
     if end_date < start_date:
-        raise AppError("VALIDATION_ERROR", "end_date는 start_date와 같거나 그 이후여야 합니다")
+        raise AppError("VALIDATION_ERROR", "끝나는 날은 시작하는 날과 같거나 그 뒤여야 해요")
 
     normalized_region = None
     if region is not None:
         normalized_label = region.label.strip()
         if not normalized_label:
-            raise AppError("VALIDATION_ERROR", "region.label이 비어 있습니다")
+            raise AppError("VALIDATION_ERROR", "지역 이름을 입력해 주세요")
         if not (-90 <= region.lat <= 90):
-            raise AppError("VALIDATION_ERROR", "region.lat은 -90~90 범위여야 합니다")
+            raise AppError("VALIDATION_ERROR", "지역 위도는 -90~90 사이여야 해요")
         if not (-180 <= region.lng <= 180):
-            raise AppError("VALIDATION_ERROR", "region.lng는 -180~180 범위여야 합니다")
+            raise AppError("VALIDATION_ERROR", "지역 경도는 -180~180 사이여야 해요")
         normalized_region = MapRegion(label=normalized_label, lat=region.lat, lng=region.lng)
 
     return NewMap(

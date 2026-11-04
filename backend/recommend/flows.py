@@ -704,9 +704,8 @@ def _within_trip_sido(
 
 def _circle_outside_region(db: Session, *, center: tuple[float, float], radius_m: float, sido: str) -> bool | None:
     """원 전체가 그 시·도 밖이면 True, 걸치기만 하면 False, 경계를 모르면 None — places가 시·도 경계 데이터로 정한다(#1385).
-    places.api.circle_outside_region(PR #1400)이 develop에 들어오면 이 본문이 그 함수를 부른다. 그 전에는 모르는 것으로
-    답해(None) 아무것도 막지 않는다. 테스트는 이 함수를 바꿔 끼운다."""
-    return None
+    places.api.circle_outside_region을 부르는 자리 한 곳이다. 경계만 보므로 원이 경계에 닿기만 해도 False(막지 않음)다."""
+    return places_api.circle_outside_region(*center, radius_m, sido, db=db)
 
 
 def _outside_trip_region_label(db: Session, *, map_id: str, center: tuple[float, float]) -> str | None:

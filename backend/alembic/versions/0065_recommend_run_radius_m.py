@@ -4,7 +4,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0065_recommend_run_radius_m"
-down_revision = "0063_agent_suggestion_followup"
+down_revision = "0064_sido_boundaries"
 branch_labels = None
 depends_on = None
 

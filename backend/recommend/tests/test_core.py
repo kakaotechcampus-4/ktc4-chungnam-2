@@ -191,6 +191,21 @@ def test_radius_walk_min_is_a_compat_approximation_of_the_meter_value():
     assert core.radius_walk_min_compat(3000) == round(3000 / WALKING_SPEED_M_PER_MIN) == 38
 
 
+@pytest.mark.parametrize("walk_min, current_m, next_m", [
+    (15, 1200, 2200),    # 옛 음식점·카페 기본
+    (20, 1600, 2600),
+    (25, 2000, 3000),    # 옛 관광지 기본 — 넓히면 3,000m
+    (30, 2400, 3400),    # 옛 음식점·카페 상한
+    (45, 3600, 4600),    # 옛 관광지 상한 — 넓히면 4,600m(새 상한 5,000m 안)
+])
+def test_an_old_run_without_the_meter_column_widens_by_1000m_from_its_walk_minutes_1385(walk_min, current_m, next_m):
+    from recommend.models import RecommendRun
+    old = RecommendRun(default_radius_walk_min=walk_min, default_radius_m=None)
+    assert core.run_radius_m(old) == current_m
+    assert core.next_default_radius_m(current_m) == next_m == core.widened_radius_m(current_m)
+    assert core.run_radius_fields(old) == {"default_radius_m": current_m, "next_default_radius_m": next_m}
+
+
 def test_run_radius_reads_the_meter_column_or_falls_back_to_the_old_walk_minutes_1385():
     from recommend.models import RecommendRun
     old = RecommendRun(default_radius_walk_min=15, default_radius_m=None)
