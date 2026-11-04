@@ -2850,3 +2850,50 @@ def test_concurrent_executes_on_one_run_leave_a_single_candidate_set(test_engine
         verify.execute(delete(RecommendRun).where(RecommendRun.id == run_id))
         verify.commit()
         verify.close()
+
+
+def test_map_center_run_keeps_center_when_widened_and_retried(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810", lat=35.2, lng=129.3)
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "\ubd80\uc0b0")
+    monkeypatch.setattr(flows, "_clustered_regions", lambda *a: pytest.fail("center was clustered"))
+    run = flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.1, 129.0))
+    region, = service.list_regions(db_session, str(run.id))
+    db_session.flush()
+    db_session.expire(run, ["origin_lat", "origin_lng"])
+    assert (run.origin_lat, run.origin_lng) == (35.1, 129.0)
+    assert region.anchor_points == [[35.1, 129.0]]
+    assert region.label == "\ubcf4\ub358 \uacf3 \uc8fc\ubcc0"
+    original_radius = region.radius_m
+    monkeypatch.setattr(flows, "_search_and_store", lambda db, run, **kw: run)
+    flows.widen_run(db_session, run_id=str(run.id), place_search=None, place_facts=None)
+    assert region.radius_m > original_radius
+    flows.retry_run(db_session, run_id=str(run.id), place_search=None, place_facts=None)
+    assert region.anchor_points == [[35.1, 129.0]]
+    assert (region.center_lat, region.center_lng) == (35.1, 129.0)
+
+
+def test_center_without_sido_is_rejected(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810")
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: None)
+    with pytest.raises(AppError) as exc:
+        flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.1, 129.0))
+    assert exc.value.code == "VALIDATION_ERROR"
+
+
+def test_center_run_funnel_and_widen_advice_use_center(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810", lat=35.2, lng=129.3)
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    run = flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.0, 129.0))
+    search, facts = _CirclePlaceSearch(POOL_PLACES), _RecordingPlaceFacts()
+    advice = flows.simulate_filter(db_session, run_id=str(run.id), radius_factor=20 / 15, disable_line_ids=[], place_search=search, place_facts=facts)
+    assert (advice["before"]["passed_count"], advice["after"]["passed_count"]) == (1, 2)
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["\ubc18\uacbd \ubc16 \uc81c\uac70"] == 1
+    flows.widen_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+    assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
