@@ -43,6 +43,8 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   const points = pinPoints(all)
   // 코스는 위치를 아는 확정 장소가 2곳부터다 — 확정 탭 「동선 보기」와 같은 함수로 센다.
   const routable = routableCount(items)
+  // 요청 한 줄은 여기 둔다 — 결과의 「다시 점검」·「다시 짜기」로 입력에 돌아와도 쓴 글이 남는다.
+  const [text, setText] = useState('')
 
   if (viewing) {
     return (
@@ -53,7 +55,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
     )
   }
   if (shortlist.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
-  return <Entry mapId={mapId} routable={routable} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
+  return <Entry mapId={mapId} routable={routable} text={text} setText={setText} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
 }
 
 /** 코스는 위치를 아는 확정 장소가 2곳부터다 — 안내 화면 제목과 버튼 아래 이유가 같은 말이다. */
@@ -75,8 +77,19 @@ function NotEnough({ mapId }: { mapId: string }) {
   )
 }
 
-function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; onRun: (runId: string, fromInProgress?: boolean) => void }) {
-  const [text, setText] = useState('')
+function Entry({
+  mapId,
+  routable,
+  text,
+  setText,
+  onRun,
+}: {
+  mapId: string
+  routable: number
+  text: string
+  setText: (text: string) => void
+  onRun: (runId: string, fromInProgress?: boolean) => void
+}) {
   const queryClient = useQueryClient()
   const map = useMapQuery(mapId).data
   const latestQuery = useLatestCourseQuery(mapId)
