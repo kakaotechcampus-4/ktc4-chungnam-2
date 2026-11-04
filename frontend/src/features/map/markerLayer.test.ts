@@ -55,7 +55,7 @@ const pin = (id: string, x: number, y: number, extra: Partial<Pin> = {}) =>
 
 /** 이름표가 보이는지(겹침 정리로 숨긴 것은 visibility:hidden). */
 const labelShown = (id: string) => {
-  const el = [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.getAttribute('aria-label')?.startsWith(`가게${id} `))
+  const el = [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.getAttribute('aria-label')?.startsWith(`가게${id},`))
   const label = el?.querySelector<HTMLElement>('[data-pin-name]')
   return Boolean(label) && label!.style.visibility !== 'hidden'
 }

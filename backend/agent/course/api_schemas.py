@@ -76,20 +76,46 @@ class CourseExcluded(BaseModel):
     text: str
 
 
+class CourseMove(BaseModel):
+    pin_id: str
+    from_date: Optional[date] = None   # null = 아직 날짜에 넣지 않은 장소(미배정)
+    to_date: date
+
+
+class CourseFix(BaseModel):
+    id: str
+    kind: Literal["closed", "travel", "member", "condition", "goal", "cluster", "meal", "unassigned"]
+    strength: Literal["hard", "soft"]
+    text: str
+    moves: list[CourseMove]
+    resolved_text: Optional[str] = None
+    remaining_text: Optional[str] = None
+    not_fixed_reason: Optional[str] = None
+
+
+class CourseChecked(BaseModel):
+    kind: Literal["closed", "travel", "member", "condition", "goal", "cluster", "meal"]
+    text: str
+
+
 class CourseRun(BaseModel):
     id: str
     map_id: str
     status: Literal["queued", "running", "done", "failed"]
+    mode: Literal["plan", "fill", "review"]
     outcome: Optional[Literal["solved", "solved_with_checks", "unresolved", "timeout"]] = None
     failure_code: Optional[Literal["INTERRUPTED", "ENGINE_ERROR"]] = None
+    headline: Optional[str] = None   # done일 때만
     goals: list[CourseGoal]
     unmatched: list[str]
     steps: list[CourseStep]
     days: list[CourseDay]
+    fixes: list[CourseFix]
+    checked: list[CourseChecked]
     violations: list[CourseViolation]
     checks: list[CourseCheck]
     excluded: list[CourseExcluded]
     snapshot_at: datetime
-    stale: bool                      # 요청 뒤 확정 리스트가 바뀌었다 — 「다시 짜기」
+    stale: bool                      # 요청 뒤 일정(version)이 바뀌었다 — 「일정이 바뀌었어요」 + 「다시 짜기」
     created_at: datetime
     finished_at: Optional[datetime] = None

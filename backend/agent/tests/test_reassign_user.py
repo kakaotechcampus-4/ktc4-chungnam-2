@@ -27,7 +27,7 @@ def view_at(db, suggestion_id, user_id, minutes):
 def course_run(db, map_id, requested_by, status):
     return rows.add(db, AgentCourseRun(
         id=uuid.uuid4(), map_id=map_id, requested_by=requested_by, status=status,
-        input={"request_text": "", "member_constraints": []}, snapshot_at=rows.NOW, snapshot_pin_ids=[],
+        input={"request_text": "", "member_constraints": []}, snapshot_at=rows.NOW, snapshot_version="v",
     ))
 
 

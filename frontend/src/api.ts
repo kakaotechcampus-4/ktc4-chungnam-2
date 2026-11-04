@@ -41,7 +41,7 @@ async function toApiError(res: Response): Promise<ApiError> {
   // 조용히 삼키지 않고 카탈로그의 전역 코드로 세워서 올린다.
   return new ApiError(res.status, {
     code: 'INTERNAL_ERROR',
-    message: `서버 응답을 해석할 수 없어요 (HTTP ${res.status})`,
+    message: `서버 응답을 읽지 못했어요 (HTTP ${res.status})`,
   })
 }
 

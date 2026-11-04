@@ -1,5 +1,7 @@
 """optimize(강한 기준선 끝까지)와 지휘 루프 — 후보, 고정, 모델 없이 도는 길, 쓸 수 없는 호출 대행, 되묻지 않기(#1131)."""
 
+from types import SimpleNamespace
+
 from agent.course import core, direct, goals as G, optimize as O
 from agent.course.goals import Goal
 from agent.course.state import initial_state
@@ -345,3 +347,26 @@ class TestWorklog:
 class _NoHours:
     def get_opening_hours(self, place_ids):
         return {pid: None for pid in place_ids}
+
+
+def _ReviewCall():
+    """llm의 점검 도구 호출(CourseReviewCall) — 판단은 비어 있어도 도구 자체는 review 모드 밖에서 실패한다."""
+    from llm.schemas import CourseReviewCall
+    return CourseReviewCall(tool="review", order=[], verdicts=[], picks=[])
+
+
+def test_review_tool_outside_review_mode_is_a_failed_result_and_the_turn_continues():
+    result_of = direct.execute(_ReviewCall(), direct.DirectState(state([NIGHT_D1])), TRUE_HOURS)[1]
+    assert (result_of.ok, result_of.error) == (False, "NOT_REVIEW_MODE")      # TypeError가 아니다
+
+    queue = [SimpleNamespace(thought="해 볼게요", action=_ReviewCall()), turn(tool="optimize", priority=[], locks=[]),
+             turn(tool="finish", candidate_id="c1")]
+    seen = []
+
+    def decide(turn_input):
+        seen.append(turn_input)
+        return queue.pop(0)
+
+    result = direct.run_direct(state([NIGHT_D1]), decide=decide, hours=TRUE_HOURS)
+    assert acts(result)[0].result.error == "NOT_REVIEW_MODE" and seen[1]["last_result"]["error"] == "NOT_REVIEW_MODE"
+    assert result.outcome in ("solved", "solved_with_checks")                 # 이어서 optimize·finish로 끝난다

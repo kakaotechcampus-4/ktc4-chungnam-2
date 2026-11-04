@@ -307,12 +307,12 @@ export default function MapLayout() {
 
   function onControl(key: ControlKey) {
     const map = controller.current
-    if (!map) return showToast('지도가 아직 준비되지 않았어요')
+    if (!map) return showToast('지도를 아직 불러오는 중이에요')
     // 최근 핀은 필터와 상관없이 지도 전체에서, 전체 핀 보기는 지금 보이는(필터된) 핀으로.
     const placed = (key === 'recent' ? allPins : pins).filter(isPlaced)
 
     if (key === 'locate') {
-      if (!navigator.geolocation) return showToast('이 브라우저는 현재 위치를 지원하지 않아요')
+      if (!navigator.geolocation) return showToast('이 브라우저에서는 현재 위치를 쓸 수 없어요')
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           map.panTo(pos.coords.latitude, pos.coords.longitude)
@@ -327,16 +327,16 @@ export default function MapLayout() {
       )
       return
     }
-    if (placed.length === 0) return showToast(pins.length < allPins.length ? '필터에 걸리는 핀이 없어요' : '아직 지도에 핀이 없어요')
+    if (placed.length === 0) return showToast(pins.length < allPins.length ? '필터에 맞는 핀이 없어요' : '아직 지도에 핀이 없어요')
     if (key === 'recent') {
       const pin = [...placed].sort(byNewest)[0]
       map.panTo(pin.lat!, pin.lng!)
       const who = [pin.created_by_display_name, timeAgo(pin.created_at)].filter(Boolean).join(' · ')
-      showToast(`가장 최근 핀 · ${pin.place_name ?? '이름 없는 핀'} (${who})`)
+      showToast(`가장 최근 핀: ${pin.place_name ?? '이름 없는 핀'} (${who})`)
     } else {
       // 누른 사람이 원한 것이라 이미 다 보여도 맞춘다(#1026).
       map.fitPins(placed, { force: true })
-      showToast(`핀 ${placed.length}곳을 모두 보여 줘요`)
+      showToast(`핀 ${placed.length}곳을 모두 보여 드려요`)
     }
     setActiveControl(key)
   }
@@ -458,7 +458,7 @@ export default function MapLayout() {
                 trigger={
                   <button
                     type="button"
-                    aria-label={`지도 정보와 구성원 · ${memberCount}명`}
+                    aria-label={`지도 정보와 구성원 ${memberCount}명`}
                     className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600 press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
                   >
                     <Users size={16} aria-hidden="true" />
@@ -471,7 +471,7 @@ export default function MapLayout() {
                 <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
-                  aria-label={`지도 정보와 구성원 · ${memberCount}명`}
+                  aria-label={`지도 정보와 구성원 ${memberCount}명`}
                   onClick={() => openProfile(true)}
                   className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
                 >
