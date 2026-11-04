@@ -252,13 +252,14 @@ _SIDO_AT_FETCH = 5            # 가장 가까운 곳의 주소가 비어도 다�
 
 
 def sido_at(lat: float, lng: float, *, db: Session | None = None) -> str | None:
-    """좌표의 시·도(sido와 같은 짧은 이름, #1385). 시·도 경계 표(sido_boundaries)가 적재돼 있으면 경계로 정확히 판정한다 —
-    바다·국외·경계 밖은 None이고, 장소 데이터가 없는 곳(제주 등)도 판정된다. 표가 비어 있으면 10km 안에서 가장 가까운 영업 중 자체 DB
-    장소 주소의 시·도로 정한다(적재 전 환경용 근사: 경계 근처에서는 건너편 장소가 더 가까우면 틀린다). 못 정하면 None —
-    부르는 쪽은 None이면 거르지 않는다(#1059). 읽기 전용, 좌표를 남기지 않는다."""
+    """좌표의 시·도(sido와 같은 짧은 이름, #1385). 시·도 경계 표(sido_boundaries)가 적재돼 있으면 **경계가 먼저**다 — 경계 안이면 그 시·도,
+    장소 데이터가 없는 곳(제주 등)도 판정된다. 경계에 안 들면(간소화 경계가 빠뜨린 해안·매립지·작은 섬, 바다, 국외) 10km 안에서 가장 가까운
+    영업 중 자체 DB 장소 주소의 시·도로 한 번 더 정한다(경계 근처에서는 건너편 장소가 더 가까우면 틀리는 근사). 표가 비어 있어도 같은 방식이다.
+    둘 다 못 정하면 None — 부르는 쪽은 None이면 거르지 않는다(#1059). 읽기 전용, 좌표를 남기지 않는다."""
     with _session(db) as s:
-        if repository.boundary_count(s):
-            return repository.sido_by_boundary(s, lat, lng)
+        by_boundary = repository.sido_by_boundary(s, lat, lng)
+        if by_boundary is not None:
+            return by_boundary
         rows = repository.find_nearby_own(s, lat, lng, SIDO_AT_RADIUS_M, _SIDO_AT_FETCH)
     return next((v for v in (core.sido(r.address) for r in rows) if v), None)
 

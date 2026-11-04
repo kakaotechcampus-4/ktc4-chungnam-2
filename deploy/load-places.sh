@@ -23,7 +23,16 @@ load() {
 
 S=/data
 # 시·도 경계(#1385) — 지역 판정(places.api.sido_at, circle_outside_region)의 정본 표. 멱등이라 먼저 넣는다
-load boundaries --dir $S/시도경계
+# 데이터 폴더에 시도경계/가 없으면(옛 폴더) 경고만 하고 건너뛴다 — 장소 적재는 계속한다. `boundaries`만 요청했으면 중단한다
+boundaries_loaded=1
+if [ -d "$host_dir/시도경계" ]; then
+  load boundaries --dir $S/시도경계
+elif [ "${3:-}" = boundaries ]; then
+  echo "중단: $host_dir/시도경계 폴더가 없다" >&2; exit 1
+else
+  boundaries_loaded=0
+  echo "경고: $host_dir/시도경계 폴더가 없어 경계 적재를 건너뛴다" >&2
+fi
 [ "${3:-}" = boundaries ] && { echo "끝(시·도 경계만)."; exit 0; }
 # 서울 정예(음식점 다음 카페 — 두 파일에 겹치는 곳을 카페로 둔다, #507)
 load restaurants --authoritative --file $S/서울/음식점/final_restaurant_places_hotspot.csv --labels $S/서울/음식점/seoul_restaurant_labels_hotspot.json
@@ -57,4 +66,5 @@ for R in "${REGIONS[@]}"; do
   load place-hours --all-regions --file $S/$R/정예_카페/cafe_${R}_curated_labels.json
   load place-hours --all-regions --file $S/$R/정예_관광지/tourist_${R}_curated_labels.json
 done
+[ "$boundaries_loaded" = 1 ] || echo "경계 미적재 — 시·도 판정은 가장 가까운 장소 방식으로 동작한다(시도경계/를 두고 ./load-places.sh $env_name $host_dir boundaries)"
 echo "끝. 마지막에 나온 [curated] 분류별 정예 수를 deploy_rules.md의 실측(정예 13,901곳)과 맞춰 본다."

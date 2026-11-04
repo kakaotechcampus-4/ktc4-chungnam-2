@@ -213,3 +213,61 @@ def test_real_boundaries_calls_are_fast(real):
 def test_real_boundary_table_has_a_gist_index(real):
     index = real.scalar(text("SELECT indexdef FROM pg_indexes WHERE tablename = 'sido_boundaries' AND indexdef ILIKE '%gist%'"))
     assert index and "geom" in index
+
+
+# ---------------------------------------------------------------- 경계에 안 드는 점은 가장 가까운 장소 방식으로 한 번 더(해안 회귀 방지)
+
+def _place(db, lat, lng, address):
+    from places.models import Place
+
+    db.add(Place(source="permit", source_id=f"{lat}{lng}", name="가게", category="음식점", address=address, geom=f"SRID=4326;POINT({lng} {lat})"))
+    db.flush()
+
+
+def test_sido_at_falls_back_when_the_boundary_misses_a_coast_point(synthetic):
+    _place(synthetic, 38.05, 127.5, "서울특별시 강북구 1")        # 경계(위도 ~38.0) 바로 밖 해안 장소
+    assert api.sido_at(38.05, 127.5, db=synthetic) == "서울"       # 경계는 None, 가까운 장소로 폴백
+    assert api.sido_at(38.06, 127.5, db=synthetic) == "서울"       # 장소 근처의 바다 점도 이전 방식 그대로
+    assert api.sido_at(35.0, 131.0, db=synthetic) is None          # 먼바다: 폴백도 None
+    assert api.sido_at(35.68, 139.7, db=synthetic) is None         # 도쿄
+
+
+def test_boundary_wins_over_a_nearer_place_across_the_border(synthetic):
+    _place(synthetic, 37.2, 126.99, "경기도 어딘가 1")               # 경기 쪽 장소가 더 가깝지만
+    assert api.sido_at(37.2, 127.01, db=synthetic) == "서울"        # 점은 서울 경계 안 — 경계 우선
+
+
+def test_real_coast_points_outside_the_boundary_still_get_a_sido(real):
+    # 경계에 안 드는 영업 중 장소의 좌표(pingo_final_1104에서 고른 부산 영도 동삼동) — 실제 장소가 있는 DB에서만 의미가 있다.
+    # 여기서는 경계만 적재된 시험 DB이므로, 같은 점 옆에 장소를 두고 이전 방식이 시·도를 돌려주는지 본다
+    lat, lng = 35.0699, 129.0669
+    assert repository.sido_by_boundary(real, lat, lng) is None           # 간소화 경계가 영도 동삼동을 빠뜨린다
+    _place(real, lat, lng, "부산광역시 영도구 중리북로 8 (동삼동)")
+    assert api.sido_at(lat, lng, db=real) == "부산"
+
+
+# ---------------------------------------------------------------- 자기교차 입력(나비넥타이) — ST_MakeValid 경로
+
+BOWTIE = [[[[37.0, 127.0], [38.0, 128.0], [37.0, 128.0], [38.0, 127.0]]]]   # 한 다각형의 고리 하나. 대각선 둘이 (37.5, 127.5)에서 교차하는 나비넥타이
+
+
+def test_self_intersecting_polygon_is_made_valid_on_load(db_session, tmp_path, monkeypatch):
+    hashes = {}
+    for i, code in enumerate(boundaries.SIDO_BY_CODE):
+        data = BOWTIE if code == "11" else [[_square(33 + i * 0.3, 126, 33.2 + i * 0.3, 127)]]
+        (tmp_path / f"{code}.json").write_text(json.dumps(data), encoding="utf-8")
+        hashes[code] = boundaries.content_hash(data)
+    monkeypatch.setattr(boundaries, "EXPECTED_SHA256", hashes)
+    raw_wkt = boundaries.to_wkt(BOWTIE)
+    assert db_session.scalar(text("SELECT ST_IsValid(ST_GeomFromText(:w, 4326))"), {"w": raw_wkt}) is False   # 입력은 무효다
+    assert load.main(["boundaries", "--dir", str(tmp_path)], session_factory=lambda: _NoClose(db_session)) == 0
+    valid, area, kind = db_session.execute(text("SELECT ST_IsValid(geom), ST_Area(geom::geography), GeometryType(geom) FROM sido_boundaries WHERE code = '11'")).one()
+    assert valid is True and kind == "MULTIPOLYGON"
+    # 왼쪽·오른쪽 삼각형 둘(밑변 위도 1° ≈ 111.2km, 높이 경도 0.5° ≈ 44.2km). 무효 도형을 고쳐도 넓이가 보존된다
+    expected = 2 * 0.5 * 111_200 * 44_200
+    assert abs(area - expected) / expected < 0.03
+    assert api.sido_at(37.5, 127.1, db=db_session) == "서울"        # 왼쪽 삼각형 안
+    assert api.sido_at(37.5, 127.9, db=db_session) == "서울"        # 오른쪽 삼각형 안
+    assert api.sido_at(37.9, 127.5, db=db_session) is None          # 위쪽 틈(두 삼각형 사이)
+    assert api.circle_outside_region(37.9, 127.5, 1000, "서울", db=db_session) is True
+    assert api.circle_outside_region(37.5, 127.5, 1000, "서울", db=db_session) is False   # 교차점의 원은 둘 다에 닿는다

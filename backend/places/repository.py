@@ -649,7 +649,7 @@ def boundary_hashes(db: Session) -> dict[str, str]:
 
 
 def sido_by_boundary(db: Session, lat: float, lng: float) -> str | None:
-    """점이 속한 시·도 이름. 어느 경계에도 안 들면(바다·국외) None. 표가 비었는지는 부르는 쪽이 boundary_count로 본다."""
+    """점이 속한 시·도 이름. 어느 경계에도 안 들면(바다·국외) None. 표가 비어 있으면 None."""
     point = func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326)
     return db.scalar(select(SidoBoundary.name).where(func.ST_Intersects(SidoBoundary.geom, point)).order_by(SidoBoundary.code).limit(1))
 
