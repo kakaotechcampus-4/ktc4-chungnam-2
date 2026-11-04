@@ -48,6 +48,10 @@ function renderImport() {
 
 const row = (rows: ReturnType<typeof useLinkImport>['rows'], url: string) => rows.find((r) => r.share.url === url)
 
+/** 카톡 「대화 내보내기」 .txt 모양 — 줄마다 메시지 하나(#1139). 기간은 그 날짜부터 대화 끝까지. */
+const RANGE = { from: '2026-11-02' }
+const talk = (...lines: string[]) => lines.map((l) => `2026년 11월 2일 오전 1:00, 친구A : ${l}`).join('\n')
+
 describe('가져오기 목록이 바뀌는 중에 온 응답(#1116 검토)', () => {
   it('이름 검색 중에 「완료된 것 지우기」를 눌러도 결과는 그 링크의 줄에 붙는다', async () => {
     const gB = gate()
@@ -61,7 +65,7 @@ describe('가져오기 목록이 바뀌는 중에 온 응답(#1116 검토)', () 
     )
     const { result } = renderImport()
     act(() => {
-      result.current.add('A집 - https://maps.app.goo.gl/a\nB집 - https://maps.app.goo.gl/b\nC집 - https://maps.app.goo.gl/c')
+      result.current.add(talk('A집 - https://maps.app.goo.gl/a', 'B집 - https://maps.app.goo.gl/b', 'C집 - https://maps.app.goo.gl/c'), RANGE)
     })
     await waitFor(() => expect(row(result.current.rows, 'https://maps.app.goo.gl/b')?.search?.status).toBe('loading'))
 
@@ -79,11 +83,11 @@ describe('가져오기 목록이 바뀌는 중에 온 응답(#1116 검토)', () 
     server.use(previewHandler(first.wait), http.get('*/places/search', () => HttpResponse.json([])))
     const { result } = renderImport()
     act(() => {
-      result.current.add('B집 - https://maps.app.goo.gl/b')
+      result.current.add(talk('B집 - https://maps.app.goo.gl/b'), RANGE)
     })
     await waitFor(() => expect(result.current.phase).toBe('checking'))
     act(() => {
-      result.current.add('C집 - https://maps.app.goo.gl/c')
+      result.current.add(talk('C집 - https://maps.app.goo.gl/c'), RANGE)
     })
     first.open()
 
