@@ -641,14 +641,13 @@ def test_instruction_hidden_in_a_reason_never_reaches_the_screen(e2e):
 # ---------------------------------------------------------------- 추천 막힘 조언: 추천 → 시뮬레이션 → 조언 → 사람이 넓힘
 
 def _thin_run(e2e):
-    """관광지 추천 결과가 0곳인 run. 추천의 기본 지역은 그 카테고리 핀들의 중심에서 관광지 기본 반경(radius_walk_mins)이다.
+    """관광지 추천 결과가 0곳인 run. 추천의 기본 지역은 요청 center(이 하네스는 핀들의 중심)에서 기본 반경 3,000m(core.DEFAULT_RADIUS_M, #1385)다.
     핀은 성수 한가운데 「성수 골목」 하나라(이미 핀이라 후보에서 빠진다) 결과가 없다. 기본 원 밖, 넓히기 상한 안에 다섯 곳이
     있어 「반경 밖 제거」가 뚜렷한 단계(ADVICE_CLEAR_DROP 5곳 이상)가 된다: 기본 원 +150m에 「성수 갤러리」, 넓히기 한 번(+5분)의
     원 +100m에 「서울숲」, 그 바깥 +200·300·400m에 공원 셋. 반경 넓히기 한 번은 갤러리 하나만 더 닿는다. 거리는 반경 값에서
     계산해 관광지 반경이 바뀌어도 그대로 성립한다(#1055)."""
-    walk_min, _limit = recommend_core.radius_walk_mins("관광지")
-    base_m = recommend_core.radius_m_for_walk_min(walk_min)
-    widened_m = recommend_core.radius_m_for_walk_min(recommend_core.next_default_radius_walk_min(walk_min, "관광지"))
+    base_m = recommend_core.DEFAULT_RADIUS_M
+    widened_m = recommend_core.widened_radius_m(base_m)
 
     def east_of_center(meters: float) -> float:   # 중심에서 동쪽으로 meters만큼 간 경도
         return REGION["lng"] + meters / (111_320 * math.cos(math.radians(REGION["lat"])))

@@ -30,6 +30,7 @@ function town(mapId: string | undefined) {
 const RADIUS_DEFAULT_M = 3000;
 const RADIUS_STEP_M = 1000;
 const RADIUS_LIMIT_M = 5000;
+const RADIUS_MIN_M = 2000; // #1416 사용자가 고를 수 있는 하한(상한은 RADIUS_LIMIT_M)
 
 /** run의 현재 반경과 넓히면 바뀔 반경(상한이면 null). 시드로 만든 run에는 칸이 없어 기본값으로 본다. */
 function radiusFields(run: { default_radius_m?: number }) {
@@ -95,10 +96,15 @@ export const recommendHandlers = [
     if ((lat === null) !== (lng === null) || (lat !== null && lng !== null && !(Number(lat) >= 33 && Number(lat) <= 39 && Number(lng) >= 124 && Number(lng) <= 132))) {
       return apiError(422, "VALIDATION_ERROR", "추천을 받을 수 없는 위치예요");
     }
+    // #1416 — 쿼리 radius_m은 2000~5000의 정수 문자열만. 목 서버는 값을 계산에 쓰지 않는다
+    const radiusQ = q.get("radius_m");
+    if (radiusQ !== null && (!/^\d+$/.test(radiusQ) || Number(radiusQ) < RADIUS_MIN_M || Number(radiusQ) > RADIUS_LIMIT_M)) {
+      return apiError(422, "VALIDATION_ERROR", "추천 범위는 2000~5000 사이의 정수예요");
+    }
     const result: Record<string, Record<string, unknown>> = {};
     for (const category of RECOMMEND_CATEGORIES) {
       const answered = opinionPinCount(mapId, category);
-      result[category] = { ready: answered >= REQUIRED_OPINION_PINS, answered_count: answered, required_count: REQUIRED_OPINION_PINS, radius_m: RADIUS_DEFAULT_M };
+      result[category] = { ready: answered >= REQUIRED_OPINION_PINS, answered_count: answered, required_count: REQUIRED_OPINION_PINS, radius_m: RADIUS_DEFAULT_M, radius_min_m: RADIUS_MIN_M, radius_max_m: RADIUS_LIMIT_M };
       if (answered > 0) { // 의견 핀이 있어야 기본 지역이 있다(#798)
         const curated = curatedNearby(mapId);
         result[category].curated_nearby = curated;
@@ -135,7 +141,11 @@ export const recommendHandlers = [
 
   http.post("*/maps/:mapId/runs", async ({ params, request }) => {
     const mapId = params.mapId as string;
-    const body = (await request.json()) as { category: string; execute?: boolean; center?: { lat: number; lng: number } | null };
+    const body = (await request.json()) as { category: string; execute?: boolean; center?: { lat: number; lng: number } | null; radius_m?: unknown };
+    // #1416 — radius_m은 2000 이상 5000 이하의 정수만(범위 밖·정수 아님은 422). 없으면 기본 3000
+    if (body.radius_m !== undefined && (!Number.isInteger(body.radius_m) || (body.radius_m as number) < RADIUS_MIN_M || (body.radius_m as number) > RADIUS_LIMIT_M)) {
+      return apiError(422, "VALIDATION_ERROR", "추천 범위는 2000~5000 사이의 정수예요");
+    }
     // #1331 — 중심 지정 run: 위도 33~39·경도 124~132 밖은 422
     const center = body.center ?? null;
     if (center && !(center.lat >= 33 && center.lat <= 39 && center.lng >= 124 && center.lng <= 132)) {
@@ -168,7 +178,7 @@ export const recommendHandlers = [
     if (blocked) return blocked;
     const runId = nextId("run");
     chargeCredit("recommend_run", runId); // 실서버는 run 저장과 같은 트랜잭션. 같은 Idempotency-Key의 재사용은 위에서 돌아가 다시 빠지지 않는다
-    store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1, ...radiusFields({}) };
+    store.runs[runId] = { id: runId, map_id: mapId, category: body.category as any, status: "collecting_evidence", attempt_no: 1, ...radiusFields({ default_radius_m: body.radius_m as number | undefined }) };
     store.runRequestedBy[runId] = ME_USER_ID;
     if (idemKey) store.idempotencyKeys[`${ME_USER_ID}:${idemKey}`] = { runId, mapId, category: body.category, execute: Boolean(body.execute), center: centerKey };
     runCreatedAt[runId] = new Date().toISOString();

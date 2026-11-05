@@ -997,6 +997,41 @@ describe("#1385·#1370·#1164 — 추천 반경(m)과 여행 지역 밖 오류",
     expect(mine.next_default_radius_m).toBe(5000);
   });
 
+  it("radius_m: 2000~5000 정수만 받는다 — 경계 통과, 범위 밖·소수·문자열은 422(#1416)", async () => {
+    resetScenario("happy-path");
+    for (const ok of [2000, 5000]) {
+      const res = await createRun({ radius_m: ok } as never);
+      expect(res.status).toBe(202);
+    }
+    for (const bad of [1999, 5001, 2500.5, "3000", null, true]) {
+      const res = await createRun({ radius_m: bad } as never);
+      expect(res.status).toBe(422);
+      expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("고른 반경이 run의 default_radius_m이 되고 넓히기는 거기서 +1000, 5000이면 next는 null(#1416)", async () => {
+    resetScenario("happy-path");
+    const low = await (await createRun({ radius_m: 2000 } as never)).json();
+    expect(low.default_radius_m).toBe(2000);
+    expect(low.next_default_radius_m).toBe(3000);
+    const high = await (await createRun({ radius_m: 5000 } as never)).json();
+    expect(high.default_radius_m).toBe(5000);
+    expect(high.next_default_radius_m).toBeNull();
+  });
+
+  it("readiness: radius_min_m 2000·radius_max_m 5000·radius_m 3000, 쿼리 radius_m은 2000~5000 정수 문자열만(#1416)", async () => {
+    resetScenario("happy-path");
+    const ok = await fetch(`${BASE}/maps/map_1/recommend/readiness?center_lat=37.5&center_lng=127&radius_m=2500`);
+    expect(ok.status).toBe(200);
+    const card = (await ok.json())["음식점"];
+    expect([card.radius_m, card.radius_min_m, card.radius_max_m]).toEqual([3000, 2000, 5000]);
+    for (const bad of ["1999", "5001", "2500.5", "abc"]) {
+      const res = await fetch(`${BASE}/maps/map_1/recommend/readiness?center_lat=37.5&center_lng=127&radius_m=${bad}`);
+      expect(res.status).toBe(422);
+    }
+  });
+
   it("지도가 서울이고 center가 부산이면 422 OUTSIDE_TRIP_REGION — detail.region_label, 크레딧을 쓰지 않는다", async () => {
     resetScenario("happy-path");
     store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };

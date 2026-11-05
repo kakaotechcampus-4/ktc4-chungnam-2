@@ -32,7 +32,7 @@ from authz.guard import require_map_member, require_on_map, require_with_princip
 from authz.ports import MembershipGateway
 from common.errors import AppError
 from pins.schemas import Pin
-from recommend import flows
+from recommend import core, flows
 from recommend.deps import DbSession, EvidencePlanGatewayDep, PlaceFactsGatewayDep, PlaceSearchGatewayDep
 from recommend.loaders import load_run
 from recommend.ports import EvidencePlanGateway, PlaceFactsGateway, PlaceSearchGateway
@@ -60,7 +60,7 @@ EvidenceGate = Depends(require_with_principal("recommend.evidence", load_run))
 def _run_response(run) -> RecommendRunResponse:
     return RecommendRunResponse(
         id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
-        default_radius_walk_min=run.default_radius_walk_min,
+        default_radius_walk_min=core.radius_walk_min_compat(core.run_radius_m(run)), **core.run_radius_fields(run),
     )
 
 
@@ -69,12 +69,21 @@ def get_readiness(
     mapId: str = Path(...), _principal: Principal = RecommendForMap, db: Session = DbSession,
     place_search: PlaceSearchGateway = PlaceSearchGatewayDep,
     center_lat: float | None = Query(None, ge=33, le=39), center_lng: float | None = Query(None, ge=124, le=132),
+    radius_m: str | None = Query(None, pattern=r"^[0-9]+$", max_length=7),
 ):
     """center_lat·center_lng는 함께(#1331) — 하나만 보내면 422. 있으면 curated_nearby를 run 생성의 center와 같은 원으로 센다."""
     if (center_lat is None) != (center_lng is None):
         raise AppError("VALIDATION_ERROR", "center_lat과 center_lng는 함께 보내야 합니다")
     center = (center_lat, center_lng) if center_lat is not None else None
-    return flows.get_readiness(db, map_id=mapId, place_search=place_search, center=center)
+    radius = None
+    if radius_m is not None:   # 숫자만("3000.0"·음수·빈 값은 pattern이 422), 범위는 여기서(#1416). 본문과 같은 2000~5000
+        try:   # 자릿수가 아주 긴 입력은 max_length가 막지만, 변환 예외도 422로 처리한다(500이 아니다)
+            radius = int(radius_m)
+        except ValueError:
+            raise AppError("VALIDATION_ERROR", "radius_m은 정해진 범위의 정수여야 합니다") from None
+        if not core.MIN_RADIUS_M <= radius <= core.WIDEN_LIMIT_M:
+            raise AppError("VALIDATION_ERROR", "radius_m은 정해진 범위의 정수여야 합니다")
+    return flows.get_readiness(db, map_id=mapId, place_search=place_search, center=center, radius_m=radius)
 
 
 @router.get("/maps/{mapId}/runs", response_model=list[RunSummary])
@@ -94,7 +103,7 @@ def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principa
     run = flows.create_run(
         db, map_id=mapId, category=body.category, requested_by=principal.user_id, evidence_planner=evidence_planner,
         idempotency_key=idempotency_key, execute=body.execute, place_search=place_search, place_facts=place_facts,
-        center=(body.center.lat, body.center.lng) if body.center else None,
+        center=(body.center.lat, body.center.lng) if body.center else None, radius_m=body.radius_m,
     )
     return _run_response(run)
 
