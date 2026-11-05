@@ -6,7 +6,7 @@ import ErrorText from '@/ErrorText'
 import { AiHeader } from '@/features/recommend/Readiness'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { KAKAO_ROUTE_MAX } from '@/features/shortlist/model'
-import { useRouteStore } from '@/features/shortlist/routeStore'
+import { openRoute } from '@/features/shortlist/routeStore'
 import Notice from '@/ui/Notice'
 import PingoLoading from '@/ui/PingoLoading'
 
@@ -116,8 +116,6 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
   const drawings = courseDrawings(run, points)
   const showCourse = useCourseMapStore((s) => s.show)
   const setStage = useSheetStore((s) => s.setStage)
-  const setRouteOn = useRouteStore((s) => s.set)
-  const setRouteDay = useRouteStore((s) => s.setDay)
 
   // 지도에 날짜별 선을 긋고, 시트를 접어 지도와 범례(탭 머리)가 보이게 한다. 결과는 그대로 남아 다시 펼치면 보인다.
   // 「동선 보기」는 확정 탭에만, 코스 선은 AI 코스 탭에만 그려서 둘이 겹치지 않는다.
@@ -172,12 +170,8 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
       {mode === 'review' && (
         <Link
           to={`/maps/${mapId}/shortlist`}
-          onClick={() => {
-            // 점검 당시 days 대신 확정 탭의 현재 일정을 본다. 날짜는 장소가 있는 첫날로 고른다.
-            setRouteDay(null)
-            setRouteOn(true)
-            setStage('shortlist', 2)
-          }}
+          // 점검 당시 days 대신 확정 탭의 현재 일정을 본다.
+          onClick={openRoute}
           className="btn-outline btn-md w-full"
         >
           <MapIcon size={16} aria-hidden="true" /> 현재 일정 동선 보기
