@@ -35,7 +35,7 @@ CI가 같은 점검을 매주·의존성 변경 때 돈다. 아래는 이 문서
 - `python-dotenv==1.0.1` → 수정 버전 1.2.2 (PYSEC-2026-2270)
 - `pytest==8.3.3` → 수정 버전 9.0.3 (PYSEC-2026-1845). 테스트 도구인데 운영 요구 파일에 들어 있다 — 분리 여부는 별도 판단
 
-**frontend (npm audit)** — 17건(낮음 1·보통 8·높음 8).
+**frontend (npm audit)** — 개발 도구 포함 19건(낮음 1·보통 8·높음 8·**치명 2**), 개발 도구를 뺀 `--omit=dev` 기준 17건(치명 0). CI는 개발 도구를 포함해 센다. 치명 2건은 `solid-js`→`seroval`(하위 의존성, 개발 도구 쪽)로, 운영 번들에 들어가는지는 확인 못 함 — 별도 조사 후 처리.
 - 대부분 `shadcn` CLI(`dependencies`에 있다)가 끌어오는 하위 패키지다(`@modelcontextprotocol/sdk`, `hono`, `body-parser`, `undici`, `systeminformation`, `zod` 등). 화면 번들에는 들어가지 않는 개발 도구로 보이나, 실제 번들 포함 여부는 확인 못 함
 - `vite`(devDependencies) — 업데이트로 해결된다고 보고됨
 - `shadcn` 자체는 수정에 주 버전 변경이 필요하다고 나온다 — 올리기 전에 영향 확인
