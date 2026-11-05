@@ -11,19 +11,21 @@ const item = (id: string, name: string) =>
 const items = [item('a', '흑돼지식당'), item('b', '우진해장국')]
 
 describe('확정 리스트 줄(일정에 아직 넣지 않은 곳)', () => {
-  it('순서 바꾸기·「위로」「아래로」·밀어서 빼기는 없고, 체크박스로 고르고 「확정 해제」가 있다', async () => {
-    const onCheck = vi.fn()
-    const onRemove = vi.fn()
-    render(<ShortlistList items={items} checked={new Set()} onCheck={onCheck} onOpen={() => {}} onRemove={onRemove} />)
+  it('순서 바꾸기·밀어서 빼기·체크박스·「확정 해제」는 없고, 줄의 「넣기」가 고른 날에 넣는다', async () => {
+    const onPut = vi.fn()
+    const { rerender } = render(<ShortlistList items={items} dayLabel="둘째 날" onPut={onPut} onOpen={() => {}} />)
 
     expect(screen.queryByRole('button', { name: /순서 바꾸기/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '위로' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /빼기/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '확정 해제' })).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('checkbox', { name: '우진해장국 고르기' }))
-    expect(onCheck).toHaveBeenCalledWith('pin_b', true)
-    await userEvent.click(screen.getAllByRole('button', { name: '확정 해제' })[0])
-    expect(onRemove).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }))
+    await userEvent.click(screen.getByRole('button', { name: '우진해장국 둘째 날에 넣기' }))
+    expect(onPut).toHaveBeenCalledWith(expect.objectContaining({ id: 'b' }))
+
+    // 여행 날짜가 없으면 넣을 곳이 없어 「넣기」도 없다.
+    rerender(<ShortlistList items={items} dayLabel="" onOpen={() => {}} />)
+    expect(screen.queryByRole('button', { name: /넣기/ })).not.toBeInTheDocument()
   })
 
   it('「일정 짜기」 패널이 열려 있을 때만 ≡ 가 있고, 끌어서 칸에 놓으면 그 자리에 넣는다', () => {
@@ -39,10 +41,10 @@ describe('확정 리스트 줄(일정에 아직 넣지 않은 곳)', () => {
     const doc = document as { elementFromPoint?: Document['elementFromPoint'] }
     doc.elementFromPoint = () => day
 
-    const { container, rerender } = render(<ShortlistList items={items} checked={new Set()} onCheck={() => {}} onOpen={() => {}} onRemove={() => {}} />)
+    const { container, rerender } = render(<ShortlistList items={items} dayLabel="첫째 날" onOpen={() => {}} />)
     expect(container.querySelector('.cursor-grab')).toBeNull()
 
-    rerender(<ShortlistList items={items} checked={new Set()} onCheck={() => {}} onOpen={() => {}} onRemove={() => {}} onDrop={onDrop} />)
+    rerender(<ShortlistList items={items} dayLabel="첫째 날" onOpen={() => {}} onDrop={onDrop} />)
     const handle = container.querySelectorAll<HTMLElement>('.cursor-grab')[0]
     fireEvent.pointerDown(handle, { clientX: 400, clientY: 100, pointerId: 1 })
     fireEvent.pointerMove(handle, { clientX: 640, clientY: 280, pointerId: 1 })
