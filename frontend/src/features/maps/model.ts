@@ -22,6 +22,8 @@ export type MapView = Pick<MapDto, 'id' | 'title'> & {
   isOwner: boolean
   /** 목록 한 줄 요약 — "10.3 (토) ~ 10.5 (월) · 구성원 4명 · 핀 3개" */
   summary: string
+  /** 카드 「⋯」 메뉴의 수정·삭제·나가기 창이 쓰는 값(#1444). 지도 화면 머리글과 같은 모양이다. */
+  header: MapHeaderView
 }
 
 /** "10.3 (토)" — 화면의 날짜 표기 하나. */
@@ -111,6 +113,7 @@ export function toMapView(map: MapDto): MapView {
     createdByMe: map.created_by_me,
     isOwner: map.my_role === 'owner',
     summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명 · 핀 ${map.pin_count}개`,
+    header: toMapHeaderView(map),
   }
 }
 
