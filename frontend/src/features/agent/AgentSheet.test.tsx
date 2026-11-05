@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
+import { http, HttpResponse } from 'msw'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -118,8 +119,8 @@ describe('우리 조건 요약(#589)', () => {
     expect(screen.getByText('매운 곳 제외 · 1명')).toBeInTheDocument()
     expect(screen.getByText('횟집 원함 · 2명')).toBeInTheDocument()
     expect(screen.getByText('체인점 · 원함 1 / 피함 1')).toBeInTheDocument()
-    expect(screen.getByText('더 적어 주면 반영돼요 · 1건')).toBeInTheDocument()
-    expect(screen.getByText('추천이 거르지 않아요 · 1건')).toBeInTheDocument()
+    expect(screen.getByText('더 적어 주면 반영돼요 (1건)')).toBeInTheDocument()
+    expect(screen.getByText('추천에서 거르지 않는 조건 (1건)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '이 조건으로 음식점 추천 받기' })).toBeInTheDocument()
   })
 
@@ -248,7 +249,7 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
 
     it('found는 「확인되지 않음」 머리 + 서버 문장 그대로 + 문장마다 출처 이름 링크(새 탭)', () => {
       setup(state({ ...split, facts: [facts[0], { ...unknownFact, web: found }] }))
-      const block = screen.getByRole('heading', { name: 'AI 웹 요약 · 확인되지 않음' }).parentElement!
+      const block = screen.getByRole('heading', { name: 'AI 웹 요약 (확인 안 됨)' }).parentElement!
       for (const s of found.statements) {
         expect(screen.getByText(s.text)).toBeInTheDocument()
         const link = screen.getByRole('link', { name: `${s.source_name}에서 보기, 새 탭` })
@@ -264,10 +265,10 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
     it('웹 요약은 web이 있는 그 줄 아래에만 붙는다', () => {
       setup(state({ ...split, facts: [facts[0], { ...unknownFact, web: found }] }))
       const [plain, withWeb] = factLines()
-      expect(plain).not.toHaveTextContent('확인되지 않음')
+      expect(plain).not.toHaveTextContent('확인 안 됨')
       expect(plain.querySelector('a')).toBeNull()
       expect(withWeb).toHaveTextContent('이 주차할 수 있는 곳인지 몰라요')
-      expect(withWeb).toHaveTextContent('AI 웹 요약 · 확인되지 않음')
+      expect(withWeb).toHaveTextContent('AI 웹 요약 (확인 안 됨)')
     })
 
     it.each([['not_found' as const], ['paused' as const]])('%s는 서버 notice 글을 그대로 한 줄 — 화면이 문구를 적지 않는다', (status) => {
@@ -275,7 +276,7 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
       const notice = `서버가 보낸 ${status} 안내 글`
       setup(state({ ...split, facts: [{ ...unknownFact, web: { status, notice, statements: [], checked_at: found.checked_at } }] }))
       expect(screen.getByText(notice)).toBeInTheDocument()
-      expect(screen.queryByText(/확인되지 않음|웹에서도 찾지 못했어요|웹 확인을 쉬고/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/확인 안 됨|웹에서도 찾지 못했어요|웹 확인을 쉬고/)).not.toBeInTheDocument()
       expect(screen.queryByRole('link')).not.toBeInTheDocument()
     })
 
@@ -286,7 +287,7 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
       setup(state({ ...split, facts: [line] }))
       const [only] = factLines()
       expect(only).toHaveTextContent(/^우리 데이터로는 성수 카페이 주차할 수 있는 곳인지 몰라요$/)
-      expect(screen.queryByText(/확인되지 않음/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/확인 안 됨/)).not.toBeInTheDocument()
       expect(screen.queryByRole('link')).not.toBeInTheDocument()
     })
   })
@@ -294,5 +295,147 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
   it('목 서버 시드 지도는 현황 문단을 보낸다', async () => {
     setup()
     expect(await screen.findByRole('region', { name: '지금 지도 현황' })).toBeInTheDocument()
+  })
+})
+
+describe('핑고가 한 일과 살펴본 상태(#1300)', () => {
+  const steps = [
+    { stage: '감지', role: '계산', by: 'code', by_detail: null, text: '의견이 갈린 핀 1곳을 찾았어요' },
+    { stage: '조사', role: '지휘', by: 'ai', by_detail: '모델 → 코드', text: '반대 사유 3개를 읽었어요' },
+  ] satisfies AgentSuggestionDto['steps']
+
+  it('제안 아래 「핑고가 한 일 보기」를 누르면 단계 · 누가 칩 · 문장이 한 줄씩 펼쳐진다', async () => {
+    setup(state({ ...split, steps }))
+    const toggle = screen.getByRole('button', { name: '핑고가 한 일 보기' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('list', { name: '핑고가 한 일' })).not.toBeInTheDocument()
+    await userEvent.click(toggle)
+    const log = screen.getByRole('list', { name: '핑고가 한 일' })
+    expect(log.querySelectorAll('li')).toHaveLength(2)
+    expect(screen.getByText('의견이 갈린 핀 1곳을 찾았어요')).toBeInTheDocument()
+    expect(screen.getByText('모델 → 코드')).toBeInTheDocument()
+    expect(within(log).getByText('AI')).toHaveClass('tag-ai')
+    expect(within(log).getByText('코드')).toHaveClass('tag-neutral')
+    expect(screen.getByRole('button', { name: '핑고가 한 일 접기' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('steps가 없거나 비면 토글을 그리지 않는다', () => {
+    setup(state({ ...split, steps: [] }))
+    expect(screen.queryByRole('button', { name: /핑고가 한 일/ })).not.toBeInTheDocument()
+  })
+
+  it('살펴본 시각을 상대 시각으로, 제안이 없으면 서버 notice 를 그대로 보인다', () => {
+    const checked = new Date(Date.now() - 12 * 60_000).toISOString()
+    setup({ ...state(null), observation: { checked_at: checked, notice: '오늘은 자세히 살펴보는 횟수를 다 썼어요. 내일 다시 볼게요' } })
+    expect(screen.getByText('핑고가 12분 전에 지도를 살펴봤어요')).toBeInTheDocument()
+    expect(screen.getByText('지금은 따로 드릴 제안이 없어요')).toBeInTheDocument()
+    expect(screen.getByText('오늘은 자세히 살펴보는 횟수를 다 썼어요. 내일 다시 볼게요')).toBeInTheDocument()
+  })
+
+  it('관찰한 적이 없으면(checked_at null) 시각 줄을 두지 않는다', () => {
+    setup({ ...state(null), observation: { checked_at: null, notice: null } })
+    expect(screen.queryByText(/지도를 살펴봤어요/)).not.toBeInTheDocument()
+  })
+
+  it('시트 조회가 실패하면 「다시 시도」로 다시 받는다', async () => {
+    let calls = 0
+    server.use(
+      http.get('*/maps/:mapId/agent', () => {
+        calls += 1
+        return calls === 1 ? HttpResponse.json({ code: 'INTERNAL', message: 'x' }, { status: 500 }) : HttpResponse.json(state(null))
+      }),
+    )
+    setup()
+    await userEvent.click(await screen.findByRole('button', { name: '다시 시도' }))
+    expect(await screen.findByText('지금은 따로 드릴 제안이 없어요')).toBeInTheDocument()
+    expect(screen.queryByText('조언을 불러오지 못했어요')).not.toBeInTheDocument()
+  })
+})
+
+describe('막힌 곳 지켜보기와 충돌 선언(#1348)', () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString()
+  const tracking: NonNullable<AgentStateDto['tracking']> = [
+    { suggestion_id: 't1', diagnosis: 'stall', category: '음식점', status: 'watching', text: '음식점 · 추천 받기 뒤로 지켜보는 중', since: hoursAgo(2), tried: [] },
+    { suggestion_id: 't2', diagnosis: 'category_gap', category: '카페', status: 'resolved', text: '카페 · 풀렸어요 — 새 핀이 올라왔어요', since: hoursAgo(5), tried: [] },
+    { suggestion_id: 't3', diagnosis: 'split', category: '관광지', status: 'declared', text: '관광지 · 해 본 것을 남겼어요', since: hoursAgo(26), tried: [] },
+  ]
+  const tried: NonNullable<AgentSuggestionDto['tried']> = [
+    // 순서가 섞여 와도 오래된 것부터 그린다.
+    { action_type: 'search_place', label: '음식점 검색', accepted_at: hoursAgo(4) },
+    { action_type: 'open_recommend', label: '음식점 추천 받기', accepted_at: hoursAgo(9) },
+  ]
+  const triedLabels = () => [...screen.getByRole('heading', { name: '해 본 것' }).parentElement!.querySelectorAll('li')].map((li) => li.firstChild?.nextSibling?.firstChild?.textContent)
+
+  it('지켜보는 곳 셋 상태 — 서버 문구 그대로, 지켜보는 중만 「N시간째」를 따로 붙인다', () => {
+    setup({ ...state(null), tracking })
+    const list = screen.getByRole('heading', { name: '핑고가 지켜보는 곳' }).parentElement!
+    const rows = [...list.querySelectorAll('li')]
+    expect(rows).toHaveLength(3)
+    expect(within(rows[0]).getByText('음식점 · 추천 받기 뒤로 지켜보는 중', { exact: false })).toBeInTheDocument()
+    expect(within(rows[0]).getByText('2시간째')).toBeInTheDocument()
+    expect(within(rows[0]).getByRole('img', { name: '지켜보는 중' })).toBeInTheDocument()
+    expect(within(rows[1]).getByText('5시간 전')).toBeInTheDocument()
+    expect(within(rows[1]).getByRole('img', { name: '풀림' })).toBeInTheDocument()
+    expect(within(rows[2]).getByText('1일 전')).toBeInTheDocument()
+    expect(within(rows[2]).getByRole('img', { name: '해 본 것을 남김' })).toBeInTheDocument()
+    // 숫자는 서버 문구에 섞지 않는다 — 문구 조각은 그대로다.
+    expect(within(rows[0]).getByText('2시간째').parentElement!.firstChild?.textContent).toBe('음식점 · 추천 받기 뒤로 지켜보는 중')
+  })
+
+  it.each([
+    ['없으면', undefined],
+    ['빈 목록이면', []],
+  ])('tracking이 %s 자리를 두지 않는다', (_, t) => {
+    setup({ ...state(null), tracking: t })
+    expect(screen.queryByRole('heading', { name: '핑고가 지켜보는 곳' })).not.toBeInTheDocument()
+  })
+
+  it('모드가 꺼져 있으면 지켜보는 곳을 그리지 않는다', () => {
+    setup({ ...state(null), tracking, settings: { enabled: false, updated_by: null, updated_at: null } })
+    expect(screen.queryByRole('heading', { name: '핑고가 지켜보는 곳' })).not.toBeInTheDocument()
+  })
+
+  it('attempt 1(다음 방법)은 「두 번째 방법」 칩과 해 본 것(오래된 것부터), 버튼은 그대로', () => {
+    setup(state({ ...split, attempt: 1, tried }))
+    expect(screen.getByText('두 번째 방법')).toHaveClass('tag')
+    expect(triedLabels()).toEqual(['음식점 추천 받기', '음식점 검색'])
+    expect(screen.getByRole('button', { name: '갈린 핀 보기' })).toBeInTheDocument()
+  })
+
+  it('attempt 2(충돌 선언)는 버튼 없이 서버 문장만 — 문장이 해 본 것을 나열해 목록을 따로 두지 않는다, 닫기는 남는다', () => {
+    const declared = { ...split, analysis: null, attempt: 2, tried, actions: [], advice: [{ segments: [{ kind: 'text' as const, text: '어떤 조건을 지킬지는 여러분이 정해요' }], is_guess: false }] }
+    setup(state(declared))
+    expect(screen.queryByText('두 번째 방법')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '해 본 것' })).not.toBeInTheDocument()
+    expect(screen.getByText('어떤 조건을 지킬지는 여러분이 정해요')).toBeInTheDocument()
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(expect.not.arrayContaining(['갈린 핀 보기']))
+    expect(screen.getByRole('button', { name: '이 제안 닫기' })).toBeInTheDocument()
+  })
+
+  it('attempt가 없으면 0 — 칩도 해 본 것도 없다', () => {
+    setup(state({ ...split, tried }))
+    expect(screen.queryByText('두 번째 방법')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '해 본 것' })).not.toBeInTheDocument()
+  })
+
+  it('목 서버 기본 시나리오: 지켜보는 중 하나와 풀림 하나', async () => {
+    setup()
+    const head = await screen.findByRole('heading', { name: '핑고가 지켜보는 곳' })
+    expect(head.parentElement!.querySelectorAll('li')).toHaveLength(2)
+    expect(screen.getByText('음식점 · 추천 받기 뒤로 지켜보는 중', { exact: false })).toBeInTheDocument()
+  })
+
+  it('목 서버 agent-declared: 충돌 선언 카드, 작업 기록에 「후속 확인」 줄', async () => {
+    resetScenario('agent-declared')
+    setup()
+    expect(await screen.findByText('음식점은 해 본 방법으로 풀리지 않았어요')).toBeInTheDocument()
+    // 해 본 것은 서버 문장이 말한다 — 목록은 없다.
+    expect(screen.getByText('추천 받기와 장소 검색을 해 봤지만 반대 의견 뒤로 음식점에 새 핀이 없어요')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '해 본 것' })).not.toBeInTheDocument()
+    // 충돌 선언은 버튼이 없다(우리 조건 요약의 추천 버튼은 제안 밖이다).
+    expect(screen.queryByRole('button', { name: /^음식점 (추천 받기|검색)$/ })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '핑고가 한 일 보기' }))
+    expect(screen.getByText('후속 확인')).toBeInTheDocument()
+    expect(screen.getByText('장소 검색 뒤로 4시간 동안 음식점에 새 핀이 없었어요')).toBeInTheDocument()
   })
 })

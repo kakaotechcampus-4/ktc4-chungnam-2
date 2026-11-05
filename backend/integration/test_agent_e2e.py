@@ -345,8 +345,12 @@ def _text(line) -> str:
 
 
 def _later(hours: float) -> datetime:
-    """관찰 시각. 반대 뒤 기준 시간(이벤트가 적으면 3시간 × D-day 계수 1.0, 명세 6.1)을 넘기려고 앞으로 당긴다."""
-    return datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=hours)
+    """관찰 시각. 반대 뒤 기준 시간(이벤트가 적으면 3시간 × D-day 계수 1.0, 명세 6.1)을 넘기려고 앞으로 당긴다.
+
+    KST 자정 전 한 시간에 걸리면 한 시간 더 민다. 뒤따르는 관찰(+10분)이 자정을 넘으면 현황 칸의 dday가 바뀌어
+    「칸이 그대로면 문단을 다시 부르지 않는다」를 보는 단언이 저녁 8시 무렵 CI에서만 깨진다."""
+    t = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=hours)
+    return t + timedelta(hours=1) if kst_date(t) != kst_date(t + timedelta(hours=1)) else t
 
 
 def _stall_map(e2e, *, against):
@@ -398,6 +402,18 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
         {"index": 0, "type": "open_recommend", "label": "음식점 추천 받기", "params": {"category": "음식점"}},
     ]
     assert body["has_unseen"] is True
+    # 작업 기록(11.3, #1297): 코드가 찾고 모델이 도구를 골라 읽고, 코드가 미리 찾고 대조하고 다시 봤다. 숫자는 기록에서 온다
+    assert [(st["stage"], st["role"], st["by"], st["text"]) for st in sug["steps"]] == [
+        ("감지", "계산", "code", "음식점에 반대 의견 2개가 남은 뒤로 새 후보가 없어요"),
+        ("조사", "지휘", "ai", "반대 사유 2개를 읽었어요"),
+        ("조사", "지휘", "ai", "추천 준비를 확인했어요"),
+        ("미리 찾기", "계산", "code", f"지금 조건으로 미리 찾아봤어요 · {run.tool_calls[0]['result']['passed_count']}곳 남아요"),
+        ("우리 데이터", "검증", "code", f"가게 정보 {len(sug['facts'])}개를 우리 데이터에서 확인했어요"),
+        ("검증", "검증", "code", f"숫자와 인용 {len(run.verification['claims']['kept'])}개를 지도와 대조했어요"),
+        ("재확인", "검증", "code", core.STEP_RECHECK),
+    ]
+    steps_text = json.dumps(sug["steps"], ensure_ascii=False)
+    assert not any(leak in steps_text for leak in (*names.values(), SPICY, ALLERGY, "m1", "m2", "m3"))
     # 같은 관찰 끝에서 만든 지도 현황 문단(8.2). 칸에 이름과 사유 글이 없어 문단에도 없다
     [status_run] = e2e.runs(map_id, trigger="status")
     assert (status_run.outcome, status_run.used_model) == ("status_updated", True)
@@ -410,6 +426,8 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     assert summary["not_filtered"] == {"count": 1, "notices": [core.SUMMARY_NOTICES["allergy"]]}
     events = e2e.events(map_id)
     assert {"agent.suggested", "agent.summary_updated"} <= {t for t, _ in events}
+    # 이벤트도 GET과 같은 렌더를 거친다(#1297)
+    assert [p["steps"] for t, p in events if t == "agent.suggested"] == [sug["steps"]]
     assert ALLERGY not in json.dumps([body, events], ensure_ascii=False, default=str)
 
     # 열람은 사람마다, 수락은 지도 단위로 한 번. 서버는 실행하지 않고 버튼의 동작만 돌려준다(명세 16.3)
@@ -424,13 +442,153 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     assert ("agent.resolved", {"suggestion_id": sug["id"], "status": "accepted",
                                "resolved_action_type": "open_recommend"}) in e2e.events(map_id)
 
-    # 다음 관찰: 상황은 그대로지만 사람이 이미 판단한 제안이라 다시 내지 않는다(12.3 중복). 모델도 다시 부르지 않는다
+    # 다음 관찰: 같은 신호는 사람이 이미 판단한 제안이라 다시 내지 않는다(12.3 중복). 그 막힌 곳은 수락 뒤로 지켜보는 중이다(6.9,
+    # #1346) — 이 테스트의 수락은 실제 시각이고 관찰은 4시간 뒤라 기준 시간이 지나 「그대로」로 보고 다음 방법을 낸다. 이미 해 본
+    # 「추천 받기」는 검증이 뺀다. 다음 방법의 전체 흐름은 test_accepted_stall_is_watched_then_next_method_then_declaration
     e2e.tick(now + timedelta(minutes=10))
     last = e2e.runs(map_id)[-1]
-    assert last.outcome == "blocked" and [b_["reason"] for b_ in last.blocked] == ["duplicate"]
-    assert len(diagnosis_requests(e2e.model)) == 3
+    assert last.outcome == "suggested" and [b_["reason"] for b_ in last.blocked] == ["duplicate"]
+    assert len(diagnosis_requests(e2e.model)) == 6
     assert len(e2e.runs(map_id, trigger="status")) == 1   # 칸이 그대로라 현황 문단도 다시 부르지 않는다
-    assert b.get(f"/maps/{map_id}/agent").json()["active_suggestion"] is None
+    nxt = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (nxt["attempt"], [t["action_type"] for t in nxt["tried"]]) == (1, ["open_recommend"])
+    assert all(x["type"] != "open_recommend" for x in nxt["actions"])
+
+
+# ---------------------------------------------------------------- 수락 뒤 지켜보기: 다음 방법 → 충돌 선언(#1346, 6.9)
+
+def followup_brain(our_pins):
+    """첫 제안은 stall_brain 그대로. 다음 방법(attempt 1)이면 해 본 것을 사실로만 말하고, 남은 허용 행동만 고른다. 숫자는 코드 호출
+    기록 f1을 가리킨다(diagnose-v8이 쓰려는 모양, #1347)."""
+    first = stall_brain(our_pins)
+
+    def brain(turn):
+        inp = turn.input
+        if inp.get("attempt") != 1 or not set(inp.get("against_pin_ids") or ()) & our_pins:
+            return first(turn)
+        claims = [ToolClaim(id="c1", kind="tool_result", call_id="f1", path="new_pins", value=0)]
+        advice = [
+            AdviceLine(text="추천 받기를 해 봤지만 새 후보가 지도에 오르지 않았어요", basis=["c1"], is_guess=False),
+            AdviceLine(text="직접 찾아서 올려 보면 좋겠어요", basis=["c1"], is_guess=True),
+        ]
+        actions = [Action(type=t, category=inp["category"], pin_ids=None, basis=["c1"]) for t in inp["allowed_actions"]]
+        return _answer(DiagnosisOutput(decision="suggest", diagnosis="stall", signal_id=inp["signal_id"], claims=claims,
+                                       advice=advice, actions=actions))
+    return brain
+
+
+def test_accepted_stall_is_watched_then_next_method_then_declaration(e2e):
+    """수락 → 활동 → 후속(다음 방법) → 수락 → 충돌 선언. 지켜보는 동안 모델은 부르지 않고, 다음 방법은 진단을 해 본 것과 함께 한 번,
+    충돌 선언은 코드다. 누가 눌렀는지와 추천 결과는 어디에도 없다."""
+    (a, b, c), map_id, pins = _stall_map(e2e, against=[(1, 0, SPICY, ["food_spicy"]), (2, 1, WAITING, None)])
+    e2e.model.brains[DiagnosisOutput] = followup_brain(set(pins))
+
+    e2e.tick(_later(4))
+    first = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (first["attempt"], first["tried"]) == (0, [])
+    assert c.post(f"/agent/suggestions/{first['id']}/accept", json={"action_index": 0}).status_code == 200
+    [watching] = b.get(f"/maps/{map_id}/agent").json()["tracking"]
+    assert (watching["status"], watching["text"]) == ("watching", "음식점 · 추천 받기 뒤로 지켜보는 중")
+    assert [t["label"] for t in watching["tried"]] == ["음식점 추천 받기"]
+    assert len(diagnosis_requests(e2e.model)) == 3
+
+    # 활동: 다른 카테고리에서 두 사람이 핀을 찍었다. 음식점에는 새 핀이 없다 → 그대로 → 다음 방법
+    e2e.pin(b, map_id, "seongsu-cafe-a")
+    e2e.pin(c, map_id, "seongsu-cafe-b")
+    e2e.tick(_later(8))
+    second = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (second["attempt"], [t["action_type"] for t in second["tried"]]) == (1, ["open_recommend"])
+    assert [(x["type"], x["label"]) for x in second["actions"]] == [("search_place", "음식점 검색")]
+    assert [_text(line) for line in second["advice"]][0] == "추천 받기를 해 봤지만 새 후보가 지도에 오르지 않았어요"
+    assert [st["stage"] for st in second["steps"]][:2] == ["감지", "후속 확인"]
+    assert len(diagnosis_requests(e2e.model)) == 4   # 다음 방법은 진단 한 번(도구 없이 답함)
+    assert b.get(f"/maps/{map_id}/agent").json()["tracking"] == []   # 지금 제안인 막힌 곳은 줄에 없다
+
+    # 다음 방법도 수락 → 그대로 → 충돌 선언(코드). 버튼이 없고 해 본 것이 남는다
+    assert a.post(f"/agent/suggestions/{second['id']}/accept", json={"action_index": 0}).status_code == 200
+    e2e.tick(_later(12))
+    third = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (third["attempt"], third["actions"]) == (2, [])
+    assert [t["action_type"] for t in third["tried"]] == ["open_recommend", "search_place"]
+    texts = [_text(line) for line in third["advice"]]
+    assert texts[:2] == ["음식점 추천 받기를 해 봤어요", "음식점 검색을 해 봤어요"]
+    assert texts[-1] == core.DECLARE_CLOSING
+    assert not any(core._squash(p) in core._squash("".join(texts)) for p in core.DECLARE_FORBIDDEN)
+    assert len(diagnosis_requests(e2e.model)) == 4   # 충돌 선언은 모델을 부르지 않는다
+    declared_run = e2e.runs(map_id)[-1]
+    assert (declared_run.outcome, declared_run.used_model) == ("suggested", False)
+
+    events = e2e.events(map_id)
+    suggested = [p for t, p in events if t == "agent.suggested"]
+    assert [p["attempt"] for p in suggested] == [0, 1, 2]
+    dumped = json.dumps([third, suggested, [p for t, p in events if t == "agent.resolved"]], ensure_ascii=False)
+    for leak in (SPICY, WAITING, *e2e.user_ids, "resolved_by"):
+        assert leak not in dumped
+
+
+# ---------------------------------------------------------------- 같은 특징을 반대로 원한 갈림(#1317)
+
+CALM = "분위기가 차분해서 좋아요"
+DULL = "너무 차분하기만 해서 심심했어요"
+
+
+def split_brain(pin_id):
+    """의견 갈림을 진단하는 모델(diagnose-v7이 쓰려는 모양). 미리 센 수(p1)를 쓰고 「추천 받기」와 「장소 검색」을 고른다. 옛 버릇대로
+    「핀 보기」도 하나 섞는다 — 검증이 빼야 한다. 그 핀이 아닌 신호에는 침묵한다."""
+    def brain(turn):
+        inp = turn.input
+        if inp["diagnosis"] != "split" or inp.get("pin_id") != pin_id:
+            return _silent(inp)
+        claims = [
+            CountClaim(id="c1", kind="count", subject="pin", subject_id=pin_id, metric="like", value=inp["counts"]["like"]),
+            CountClaim(id="c2", kind="count", subject="pin", subject_id=pin_id, metric="against",
+                       value=inp["counts"]["against"]),
+            ToolClaim(id="c3", kind="tool_result", call_id="p1", path="passed_count", value=inp["preview"]["passed_count"]),
+        ]
+        advice = [
+            AdviceLine(text="♥ {c1.value}명, 🚫 {c2.value}명으로 갈렸어요", basis=["c1", "c2"], is_guess=False),
+            AdviceLine(text="두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {c3.value}곳 있어요", basis=["c3"],
+                       is_guess=False),
+        ]
+        actions = [
+            Action(type="show_pins", category=None, pin_ids=[pin_id], basis=["c1", "c2"]),
+            Action(type="open_recommend", category="음식점", pin_ids=None, basis=["c1", "c2", "c3"]),
+            Action(type="search_place", category="음식점", pin_ids=None, basis=["c1", "c2"]),
+        ]
+        return _answer(DiagnosisOutput(decision="suggest", diagnosis="split", signal_id=inp["signal_id"], claims=claims,
+                                       advice=advice, actions=actions))
+    return brain
+
+
+def test_same_axis_split_is_previewed_and_points_to_recommend_not_pins(e2e, monkeypatch):
+    """같은 특징(조용함)을 ♥ 쪽은 원하고 🚫 쪽은 피한 갈림. 코드가 미리 세서 모델에 수를 주고, 검증이 「핀 보기」를 빼고, 화면에는
+    추천 받기(남는 곳이 있을 때)와 장소 검색이 남는다(#1317)."""
+    monkeypatch.setitem(KEYWORDS, "심심", ("quiet", False))   # 🚫 글을 먼저 본다 — 「차분」도 들어 있다
+    monkeypatch.setitem(KEYWORDS, "차분", ("quiet", True))
+    a, b, c = e2e.users(a="가온", b="나래", c="다솜")
+    map_id = e2e.shared_map(a, b, c)
+    pin = e2e.pin(a, map_id, "seongsu-kalguksu")
+    e2e.react(a, pin, "like", CALM)
+    e2e.react(b, pin, "like")
+    e2e.react(c, pin, "against", DULL)
+    e2e.model.brains[DiagnosisOutput] = split_brain(pin)
+
+    e2e.tick(_later(4))
+
+    run = e2e.runs(map_id)[-1]
+    assert (run.outcome, run.used_model) == ("suggested", True)
+    [preview] = [t for t in run.tool_calls if t["call_id"] == "p1"]
+    assert (preview["name"], preview["args"]) == ("preview_filter", {"category": "음식점", "with_keys": []})   # ♥ 쪽 키 없이
+    passed = preview["result"]["passed_count"]
+    assert run.verification["actions"]["removed"][0] == {"index": 0, "reason": "type"}   # 「핀 보기」는 허용 버튼이 아니다
+
+    sug = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+    assert (sug["diagnosis"], sug["analysis"]["conflict_type"]) == ("split", "same_axis")
+    assert _text(sug["advice"][1]) == f"두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {passed}곳 있어요"
+    expected = ([("open_recommend", "음식점 추천 받기")] if passed else []) + [("search_place", "음식점 검색")]
+    assert [(x["type"], x["label"]) for x in sug["actions"]] == expected
+    assert [st["text"] for st in sug["steps"] if st["stage"] == "미리 찾기"] == [f"지금 조건으로 미리 찾아봤어요 · {passed}곳 남아요"]
+    assert CALM not in json.dumps(run.tool_calls, ensure_ascii=False) and DULL not in json.dumps(sug, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------- 장애와 조작된 입력
@@ -449,6 +607,9 @@ def test_model_outage_leaves_no_suggestion_and_the_rest_keeps_working(e2e):
     assert [r.outcome for r in e2e.runs(map_id, trigger="status")] == ["model_failed"]
     body = b.get(f"/maps/{map_id}/agent").json()
     assert body["active_suggestion"] is None and body["has_unseen"] is False   # 화면은 "지금은 따로 드릴 제안이 없어요"
+    # 그 아래 실패와 「낼 제안 없음」을 가르는 안내(21.3, #1297). 마지막으로 살펴본 시각도 함께 간다
+    assert body["observation"]["notice"] == core.OBSERVATION_NOTICES["failed"]
+    assert body["observation"]["checked_at"] is not None
     assert body["status"] is None
     assert "agent.suggested" not in {t for t, _ in e2e.events(map_id)}
     # 모델 없이 도는 요약은 그대로 갱신된다 — 모델 장애가 다른 기능을 막지 않는다
@@ -480,14 +641,13 @@ def test_instruction_hidden_in_a_reason_never_reaches_the_screen(e2e):
 # ---------------------------------------------------------------- 추천 막힘 조언: 추천 → 시뮬레이션 → 조언 → 사람이 넓힘
 
 def _thin_run(e2e):
-    """관광지 추천 결과가 0곳인 run. 추천의 기본 지역은 그 카테고리 핀들의 중심에서 관광지 기본 반경(radius_walk_mins)이다.
+    """관광지 추천 결과가 0곳인 run. 추천의 기본 지역은 요청 center(이 하네스는 핀들의 중심)에서 기본 반경 3,000m(core.DEFAULT_RADIUS_M, #1385)다.
     핀은 성수 한가운데 「성수 골목」 하나라(이미 핀이라 후보에서 빠진다) 결과가 없다. 기본 원 밖, 넓히기 상한 안에 다섯 곳이
     있어 「반경 밖 제거」가 뚜렷한 단계(ADVICE_CLEAR_DROP 5곳 이상)가 된다: 기본 원 +150m에 「성수 갤러리」, 넓히기 한 번(+5분)의
     원 +100m에 「서울숲」, 그 바깥 +200·300·400m에 공원 셋. 반경 넓히기 한 번은 갤러리 하나만 더 닿는다. 거리는 반경 값에서
     계산해 관광지 반경이 바뀌어도 그대로 성립한다(#1055)."""
-    walk_min, _limit = recommend_core.radius_walk_mins("관광지")
-    base_m = recommend_core.radius_m_for_walk_min(walk_min)
-    widened_m = recommend_core.radius_m_for_walk_min(recommend_core.next_default_radius_walk_min(walk_min, "관광지"))
+    base_m = recommend_core.DEFAULT_RADIUS_M
+    widened_m = recommend_core.widened_radius_m(base_m)
 
     def east_of_center(meters: float) -> float:   # 중심에서 동쪽으로 meters만큼 간 경도
         return REGION["lng"] + meters / (111_320 * math.cos(math.radians(REGION["lat"])))

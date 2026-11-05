@@ -7,7 +7,7 @@ shortlist와 같은 재사용 원칙) — 이 모듈은 candidate 전용 permiss
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StrictInt, StringConstraints
 
 from authz.schemas import Permissions
 from common import categories
@@ -34,10 +34,22 @@ class Readiness(BaseModel):
     # 기본 지역에서 넓히기 상한 안의 정예 장소 수(#798). 의견 핀이 없어 기본 지역이 없으면 둘 다 없다
     curated_nearby: int | None = Field(default=None, ge=0)
     external_search: ExternalSearch | None = None  # curated_nearby가 0일 때만
+    radius_m: int | None = None   # 기본 추천 반경(m) — 화면이 run을 만들기 전에 원을 그린다. 모든 카테고리 같다(core.DEFAULT_RADIUS_M, #1385)
+    radius_min_m: int | None = None   # 사용자가 고를 수 있는 반경의 하한(core.MIN_RADIUS_M, #1416)
+    radius_max_m: int | None = None   # 상한(core.WIDEN_LIMIT_M)
+
+
+class RunCenter(BaseModel):
+    lat: float = Field(ge=33, le=39)
+    lng: float = Field(ge=124, le=132)
 
 
 class RunCreateRequest(BaseModel):
     category: Category
+    center: RunCenter | None = None
+    # 추천 반경(m, #1416). 정수만(소수·문자열·불리언은 422), 2000~5000(core.MIN_RADIUS_M·WIDEN_LIMIT_M와 같은 값 — 순환 import라 적는다). 없으면 3000
+    # 생략은 None이지만 명시한 null은 422다(계약) — 타입은 정수이고 기본값 None은 검증하지 않는다.
+    radius_m: StrictInt = Field(None, ge=2000, le=5000)
     execute: bool = False   # true면 근거 조립 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다(#845, #847). 생략은 false
 
 
@@ -47,7 +59,9 @@ class RecommendRun(BaseModel):
     category: Category
     status: RunStatus
     attempt_no: int
-    default_radius_walk_min: int  # 기본값 원의 현재 도보 시간(분) — 반경 넓히기마다 +5, 상한은 카테고리별(core.radius_walk_mins)
+    default_radius_walk_min: int  # 호환용(곧 없앤다) — round(default_radius_m / 80)
+    default_radius_m: int | None = None   # 기본값 원의 현재 반경(m) — 기본 3000, 넓히기마다 +1000, 상한 5000(core, #1385)
+    next_default_radius_m: int | None = None   # 넓히면 바뀔 반경(m). 이미 상한이면 null(#1370)
 
 
 class RunSummary(BaseModel):
@@ -60,6 +74,8 @@ class RunSummary(BaseModel):
     created_at: datetime
     candidate_count: int = Field(ge=0)  # 마지막 시도의 후보 수. done이 아니면 0
     published_count: int = Field(ge=0)  # 그 run에서 게시한 후보 수
+    default_radius_m: int | None = None   # RecommendRun.default_radius_m과 같은 값(#1164)
+    next_default_radius_m: int | None = None   # 넓히면 바뀔 반경(m), 이미 상한이면 null(#1370)
 
 
 class EvidenceLine(BaseModel):
@@ -75,6 +91,9 @@ class EvidenceLine(BaseModel):
     # 끈 줄(is_active=false)도 켜면 쓰이는지를 보인다. 쓰이지 않으면 이유(not_enforced_reason)가 따라온다. 응답에는 항상 채워 내려 준다.
     enforced: bool | None = None
     not_enforced_reason: Literal["no_key", "no_direction", "not_for_category", "off_season"] | None = None
+    # 쓰이는 줄이 후보를 빼는가(true, hard와 접근성 필요 조건) 순위만 낮추는가(false, 취향 줄)(#1260). 쓰이지 않으면 null.
+    # core.evidence_line_use(LineUse.filters_candidates)가 정한다.
+    filters_candidates: bool | None = None
     is_active: bool
     permissions: Permissions
 

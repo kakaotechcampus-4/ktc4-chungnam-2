@@ -24,7 +24,9 @@ describe('course model', () => {
   })
 
   it('에러 코드별 문구와 진행 중 run id', () => {
-    expect(createErrorMessage(err('COURSE_NOT_ENOUGH_PLACES'))).toContain('2곳')
+    // 몇 곳부터인지는 서버 detail.min 으로 — 화면에 숫자를 적지 않는다
+    expect(createErrorMessage(err('COURSE_NOT_ENOUGH_PLACES', { min: 3, count: 1 }))).toBe('확정 리스트에 장소를 3곳 이상 담아 주세요')
+    expect(createErrorMessage(err('COURSE_NOT_ENOUGH_PLACES'))).not.toMatch(/\d/)
     expect(createErrorMessage(err('SOMETHING_ELSE'))).toBeNull()
     // 크레딧 오류는 버튼 자리(CreditGate)가 말한다 — 여기서 문구를 만들지 않는다
     expect(createErrorMessage(err('CREDIT_INSUFFICIENT'))).toBeNull()
@@ -39,11 +41,11 @@ describe('course model', () => {
     expect(understandBody('둘째 날은 실내 위주로 이해했어요')).toBe('둘째 날은 실내 위주로 이해했어요')
   })
 
-  it('목표 상태: 지킴 / 못 지킴 / 확인할 수 없어요', () => {
+  it('목표 상태: 지킴 / 못 지킴 / 알 수 없음', () => {
     const g = (met: boolean | null) => goalState({ id: 'a', kind: 'day_indoor', label: 'x', met }).label
     expect(g(true)).toBe('지킴')
     expect(g(false)).toBe('못 지킴')
-    expect(g(null)).toBe('확인할 수 없어요')
+    expect(g(null)).toBe('알 수 없음')
   })
 
   it('날짜 제목은 몇째 날과 요일만, 시간은 없다', () => {

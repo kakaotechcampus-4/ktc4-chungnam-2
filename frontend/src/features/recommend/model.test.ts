@@ -10,10 +10,14 @@ import {
   memberConditions,
   noResultsExternalSearch,
   notEnforcedNote,
+  rerunErrorMessage,
+  runErrorMessage,
   toReadinessCards,
   type CandidateDto,
   visibleConditionCount,
+  runHistoryLine,
   type EvidenceLineDto,
+  type RunSummaryDto,
 } from './model'
 
 const search = { query: '춘천 한식', url: 'https://map.kakao.com/link/search/춘천 한식' }
@@ -136,5 +140,34 @@ describe('후보를 다 보여 준 뒤의 안내(#1142)', () => {
     expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 13 }])).toBe(true)
     expect(hasExcluded([{ key: 'excluded', label: '이미 제안·거절됨', removed_count: 0 }])).toBe(false)
     expect(hasExcluded([{ label: '이미 제안·거절됨', removed_count: 13 }])).toBe(false)
+  })
+})
+
+describe('runHistoryLine (#482 지난 추천)', () => {
+  const r = (over: Partial<RunSummaryDto>): RunSummaryDto => ({ id: 'r', map_id: 'm', category: '음식점', status: 'done', attempt_no: 1, created_at: '2026-11-01T00:00:00Z', candidate_count: 3, published_count: 0, ...over })
+  it('끝난 추천은 찾은 수와 올린 수, 끝나지 않았으면 상태', () => {
+    expect([r({}), r({ published_count: 1 }), r({ candidate_count: 0 }), r({ status: 'failed' }), r({ status: 'executing' })].map(runHistoryLine)).toEqual([
+      '3곳 찾음',
+      '3곳 찾음 · 지도에 올림 1곳',
+      '찾은 곳 없음',
+      '끝내지 못했어요',
+      '찾는 중',
+    ])
+  })
+})
+
+describe('추천 실패 문구(#1385, #1386 리뷰)', () => {
+  const IN_PROGRESS = '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
+
+  it('「추천받기」 시작: 처리 중만 따로, 그 밖은 「추천 장소를 찾지 못했어요」', () => {
+    expect(runErrorMessage(err('REQUEST_IN_PROGRESS'))).toBe(IN_PROGRESS)
+    expect(runErrorMessage(err('VALIDATION_ERROR'))).toBe('추천 장소를 찾지 못했어요')
+    expect(runErrorMessage(new Error('network'))).toBe('추천 장소를 찾지 못했어요')
+  })
+
+  it('다시 추천·넓히기: 결과가 남아 있어 예전 문구, 넓히기 상한과 처리 중은 따로', () => {
+    expect(rerunErrorMessage(err('WIDEN_LIMIT'))).toBe('더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요')
+    expect(rerunErrorMessage(err('REQUEST_IN_PROGRESS'))).toBe(IN_PROGRESS)
+    expect(rerunErrorMessage(err('INTERNAL'))).toBe('추천을 끝내지 못했어요. 잠시 뒤 다시 눌러 주세요')
   })
 })

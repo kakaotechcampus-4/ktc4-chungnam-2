@@ -49,7 +49,7 @@ def previews(monkeypatch):
 
 
 def stall_with_count(inp, call_tool):
-    """미리 돌려 본 수를 p1로 가리키고 「추천 받기」와 「핀 보기」를 고른다."""
+    """미리 돌려 본 수를 p1로 가리키고 「추천 받기」와 「장소 검색」을 고른다."""
     ready = call_tool("get_readiness", {"category": inp["category"]})
     return DiagnosisOutput.model_validate({
         "decision": "suggest", "diagnosis": "stall", "signal_id": inp["signal_id"],
@@ -62,7 +62,7 @@ def stall_with_count(inp, call_tool):
         "advice": [{"text": "지금 조건으로 찾으면 맞는 곳이 {c2.value}곳 있어요", "basis": ["c2"], "is_guess": False}],
         "actions": [
             {"type": "open_recommend", "category": None, "pin_ids": None, "basis": ["c1", "c2"]},
-            {"type": "show_pins", "category": None, "pin_ids": inp["against_pin_ids"], "basis": ["c3"]},
+            {"type": "search_place", "category": None, "pin_ids": None, "basis": ["c3"]},
         ],
     })
 
@@ -85,7 +85,7 @@ def test_stall_preview_goes_into_the_input_and_the_tool_log_as_p1(world, preview
     assert preview["result"] == {"passed_count": 4, "funnel": FUNNEL}
     assert readiness["call_id"] == "t1"   # 모델이 고른 도구 번호는 그대로 t1부터(미리 돌려 보기는 상한에 세지 않는다)
     sug = world.one(AgentSuggestion, map_id=map_id)
-    assert [a["type"] for a in sug.actions] == ["open_recommend", "show_pins"]
+    assert [a["type"] for a in sug.actions] == ["open_recommend", "search_place"]
     assert {"id": "c2", "kind": "tool_result", "call_id": "p1", "path": "passed_count", "value": 4} in sug.claims
 
 
@@ -97,7 +97,7 @@ def test_zero_places_drop_the_recommend_button_but_keep_the_rest(world, previews
     assert observe(world, map_id, FakeGateway(diagnose=stall_with_count)) == "suggested"
 
     sug = world.one(AgentSuggestion, map_id=map_id)
-    assert [a["type"] for a in sug.actions] == ["show_pins"]
+    assert [(a["type"], a["label"]) for a in sug.actions] == [("search_place", "음식점 검색")]   # 새 후보는 검색으로
     run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert run.verification["actions"]["removed"] == [{"index": 0, "reason": "preview_empty"}]
 
@@ -163,16 +163,65 @@ def test_split_on_different_axes_counts_places_that_satisfy_both_sides(world, pr
     assert {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "with_keys_count", "value": 1} in sug.claims
 
 
-def test_split_without_different_axes_does_not_preview(world, previews):
+def split_with_count(inp, call_tool):
+    """반대 사유를 지키는 후보 수(p1 passed_count)를 쓰고 「추천 받기」와 「장소 검색」을 고른다(#1317)."""
+    pin = inp["pin_id"]
+    return DiagnosisOutput.model_validate({
+        "decision": "suggest", "diagnosis": "split", "signal_id": inp["signal_id"],
+        "claims": [
+            {"id": "c1", "kind": "count", "subject": "pin", "subject_id": pin, "metric": "like", "value": 2},
+            {"id": "c2", "kind": "count", "subject": "pin", "subject_id": pin, "metric": "against", "value": 1},
+            {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "passed_count",
+             "value": inp["preview"]["passed_count"]},
+        ],
+        "advice": [{"text": "두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {c3.value}곳 있어요", "basis": ["c3"],
+                    "is_guess": False}],
+        "actions": [
+            {"type": "open_recommend", "category": "음식점", "pin_ids": None, "basis": ["c1", "c2", "c3"]},
+            {"type": "search_place", "category": "음식점", "pin_ids": None, "basis": ["c1", "c2"]},
+        ],
+    })
+
+
+class SameAxis(FakeGateway):
+    """② 대역 — ♥ 글은 조용한 곳 원함, 🚫 글은 조용한 곳 피함(같은 특징을 반대로, same_axis)."""
+    KEYS = {LIKE_TEXT: ("quiet", True), AGAINST_TEXT: ("quiet", False)}
+
+    def structure(self, raw):
+        return [[llm_api.EvidenceLine(source="reaction", text=r["text"], badge=r["badge"], fact_key=self.KEYS[r["text"]][0],
+                                      wants=self.KEYS[r["text"]][1])] for r in raw]
+
+
+@pytest.mark.parametrize("gateway_class, conflict", [(SameAxis, "same_axis"), (FakeGateway, "unclear")])
+def test_split_without_different_axes_previews_without_keys(world, previews, gateway_class, conflict):
+    """same_axis·unclear 갈림도 그 카테고리 근거 전부로 미리 센다(#1317). ♥ 쪽 키는 더하지 않는다."""
     calls, _ = previews
-    map_id, _, _, _ = _split_map(world)   # dev ②는 키를 붙이지 않아 unclear다
-    gateway = FakeGateway(diagnose=lambda inp, call: DiagnosisOutput(
-        decision="silent", diagnosis="split", signal_id=inp["signal_id"], claims=[], advice=[], actions=[]))
+    map_id, _, _, _ = _split_map(world)   # dev ②(FakeGateway)는 키를 붙이지 않아 unclear다
+    gateway = gateway_class(diagnose=split_with_count)
 
-    observe(world, map_id, gateway)
+    assert observe(world, map_id, gateway) == "suggested"
 
-    assert calls == [] and gateway.inputs[0]["preview"] is None
-    assert gateway.inputs[0]["comparison"]["conflict_type"] == "unclear"
+    [inp] = gateway.inputs
+    assert inp["comparison"]["conflict_type"] == conflict
+    assert inp["preview"] == {"passed_count": 4}
+    [call] = calls
+    assert (call["category"], call["with_keys"]) == ("음식점", [])
+    sug = world.one(AgentSuggestion, map_id=map_id)
+    assert [(a["type"], a["label"]) for a in sug.actions] == [("open_recommend", "음식점 추천 받기"), ("search_place", "음식점 검색")]
+    assert {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "passed_count", "value": 4} in sug.claims
+
+
+def test_same_axis_split_with_zero_places_keeps_only_search(world, previews):
+    _, counts = previews
+    counts["passed"] = 0
+    map_id, _, _, _ = _split_map(world)
+
+    assert observe(world, map_id, SameAxis(diagnose=split_with_count)) == "suggested"
+
+    sug = world.one(AgentSuggestion, map_id=map_id)
+    assert [a["type"] for a in sug.actions] == ["search_place"]
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
+    assert run.verification["actions"]["removed"] == [{"index": 0, "reason": "preview_empty"}]
 
 
 def test_the_real_preview_passes_through_recommend_and_returns_counts_only(world):

@@ -104,10 +104,22 @@ def result(c, rid):
         time.sleep(1)
 
 
+_MAP_REGION: dict = {}   # 지도 id → 만들 때 준 region. 추천 요청의 center로 쓴다(#1331)
+
+
 def new_map(c, start="2026-11-10", end="2026-11-12", **kw):
-    r = c.post("/maps", json={"title": "QA 지도", "start_date": start, "end_date": end, "region": SEONGSU, **kw})
+    region = kw.pop("region", SEONGSU)
+    r = c.post("/maps", json={"title": "QA 지도", "start_date": start, "end_date": end, "region": region, **kw})
     assert r.status_code == 201, r.text
-    return r.json()["id"]
+    mid = r.json()["id"]
+    _MAP_REGION[mid] = region
+    return mid
+
+
+def run_body(mid, cat="음식점", **kw):
+    """POST /maps/{mid}/runs 본문. center는 필수다(#1331) — FE처럼 지도 화면 중심, 여기서는 그 지도를 만들 때 준 지역."""
+    region = _MAP_REGION.get(mid, SEONGSU)
+    return {"category": cat, "center": {"lat": region["lat"], "lng": region["lng"]}, **kw}
 
 
 def add_pin(c, mid, skip=0, cat="음식점", fact=None):
@@ -166,7 +178,7 @@ def a04_a05():
 def a06_a09():
     _, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
     c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
-    run = c.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+    run = c.post(f"/maps/{mid}/runs", json=run_body(mid))
     rid = run.json()["id"]
     r = c.patch(f"/runs/{rid}/evidence", json={"add": [{"text": t} for t in ["한식", "조용한 곳", "주차 가능", "웨이팅 짧음", "가성비"]]})
     check("A06", r.status_code == 200, "5줄 200", f"{r.status_code} {r.text[:150]}")
@@ -244,7 +256,7 @@ def b04_b08():
     codes = []
     for i in range(31):
         cat = ("음식점", "카페", "관광지")[i % 3]
-        r = c.post(f"/maps/{mid}/runs", json={"category": cat}); codes.append(r.status_code)
+        r = c.post(f"/maps/{mid}/runs", json=run_body(mid, cat)); codes.append(r.status_code)
     last = r
     d = last.json().get("detail") or {}
     check("B04", codes[:30] == [202] * 30 and codes[30] == 402 and last.json().get("code") == "CREDIT_INSUFFICIENT"
@@ -265,7 +277,7 @@ def c01_c05():
     n = len(c.get(f"/pins/{pin}/reactions").json())
     check("C01", all(x == 200 for x in codes) and n == 1, f"동시 6개 PUT → 모두 200, 반응 1개", f"{codes}, 저장 {n}개")
     c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "좋아요"})
-    run = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}); rid = run.json()["id"]
+    run = c.post(f"/maps/{mid}/runs", json=run_body(mid)); rid = run.json()["id"]
     c.post(f"/runs/{rid}/regions/confirm", json={})
     def exe(_):
         return client(c.cookies).post(f"/runs/{rid}/execute").status_code
@@ -287,7 +299,7 @@ def c01_c05():
 def l01_l04():
     uid, c = user(); mid = new_map(c); pin = add_pin(c, mid).json()["id"]
     c.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
-    rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
+    rid = c.post(f"/maps/{mid}/runs", json=run_body(mid)).json()["id"]
     c.post(f"/runs/{rid}/regions/confirm", json={}); c.post(f"/runs/{rid}/execute")
     tok = c.post(f"/maps/{mid}/invite").json()["token"]
     c.delete(f"/maps/{mid}")
@@ -365,7 +377,7 @@ def p01():
     pin3 = add_pin(a, mid, skip=2).json()["id"]; a.delete(f"/pins/{pin3}")   # 휴지통에 있는 핀
     sched_ver = a.get(f"/maps/{mid}/shortlist/schedule").json()["version"]
     tok = a.post(f"/maps/{mid}/invite").json()["token"]
-    rid = a.post(f"/maps/{mid}/runs", json={"category": "음식점", "execute": True}).json()["id"]
+    rid = a.post(f"/maps/{mid}/runs", json=run_body(mid, execute=True)).json()["id"]
     cands = (result(a, rid).json() or {}).get("candidates") or []
     _, lat, lng, _ = place()
     body_pin = {"category": "음식점", "place_id": "hint", "place_name": "QA", "lat": lat, "lng": lng}
@@ -382,7 +394,7 @@ def p01():
         ("POST", f"/reviews/{review}/reports", None),
         ("PUT", f"/pins/{pin}/reaction", {"type": "like"}), ("GET", f"/pins/{pin}/reactions", None),
         ("GET", f"/maps/{mid}/recommend/readiness", None), ("GET", f"/maps/{mid}/runs", None),
-        ("POST", f"/maps/{mid}/runs", {"category": "음식점"}),
+        ("POST", f"/maps/{mid}/runs", run_body(mid)),
         *[("POST", f"/candidates/{x['id']}/publish", None) for x in cands[:1]],   # 다시 추천이 후보를 바꾸기 전에
         ("GET", f"/runs/{rid}/evidence", None), ("PATCH", f"/runs/{rid}/evidence", {"add": [{"text": "조용한 곳"}]}),
         ("POST", f"/runs/{rid}/regions/confirm", {}), ("POST", f"/runs/{rid}/execute", None),
@@ -422,7 +434,7 @@ def l02_l03():
     tok = a.post(f"/maps/{mid}/invite").json()["token"]; b.post(f"/invites/{tok}/accept")
     pin = add_pin(b, mid).json()["id"]
     b.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "좋아요"})
-    rid = b.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
+    rid = b.post(f"/maps/{mid}/runs", json=run_body(mid)).json()["id"]
     b.post("/auth/withdraw")
     r = b.get(f"/runs/{rid}/result")
     check("L02", r.status_code in (401, 403, 404), f"탈퇴한 요청자 접근 {r.status_code}", f"{r.status_code}")
@@ -456,9 +468,9 @@ def r3_widen_retry():
     pa = add_pin(a, mid).json()["id"]
     pb = add_pin(b, mid, skip=7).json()["id"]
     a.put(f"/pins/{pa}/reaction", json={"type": "like"})   # A는 사유 글 없이 — 30번 돌려도 ② 호출이 없다
-    codes_a = [a.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(31)]
+    codes_a = [a.post(f"/maps/{mid}/runs", json=run_body(mid)).status_code for _ in range(31)]
     b.put(f"/pins/{pb}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})   # B06의 결과용, ② 1번
-    r = b.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+    r = b.post(f"/maps/{mid}/runs", json=run_body(mid))
     check("B05", codes_a[:30] == [202] * 30 and codes_a[30] == 402 and r.status_code == 202,
           "A 30회 후 402, B는 자기 크레딧으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
     rid = r.json()["id"]
@@ -505,7 +517,7 @@ def r3_evidence_enforced():
     pid = add_pin(c, mid).json()["id"]; pid2 = add_pin(c, mid, skip=2, fact="cuisine_western").json()["id"]
     c.put(f"/pins/{pid}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
     c.put(f"/pins/{pid2}/reaction", json={"type": "against", "reason_text": "땅콩 알레르기가 있어서 못 먹어요"})
-    rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
+    rid = c.post(f"/maps/{mid}/runs", json=run_body(mid)).json()["id"]
     ev = c.get(f"/runs/{rid}/evidence").json()
     if not any("enforced" in e for e in ev):
         rec("E720", "INFO", "enforced 필드 아직 없음(#720 구현 미병합)"); return
@@ -520,7 +532,7 @@ def r3_republish_exclusion():
     pid = add_pin(c, mid).json()["id"]
     c.put(f"/pins/{pid}/reaction", json={"type": "like", "reason_text": "한식이 좋아요"})
     def run_once():
-        rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).json()["id"]
+        rid = c.post(f"/maps/{mid}/runs", json=run_body(mid)).json()["id"]
         c.post(f"/runs/{rid}/regions/confirm", json={}); c.post(f"/runs/{rid}/execute")
         return rid, result(c, rid).json().get("candidates", [])
     rid1, c1 = run_once()
@@ -531,6 +543,50 @@ def r3_republish_exclusion():
     names2 = [x["place_name"] for x in c2]
     check("R11", c1 and c2 and not set(names1) & set(names2), f"1차 {names1} → 2차 {names2} (겹침 없음)",
           f"1차 {names1} → 2차 {names2} (겹침 {set(names1) & set(names2)})")
+
+
+# ───────── 추천 반경(#1416)·여행 지역 밖(#1385) — 서버가 고른 반경을 받는지, 범위 밖을 막는지 ─────────
+HAEUNDAE = {"lat": 35.1587, "lng": 129.1604}   # 서울 지도에서 원 전체가 여행 지역 밖인 중심(시·도 경계가 적재돼 있어야 한다)
+
+
+def r20_user_radius():
+    """R20~R23: radius_m 2000~5000 정수만(고른 값이 default_radius_m, 넓히기 다음 값), 범위 밖·정수 아님 422, readiness 범위 값, 여행 지역 밖 422.
+    ♥는 사유 글 없이 남겨 ② 호출이 없고 execute 하지 않아 모델 비용 0이다."""
+    _, c = user(); mid = new_map(c)
+    pid = add_pin(c, mid).json()["id"]
+    c.put(f"/pins/{pid}/reaction", json={"type": "like"})
+    # R20: 고른 반경이 run의 반경이 된다
+    low = c.post(f"/maps/{mid}/runs", json=run_body(mid, radius_m=2000))
+    high = c.post(f"/maps/{mid}/runs", json=run_body(mid, radius_m=5000))
+    lj, hj = (low.json() if low.status_code == 202 else {}), (high.json() if high.status_code == 202 else {})
+    check("R20", low.status_code == high.status_code == 202 and (lj.get("default_radius_m"), lj.get("next_default_radius_m")) == (2000, 3000)
+          and (hj.get("default_radius_m"), hj.get("next_default_radius_m")) == (5000, None),
+          "2000 → 기본 2000·다음 3000, 5000 → 기본 5000·다음 없음", f"{low.status_code} {low.text[:120]} / {high.status_code} {high.text[:120]}")
+    # R21: 범위 밖·정수 아님은 422 VALIDATION_ERROR, 크레딧·run을 쓰지 않는다
+    before = _credits(c)["balance"]
+    bad = {}
+    for v in (1999, 5001, 2500.5, "3000", True, None):
+        r = c.post(f"/maps/{mid}/runs", json=run_body(mid, radius_m=v))
+        bad[repr(v)] = (r.status_code, r.json().get("code") if r.headers.get("content-type", "").startswith("application/json") else None)
+    check("R21", all(x == (422, "VALIDATION_ERROR") for x in bad.values()) and _credits(c)["balance"] == before,
+          f"6종 모두 422, 크레딧 그대로({before})", f"{bad} 크레딧 {before}→{_credits(c)['balance']}")
+    # R22: readiness 범위 값과 쿼리 radius_m 검증
+    q = {"center_lat": SEONGSU["lat"], "center_lng": SEONGSU["lng"]}
+    ok = c.get(f"/maps/{mid}/recommend/readiness", params={**q, "radius_m": 2500})
+    card = ok.json().get("음식점", {}) if ok.status_code == 200 else {}
+    bads = {v: c.get(f"/maps/{mid}/recommend/readiness", params={**q, "radius_m": v}).status_code for v in ("1999", "5001", "2500.5", "abc")}
+    check("R22", ok.status_code == 200 and (card.get("radius_m"), card.get("radius_min_m"), card.get("radius_max_m")) == (3000, 2000, 5000)
+          and all(v == 422 for v in bads.values()),
+          "radius_m 3000·min 2000·max 5000, 범위 밖·숫자 아님 422", f"{ok.status_code} {card} / {bads}")
+    # R23: 서울 지도에서 부산 중심은 원 전체가 여행 지역 밖 — 422 OUTSIDE_TRIP_REGION, 크레딧·run을 쓰지 않는다(시·도 경계 적재 필요)
+    before = _credits(c)["balance"]
+    out = c.post(f"/maps/{mid}/runs", json={"category": "음식점", "center": HAEUNDAE})
+    code = out.json().get("code") if out.headers.get("content-type", "").startswith("application/json") else None
+    after_out = _credits(c)["balance"]   # 지역 안 요청은 크레딧을 쓰므로 거절 직후에 잰다
+    inside = c.post(f"/maps/{mid}/runs", json=run_body(mid))
+    check("R23", out.status_code == 422 and code == "OUTSIDE_TRIP_REGION" and after_out == before and inside.status_code == 202,
+          "부산 중심 422 OUTSIDE_TRIP_REGION(크레딧 그대로), 지역 안은 202",
+          f"부산 {out.status_code} {code}(202면 sido_boundaries 17행 적재 확인) / 지역 안 {inside.status_code} / 거절 직후 크레딧 {before}→{after_out}")
 
 
 # ───────── 크레딧 원장(W, #1091) — docs/credits-reviews.md 3·5절 ─────────
@@ -561,7 +617,7 @@ def w01_w07():
     c.delete(f"/pins/{p1}/reviews/me")
 
     k = max(1, reward // 2)   # 상한 바로 아래로 내려 보상이 상한까지만 채우는지 본다(30 → 25, 보상 10 → +5)
-    codes = [c.post(f"/maps/{mid}/runs", json={"category": "음식점"}).status_code for _ in range(k)]
+    codes = [c.post(f"/maps/{mid}/runs", json=run_body(mid)).status_code for _ in range(k)]
     bal = _credits(c)["balance"]
     again = _review(c, p1).json()
     check("W02", first.get("credited") == 0 and first.get("balance") == cap and again.get("credited") == 0 and again.get("balance") == bal,
@@ -574,8 +630,8 @@ def w01_w07():
           f"{k}번 추천 뒤 {bal}에서 새 장소 후기 +{want}, 고치기 0", f"추천 {codes}, 잔액 {bal}, 새 후기 {new}, 고치기 {edit}")
 
     before = _credits(c)["balance"]; key = uuid.uuid4().hex
-    r1 = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}, headers={"Idempotency-Key": key})
-    r2 = c.post(f"/maps/{mid}/runs", json={"category": "음식점"}, headers={"Idempotency-Key": key})
+    r1 = c.post(f"/maps/{mid}/runs", json=run_body(mid), headers={"Idempotency-Key": key})
+    r2 = c.post(f"/maps/{mid}/runs", json=run_body(mid), headers={"Idempotency-Key": key})
     after = _credits(c)["balance"]
     check("W04", r1.status_code == 202 and r2.is_success and r1.json().get("id") == r2.json().get("id") and after == before - price,
           f"같은 키 두 번 → 같은 run, {price}만 빠짐", f"{r1.status_code}/{r2.status_code} 같은 run {r1.json().get('id') == r2.json().get('id')}, 잔액 {before} → {after}")
@@ -584,7 +640,7 @@ def w01_w07():
     uid2, z = user(); _W_USERS.append(uid2); zmid = new_map(z, region=BUSAN)
     zp = add_pin(z, zmid).json()["id"]; z.put(f"/pins/{zp}/reaction", json={"type": "like"})
     b0 = _credits(z)["balance"]
-    run = z.post(f"/maps/{zmid}/runs", json={"category": "음식점", "execute": True})
+    run = z.post(f"/maps/{zmid}/runs", json=run_body(zmid, execute=True))
     rid = run.json().get("id"); res = result(z, rid) if rid else run
     b1 = _credits(z)["balance"]
     zero = res.status_code == 404 and res.json().get("code") == "NO_RESULTS"
@@ -602,7 +658,7 @@ def w01_w07():
     if gr.status_code != 201:
         rec("W06", "INFO", f"게스트를 만들지 못함({gr.status_code}) — 게스트 상한 때문일 수 있음")
     else:
-        gm = g.get("/credits/me"); gr2 = g.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+        gm = g.get("/credits/me"); gr2 = g.post(f"/maps/{mid}/runs", json=run_body(mid))
         ok = all(x.status_code == 403 and x.json().get("code") == "GUEST_NOT_ALLOWED"
                  and (x.json().get("detail") or {}).get("initial_credits") == cap for x in (gm, gr2))
         check("W06", ok, f"게스트 /credits/me·추천 403 GUEST_NOT_ALLOWED, initial_credits {cap}",
@@ -626,7 +682,7 @@ def _zero_run():
     """0곳 run — 부산 지도에 서울 핀(W05와 같은 전제). (client, run_id, 결과 응답)"""
     _, z = user(); zmid = new_map(z, region=BUSAN)
     zp = add_pin(z, zmid).json()["id"]; z.put(f"/pins/{zp}/reaction", json={"type": "like"})
-    rid = z.post(f"/maps/{zmid}/runs", json={"category": "음식점", "execute": True}).json().get("id")
+    rid = z.post(f"/maps/{zmid}/runs", json=run_body(zmid, execute=True)).json().get("id")
     return z, rid, result(z, rid)
 
 
@@ -653,7 +709,7 @@ def c02():
     price = _credits(c)["prices"]["recommend_run"]
     def post(key):
         h = {"Idempotency-Key": key} if key else {}
-        return client(c.cookies).post(f"/maps/{mid}/runs", json={"category": "음식점"}, headers=h)
+        return client(c.cookies).post(f"/maps/{mid}/runs", json=run_body(mid), headers=h)
     b0 = _credits(c)["balance"]
     with ThreadPoolExecutor(2) as ex:
         rs = list(ex.map(post, [None, None]))
@@ -740,7 +796,7 @@ def w09():
     pin = add_pin(c, mid).json()["id"]; c.put(f"/pins/{pin}/reaction", json={"type": "like"})
     me = _credits(c); price = me["prices"]["recommend_run"]
     for _ in range(me["balance"] // price):
-        c.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+        c.post(f"/maps/{mid}/runs", json=run_body(mid))
     _two_shortlisted(c, mid, (1, 2))   # 0번 장소는 ♥ 핀으로 이미 있다
     r = c.post(f"/maps/{mid}/courses", json={}); d = r.json().get("detail") or {}
     latest = c.get(f"/maps/{mid}/courses/latest")
@@ -752,7 +808,7 @@ def w09():
 def c06():
     _, a = user(); mid = new_map(a); pin = add_pin(a, mid).json()["id"]
     a.put(f"/pins/{pin}/reaction", json={"type": "like"})
-    a.post(f"/maps/{mid}/runs", json={"category": "음식점"})   # 새 계정은 잔액이 상한이라 보상이 0 — 1번 써서 상한 아래로 내린다(♥ 글 없음)
+    a.post(f"/maps/{mid}/runs", json=run_body(mid))   # 새 계정은 잔액이 상한이라 보상이 0 — 1번 써서 상한 아래로 내린다(♥ 글 없음)
     me = _credits(a); before = me["balance"]
     want = min(me["review_reward"], me["max_balance"] - before)
     def put(_):
@@ -836,7 +892,7 @@ def _withdraw_case(uid, c, with_data=True):
     mid = new_map(c); pin = add_pin(c, mid).json()["id"]
     c.put(f"/pins/{pin}/reaction", json={"type": "like"})
     for _ in range(3):
-        c.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+        c.post(f"/maps/{mid}/runs", json=run_body(mid))
     return mid, len(c.get(f"/maps/{mid}/pins").json()), _credits(c)["balance"]
 
 
@@ -898,7 +954,7 @@ def l10():
     xid, x = user(); uid, m = user(); mid = new_map(x)
     m.post(f"/invites/{x.post(f'/maps/{mid}/invite').json()['token']}/accept")
     pin = add_pin(m, mid).json()["id"]
-    m.put(f"/pins/{pin}/reaction", json={"type": "like"}); m.post(f"/maps/{mid}/runs", json={"category": "음식점"})
+    m.put(f"/pins/{pin}/reaction", json={"type": "like"}); m.post(f"/maps/{mid}/runs", json=run_body(mid))
     _review(m, pin)
     name = m.get("/auth/me").json()["display_name"]
     q = lambda t: _count(f"select count(*) from {t} where user_id=:u", u=uid)
@@ -1011,7 +1067,7 @@ def g01():
                 c.put(f"/pins/{pin2}/reaction", json={"type": "against", "reason_text": f"별로예요 {secret}"}),
                 _review(c, pin, f"후기 {secret}"), c.get("/places/search", params={"q": secret}),
                 c.post("/feedback", json={"message": f"피드백 {secret}"})]
-        rid = c.post(f"/maps/{mid}/runs", json={"category": "음식점", "execute": True}).json().get("id")
+        rid = c.post(f"/maps/{mid}/runs", json=run_body(mid, execute=True)).json().get("id")
         if rid:
             result(c, rid)
     finally:
@@ -1233,7 +1289,7 @@ for _k, _f in (("B07", b07), ("C02", c02), ("W08", w08_s07), ("W09", w09), ("C06
     CASES[_k] = _f
 for _k, _f in (("S01", s01), ("S02", s02)):
     CASES[_k] = _f
-for _k, _f in (("L07", l07), ("L09", l09), ("L10", l10), ("W10", w10), ("LOG01", g01)):
+for _k, _f in (("L07", l07), ("L09", l09), ("L10", l10), ("W10", w10), ("LOG01", g01), ("R20", r20_user_radius)):
     CASES[_k] = _f
 
 if __name__ == "__main__":

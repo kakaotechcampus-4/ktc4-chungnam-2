@@ -14,7 +14,7 @@ from recommend import api, core, flows, service
 from recommend.models import Candidate, Exclusion, RecommendRun, Region
 from recommend.models import EvidenceLine as EvidenceLineRow
 from recommend.ports import PlaceStub
-from recommend.tests.test_flows import PLANNER, _FakePlaceFacts, _FakePlaceSearch, _make_members, _make_pin, _react
+from recommend.tests.test_flows import PLANNER, _CirclePlaceSearch, _FakePlaceFacts, _make_members, _make_pin, _react
 
 CATEGORY = "음식점"
 HANSIK_TEXT = "한식 말고 고기 먹고 싶어요"
@@ -39,7 +39,7 @@ PLACES.append(PlaceStub(place_id="far", lat=35.2, lng=129.0))
 
 
 def _gateways():
-    return {"place_search": _FakePlaceSearch(PLACES), "place_facts": _FakePlaceFacts(FACTS)}
+    return {"place_search": _CirclePlaceSearch(PLACES), "place_facts": _FakePlaceFacts(FACTS)}
 
 
 def _planned(raw):
@@ -92,18 +92,36 @@ def test_same_reasons_give_the_same_count_as_a_run_up_to_the_disqualify_step(db_
 
     assert preview["funnel"] == _filter_stages(run.last_funnel)
     assert preview["funnel"] == [
-        {"key": "pool", "removed_count": 0}, {"key": "radius", "removed_count": 1},
-        {"key": "closed", "removed_count": 0}, {"key": "disqualify", "removed_count": 2},
+        {"key": "pool", "removed_count": 0}, {"key": "radius", "removed_count": 0},
+        {"key": "closed", "removed_count": 0}, {"key": "disqualify", "removed_count": 0},
     ]
     # 제외가 없는 run이라 통과 수가 같다. 결과(상위 3곳)보다 많다
-    assert preview["passed_count"] == core.passed_count(result_count, core.keyed_funnel(run.last_funnel)) == 5
+    assert preview["passed_count"] == core.passed_count(result_count, core.keyed_funnel(run.last_funnel)) == 7
     assert result_count == 3
+
+
+def test_preview_with_center_gives_the_same_funnel_as_a_run_with_that_center_1331(db_session, monkeypatch):
+    """중심이 핀과 다른 곳이어도 같은 center로 돌린 미리 돌려 보기 깔때기 == 실제 run 깔때기."""
+    text_lines = _world(db_session)
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    monkeypatch.setattr(PLANNER, "plan_evidence", _planned)
+    db_session.commit()
+    center = (35.1006, 129.0)   # 핀(35.1)보다 북쪽 — 마지막 장소들은 가깝고 far(35.2)는 여전히 멀다
+    run = flows.create_run(db_session, map_id="map_1", category=CATEGORY, requested_by="user_1",
+                           evidence_planner=PLANNER, center=center)
+    flows.execute_run(db_session, run_id=str(run.id), **_gateways())
+
+    preview = _preview(db_session, text_lines, center=center)
+
+    assert preview["funnel"] == _filter_stages(run.last_funnel)
+    result_count = len(service.list_candidates(db_session, str(run.id)))
+    assert preview["passed_count"] == core.passed_count(result_count, core.keyed_funnel(run.last_funnel))
 
 
 def test_a_wanted_cuisine_in_a_against_reason_is_demoted_like_in_a_run(db_session):
     """#422 — 🚫 글의 「고기」 원함은 선호라 cuisine_bbq가 거짓인 g도 남는다. 줄 조립을 run과 같은 함수로 해서다."""
     text_lines = _world(db_session)
-    only_spicy_and_korean = {"a", "d", "e", "f", "g"}
+    only_spicy_and_korean = {"a", "b", "c", "d", "e", "f", "g"}
 
     preview = _preview(db_session, text_lines, with_keys=["cuisine_bbq"])
 
@@ -120,7 +138,7 @@ def test_exclusions_are_neither_read_nor_applied(db_session, monkeypatch):
         requested_by="user_1",
     )
     after = api.simulate_filter(db_session, run_id=str(run.id), **_gateways())["before"]
-    assert after["passed_count"] == 3   # run은 제안한 두 곳을 뺀다
+    assert after["passed_count"] == 5   # run은 제안한 두 곳을 뺀다
 
     def no_exclusions(*args, **kwargs):
         raise AssertionError("미리 돌려 보기는 제외 목록을 읽지 않는다")
@@ -129,16 +147,16 @@ def test_exclusions_are_neither_read_nor_applied(db_session, monkeypatch):
     monkeypatch.setattr(service, "list_excluded_place_ids", no_exclusions)
     monkeypatch.setattr(flows.pins_api, "list_disliked_place_ids", no_exclusions)
 
-    assert _preview(db_session, text_lines)["passed_count"] == 5
+    assert _preview(db_session, text_lines)["passed_count"] == 7
 
 
 def test_with_keys_counts_only_places_whose_labels_are_all_known_true(db_session):
     text_lines = _world(db_session)
 
     assert _preview(db_session, text_lines)["with_keys_count"] is None   # 키가 없으면 세지 않는다
-    assert _preview(db_session, text_lines, with_keys=["quiet"])["with_keys_count"] == 1   # a만 참. d는 거짓, e·f·g는 모름
-    assert _preview(db_session, text_lines, with_keys=["quiet", "quiet"])["with_keys_count"] == 1
-    assert _preview(db_session, text_lines, with_keys=["quiet", "spicy_focused"])["with_keys_count"] == 0   # 둘 다 참이어야
+    assert _preview(db_session, text_lines, with_keys=["quiet"])["with_keys_count"] == 2
+    assert _preview(db_session, text_lines, with_keys=["quiet", "quiet"])["with_keys_count"] == 2
+    assert _preview(db_session, text_lines, with_keys=["quiet", "spicy_focused"])["with_keys_count"] == 1
 
 
 def test_returns_counts_only_without_place_names_or_ids(db_session):

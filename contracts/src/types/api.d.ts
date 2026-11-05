@@ -508,7 +508,7 @@ export interface paths {
                 };
                 403: components["responses"]["GuestNotAllowed"];
                 409: components["responses"]["MapLimit"];
-                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락. 또는 TRIP_TOO_LONG — 시작일·종료일을 포함한 기간이 MapList.trip_max_days(지금 90일)를 넘음, detail: { limit } (#1371) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -657,7 +657,7 @@ export interface paths {
                 };
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
-                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락 */
+                /** @description 검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락. 또는 TRIP_TOO_LONG — 날짜(start_date·end_date)를 바꾸는 요청에서 합친 기간이 MapList.trip_max_days(지금 90일)를 넘음, detail: { limit }. 제목·지역만 고치는 요청은 기간을 검사하지 않는다(이미 90일을 넘는 지도의 제목 수정은 허용) (#1371) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -1073,7 +1073,7 @@ export interface paths {
          *     `POST /maps/{mapId}/pins`(source: search)로 핀을 만든다. 결과는 서버 DB에 저장하지 않는다(메모리 캐시만, #53).
          *     **결과는 화면에 보여 주기만 하고 서버는 저장하지 않는다**(카카오 약관, #53) — 핀을 만들 때 "매칭 힌트"로 되돌려 보내면 서버가 같은 자체 DB 장소를 찾는다(POST /maps/{mapId}/pins).
          *     **결과는 우리 DB(자체 장소 DB)의 핀 가능한 장소가 먼저다(#822).** 서버는 먼저 자체 DB에서 이름·동네가 검색어와 맞는 장소를 찾아 `pinnable=true`로 앞에 싣고(순서는 아래 정렬 규칙), `limit`에 못 미칠 때만 카카오 결과로 남은 자리를 채운다(이미 실은 장소와 같은 가게는 뺀다). 카카오 상위권에 없어도 자체 DB에 있으면 나온다.
-         *     **자체 DB 결과의 정렬 규칙(#835)**: ① `lat`·`lng`가 있으면 지도 중심에서 30km 안(지역 구역)이 그 밖(먼 구역)보다 먼저다. 지역 구역이 `limit`을 못 채울 때만 먼 구역으로 이어 채운다. ② 각 구역 안에서 이름 일치 정도 — 완전 일치 > 앞부분 일치 > 부분 일치 > 주소 일치(공백·기호·괄호 안은 무시). ③ 같은 정도 안에서는 가까운 순(좌표가 없으면 이름순). ④ 거리까지 같을 때만 정예 먼저. 정예 여부는 추천에서 중요하고, 검색에서는 「핀을 꽂을 수 있는가」(`pinnable`)만 중요하다. 서울 지도에서 「맛집」을 쳤는데 대전 장소가 먼저 나오지 않는다. 카카오 결과로 채운 묶음 안은 카카오가 준 순서 그대로다. 핀 가능하지 않은 결과가 섞여 있는데 자체 DB 일치 장소가 빠지는 일은 없다.
+         *     **자체 DB 결과의 정렬 규칙(#835)**: ① `lat`·`lng`가 있으면 **지도 중심에서 30km 안의 장소만** 돌려준다(#1251 — 30km 밖 자체 DB 장소와 카카오 결과는 나오지 않는다). 순서는 ① 우리 DB 장소(30km 안) ② 우리 DB에 없는 곳(카카오 결과, 30km 안, `pinnable=false`)이다. ② 30km 안에서 이름 일치 정도 — 완전 일치 > 앞부분 일치 > 부분 일치 > 주소 일치(공백·기호·괄호 안은 무시). ③ 같은 정도 안에서는 가까운 순(좌표가 없으면 이름순). ④ 거리까지 같을 때만 정예 먼저. 정예 여부는 추천에서 중요하고, 검색에서는 「핀을 꽂을 수 있는가」(`pinnable`)만 중요하다. 서울 지도에서 「맛집」을 쳤는데 대전 장소가 먼저 나오지 않는다. 카카오 결과로 채운 묶음 안은 카카오가 준 순서 그대로다. 핀 가능하지 않은 결과가 섞여 있는데 자체 DB 일치 장소가 빠지는 일은 없다.
          *     결과가 0개면 빈 배열 그대로다 — 지어내서 채우지 않는다 (가드레일 2). 로그인만 필요하고 지도 구성원 여부는 보지 않는다.
          *     지도 API가 모두 실패하면 503 PLACES_UNAVAILABLE. 외부 지도 API의 일일 쿼터를 지키려고 사용자당 호출 상한이 있다(초과 시 429 RATE_LIMITED, 상한 값은 서버 설정 — 기본 분당 30회). FE는 입력 debounce 300ms 이상으로 부르고 Enter/선택 시점에만 부르는 걸 권한다.
          */
@@ -1082,7 +1082,7 @@ export interface paths {
                 query: {
                     /** @description 검색어. 앞뒤 공백을 걷은 뒤 1~50자 */
                     q: string;
-                    /** @description 현재 지도 중심 등. 이 좌표에서 30km 안의 장소를 먼저 보여 주고(자체 DB 결과), 그 안에서 이름 일치 정도 → 가까운 순으로 정렬한다. 반경으로 결과를 자르지는 않는다(지역 구역이 비면 먼 곳을 보여 준다). 없으면 이름 일치 정도 → 이름순. lat·lng는 함께 보낸다 */
+                    /** @description 현재 지도 중심 등. 이 좌표에서 30km 안의 장소만 돌려주고(#1251), 그 안에서 이름 일치 정도 → 가까운 순으로 정렬한다. 없으면 반경 제한 없이 이름 일치 정도 → 이름순. lat·lng는 함께 보낸다 */
                     lat?: number;
                     lng?: number;
                     /** @description 최대 결과 수 (기본 10) */
@@ -2524,7 +2524,14 @@ export interface paths {
         /** 카테고리별 추천 버튼 활성화 판정 (5-4). 키는 RecommendCategory 값만 온다 — 숙소는 추천 대상이 아니다 (#145) */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 지도 중심 앵커로 계산하려면 `center_lat`·`center_lng`를 **함께** 보낸다(#1331). 있으면 근처 정예 수(`curated_nearby`)를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다(중심이 없는 호출용). 하나만 보내거나 위도 33~39·경도 124~132 밖이면 422 VALIDATION_ERROR */
+                    center_lat?: number;
+                    /** @description center_lat과 함께 보낸다 */
+                    center_lng?: number;
+                    /** @description 추천 범위(원의 반경, 미터, #1416). 있으면 `curated_nearby`(근처 정예 수)를 이 반경으로 센다. 없으면 기본 3000. 2000~5000의 정수가 아니면 422 VALIDATION_ERROR. center_lat·center_lng가 있을 때 의미가 있다 */
+                    radius_m?: number;
+                };
                 header?: never;
                 path: {
                     mapId: components["parameters"]["MapId"];
@@ -2542,6 +2549,15 @@ export interface paths {
                         "application/json": {
                             [key: string]: components["schemas"]["Readiness"];
                         };
+                    };
+                };
+                /** @description 검증 실패 (VALIDATION_ERROR) — `center_lat`·`center_lng` 중 하나만 보냈거나 범위 밖 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
                     };
                 };
             };
@@ -2603,7 +2619,7 @@ export interface paths {
          *     한 번의 클릭이 모델 호출과 결과까지 가므로 연타·재전송 방어(#811)가 먼저 있어야 한다.
          *     **`Idempotency-Key` 요청 헤더(선택, #811)**: 화면이 사용자가 「추천 받기」를 시작할 때 키(uuid)를 만들어 성공·실패가 나올 때까지 같은 키로 보낸다(연타·재전송은 같은 키).
          *     서버는 모델을 부르기 **전에** (요청자, 키)를 기록한다. 같은 키로 다시 오면 — 첫 요청이 이미 run을 만들었으면 **그 run을 그대로**(같은 응답) 돌려주고, 아직 모델을 기다리는 중이면 409 `REQUEST_IN_PROGRESS`(화면은 잠시 뒤 같은 키로 다시 보낸다).
-         *     첫 요청이 모델 실패(500) 등으로 run을 못 만들었으면 키를 지워 같은 키의 재시도를 허용한다. **요청의 동일성은 (지도, `category`, `execute`)로 본다**(`execute` 생략은 false와 같다). 같은 키로 **다른 지도나 다른 본문**(예: 다른 카테고리)을 보내면 409 `IDEMPOTENCY_CONFLICT`다 — 키를 재사용한 화면의 버그 신호다(#48이 정하던 멱등키 v1의 첫 적용처가 이 엔드포인트다). 같은 키의 재사용은 **최초 응답을 복제하는 것이 아니라 같은 run id를 지금 상태 그대로** 돌려준다(그 뒤 `execute`·`retry`로 상태·`attempt_no`가 바뀌었으면 바뀐 값). 재사용 전에도 지도 접근 권한을 다시 확인한다.
+         *     첫 요청이 모델 실패(500) 등으로 run을 못 만들었으면 키를 지워 같은 키의 재시도를 허용한다. **요청의 동일성은 (지도, `category`, `execute`, `center`)로 본다**(`execute` 생략은 false, `center` 생략은 null과 같다). 같은 키로 **다른 지도나 다른 본문**(예: 다른 카테고리)을 보내면 409 `IDEMPOTENCY_CONFLICT`다 — 키를 재사용한 화면의 버그 신호다(#48이 정하던 멱등키 v1의 첫 적용처가 이 엔드포인트다). 같은 키의 재사용은 **최초 응답을 복제하는 것이 아니라 같은 run id를 지금 상태 그대로** 돌려준다(그 뒤 `execute`·`retry`로 상태·`attempt_no`가 바뀌었으면 바뀐 값). 재사용 전에도 지도 접근 권한을 다시 확인한다.
          *     **처리 기한 90초**: 첫 요청이 run을 못 만든 채 90초가 지나면(프로세스 종료·취소 등) 중단된 것으로 보고 새 요청이 이어받는다. 늦게 끝난 쪽의 저장은 거절된다(예약 소유자만 run을 저장한다). 키가 없으면 지금처럼 방어가 없다(구FE 호환). 키는 24시간 보관한다. 다른 요청자의 같은 키는 서로 영향이 없다.
          *     **크레딧(#432)**: run을 새로 만들면 크레딧 `prices.recommend_run`(1)이 빠진다(`GET /credits/me`). 잔액은 모델(②)을 부르기 **전에** 확인한다 — 모자라면 402 `CREDIT_INSUFFICIENT`이고 모델도 run도 없다. 차감은 run 저장과 같은 트랜잭션이라, 모델 실패(500)나 준비 미달(409) 등으로 run이 안 만들어지면 빠지지 않는다. 같은 `Idempotency-Key`의 재사용은 새 run이 아니라 다시 빠지지 않는다. **첫 실행의 결과가 0곳이면 차감하지 않는다**(#1015): `execute: true`이면 이 요청 안에서, 따로 `POST /runs/{runId}/execute`를 부르면 그 호출에서, 후보를 하나도 못 찾았을 때 같은 트랜잭션에서 그 run의 크레딧을 돌려준다(`GET /credits/me`의 잔액이 그대로다). 화면은 0곳 결과에 「크레딧은 쓰이지 않았어요」를 붙여도 좋다. 재추천(`retry`)·반경 넓히기(`widen`)는 처음부터 차감하지 않는다. 게스트는 추천을 받을 수 없다(403 `GUEST_NOT_ALLOWED`).
          *     「다시 추천 받기」(`retry`)와 근거 고치기(`PATCH .../evidence`)는 크레딧을 쓰지 않는다. 추천 횟수 상한은 없다(#432 D3 — 전에는 지도·사람당 10회, 429 `RETRY_LIMIT`).
@@ -2629,6 +2645,13 @@ export interface paths {
                          * @default false
                          */
                         execute?: boolean;
+                        /** @description 추천 범위(원의 반경, 미터, #1416). 2000 이상 5000 이하의 **정수**만 받는다 — 범위 밖이거나 정수가 아니면 422 VALIDATION_ERROR. 없으면 기본 3000(`Readiness.radius_m`). 사용자가 이 값을 어떻게 고르는지(슬라이더 등)는 화면의 일이고 서버는 모른다. 값이 있으면 후보를 찾는 원의 반경, 여행 지역 밖 판정(`OUTSIDE_TRIP_REGION`), 저장되는 `default_radius_m`이 모두 이 값이다. 반경 넓히기는 이 값에서 +1000m씩, 상한 5000m. 멱등 판정(`Idempotency-Key`)에 이 값이 들어간다(같은 키로 다른 반경은 409 IDEMPOTENCY_CONFLICT, 기본값 3000을 명시한 요청은 생략한 요청과 같은 요청으로 본다 — 같은 키로 보내도 충돌하지 않는다. 반경을 보내지 않는 요청은 이전과 같다) */
+                        radius_m?: number;
+                        /** @description **필수다**(2026-11-05, #1331) — 없거나 null이면 서버가 422 VALIDATION_ERROR로 거절한다(PR #1351). 지금 보고 있는 지도의 중심에서 추천받는다(#1331). **이 점을 중심으로 한 반경 3km 원이 기본 추천 범위다**(#1385, 모든 카테고리) — 원 전체가 여행 지역 밖이면 422 `OUTSIDE_TRIP_REGION`. 화면이 「여기서 음식점」 같은 버튼을 누른 순간 보이는 영역의 중심을 보낸다. 있으면 이 run의 **앵커는 이 점 하나**다 — 후보를 찾는 원의 중심(카테고리 기본 반경, 넓히기는 이 점에서 반경만 키운다), 동점일 때 거리 비교, 지도 여행 지역이 없을 때의 시·도 판정이 모두 이 점을 따른다. 지도의 핀들은 근거(의견·구성원 충족)와 시작 조건(그 카테고리에 ♥/🚫 의견이 달린 핀 1곳 이상, 미충족이면 409 NOT_READY)에만 쓰이고 위치 기준에서는 빠진다. 추천 로직(거르기·점수·상위 3곳)·크레딧·멱등·결과가 요청자에게만 보이는 것은 그대로다. 서버는 중심을 run에 저장해 `retry`·`widen`에서 같은 점을 쓰며, 응답에는 좌표를 싣지 않는다. 없으면 지금처럼 그 카테고리 핀들이 앵커다. 위도 33~39·경도 124~132 밖이거나 시·도를 정할 수 없는 곳이면 422 VALIDATION_ERROR */
+                        center: {
+                            lat: number;
+                            lng: number;
+                        };
                     };
                 };
             };
@@ -2646,6 +2669,15 @@ export interface paths {
                 403: components["responses"]["GuestNotAllowed"];
                 /** @description NOT_READY(추천 준비 미달 — 해당 카테고리에 ♥/🚫 의견이 달린 핀이 없다) · REQUEST_IN_PROGRESS(같은 `Idempotency-Key`의 첫 요청이 아직 처리 중이다 — 화면은 잠시 뒤 같은 키로 다시 보낸다, #811) · IDEMPOTENCY_CONFLICT(같은 키로 다른 요청 본문 — 키를 재사용한 화면의 버그 신호). `code`로 구분한다 */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description VALIDATION_ERROR(`center`가 범위 밖이거나 시·도를 정할 수 없는 곳) · OUTSIDE_TRIP_REGION(#1385 — 요청 `center` 기준 반경 3km 원 **전체**가 그 지도의 여행 지역(시·도) 밖이다. 걸치기만 하면 막지 않고, 지도에 여행 지역이 없으면 막지 않는다. `detail`은 `{ region_label }`(여행 지역 이름). 크레딧·모델·run 모두 쓰지 않는다. 지역 경계 판정은 서버(places)가 시·도 경계 데이터로 한다). `code`로 구분한다 */
+                422: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2888,8 +2920,8 @@ export interface paths {
         put?: never;
         /**
          * 반경 넓히기. 기본값 원만 확대한다 — 사람이 명시한 원(예 "숙소 기준 20분")은 자동으로 넓히지 않는다 (가드레일 4, 5-6-1).
-         *     한 번 누를 때마다 기본값 원의 도보 시간을 5분씩 늘린다. 기본·상한은 카테고리별이다(#1055) — 음식점·카페 15분 → 30분, 관광지 25분 → 45분. 상한을 넘으면 409 WIDEN_LIMIT.
-         *     폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_walk_min)을 실어 화면이 "다음은 몇 분"을 안내한다.
+         *     한 번 누를 때마다 기본값 원의 반경을 1,000m씩 늘린다. 기본 3,000m, 상한 5,000m이고 모든 카테고리가 같다(#1385) — 3000 → 4000 → 5000. 상한(5,000m)에서 더 넓히면 409 WIDEN_LIMIT.
+         *     폭·상한은 docs/constraints.md의 조정 가능한 상수다 — 응답 RecommendRun에 현재 기본 반경(default_radius_m)과 넓히면 바뀔 반경(next_default_radius_m, 상한이면 null)을 실어 화면이 "다음은 몇 m"를 안내한다.
          */
         post: {
             parameters: {
@@ -3248,6 +3280,7 @@ export interface paths {
         get?: never;
         /**
          * 확정 리스트 수동 정렬 (#30). 보기 좋게 순서를 바꾸는 것뿐이고 동선과는 무관하다.
+         *     날짜가 배정된 항목이 있으면 409 SHORTLIST_SCHEDULED다. 화면은 일정(#1171) 뒤 이 API를 부르지 않고 `PUT /maps/{mapId}/shortlist/schedule`로 날짜와 그날 순서를 저장한다.
          *     동선을 다시 짜려면 POST /maps/{mapId}/route를 부른다.
          *     날짜가 배정된 항목이 하나라도 있으면 이 기존 API는 409 SHORTLIST_SCHEDULED를 반환한다. 날짜별 편집에는 schedule API를 쓴다.
          */
@@ -3431,7 +3464,8 @@ export interface paths {
         };
         put?: never;
         /**
-         * 「동선 짜주기」 — 현재 확정 리스트로 동선을 계산한다 (#30, 기획안 5-10의 "동선 보기" 토글).
+         * 「동선 짜주기」 — 현재 확정 리스트로 동선을 계산한다 (#30, 기획안 5-10의 처음 설계).
+         *     화면은 일정(#1171) 뒤 이 API를 부르지 않는다. 「동선 보기」는 사람이 정한 그날 일정 순서(`GET /maps/{mapId}/shortlist/schedule`)를 그린다.
          *     확정 리스트가 바뀌어도 자동 재계산하지 않는다. 사람이 이 버튼을 눌러야 실행된다.
          */
         post: {
@@ -3583,7 +3617,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 「핑고 AI 조언」 바텀시트 상태 — 구성원 누구나 (docs/agent-v2.md 14절). 모드, 지금 제안(지도당 0개 또는 1개), 미열람 여부, 카테고리별 우리 조건 요약.
+         * 「핑고 AI 조언」 바텀시트 상태 — 구성원 누구나 (docs/agent-v2.md 14절). 모드, 지금 제안(지도당 0개 또는 1개), 미열람 여부, 카테고리별 우리 조건 요약,
+         *     마지막으로 살펴본 시각과 제안이 없는 이유(observation, #1297).
          *     문장은 모두 서버가 렌더한 것이다. FE는 슬롯이나 숫자를 다루지 않고 그대로 보여 준다.
          */
         get: {
@@ -3813,6 +3848,7 @@ export interface paths {
         /**
          * 「AI 코스 짜기」 요청 — 구성원 누구나(course.request). 확정 리스트를 지도 기간의 날짜별 방문 순서로 짠다.
          *     run을 queued로 저장하고 202를 돌려준다. 계산은 백그라운드에서 한다(보통 수 초에서 수십 초) — FE는 `GET /course-runs/{runId}`를 2초 간격으로 불러 status가 done이나 failed가 될 때까지 기다린다.
+         *     **일정 상태에 따라 하는 일이 다르다(#1237)** — 요청 본문은 같고 응답의 `mode`로 갈린다: 일정이 비어 있으면 짜기(plan), 일부만 넣었으면 남은 곳 채우기(fill), 다 넣었으면 점검과 최소 수정(review). 사람이 날짜에 넣은 장소는 AI가 바꾸지 않고, 일정 변경은 사람이 결과 카드의 「반영」을 눌러 `PUT /maps/{mapId}/shortlist/schedule`로 저장할 때만 일어난다.
          *     코스는 요청한 본인에게만 보인다(가드레일 1). 확정 장소는 좌표를 아는 것만 센다(실시간 핀은 빠지고 excluded에 남는다). 한 번에 30곳까지, 여행 기간은 앞 14일까지 짠다.
          *     지도마다 내 진행 중 run은 하나다. request_text와 member_constraints는 모두 선택이다.
          *     **크레딧(#432)**: 요청이 접수되면(202) 크레딧 `prices.course`(1)이 빠진다. 잔액은 모델을 부르기 전에 확인한다(모자라면 402 `CREDIT_INSUFFICIENT`). 코스가 결과 없이 끝나면(failed — `ENGINE_ERROR`, `INTERRUPTED`) 돌려준다(잔액 상한 `max_balance`까지만, #981). 게스트는 코스를 짤 수 없다(403 `GUEST_NOT_ALLOWED`).
@@ -4095,6 +4131,10 @@ export interface components {
             can_publish?: boolean;
             /** @description map: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465). pin: 핀 메모·분류 수정(pin.edit), 그 핀을 찍은 사람만 true이고 AI 추천·확정 핀은 false (#466) */
             can_edit?: boolean;
+            /** @description map 전용: 초대 링크 목록 보기·끄기(invite.revoke), 방장만 true (#467, #1154). 선택 필드 — 구버전 서버는 보내지 않는다 */
+            can_manage_invites?: boolean;
+            /** @description map 전용: 방장 직접 넘기기(owner.transfer), 방장만 true (#468, #1154). 선택 필드 — 구버전 서버는 보내지 않는다 */
+            can_transfer_owner?: boolean;
         };
         User: {
             id: string;
@@ -4251,6 +4291,8 @@ export interface components {
             items: components["schemas"]["Map"][];
             /** @description 만들거나 참여할 수 있는 지도 수 상한(만든 지도와 참여한 지도 합산, 삭제한 지도와 나간 지도는 세지 않음, #369). 화면은 이 값으로 "n / limit"을 그리고, items 수가 limit이면 「새 지도」를 막는다. 409 MAP_LIMIT의 detail.limit과 같은 값이다 */
             limit: number;
+            /** @description 여행 기간 상한 일수(시작일·종료일 포함, 지금 90, #1371). 화면은 이 값으로 날짜 칸의 고를 수 있는 끝을 막는다. 422 TRIP_TOO_LONG의 detail.limit과 같은 값이다. 선택 필드 — 구버전 서버는 보내지 않는다(없으면 화면이 막지 않고 서버 검사에 맡긴다) */
+            trip_max_days?: number;
         };
         MapCreateRequest: {
             /** @description 여행 제목 (#22) */
@@ -4330,7 +4372,7 @@ export interface components {
             map_title?: string;
             /** @description `pin_reaction`만 — 누르면 그 핀으로 이동. 그 핀이 지워졌으면 FE가 404를 받아 조용히 지도로만 이동한다 */
             pin_id?: string;
-            /** @description 서버가 만든 문장. 예 "지우님이 내 핀에 ♥를 남겼어요". 반대 사유·메모는 싣지 않는다 */
+            /** @description 서버가 만든 문장. 예 "지우님이 내 핀에 좋음을 남겼어요". 반대 사유·메모는 싣지 않는다 */
             message: string;
             /** Format: date-time */
             created_at: string;
@@ -4750,7 +4792,13 @@ export interface components {
             answered_count?: number;
             /** @description 항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다 */
             required_count?: number;
-            /** @description 추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(음식점·카페 도보 30분, 관광지 45분, #1055) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다 */
+            /** @description 사용자가 고를 수 있는 추천 반경의 하한(m, #1416). 지금 2000. 화면이 이 값을 코드에 적지 않고 응답으로 받는다. 선택 필드(구버전 서버에는 없다) */
+            radius_min_m?: number;
+            /** @description 사용자가 고를 수 있는 추천 반경의 상한(m, #1416). 지금 5000(반경 넓히기 상한과 같다). 선택 필드 */
+            radius_max_m?: number;
+            /** @description 그 카테고리의 기본 추천 반경(m). 지금은 모든 카테고리 3000(#1385). 화면이 run을 만들기 전에 지도에 원을 그리는 데 쓴다 — 정책 값은 응답으로 받는다. 선택 필드(구버전 서버에는 없다) */
+            radius_m?: number;
+            /** @description 추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(5000m, #1385) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다 */
             curated_nearby?: number;
             /** @description curated_nearby가 0일 때만 */
             external_search?: components["schemas"]["ExternalSearch"];
@@ -4778,6 +4826,8 @@ export interface components {
              * @enum {string|null}
              */
             not_enforced_reason?: "no_key" | "no_direction" | "not_for_category" | "off_season" | null;
+            /** @description 이 줄이 후보를 목록에서 **뺄 수 있는가**(#1260). true=확인된 값이 방향과 다르면 후보에서 뺀다(붐비는 대형·접근성 필요 조건), false=후보는 그대로 두고 순위만 낮추거나 올린다(취향 조건, #1253). enforced=false이면 없다(null). 서버가 줄을 고르는 함수(recommend.core.evidence_line_use)의 effect를 그대로 내려 준다. FE는 이 값으로 「꼭 지켜야 하는 조건」(true)과 「피하고 싶어요 — 순위를 낮춰요」(false, badge=required이고 wants=false) 칸을 나누며 키 목록을 따로 들지 않는다. 구버전 서버라 필드가 없으면 기존 칸 구분을 쓴다 */
+            filters_candidates?: boolean | null;
             is_active: boolean;
             permissions: components["schemas"]["Permissions"];
         };
@@ -4809,8 +4859,12 @@ export interface components {
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 없다(#432 — 크레딧으로 센다) */
             attempt_no: number;
-            /** @description 기본값 원의 현재 도보 시간(분). 반경 넓히기마다 5씩 늘어난다 (음식점·카페 기본 15·상한 30, 관광지 기본 25·상한 45, #1055) */
+            /** @description 호환용이다 — 곧 없앤다. 화면은 default_radius_m를 쓴다(#1385). 도보 분 정본은 폐기됐고 값은 default_radius_m를 80m/분으로 나눈 근사다 */
             default_radius_walk_min?: number;
+            /** @description 기본값 원의 현재 반경(m). 모든 카테고리 기본 3000, 반경 넓히기마다 +1000, 상한 5000(#1385, docs/constraints.md). 선택 필드 — 구버전 서버에는 없다 */
+            default_radius_m?: number;
+            /** @description 넓히면 바뀔 반경(m). 이미 상한(5000)이면 null — 화면은 「반경 넓히기」를 막고 안내한다(#1370). 선택 필드 */
+            next_default_radius_m?: number | null;
         };
         /** @description 지난 추천 기록 한 건 (#469). 내가 요청한 run만 온다 */
         RunSummary: {
@@ -4830,12 +4884,16 @@ export interface components {
             candidate_count: number;
             /** @description 그 run에서 「지도에 올리기」로 게시한 후보 수 */
             published_count: number;
+            /** @description 그 run의 현재 기본값 원 반경(m). `RecommendRun.default_radius_m`과 같은 값(#1164, #1385). 선택 필드 */
+            default_radius_m?: number;
+            /** @description 넓히면 바뀔 반경(m). 이미 상한이면 null. `RecommendRun.next_default_radius_m`과 같은 값(#1370). 선택 필드 */
+            next_default_radius_m?: number | null;
         };
         /** @description 구성원 충족 집계 (가드레일 5). 게시 뒤에도 유지된다 */
         MemberFulfillment: {
             /** @description 이 후보가 자기 조건을 전부 확인된 값으로 만족시키는 구성원 수. 라벨이 모름(확인 필요)인 조건이 하나라도 있으면 충족으로 세지 않는다(#620) */
             satisfied: number;
-            /** @description 집계 대상 구성원 수 — 서비스가 확인할 수 있는 조건을 남긴 구성원. 선호(♥·선호 사유)와 키가 있는 실격 사유(required)를 낸 구성원이다(#246 G1). 키 없는 반대 사유(알러지 글, 「취향이 아니에요」 등)만 남긴 구성원은 확인한 것이 없어 빠진다(#620, 2026-10-19) */
+            /** @description 집계 대상 구성원 수 — 서비스가 확인할 수 있는 조건을 남긴 구성원. 선호(♥·선호 사유)와 키가 있는 반대 사유(required)를 낸 구성원이다(#246 G1). 반대 사유는 후보를 빼는 조건(붐비는 대형·접근성)이거나 순위만 낮추는 취향 조건이다(#1253). 키 없는 반대 사유(알러지 글, 「취향이 아니에요」 등)만 남긴 구성원은 확인한 것이 없어 빠진다(#620, 2026-10-19) */
             total: number;
             by_member?: {
                 user_id: string;
@@ -4997,10 +5055,10 @@ export interface components {
             map_id: string;
         };
         /**
-         * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리 (docs/agent-v2.md 6절)
+         * @description 제안 종류. stall=반대 후 정체, split=의견 갈림, no_reaction=아직 확인되지 않은 핀, category_gap=확정 리스트에 빠진 카테고리, schedule=확정 일정에 쉬는 날 방문·이동 과다가 있음(#1356) (docs/agent-v2.md 6절, 6.10)
          * @enum {string}
          */
-        AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap";
+        AgentDiagnosis: "stall" | "split" | "no_reaction" | "category_gap" | "schedule";
         /**
          * @description 서버가 렌더한 문장 한 줄(#717). 에이전트의 말과 구성원이 쓴 글을 한 문자열에 섞지 않고 조각으로 나눠 내린다.
          *     FE는 조각을 차례로 이어 그리되, quote는 구성원 의견(인용 모양), pin은 핀 이름 모양으로 따로 그린다. 조각 text의 합은 300자 이하.
@@ -5028,18 +5086,19 @@ export interface components {
          * @description 버튼 하나. 사람이 원래 하던 동작으로만 이어진다(확정, 삭제, 반응 변경, 근거 줄 빼기는 없다). FE가 하는 일은 docs/agent-v2.md 16.3 표.
          *     open_recommend → AI 추천 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/runs`. show_pins → 지도 탭 필터. search_place → 장소 검색 시트.
          *     open_route → 리스트 탭 동선. widen_radius → 기존 반경 넓히기. open_evidence → 근거 확인 화면.
+         *     open_pin(#1356) → 지도 탭에서 params.pin_ids[0] 핀 카드를 연다(확정은 사람이 한다). open_course(#1356) → AI 코스 짜기를 시작한다 — 확정 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/courses`(크레딧 1, 게스트·잔액 부족은 그 API의 오류 그대로).
          */
         AgentAction: {
             /** @description accept 요청의 action_index */
             index: number;
             /** @enum {string} */
-            type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence";
-            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기" */
+            type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence" | "open_pin" | "open_course";
+            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기", "이 핀 보기", "AI 코스로 고칠 안 받기" */
             label: string;
             /** @description type마다 쓰는 것만 채운다 */
             params: {
                 category?: components["schemas"]["Category"];
-                /** @description show_pins: 보여 줄 핀 */
+                /** @description show_pins: 보여 줄 핀. open_pin: 열 핀 하나 */
                 pin_ids?: string[];
                 /** @description show_pins: 내가 아직 반응하지 않은 핀만 */
                 unseen_only?: boolean;
@@ -5079,6 +5138,20 @@ export interface components {
             actions: components["schemas"]["AgentAction"][];
             /** @description 우리 데이터 확인(#1152, docs/agent-v2.md 6.6). stall·split 중 사실 다툼일 때만 들어 있다. 선택 필드 — 서버 구현(#1168) 전에는 없고, FE는 없거나 빈 목록이면 칸을 그리지 않는다 */
             facts?: components["schemas"]["AgentFactLine"][];
+            /**
+             * @description 작업 기록 — 이 제안을 만들 때 핑고가 거친 단계(#1297, docs/agent-v2.md 11.3). AI 코스의 작업 기록과 같은 모양이다.
+             *     순서: 감지 → 후속 확인(attempt ≥ 1, #1345) → 순위(신호가 2개 이상일 때만) → 조사(모델이 고른 도구마다 한 줄) → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인. 있는 단계만 온다. 코드 유형(no_reaction, category_gap)과 충돌 선언은 조사·웹 확인·검증이 없다.
+             *     문장은 서버 고정 문구와 숫자뿐이다 — 사유 글, 핀·장소 이름, 구성원, URL은 들어가지 않는다.
+             *     선택 필드 — 서버 구현 전에는 없고, 기록이 지워진 제안(탈퇴, 30일 정리)은 빈 목록이다. FE는 없거나 빈 목록이면 「핑고가 한 일」을 그리지 않는다.
+             */
+            steps?: components["schemas"]["WorkStep"][];
+            /**
+             * @description 막힌 곳 한 살이의 몇 번째 제안인가(#1345, docs/agent-v2.md 6.9). 0=첫 제안, 1=다음 방법(앞 제안을 수락했는데 그대로라 이미 해 본 것과 다른 방법),
+             *     2=충돌 선언(최후 — 해 본 것을 남기고 결정은 사람에게. actions는 빈 목록). 선택 필드 — 서버 구현(#1346) 전에는 없고, FE는 없으면 0으로 본다.
+             */
+            attempt?: number;
+            /** @description attempt ≥ 1일 때 이 막힌 곳에서 이미 해 본 것(수락한 앞 제안의 버튼), 오래된 것부터. attempt 0이면 빈 목록. 선택 필드 */
+            tried?: components["schemas"]["AgentTried"][];
             /** Format: date-time */
             created_at: string;
             /**
@@ -5086,6 +5159,37 @@ export interface components {
              * @description 만들고 24시간 뒤. 지나면 만료(agent.resolved, status=expired)
              */
             expires_at: string;
+        };
+        /** @description 막힌 곳에서 이미 해 본 것 하나(#1345) — 수락한 제안의 버튼. 누가 눌렀는지와 추천 결과(비공개 run)는 싣지 않는다 */
+        AgentTried: {
+            /** @enum {string} */
+            action_type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence" | "open_pin" | "open_course";
+            /** @description 그때 버튼 문구(서버 렌더). 예: "음식점 추천 받기" */
+            label: string;
+            /** Format: date-time */
+            accepted_at: string;
+        };
+        /**
+         * @description 핑고가 지켜보는 막힌 곳 하나(#1345, docs/agent-v2.md 6.9). 수락한 제안이 풀렸는지 매 관찰마다 코드가 본다(모델 호출 없음).
+         *     지금 활성 제안인 막힌 곳과, 닫기·만료로 끝난 막힌 곳은 들어가지 않는다. 최근 48시간만.
+         *     watching=수락 뒤 지켜보는 중, resolved=풀림(text에 무엇으로 풀렸는지), declared=충돌 선언을 냈고 더 지켜보지 않음.
+         *     text는 서버 고정 문구다. 구성원 글과 이름은 없다. 예: "음식점 · 추천 받기 뒤로 지켜보는 중", "카페 · 풀렸어요 — 새 핀이 올라왔어요".
+         *     경과 시간은 FE가 since로 그린다(예: 「2시간째」).
+         */
+        AgentTracking: {
+            /** @description 그 막힌 곳의 마지막 제안 */
+            suggestion_id: string;
+            diagnosis: components["schemas"]["AgentDiagnosis"];
+            category: components["schemas"]["Category"] | null;
+            /** @enum {string} */
+            status: "watching" | "resolved" | "declared";
+            text: string;
+            /**
+             * Format: date-time
+             * @description watching이면 마지막 수락 시각, resolved면 풀린 것을 본 시각, declared면 충돌 선언 시각
+             */
+            since: string;
+            tried: components["schemas"]["AgentTried"][];
         };
         /**
          * @description 우리 데이터 확인 한 줄(#1152, docs/agent-v2.md 6.6). 서버가 그 핀 장소의 라벨로 렌더한 고정 문구다. 모델이 쓰지 않는다.
@@ -5099,7 +5203,7 @@ export interface components {
             /** @enum {string} */
             value: "yes" | "no" | "unknown";
             segments: components["schemas"]["AdviceSegment"][];
-            /** @description 웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄에만, 제안마다 많아야 한 줄. 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다 */
+            /** @description 웹 확인(#1152 ④, docs/agent-v2.md 6.8). value가 unknown인 줄마다(#1317, 줄이 많아야 2개라 제안마다 많아야 두 줄). 선택 필드 — 서버 구현(#1216) 전에는 없고, 확인이 실패했으면 없다. FE는 없으면 그리지 않는다 */
             web?: components["schemas"]["AgentWebCheck"];
         };
         /**
@@ -5204,6 +5308,28 @@ export interface components {
             summaries: components["schemas"]["AgentSummary"][];
             /** @description 지도 현황 문단(#1152, docs/agent-v2.md 8.2). 아직 만든 적이 없으면 null. 선택 필드 — 서버 구현(#1168) 전에는 없고, FE는 없거나 null이면 자리를 두지 않는다 */
             status?: components["schemas"]["AgentMapStatus"] | null;
+            /** @description 살펴본 상태(#1297). 선택 필드 — 서버 구현 전에는 없고, FE는 없으면 자리를 두지 않는다 */
+            observation?: components["schemas"]["AgentObservation"];
+            /** @description 핑고가 지켜보는 막힌 곳(#1345). 최근 것부터. 모드가 꺼져 있으면 빈 목록. 선택 필드 — 서버 구현(#1346) 전에는 없고, FE는 없거나 빈 목록이면 자리를 두지 않는다 */
+            tracking?: components["schemas"]["AgentTracking"][];
+        };
+        /**
+         * @description 핑고가 이 지도를 마지막으로 살펴본 시각과, 지금 제안이 없는 이유(#1297, docs/agent-v2.md 21.3).
+         *     이벤트로 갱신하지 않는다 — 시트를 열 때 받는다(현황 문단과 같다).
+         */
+        AgentObservation: {
+            /**
+             * Format: date-time
+             * @description 마지막 관찰 시각. 아직 관찰한 적이 없으면 null. 화면 예: 「핑고가 12분 전에 지도를 살펴봤어요」
+             */
+            checked_at: string | null;
+            /**
+             * @description 서버 고정 문구. **지금 제안이 있거나 모드가 꺼져 있으면 null이다.** 판정은 서버 한 곳(`agent.core`)이고 기준은 가장 최근 관찰의 결과다.
+             *     진단 실패(모델 오류, 시간 초과, 형식 오류)·관찰 예외 → 「이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요」,
+             *     검증에서 걸러짐 → 「핑고가 쓴 제안이 확인을 통과하지 못해 내보내지 않았어요」, 그날 진단 횟수를 다 씀 → 「오늘은 자세히 살펴보는 횟수를 다 썼어요. 내일 다시 볼게요」,
+             *     여행이 끝남 → 「여행이 끝나 더 살펴보지 않아요」. 낼 제안이 없었을 뿐이면 null이다(FE의 「지금은 따로 드릴 제안이 없어요」만 보인다). FE는 문구를 적지 않는다
+             */
+            notice: string | null;
         };
         AgentAcceptRequest: {
             action_index: number;
@@ -5251,6 +5377,13 @@ export interface components {
             /** @enum {string} */
             status: "queued" | "running" | "done" | "failed";
             /**
+             * @description 이 코스가 하는 일(#1237). 요청을 받을 때 서버가 확정 리스트의 일정 상태로 정하고 사용자가 고르지 않는다 — 버튼은 「AI 코스」 하나다. 진행 중에도 값이 있다.
+             *     plan=아무 장소도 날짜에 넣지 않음 → 날짜별 코스를 짠다. fill=일부만 넣음 → 넣어 둔 장소는 그 날에 두고 미배정만 나눈다. review=모두 넣음 → 일정을 점검해 고칠 점(fixes)만 낸다.
+             *     사람이 날짜에 넣은 장소는 어느 모드에서도 AI가 바꾸지 않는다. 일정·확정 리스트·지도는 AI가 바꾸지 않는다 — 바뀌는 것은 사람이 카드의 「반영」을 누를 때뿐이다.
+             * @enum {string}
+             */
+            mode: "plan" | "fill" | "review";
+            /**
              * @description done일 때만. solved=위반·확인 필요 없음, solved_with_checks=확정 위반 없음·확인 필요 남음, unresolved=확정 위반이 남음(violations), timeout=시간 초과. 영업시간을 모르는 동안은 보통 solved_with_checks
              * @enum {string|null}
              */
@@ -5260,14 +5393,20 @@ export interface components {
              * @enum {string|null}
              */
             failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
-            /** @description 요청 한 줄에서 모델이 세우고 코드가 검증한 목표. 요청이 없으면 빈 배열 */
+            /** @description 결과 화면 머리 문구 — mode마다 서버 템플릿이 다르다(예: review는 「일정을 점검했어요. 고칠 점 2개」). done일 때만, 진행 중·failed는 null. 버튼 이름은 모드와 관계없이 「AI 코스」다(#1237) */
+            headline: string | null;
+            /** @description 요청 한 줄과 지도 근거에서 세우고 코드가 검증한 목표. 요청 목표가 먼저이고, 지도 근거(우리 조건 요약의 꼭 지킬 조건·겹치는 선호, 확정 장소의 야경 라벨)로 세운 목표는 label 끝에 「(지도에서 세운 목표)」가 붙는다(#1131). 요청도 지도 근거도 없으면 빈 배열 */
             goals: components["schemas"]["CourseGoal"][];
             /** @description 목표로 바꾸지 못한 요청 조각(요청 원문의 일부). 화면에 「반영하지 못했어요」로 보인다 */
             unmatched: string[];
-            /** @description 작업 기록 — 이해, 확인, 짜기, 점검, 재계획, 끝, 결과 순으로 누가 했는지와 함께. running 중에도 단계마다 늘어난다(앞 단계는 바뀌지 않고 뒤로만 붙는다). 그동안 goals, days 같은 결과 칸은 비어 있다 */
+            /** @description 작업 기록 — 이해에서 결과까지 단계마다 누가 했는지와 함께(단계 값은 CourseStep.stage). running 중에도 단계마다 늘어난다(앞 단계는 바뀌지 않고 뒤로만 붙는다). 그동안 goals, days 같은 결과 칸은 비어 있다 */
             steps: components["schemas"]["CourseStep"][];
-            /** @description 지도 기간의 날짜별 순서(최대 14일). 날짜 하나가 비어 있을 수 있다 */
+            /** @description 지도 기간의 날짜별 순서(최대 14일). 날짜 하나가 비어 있을 수 있다. plan=새로 짠 코스, fill=넣어 둔 장소는 그 날 그대로 두고 미배정을 채운 안, review=지금 일정 그대로(카드를 반영하기 전) */
             days: components["schemas"]["CourseDay"][];
+            /** @description 고칠 점 카드(#1237). fill과 review에서 낸다 — 하드 문제가 먼저, 그다음 선호. plan은 빈 배열. 카드 하나는 문제 하나이고, 반영은 사람이 카드마다 누른다 */
+            fixes: components["schemas"]["CourseFix"][];
+            /** @description 점검했고 문제가 없는 항목(#1237) — 화면에 「괜찮아요」로 보인다. fill과 review에서 낸다. 문제가 있는 항목은 fixes에 있고 여기에는 없다. plan은 빈 배열 */
+            checked: components["schemas"]["CourseChecked"][];
             /** @description 남은 확정 위반(쉬는 날, 도보 상한 초과). 비어 있어야 정상이다 */
             violations: components["schemas"]["CourseViolation"][];
             /** @description 그날 영업하는지 알 수 없는 장소 — 「가게에 직접 확인해 주세요」 */
@@ -5276,7 +5415,7 @@ export interface components {
             excluded: components["schemas"]["CourseExcluded"][];
             /** Format: date-time */
             snapshot_at: string;
-            /** @description 요청 뒤 확정 리스트가 바뀌었다 — 「확정 리스트가 바뀌었어요」 + 「다시 짜기」 */
+            /** @description 요청 뒤 일정이 바뀌었다 — 「일정이 바뀌었어요」 + 「다시 짜기」(#1237). 서버가 요청 때 저장한 일정 version(`ShortlistSchedule.version`)과 지금 version이 다르면 true다. version에 확정 장소 집합·날짜 배정·순서·여행 기간이 들어 있어 장소를 더하거나 빼도, 날짜를 옮겨도, 여행 기간이 바뀌어도 true가 된다 */
             stale: boolean;
             /** Format: date-time */
             created_at: string;
@@ -5296,11 +5435,18 @@ export interface components {
             /** @description 지켜졌나. null = 판단할 수 없다(라벨을 아는 장소가 없다) — 「확인할 수 없어요」 */
             met: boolean | null;
         };
-        CourseStep: {
-            /** @description 이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 검증 · 질문 · 답 · 대행 · 끝 · 결과 */
+        /** @description AI 코스의 작업 기록 한 줄. 모양은 WorkStep과 같다(#1297에서 「핑고 AI 조언」 작업 기록과 함께 쓰도록 WorkStep으로 옮겼다. 이 이름은 그대로 쓸 수 있다) */
+        CourseStep: components["schemas"]["WorkStep"];
+        /** @description 작업 기록 한 줄 — 에이전트가 거친 단계와 누가 했는지. AI 코스(`CourseRun.steps`)와 「핑고 AI 조언」(`AgentSuggestion.steps`, #1297)이 같이 쓴다 */
+        WorkStep: {
+            /**
+             * @description 단계 이름. 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243).
+             *     AI 코스: 이해(목표 세우기) · 확인(목표가 데이터로 되는지) · 짜기 · 다시 짜기 · 점검 · 재계획(AI가 결과를 보고 다음 수) · 고정 · 찾기 · 옮겨 보기(쉬는 날·이동 과다를 코드가 찾아 옮겨 봄) · 대행(모델 실패를 코드가 이어받음) · 검증(모델 문장을 코드 문장으로 바꿈) · 가정(모르는 영업시간을 여는 것으로 봄) · 비교(후보끼리 견줌) · 결정(코드가 고름) · 끝(지휘가 고름) · 결과. 되묻지 않으므로 질문·답 단계는 없다(#1131).
+             *     핑고 AI 조언(#1297): 감지(막힌 곳을 찾음) · 순위(여러 곳 중 먼저 볼 곳) · 조사(모델이 고른 도구로 지도 데이터를 읽음) · 미리 찾기(지금 조건으로 남는 곳 수) · 우리 데이터(장소 라벨 확인) · 웹 확인(모델이 웹을 찾고 코드가 출처를 대조) · 검증(모델 출력을 지도와 대조) · 재확인(저장 직전 지도가 그대로인지) · 후속 확인(#1345, 수락한 앞 제안 뒤로 막힌 곳이 그대로인지 — 다음 방법과 충돌 선언에만, 감지 다음)
+             */
             stage: string;
             /**
-             * @description 무슨 일이었나. 해석=요청을 목표로, 지휘=도구 고르기·점검·끝, 계산=최적화·수리, 검증=코드가 사실과 맞춰 봄(모델 문장을 코드 문장으로 바꾼 기록 포함), 결정=사람의 답 또는 기본값
+             * @description 무슨 일이었나. 해석=요청을 목표로, 지휘=도구 고르기·점검·끝, 계산=최적화·수리·탐지·미리 찾기, 검증=코드가 사실과 맞춰 봄(모델 문장을 코드 문장으로 바꾼 기록, 웹 문장의 출처 대조 포함), 결정=코드가 고르거나 가정을 세움(결정·가정·순위 단계)
              * @enum {string}
              */
             role: "해석" | "지휘" | "계산" | "검증" | "결정";
@@ -5342,6 +5488,61 @@ export interface components {
         CourseViolation: {
             /** @enum {string} */
             kind: "closed" | "travel" | "member";
+            text: string;
+        };
+        /**
+         * @description 고칠 점 카드 하나(#1237) — 문제 하나와 그 문제를 고치는 가장 덜 건드리는 안. 서버가 문장을 모두 코드 템플릿으로 만든다(사용자가 쓴 글은 담지 않는다, #717).
+         *     안을 찾는 순서는 ① 날 맞바꾸기 ② 1곳 옮기기 ③ 2곳 맞바꾸기이고, 그 문제가 풀리고 다른 문제가 늘지 않는 첫 단계에서 멈춘다. 셋 다 안 되면 ④ moves는 비고 not_fixed_reason에 「크게 바꿔야 해요」를 적는다.
+         *     **반영은 FE가 한다**: 서버에 반영 API가 없다. 「반영」을 누르면 FE가 `GET /maps/{mapId}/shortlist/schedule`로 지금 일정을 읽어 moves대로 `pin_id`의 항목을 `to_date`로 옮기고(항목 id는 `ShortlistItem.pin.id`가 `pin_id`인 항목) 같은 응답의 `version`과 함께 `PUT /maps/{mapId}/shortlist/schedule`로 저장한다. 그동안 일정이 바뀌어 409 `SHORTLIST_STALE`이 오면 「일정이 바뀌었어요」 + 「다시 점검」으로 안내한다.
+         *     옮겨 간 날의 순서: 그 날에 남는 장소 뒤에, 원래 일정의 순서(날짜 → 그날 순서)대로 붙는다. 날 맞바꾸기는 두 날의 모든 장소가 moves에 있고 각 날의 기존 순서가 그대로 따라간다. 순서는 AI가 고치지 않는다(일정표의 위아래 이동과 「동선 보기」가 맡는다).
+         */
+        CourseFix: {
+            /** @description run 안에서 카드를 가리키는 값(예: fix_1). 반영한 카드를 화면이 표시할 때 쓴다 */
+            id: string;
+            /**
+             * @description 문제 종류. closed=쉬는 날에 넣음(영업시간을 아는 장소만, 모르면 checks의 「가게에 확인」), travel=도보 구간·하루 도보·하루 이동 상한을 넘음, member=요청 때 넣은 구성원 도보 상한(`member_constraints`)을 넘음(`CourseViolation.kind`의 member와 같은 판정), condition=우리 조건 요약에서 온 목표와 어긋남(예: 「걷기 힘들어」 2명인데 도보가 긴 날),
+             *     goal=요청한 목표를 못 지킴, cluster=같은 동네가 두 날로 갈림, meal=식당 없는 날 또는 하루 식당 3곳 이상, unassigned=아직 날짜에 넣지 않은 장소(fill 모드에서 「○일째에 넣기」)
+             * @enum {string}
+             */
+            kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal" | "unassigned";
+            /**
+             * @description hard=확정 위반(closed, travel, member) — 의도와 상관없이 늘 알린다. soft=선호(condition, goal, cluster, meal, unassigned). 세기는 서버 코드가 정한다
+             * @enum {string}
+             */
+            strength: "hard" | "soft";
+            /** @description 문제 문장. 예: 「덕수궁은 둘째 날 (화)에 쉬어요」 */
+            text: string;
+            /** @description 고칠 안 — 무엇이 어느 날에서 어느 날로 가는지. 고치지 않기로 한 카드는 빈 배열이다(not_fixed_reason이 있다) */
+            moves: components["schemas"]["CourseMove"][];
+            /** @description 안으로 풀리는 것. 예: 「덕수궁 휴무가 풀려요」. moves가 비면 null */
+            resolved_text: string | null;
+            /** @description 안을 따라도 남는 것(없으면 null). 예: 「셋째 날 도보 90분은 그대로예요」 */
+            remaining_text: string | null;
+            /** @description 고치지 않기로 한 이유. 예: 「고치려면 2곳을 옮겨야 해서 그대로 둬요」 · 「크게 바꿔야 해요」. moves가 있으면 null */
+            not_fixed_reason: string | null;
+        };
+        /** @description 장소 하나의 날짜 이동. 날 맞바꾸기는 두 날의 모든 장소가, 1곳 옮기기는 1개가, 2곳 맞바꾸기는 2개가 들어 있다. 어느 날끼리 바꾸는지는 CourseFix.text와 resolved_text에도 적힌다(첫날·마지막 날도 뺄 수 없다 — 도착·출발 데이터가 없다, #1237) */
+        CourseMove: {
+            /** @description 확정 리스트의 핀. 이름과 좌표는 핀 응답(GET /maps/{mapId}/shortlist)에서 읽는다 */
+            pin_id: string;
+            /**
+             * Format: date
+             * @description 지금 일정의 날짜. null은 아직 날짜에 넣지 않은 장소(미배정)
+             */
+            from_date: string | null;
+            /**
+             * Format: date
+             * @description 고친 안의 날짜(여행 기간 안)
+             */
+            to_date: string;
+        };
+        /** @description 점검했고 문제가 없는 항목 하나(#1237). 예: 「쉬는 날에 넣은 곳은 없어요」 */
+        CourseChecked: {
+            /**
+             * @description CourseFix.kind와 같은 값(unassigned는 없다)
+             * @enum {string}
+             */
+            kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal";
             text: string;
         };
         CourseCheck: {
@@ -5655,7 +5856,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 기본값 원이 이미 상한(음식점·카페 도보 30분, 관광지 45분, */
+        /** @description 기본값 원이 이미 상한(5,000m, 모든 카테고리, */
         WidenLimit: {
             headers: {
                 [name: string]: unknown;

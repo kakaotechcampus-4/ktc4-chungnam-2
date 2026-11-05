@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { pushRecent, RECENT_MAX } from './recentSearches'
+import { pushRecent, RECENT_MAX } from './recentSearchStore'
 
 describe('pushRecent', () => {
   it('맨 앞에 넣고, 같은 검색어는 앞으로 올리고, 상한만큼만 남긴다', () => {

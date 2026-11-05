@@ -2,11 +2,16 @@ import { useState } from 'react'
 import { MessageSquare, Users } from 'lucide-react'
 
 import type { MemberView } from '@/features/maps/model'
+import Mark from '@/ui/Mark'
 
 import { fulfillmentLine, memberConditions, sourceLabel, toChecks, type AiEvidence, type CheckView } from './model'
 
 const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
-const MARK = { pass: '✓', check: '?', fail: '✗' } as const
+const MARK = {
+  pass: <Mark kind="check" size={12} />,
+  check: <Mark kind="unknown" size={12} />,
+  fail: <Mark kind="cross" size={12} />,
+} as const
 
 /**
  * AI가 고른 장소의 근거(가드레일 5) — 추천 이유, 조건별 충족 체크, 구성원 충족 집계, 출처.
@@ -49,10 +54,10 @@ export function AiFulfillment({ evidence, members }: { evidence: AiEvidence; mem
       <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
         {f && (
           <>
-            <Users size={14} aria-hidden="true" /> {f.total}명 중 {f.satisfied}명 조건 충족
+            <Users size={14} aria-hidden="true" /> {f.total}명 중 {f.satisfied}명이 조건에 맞아요
           </>
         )}
-        <span className="ml-auto font-normal text-ink-600">출처 · {sourceLabel(evidence)}</span>
+        <span className="ml-auto font-normal text-ink-600">출처: {sourceLabel(evidence)}</span>
       </p>
       {f && <p className="text-xs text-ink-600">{fulfillmentLine(evidence, members)}</p>}
       <MemberConditions evidence={evidence} members={members} />

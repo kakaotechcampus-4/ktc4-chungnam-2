@@ -11,6 +11,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 from agent.course.constants import MEMBER_WALK_MAX, MEMBER_WALK_MIN, REQUEST_TEXT_MAX_CHARS
+from agent.schemas import WorkStep
 
 
 class MemberConstraint(BaseModel):
@@ -35,12 +36,9 @@ class CourseGoal(BaseModel):
     met: Optional[bool] = None       # null = 판단할 수 없음(라벨을 아는 장소가 없다)
 
 
-class CourseStep(BaseModel):
-    stage: str                       # 이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 검증 · 질문 · 답 · 대행 · 끝 · 결과
-    role: Literal["해석", "지휘", "계산", "검증", "결정"]
-    by: Literal["ai", "code", "human"]   # 섞여 있으면 대표값(사람 > 모델 > 코드)이고 by_detail에 원문
-    by_detail: Optional[str] = None  # 예: "모델 → 코드", "코드(목표 세우기 실패)". 단순하면 null
-    text: str
+# 작업 기록 한 줄. 「핑고 AI 조언」과 같은 모양이라 agent.schemas.WorkStep을 같이 쓴다(api-spec CourseStep → WorkStep, #1297).
+# stage: 이해 · 확인 · 짜기 · 점검 · 재계획 · 다시 짜기 · 고정 · 찾기 · 옮겨 보기 · 대행 · 검증 · 가정 · 비교 · 결정 · 끝 · 결과
+CourseStep = WorkStep
 
 
 class CourseSlot(BaseModel):
@@ -78,20 +76,46 @@ class CourseExcluded(BaseModel):
     text: str
 
 
+class CourseMove(BaseModel):
+    pin_id: str
+    from_date: Optional[date] = None   # null = 아직 날짜에 넣지 않은 장소(미배정)
+    to_date: date
+
+
+class CourseFix(BaseModel):
+    id: str
+    kind: Literal["closed", "travel", "member", "condition", "goal", "cluster", "meal", "unassigned"]
+    strength: Literal["hard", "soft"]
+    text: str
+    moves: list[CourseMove]
+    resolved_text: Optional[str] = None
+    remaining_text: Optional[str] = None
+    not_fixed_reason: Optional[str] = None
+
+
+class CourseChecked(BaseModel):
+    kind: Literal["closed", "travel", "member", "condition", "goal", "cluster", "meal"]
+    text: str
+
+
 class CourseRun(BaseModel):
     id: str
     map_id: str
     status: Literal["queued", "running", "done", "failed"]
+    mode: Literal["plan", "fill", "review"]
     outcome: Optional[Literal["solved", "solved_with_checks", "unresolved", "timeout"]] = None
     failure_code: Optional[Literal["INTERRUPTED", "ENGINE_ERROR"]] = None
+    headline: Optional[str] = None   # done일 때만
     goals: list[CourseGoal]
     unmatched: list[str]
     steps: list[CourseStep]
     days: list[CourseDay]
+    fixes: list[CourseFix]
+    checked: list[CourseChecked]
     violations: list[CourseViolation]
     checks: list[CourseCheck]
     excluded: list[CourseExcluded]
     snapshot_at: datetime
-    stale: bool                      # 요청 뒤 확정 리스트가 바뀌었다 — 「다시 짜기」
+    stale: bool                      # 요청 뒤 일정(version)이 바뀌었다 — 「일정이 바뀌었어요」 + 「다시 짜기」
     created_at: datetime
     finished_at: Optional[datetime] = None

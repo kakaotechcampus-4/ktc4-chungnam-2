@@ -52,6 +52,29 @@ class Point(NamedTuple):
     lng: float
 
 
+def cluster_points(points: Sequence[Point], threshold_m: float) -> list[list[Point]]:
+    """거리 임계값 이내의 연결 요소를 입력에서 처음 등장한 순서로 묶는다."""
+    parent = list(range(len(points)))
+
+    def find(index: int) -> int:
+        while index != parent[index]:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for i in range(len(points)):
+        for j in range(i + 1, len(points)):
+            if haversine_distance_m(points[i].lat, points[i].lng, points[j].lat, points[j].lng) <= threshold_m:
+                root_i, root_j = find(i), find(j)
+                if root_i != root_j:
+                    parent[root_i] = root_j
+
+    groups: dict[int, list[Point]] = {}
+    for i, point in enumerate(points):
+        groups.setdefault(find(i), []).append(point)
+    return list(groups.values())
+
+
 def nearest_neighbor_order(points: Sequence[Point], *, start_id: str | None = None) -> list[str]:
     """탐욕적 최근접 이웃 순서(모델 미사용 — shortlist/CLAUDE.md "왜 AI 동선 짜주기가 아닌가").
     매 단계에서 아직 안 방문한 점 중 현재 위치에서 가장 가까운 점을 고른다. 최적해를 보장하지

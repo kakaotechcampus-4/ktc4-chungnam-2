@@ -87,7 +87,7 @@ describe('잔액 부족 안내의 광고 보고 충전(#1039)', { timeout: 20_00
 
     // 고지 한 줄과 버튼 — 숫자는 응답 값
     const { reward, daily_max, used_today } = before.ad
-    expect(await screen.findByText(`광고를 끝까지 보면 ${reward} 크레딧을 드려요 · 오늘 ${daily_max - used_today}번 남음`)).toBeInTheDocument()
+    expect(await screen.findByText(`광고를 끝까지 보면 ${reward} 크레딧을 드려요. 오늘 ${daily_max - used_today}번 남았어요`)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: `광고 보고 ${reward} 크레딧 받기` }))
 
     // 테스트 광고 창: 다 보기 전에는 「보상 받고 닫기」가 없다
@@ -121,7 +121,7 @@ describe('잔액 부족 안내의 광고 보고 충전(#1039)', { timeout: 20_00
     await user.click(button)
     await user.click(await screen.findByRole('button', { name: '광고 닫기' }))
 
-    expect(await screen.findByText('광고를 끝까지 보면 크레딧을 받을 수 있어요')).toBeInTheDocument()
+    expect(await screen.findByText('광고를 끝까지 봐야 크레딧을 받아요')).toBeInTheDocument()
     expect(seen.claimed).toEqual([]) // 다 보지 않았으면 받지 않는다
 
     // 광고를 다시 불러 둔 뒤 버튼이 다시 눌린다

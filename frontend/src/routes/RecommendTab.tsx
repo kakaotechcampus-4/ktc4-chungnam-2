@@ -102,7 +102,7 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
     return tab(
       <>
         <BackToReadiness mapId={mapId} />
-        <AiHeader title="추천을 끝내지 못했어요" sub="조건이 까다로워서가 아니에요. 잠깐 문제가 생겼어요" mood="error" />
+        <AiHeader title="추천 장소를 찾지 못했어요" mood="error" />
       </>,
       <Failed mapId={mapId} run={run} />,
     )
@@ -111,7 +111,7 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
     return tab(
       <>
         <BackToReadiness mapId={mapId} />
-        <AiHeader title={`조건에 맞는 ${run.category}${josa(run.category, '을', '를')} 찾지 못했어요`} sub="조건이 까다로워서가 아니라, 반경 안에 맞는 곳이 없었어요" mood="sorry" />
+        <AiHeader title={`조건에 맞는 ${run.category}${josa(run.category, '을', '를')} 찾지 못했어요`} sub="반경 안에 맞는 곳이 없었어요" mood="sorry" />
       </>,
       <NoResults
         mapId={mapId}
@@ -132,7 +132,7 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const data = result.data
   const count = data.candidates.length
   if (view.kind === 'how') {
-    return tab(<AiHeader title="어떻게 골랐나요" sub="조건은 코드가 거르고, 순위도 규칙대로 정해요" />, <HowPicked funnel={data.funnel} count={count} onBack={back} />)
+    return tab(<AiHeader title="이렇게 골랐어요" sub="조건에 안 맞는 곳을 빼고, 남은 곳에 순위를 매겼어요" />, <HowPicked funnel={data.funnel} count={count} onBack={back} />)
   }
   // 머리글의 수는 이번 실행이 새로 찾은 곳이다(new_count, 올려도 줄지 않는다) — 이미 올린 곳은 목록 아래에 따로 보인다(#849).
   const found = data.new_count ?? data.candidates.filter((c) => c.visibility !== 'published').length

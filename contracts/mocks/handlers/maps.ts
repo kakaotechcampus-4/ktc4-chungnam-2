@@ -8,6 +8,9 @@ const withPinCount = <T extends { id: string }>(map: T) => ({ ...map, pin_count:
 
 /** 내 지도 상한(#369, #433에서 10→20). 만들거나 참여한 지도 합산 — 목 서버는 삭제·나간 지도를 이미 지우므로 지금 속한 지도만 센다. */
 export const MAP_LIMIT = 20;
+export const TRIP_MAX_DAYS = 90; // #1371: 시작일·종료일 포함
+const tripDays = (start: string, end: string) => Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1;
+const tripTooLong = () => apiError(422, "TRIP_TOO_LONG", `여행 기간은 최대 ${TRIP_MAX_DAYS}일까지 정할 수 있어요`, { limit: TRIP_MAX_DAYS });
 const myMapCount = () => Object.keys(store.maps).filter((id) => (store.members[id] ?? []).some((m) => m.user_id === ME_USER_ID)).length;
 const mapLimitError = () =>
   apiError(409, "MAP_LIMIT", `지도는 ${MAP_LIMIT}개까지 만들거나 참여할 수 있어요. 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`, { limit: MAP_LIMIT, count: myMapCount() });
@@ -25,7 +28,7 @@ function toMapResponse(map: MapEntity, { detail = false } = {}) {
     ...withPinCount(rest),
     my_role: owner ? ("owner" as const) : ("member" as const),
     created_by_me: createdBy === ME_USER_ID, // #340·회의 14번: 만든 사람이 위임해도 값은 그대로다(my_role과 달라질 수 있다)
-    permissions: { can_delete: owner, can_leave: !owner || next !== null, can_edit: owner },
+    permissions: { can_delete: owner, can_leave: !owner || next !== null, can_edit: owner, can_manage_invites: owner, can_transfer_owner: owner },
     ...(detail && next ? { next_owner: { user_id: next.user_id!, display_name: next.display_name ?? "" } } : {}),
   };
 }
@@ -45,7 +48,7 @@ export const mapsHandlers = [
       .filter(([mapId]) => (store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID))
       .map(([, map]) => toMapResponse(map))
       .reverse();
-    return HttpResponse.json({ items: mine, limit: MAP_LIMIT }); // #623: 목록과 상한을 함께
+    return HttpResponse.json({ items: mine, limit: MAP_LIMIT, trip_max_days: TRIP_MAX_DAYS }); // #623, #1371: 목록과 상한을 함께
   }),
 
   // #464 내가 방장인 삭제된 지도 — 30일 안인 것만, 최근 삭제순
@@ -71,6 +74,7 @@ export const mapsHandlers = [
     };
     if (store.users[ME_USER_ID]?.is_guest) return apiError(403, "GUEST_NOT_ALLOWED", "지도를 만들려면 카카오로 로그인해 주세요"); // #472
     if (body.start_date && body.end_date && body.end_date < body.start_date) return apiError(422, "VALIDATION_ERROR", "종료일은 시작일과 같거나 뒤여야 해요"); // #1197
+    if (body.start_date && body.end_date && tripDays(body.start_date, body.end_date) > TRIP_MAX_DAYS) return tripTooLong(); // #1371
     if (myMapCount() >= MAP_LIMIT) return mapLimitError();
     const mapId = nextId("map");
     store.maps[mapId] = {
@@ -111,6 +115,7 @@ export const mapsHandlers = [
     if (Object.keys(body).length === 0 || title.trim().length < 1 || title.length > 100 || end < start) {
       return apiError(422, "VALIDATION_ERROR", "지도 수정 값이 올바르지 않아요");
     }
+    if ((body.start_date !== undefined || body.end_date !== undefined) && tripDays(start, end) > TRIP_MAX_DAYS) return tripTooLong(); // #1371: 날짜를 바꿀 때만
     const items = store.shortlist[mapId] ?? [];
     const ordered = [...items].sort((a, b) => (a.scheduled_date ?? "9999").localeCompare(b.scheduled_date ?? "9999") || (a.visit_order ?? 1e9) - (b.visit_order ?? 1e9));
     const unassigned = ordered.filter(i => !i.scheduled_date);

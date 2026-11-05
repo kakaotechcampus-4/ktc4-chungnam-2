@@ -38,7 +38,7 @@
 | `places` | 자체 장소 DB(`places`, `place_facts`) 적재·DB 내 검색, 카카오 실시간 검색(표시용 `PlaceSource`) | #14, 멘토 피드백 5, #53 | — (외부 API는 카카오 실시간 표시만, 응답은 저장하지 않음) |
 | `seeding` | 프리시딩 배치 워커, 지도 생성·핀 생성·최초 ♥ 시 큐잉 | 신규(D3), #99 | `places` (예정) |
 | `recommend` | 추천 오케스트레이션(①②③-a-2④), 근거 조립, 검색범위(circles) 계산, 선호 순위 점수(#99), funnel, 제외목록, 재시도 | 3절, 5-5~5-6-1 | `pins` |
-| `llm` | 모델 호출 2곳(② 사유 구조화, ③-a-1 라벨링) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
+| `llm` | 모델 호출(v1 요청 중에는 ② 사유 구조화 하나, ③-a-1 라벨링은 v1 스텁이라 모델을 부르지 않는다, v2 에이전트·AI 코스 호출은 `llm/models.py`의 `CALLS`) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
 | `shortlist` | 확정 리스트 추가/제외, 동선 계산(모델 미사용) | 5-3, 5-10 | `pins` |
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
 | `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
@@ -120,6 +120,8 @@ core.py로 옮긴다.
 | 다른 모듈의 `service.py` | **금지** | 공개 접점이 아니다. 필요하면 그 모듈이 `api.py`에 함수를 연다 |
 
 `maps`는 여행 기간 변경 시 지도 행을 잠근 뒤 `shortlist.api.unassign_outside_dates(db, map_id=..., start_date=..., end_date=...)`를 호출한다. 범위 밖 일정은 미배정 뒤에 보존하며 호출자가 같은 트랜잭션을 커밋한다.
+
+`agent/course`는 `shortlist.api.get_schedule_for_agent(db, map_id=...)`로 일정(`start_date`, `end_date`, `version`, 항목별 `scheduled_date`·`visit_order`)을 읽는다. 순서와 `version`은 `GET /maps/{mapId}/shortlist/schedule`과 같고 읽기 전용이다(#1238).
 
 `api.py`가 없는 모듈은 아직 다른 모듈에게 열어줄 데이터가 없다는 뜻이다. 필요해지는 쪽이
 그 모듈 담당에게 이슈로 요청해서 만든다(`backend/CLAUDE.md`, #757).
@@ -272,6 +274,10 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 30일 안의 핀은 건드리지 않는다. 정리 작업의 dry-run은 호출자가 롤백해 확인한다(다른 단계와 같다).
 
+### 추천 반대 사유와 필요 조건 (#1253)
+
+추천의 hard 레지스트리는 `is_crowded_large` 하나다. 일반 soft 반대 사유는 후보를 거르지 않고 같은 키를 직접 쓴 구성원당 3점을 감점한다. 한 사람이 같은 사유를 여러 번 내도 한 번만 센다. 글·칩에서 나온 `accessible`, `wants=true`, `required`는 예외적으로 known 거짓만 제외하고 모름은 통과 + 확인 필요로 둔다. 알러지·재료 키는 만들지 않고 기존 확인 안내를 유지한다.
+
 ## 2. 장소 데이터 3층 모델
 
 멘토 지적: "네이버·구글을 프록시로 쓰려는 방향이 틀렸다." API가 무엇을 주고 안 주는지로 설계를 시작하지 않는다. 대신 **우리가 채우고 싶은 데이터가 무엇인지**를 먼저 정하고(기획안 5-7의 실격/선호 조건 전체), 그걸 채우는 소스를 층별로 정리한다.
@@ -332,15 +338,16 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | `place_link(place: PlaceInfo) -> str \| None` | recommend(결과 카드), pins(핀 상세) | 「카카오맵에서 보기」 링크(#798, #799). 기록된 카카오 장소 URL이 있으면 그것, 없으면 `{이름} {동네}` 카카오맵 검색 링크(동네가 없으면 이름만), 이름이 없으면 `None`. 카카오를 부르지 않는다 |
 | `neighborhood(address) -> str \| None`, `kakao_search_url(query) -> str` | recommend(지역 단위 검색어와 링크) | 동네는 주소의 시·군·구와 괄호 안 동(읍·면), 괄호가 없으면 시·군·구까지. 검색 링크 형식(`https://map.kakao.com/link/search/` + URL 인코딩)은 `places.core` 한 곳이다 — 다른 모듈은 이 글자를 다시 적지 않는다(`docs/constraints.md` 「카카오맵 검색 링크」) |
 | `sido(address) -> str \| None` | recommend(관광지 후보를 여행 지역 시·도 안으로, #1055·#1059) | 주소의 시·도를 **짧은 이름 하나로 정규화**해 돌려준다("서울특별시 …"와 "서울 …"은 같은 값, "경기도"·"강원특별자치도"·"강원도"도 각각 하나로, 2026 통합 "전남광주통합특별시"도 처리). 이름 표는 함수 설명에 둔다. 규칙은 `places.core`의 시·도 판정(`_SIDO_SHORT`·`_is_sido`, `neighborhood`가 쓰는 것) 한 곳이다. 못 찾으면 `None`. 순수 함수 |
-| `sido_at(lat, lng, *, db=None) -> str \| None` | recommend(여행 지역 중심이나 핀 중심의 시·도, #1059) | 좌표의 시·도. 방법은 places가 정한다(예: 가장 가까운 자체 DB 장소 주소의 `sido`). 못 정하면 `None`. **호출하는 쪽은 `None`이면 거르지 않는다**(모름을 실격으로 읽지 않는다, #1059 루트 결정) |
+| `sido_at(lat, lng, *, db=None) -> str \| None` | recommend(여행 지역 중심이나 핀 중심의 시·도, #1059) | 좌표의 시·도(`sido`와 같은 짧은 이름). **시·도 경계 표(`sido_boundaries`, 통계청 2018, #1385)가 적재돼 있으면 경계로 판정**한다 — 장소 데이터가 없는 곳(제주 등)도 판정된다. 경계에 안 들거나 표가 비어 있으면(간소화 경계가 빠뜨린 해안·섬, 바다, 적재 전 환경) 가장 가까운 자체 DB 장소 주소의 `sido`로 한 번 더 정한다(10km, 근사). 못 정하면 `None`. **호출하는 쪽은 `None`이면 거르지 않는다**(모름을 실격으로 읽지 않는다, #1059 루트 결정) |
+| `circle_outside_region(lat, lng, radius_m, sido, *, db=None) -> bool \| None` | recommend(`OUTSIDE_TRIP_REGION`, #1385) | 중심 (lat, lng), 반경 radius_m(m) 원이 그 시·도 경계와 **하나도 겹치지 않으면 `True`**, 걸치기만 해도 `False`. `sido`는 `sido`·`sido_at`의 짧은 이름("전남광주"는 광주·전남 경계 둘을 합쳐 본다). 경계 표가 비었거나 그 시·도 경계를 모르면 **`None` — 막지 않는다**. 원은 geography로 만든다(위도마다 다른 경도 거리 반영). 읽기 전용 |
 | `get_hours(place_ids) -> dict[str, PlaceHours]` | places 안(`get_week_open_status`), 상세 표시 | `place_hours`의 `hours`·`closed_days`·`closed_note`·`hours_note`를 배치로 조회(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 영업 여부 판정은 아래 두 함수를 쓴다 |
 | `get_week_open_status(place_ids) -> dict[str, dict[int, str]]` | recommend(「영업 종료 제거」), AI 코스(휴무 요일) | 장소별 요일 판정 `{0=월 … 6=일: open/closed/unknown}`(#747). place_hours를 배치로 읽는다. 행이 없는 장소는 키에서 뺀다(= 모름). 판정 규칙은 `places.core.day_open_status` 한 곳이다(`docs/constraints.md`「영업 중 판정」). 다른 모듈은 요일 이름, 시각 파싱, 자정 넘김을 다시 계산하지 않는다 |
 | `week_open_status(hours, closed_days) -> dict[int, str]` | AI 코스 평가 스크립트(원본 파일을 읽는 쪽) | 위와 같은 판정을 DB 없이 원본 칸에 적용하는 순수 함수(#747) |
 | `get_facts(place_ids) -> dict[str, list[FactLabel]]` | recommend(라벨) | `place_facts`의 `fact_key`·`value`·`confidence`를 그대로(없으면 빈 리스트). 호출하는 쪽이 `unknown_policy`를 적용한다 |
 
 - **`db` 선택 키워드 인자(#199에서 추가, 6개 함수 전부 `*, db: Session | None = None`)**: `db=db`를 넘기면 그 요청 트랜잭션에 참여한다(커밋은 호출한 쪽이 한다). **pins는 `record_kakao_match`를 반드시 `db=db`로 부른다** — 핀 생성과 같은 트랜잭션이어야 한다. 안 넘기면 places가 짧은 세션을 직접 열어 쓰고 닫는다(읽기 전용 호출은 충분하지만 호출마다 연결을 쓴다). `FakePlaces`도 같은 인자를 받는다.
-- **`maps.api.get_map_region_center(db, map_id) -> tuple[float, float] | None`**(#1059): 지도 여행 지역(`maps.region_center`)의 (lat, lng). 여행 지역을 안 고른 지도는 `None`이다. recommend는 이것이 있으면 `places.api.sido_at`으로 여행 지역의 시·도를 정하고, 없으면 기본 지역 중심(그 카테고리 의견 핀들의 중심)으로 정한다.
-- `sido`·`sido_at`은 `places.testing.FakePlaces`에도 같은 시그니처로 있다(recommend가 대역으로 테스트한다).
+- **`maps.api.get_map_region_center(db, map_id) -> tuple[float, float] | None`**(#1059): 지도 여행 지역(`maps.region_center`)의 (lat, lng). 여행 지역을 안 고른 지도는 `None`이다. recommend는 이것이 있으면 `places.api.sido_at`으로 여행 지역의 시·도를 정하고, 없으면 첫 기본 지역의 같은 카테고리 핀 무리 중심으로 정한다(#1252).
+- `sido`·`sido_at`·`circle_outside_region`은 `places.testing.FakePlaces`에도 같은 시그니처로 있다(recommend가 대역으로 테스트한다). 대역의 `circle_outside_region`은 항상 `None`(경계 없음 = 모름)이다.
 - `place_id`는 문자열(`places.id`의 UUID). 타입은 `places/schemas.py`의 불변 dataclass: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`, `FactLabel`.
 - **카카오 원자료는 이 함수들의 입출력 어디에도 없다.** `kakao_place_id`·`kakao_place_url`만 예외(저장 허용 범위).
 - `places.api`의 실시간 카카오 검색은 `search_by_name`(표시용) 하나만 남는다. 옛 `search_nearby`(카카오 실시간 후보 풀)·`resolve_place`·`get_raw_facts`·`call_counts`는 부르는 곳이 없어 지웠다(#190, #195, #773).

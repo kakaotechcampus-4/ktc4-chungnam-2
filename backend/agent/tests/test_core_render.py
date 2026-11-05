@@ -53,9 +53,8 @@ def test_category_gap_template_title_and_particle(category, title):
     assert [(c["metric"], c["subject"], c["value"]) for c in draft.claims] == [
         ("confirmed", "map", 2), ("confirmed", "category", 0),
     ]
-    assert [(a["type"], a["label"], a["params"]) for a in draft.actions] == [
+    assert [(a["type"], a["label"], a["params"]) for a in draft.actions] == [   # 버튼 하나 — 「핀 보기」는 뺐다(#1317)
         ("open_recommend", f"{category} 추천 받기", {"category": category}),
-        ("show_pins", f"{category} 핀 보기", {"category": category}),
     ]
 
 
@@ -64,7 +63,7 @@ def test_category_gap_for_non_recommendable_category_searches_instead():
     draft = core.render_template(_signal("category_gap", category="숙소"))
 
     assert draft.title == "확정 리스트에 숙소가 아직 없어요"
-    assert [(a["type"], a["label"]) for a in draft.actions] == [("search_place", "숙소 검색"), ("show_pins", "숙소 핀 보기")]
+    assert [(a["type"], a["label"]) for a in draft.actions] == [("search_place", "숙소 검색")]
 
 
 @pytest.mark.parametrize("diagnosis", ["stall", "split"])
@@ -230,16 +229,16 @@ def test_rendered_suggestion_has_no_server_internal_values():
                                       resolved_by="u1"), core.RenderRefs(pin_names={}))
 
     dumped = out.model_dump(mode="json")
-    assert set(dumped) == {"id", "diagnosis", "category", "title", "analysis", "advice", "actions", "facts", "created_at",
-                           "expires_at"}
+    assert set(dumped) == {"id", "diagnosis", "category", "title", "analysis", "advice", "actions", "facts", "steps", "attempt",
+                           "tried", "created_at", "expires_at"}
     assert "{c" not in json.dumps(dumped, ensure_ascii=False)
 
 
 def test_action_at_finds_by_index():
-    draft = core.render_template(_signal("category_gap", category="카페"))
+    draft = core.render_template(_signal("no_reaction", ids=("p1",)))
 
-    assert core.action_at(draft.actions, 1).type == "show_pins"
-    assert core.action_at(draft.actions, 2) is None
+    assert core.action_at(draft.actions, 0).type == "show_pins"
+    assert core.action_at(draft.actions, 1) is None
 
 
 # ---------------------------------------------------------------- 상태와 이벤트

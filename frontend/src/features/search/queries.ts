@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { ApiError } from '@/api'
 
-import { nearestPlaces, parseLink, searchPlaces } from './api'
+import { externalSearch, nearestPlaces, parseLink, searchPlaces } from './api'
 import type { LatLng, SourcePlaces } from './model'
 import type { SearchSource } from './searchStore'
 
@@ -29,11 +29,19 @@ export function useSourcePlacesQuery(source: SearchSource | null, near: LatLng |
   })
 }
 
+/**
+ * 결과 없음 화면의 카카오맵 링크(#905). 이름 검색이 0곳일 때만 부른다. 실패하면 링크만 숨긴다 — 결과 없음 화면은 그대로다.
+ * 링크는 검색어로만 정해져서 같은 검색어는 다시 부르지 않는다.
+ */
+export function useExternalSearchQuery(query: string) {
+  return useQuery({ queryKey: ['places', 'external-search', query], queryFn: () => externalSearch(query), staleTime: Infinity, retry: false })
+}
+
 /** docs/errors.md 문구. */
 export function searchErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'RATE_LIMITED') return '너무 빨리 검색하고 있어요. 잠시 뒤 다시 시도해 주세요'
-  if (err instanceof ApiError && err.code === 'PLACES_UNAVAILABLE') return '지금은 장소를 검색할 수 없어요. 잠시 뒤 다시 시도해 주세요'
-  if (err instanceof ApiError && err.code === 'LINK_NOT_SUPPORTED') return '구글맵·카카오맵 링크만 붙일 수 있어요'
-  if (err instanceof ApiError && err.code === 'LINK_UNRESOLVED') return '링크에서 장소를 찾지 못했어요. 검색으로 남겨 주세요'
+  if (err instanceof ApiError && err.code === 'RATE_LIMITED') return '너무 자주 검색했어요. 잠시 뒤 다시 검색해 주세요'
+  if (err instanceof ApiError && err.code === 'PLACES_UNAVAILABLE') return '지금은 장소를 검색할 수 없어요. 잠시 뒤 다시 검색해 주세요'
+  if (err instanceof ApiError && err.code === 'LINK_NOT_SUPPORTED') return '구글맵, 카카오맵 링크만 붙일 수 있어요'
+  if (err instanceof ApiError && err.code === 'LINK_UNRESOLVED') return '링크에서 장소를 찾지 못했어요. 이름으로 검색해 주세요'
   return '검색하지 못했어요'
 }

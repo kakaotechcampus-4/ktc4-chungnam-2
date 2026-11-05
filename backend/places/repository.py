@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from places import matching
 from places.ingest import HoursRow, LabelRow, PlaceRow
 from places.matching import Candidate
-from places.models import Place, PlaceExternalId, PlaceExternalIdVote, PlaceFact, PlaceHours
+from places.models import Place, PlaceExternalId, PlaceExternalIdVote, PlaceFact, PlaceHours, SidoBoundary
 from places.schemas import Area, FactLabel, PlaceHint, PlaceHours as PlaceHoursInfo, PlaceInfo, PlaceRef
 
 _CHUNK = 1000
@@ -625,3 +625,41 @@ def _uuid_or_none(raw: str) -> uuid.UUID | None:
         return uuid.UUID(raw)
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+# ---- 시·도 경계(#1385) — 지역 판정의 정본 표. 읽기는 api.sido_at·circle_outside_region, 쓰기는 places.load boundaries ----
+
+def upsert_boundaries(db: Session, rows: Sequence[dict]) -> int:
+    """[{code, name, wkt, sha256}]를 code로 upsert(멱등). 넣은 행 수."""
+    for row in rows:
+        values = {"code": row["code"], "name": row["name"], "source_sha256": row["sha256"],
+                  "geom": func.ST_Multi(func.ST_CollectionExtract(func.ST_MakeValid(func.ST_GeomFromText(row["wkt"], 4326)), 3))}
+        stmt = pg_insert(SidoBoundary).values(**values)
+        db.execute(stmt.on_conflict_do_update(index_elements=[SidoBoundary.code],
+                                              set_={k: stmt.excluded[k] for k in ("name", "geom", "source_sha256")}))
+    return len(rows)
+
+
+def boundary_count(db: Session) -> int:
+    return db.scalar(select(func.count()).select_from(SidoBoundary)) or 0
+
+
+def boundary_hashes(db: Session) -> dict[str, str]:
+    return dict(db.execute(select(SidoBoundary.code, SidoBoundary.source_sha256)).all())
+
+
+def sido_by_boundary(db: Session, lat: float, lng: float) -> str | None:
+    """점이 속한 시·도 이름. 어느 경계에도 안 들면(바다·국외) None. 표가 비어 있으면 None."""
+    point = func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326)
+    return db.scalar(select(SidoBoundary.name).where(func.ST_Intersects(SidoBoundary.geom, point)).order_by(SidoBoundary.code).limit(1))
+
+
+def circle_outside_sido(db: Session, lat: float, lng: float, radius_m: float, sido_name: str) -> bool | None:
+    """geography 원(중심, radius_m)이 그 시·도 경계와 하나도 겹치지 않으면 True. 이름의 경계가 없으면 None."""
+    if not db.scalar(select(func.count()).select_from(SidoBoundary).where(SidoBoundary.name == sido_name)):
+        return None
+    point = func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326)
+    circle = cast(func.ST_Buffer(cast(point, Geography), radius_m, "quad_segs=32"), Geometry)   # 위도에 따른 경도 길이를 geography가 맞춘다
+    touches = db.scalar(select(func.count()).select_from(SidoBoundary)
+                        .where(SidoBoundary.name == sido_name, func.ST_Intersects(SidoBoundary.geom, circle)))
+    return not touches

@@ -160,8 +160,8 @@ _Stage = tuple[int, tuple[float | None, float | None], float | None]   # (계층
 
 
 def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
-    """계약의 순서(docs/api-spec.yaml /places/search 정렬 규칙)를 그대로 내는 읽기 순서.
-    좌표가 있으면 지역 구역(30km 안)의 모든 계층이 먼 구역보다 먼저다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
+    """30km 안만 읽는 순서.
+    좌표가 있으면 지역 구역(30km 안)만 읽는다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
     모자랄 때만 다음으로 가도 결과가 같다(가까운 띠의 장소가 어차피 더 앞이다). 다음은 계층 3 한 번으로 부분 일치(3km 밖)와
     주소 일치를 일치 정도 순으로 얻는다 — 비싼 전체 훑기를 구역마다 한 번만 한다. 계층 1은 인덱스라 띠를 나누지 않는다."""
     if near is None:
@@ -169,13 +169,12 @@ def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
     close, region = repository.NEAR_RADIUS_M, repository.REGION_RADIUS_M
     return [
         (TIER_NAME_PREFIX, (None, region), None), (TIER_NAME_PART, (None, close), None), (TIER_REST, (None, region), close),
-        (TIER_NAME_PREFIX, (region, None), None), (TIER_REST, (region, None), None),
     ]
 
 
 def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[OwnSearchHit]:
     """장소 검색(#822, #835)의 자체 DB 몫. 이름 일치 정도 계층(완전·앞부분 > 부분 > 주소만) 순으로, 좌표가 있으면 지역 구역(30km 안)을
-    먼저, 먼 구역은 limit에 못 미칠 때만 읽는다(_search_stages). 각 단계 안은 가까운 순 → 정예. 핀으로 만들 수 있는 곳만
+    조회한다(_search_stages). 각 단계 안은 가까운 순 → 정예. 핀으로 만들 수 있는 곳만
     pinnable=True로 최대 limit곳. 단계마다 핀 가능한 곳이 모이거나 후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다.
     카카오 값을 쓰지 않는다. 읽기 전용."""
     hits: list[OwnSearchHit] = []
@@ -248,17 +247,29 @@ def sido(address: str | None) -> str | None:
     return core.sido(address)
 
 
-SIDO_AT_RADIUS_M = 10_000.0   # sido_at이 장소를 찾는 반경. 이 안에 주소 있는 자체 DB 장소가 없으면 None
+SIDO_AT_RADIUS_M = 10_000.0   # 경계 표가 비었을 때 sido_at이 장소를 찾는 반경. 이 안에 주소 있는 자체 DB 장소가 없으면 None
 _SIDO_AT_FETCH = 5            # 가장 가까운 곳의 주소가 비어도 다음 곳으로 정하도록 조금 더 읽는다
 
 
 def sido_at(lat: float, lng: float, *, db: Session | None = None) -> str | None:
-    """좌표의 시·도(sido와 같은 짧은 이름). 10km 안에서 가장 가까운 영업 중 자체 DB 장소 주소의 시·도로 정한다.
-    못 정하면 None — 부르는 쪽은 None이면 거르지 않는다(#1059). 읽기 전용, 좌표를 남기지 않는다."""
-    # ponytail: 경계 근처 좌표는 건너편 시·도 장소가 더 가까우면 그쪽으로 나온다. 행정 경계 폴리곤이 생기면 그것으로 바꾼다
+    """좌표의 시·도(sido와 같은 짧은 이름, #1385). 시·도 경계 표(sido_boundaries)가 적재돼 있으면 **경계가 먼저**다 — 경계 안이면 그 시·도,
+    장소 데이터가 없는 곳(제주 등)도 판정된다. 경계에 안 들면(간소화 경계가 빠뜨린 해안·매립지·작은 섬, 바다, 국외) 10km 안에서 가장 가까운
+    영업 중 자체 DB 장소 주소의 시·도로 한 번 더 정한다(경계 근처에서는 건너편 장소가 더 가까우면 틀리는 근사). 표가 비어 있어도 같은 방식이다.
+    둘 다 못 정하면 None — 부르는 쪽은 None이면 거르지 않는다(#1059). 읽기 전용, 좌표를 남기지 않는다."""
     with _session(db) as s:
+        by_boundary = repository.sido_by_boundary(s, lat, lng)
+        if by_boundary is not None:
+            return by_boundary
         rows = repository.find_nearby_own(s, lat, lng, SIDO_AT_RADIUS_M, _SIDO_AT_FETCH)
     return next((v for v in (core.sido(r.address) for r in rows) if v), None)
+
+
+def circle_outside_region(lat: float, lng: float, radius_m: float, sido: str, *, db: Session | None = None) -> bool | None:
+    """중심 (lat, lng), 반경 radius_m(m)의 원 **전체**가 그 시·도 밖이면 True(걸치기만 해도 False). sido는 sido·sido_at이
+    돌려주는 짧은 이름("서울", "전남광주"). 경계 표가 비었거나 그 시·도의 경계를 모르면 None — 막지 않는다는 뜻이다.
+    원은 geography로 만든다(위도마다 다른 경도 거리를 반영). 읽기 전용, 좌표를 남기지 않는다. recommend의 OUTSIDE_TRIP_REGION 판정이 부른다."""
+    with _session(db) as s:
+        return repository.circle_outside_sido(s, lat, lng, radius_m, sido)
 
 
 def kakao_search_url(query: str) -> str:

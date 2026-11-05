@@ -1,16 +1,22 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
+import { http, HttpResponse } from 'msw'
 import { useState, type ReactNode } from 'react'
-import { MemoryRouter } from 'react-router'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { MemoryRouter, Outlet, Route, Routes } from 'react-router'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+
+import { START_PARAM } from '@/features/agent/actions'
+
+import { useSheetStore } from '@/features/shell/sheetStore'
 
 import { useAiStore } from './aiStore'
 import { createRun, fetchResult, retryRun } from './api'
 import ConditionsCard from './ConditionsCard'
 import type { RecommendResultDto, RecommendRunDto } from './model'
 import { ReadinessBody } from './Readiness'
+import { ResultsHeader } from './Results'
 
 const MAP = 'map_1'
 
@@ -37,26 +43,67 @@ function Card({ run, result }: { run: RecommendRunDto; result: RecommendResultDt
   return <ConditionsCard run={run} applied={result.applied_evidence} noApplied={result.no_applied_conditions} open={open} onOpenChange={setOpen} />
 }
 
+/** 크레딧을 쓰는 실행은 확인 창을 거친다(쓸 크레딧·남은 크레딧) — 그 창의 확인 버튼을 누른다. */
+async function confirmCredit(ok = '추천받기') {
+  await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: ok }))
+}
+
 async function doneRun() {
   const run = await createRun(MAP, '음식점', crypto.randomUUID())
   return { run, result: await fetchResult(run.id) }
 }
 
 describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', () => {
-  it('근거 확인 없이 execute 로 시작하고, 시도마다 Idempotency-Key 를 싣는다', async () => {
+  it('근거 확인 없이 execute 로 시작하고, 시도마다 Idempotency-Key 와 보고 있는 지도 가운데를 싣는다(#1331)', async () => {
+    const center = { lat: 37.5665, lng: 126.978 }
     const sent: { body: unknown; key: string | null }[] = []
+    const readinessQuery: string[] = []
     server.events.on('request:start', async ({ request }) => {
-      if (request.method === 'POST' && new URL(request.url).pathname === `/maps/${MAP}/runs`) {
+      const url = new URL(request.url)
+      if (request.method === 'POST' && url.pathname === `/maps/${MAP}/runs`) {
         sent.push({ body: await request.clone().json(), key: request.headers.get('Idempotency-Key') })
       }
+      if (url.pathname === `/maps/${MAP}/recommend/readiness`) readinessQuery.push(url.search)
     })
-    renderWithClient(<ReadinessBody mapId={MAP} />)
+    // 지도 셸(MapLayout)이 Outlet 으로 getCenter 를 내린다.
+    renderWithClient(
+      <Routes>
+        <Route element={<Outlet context={{ getCenter: () => center }} />}>
+          <Route path="*" element={<ReadinessBody mapId={MAP} />} />
+        </Route>
+      </Routes>,
+    )
     await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
+    await confirmCredit()
 
     await waitFor(() => expect(useAiStore.getState().runs[MAP]?.status).toBe('done'))
+    expect(readinessQuery[0]).toBe(`?center_lat=${center.lat}&center_lng=${center.lng}`)
     expect(sent).toHaveLength(1)
-    expect(sent[0].body).toEqual({ category: '음식점', execute: true })
+    expect(sent[0].body).toEqual({ category: '음식점', execute: true, center })
     expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/)
+    server.events.removeAllListeners()
+  })
+
+  it('지도를 끌어 옮기고 멈추면 「근처 정예 수」를 새 가운데로 다시 센다(#1331)', async () => {
+    let center = { lat: 37.5665, lng: 126.978 }
+    const queries: string[] = []
+    server.events.on('request:start', ({ request }) => {
+      const url = new URL(request.url)
+      if (url.pathname === `/maps/${MAP}/recommend/readiness`) queries.push(url.search)
+    })
+    renderWithClient(
+      <Routes>
+        <Route element={<Outlet context={{ getCenter: () => center }} />}>
+          <Route path="*" element={<ReadinessBody mapId={MAP} />} />
+        </Route>
+      </Routes>,
+    )
+    await screen.findByRole('button', { name: '음식점 추천받기' })
+
+    center = { lat: 35.1, lng: 129.04 }
+    act(() => useSheetStore.getState().setMapMoving(true)) // 끌기 시작과 멈춤은 따로 오는 이벤트다
+    act(() => useSheetStore.getState().setMapMoving(false))
+    await waitFor(() => expect(queries.at(-1)).toBe('?center_lat=35.1&center_lng=129.04'))
     server.events.removeAllListeners()
   })
 
@@ -64,7 +111,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     const { run, result } = await doneRun()
     renderWithClient(<Card run={run} result={result} />)
 
-    const toggle = screen.getByRole('button', { name: /이 조건으로 찾았어요/ })
+    const toggle = screen.getByRole('button', { name: /조건 .*찾았어요/ })
     expect(toggle).toHaveTextContent(/조건 \d+개/)
     await userEvent.click(toggle)
 
@@ -72,8 +119,8 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     await userEvent.click(await screen.findByRole('button', { name: '매운맛 전문 빼기' }))
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '빼기' }))
 
-    expect(await screen.findByText('고친 조건 1개 · 다시 추천 때 반영')).toBeInTheDocument()
-    const removed = screen.getByRole('heading', { name: '뺀 조건 · 다시 추천 때 반영' }).parentElement!
+    expect(await screen.findByText('고친 조건 1개는 다시 추천할 때 반영돼요')).toBeInTheDocument()
+    const removed = screen.getByRole('heading', { name: '뺀 조건' }).parentElement!
     expect(within(removed).getByRole('button', { name: '매운맛 전문 다시 넣기' })).toBeInTheDocument()
   })
 
@@ -84,6 +131,8 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+
+    await confirmCredit()
     const left = before.balance - before.prices.recommend_run
     expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${left}/${before.max_balance}`)).toBeInTheDocument()
   })
@@ -93,10 +142,11 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     const { review_reward } = await fetch(`http://localhost/credits/me`).then((r) => r.json())
     renderWithClient(<ReadinessBody mapId={MAP} />)
     await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
+    await confirmCredit()
 
     expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '후기 쓰러 가기' })).toHaveAttribute('href', `/maps/${MAP}/shortlist`)
-    expect(screen.queryByText('추천을 시작하지 못했어요')).not.toBeInTheDocument()
+    expect(screen.queryByText('추천 장소를 찾지 못했어요')).not.toBeInTheDocument()
     expect(useAiStore.getState().runs[MAP]).toBeUndefined()
   })
 
@@ -116,8 +166,135 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     for (let n = 0; n < 10; n++) last = await retryRun(run.id)
     renderWithClient(<Card run={last} result={await fetchResult(run.id)} />)
 
-    await userEvent.click(screen.getByRole('button', { name: /이 조건으로 찾았어요/ }))
+    await userEvent.click(screen.getByRole('button', { name: /조건 .*찾았어요/ }))
     expect(await screen.findByRole('button', { name: '매운맛 전문 빼기' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '조건 더하기' })).toBeInTheDocument()
+  })
+})
+
+describe('크레딧을 쓰기 전에 묻기, 다시 추천 버튼(#1363)', () => {
+  it('「추천받기」는 확인 창에 쓸 크레딧과 남은 크레딧을 보이고, 취소하면 요청하지 않는다', async () => {
+    let runs = 0
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === `/maps/${MAP}/runs`) runs += 1
+    })
+    const before = await fetch(`http://localhost/credits/me`).then((r) => r.json())
+    renderWithClient(<ReadinessBody mapId={MAP} />)
+    await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
+
+    const dialog = within(await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' }))
+    expect(dialog.getByText(`${before.prices.recommend_run} 크레딧을 써요`)).toBeInTheDocument()
+    expect(dialog.getByText(`남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
+    await userEvent.click(dialog.getByRole('button', { name: '취소' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(runs).toBe(0)
+    expect(useAiStore.getState().runs[MAP]).toBeUndefined()
+    server.events.removeAllListeners()
+  })
+
+  it('핑고 조언에서 「추천 받아 보기」로 들어와도 바로 시작하지 않고 확인 창을 먼저 띄운다', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/maps/${MAP}/recommend?${START_PARAM}=${encodeURIComponent('음식점')}`]}>
+          <ReadinessBody mapId={MAP} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' })).toBeInTheDocument()
+    expect(useAiStore.getState().runs[MAP]).toBeUndefined()
+    await confirmCredit()
+    await waitFor(() => expect(useAiStore.getState().runs[MAP]?.status).toBe('done'))
+  })
+
+  it('다시 추천은 크레딧을 쓰지 않아 확인 창 없이 바로 가고, 버튼 옆에 남은 크레딧을 보인다', async () => {
+    let retries = 0
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/retry')) retries += 1
+    })
+    // 머리의 「‹ AI 추천」이 넓은 화면인지 본다 — jsdom 에는 matchMedia 가 없다.
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }))
+    const { run } = await doneRun()
+    const credits = await fetch(`http://localhost/credits/me`).then((r) => r.json())
+    renderWithClient(<ResultsHeader mapId={MAP} run={run} count={3} />)
+
+    expect(await screen.findByText(`남은 크레딧 ${credits.balance}/${credits.max_balance}`)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '다시 추천' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(retries).toBe(1))
+    server.events.removeAllListeners()
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안내(#1385)', () => {
+  const SEOUL = { label: '서울특별시', lat: 37.5665, lng: 126.978 }
+
+  /** 지도 셸처럼 getCenter·showRegion 을 내리고, 경계를 받을 때까지 기다린다(누를 때 판정한다). */
+  async function renderInShell(center: { lat: number; lng: number }, showRegion = vi.fn()) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Routes>
+            <Route element={<Outlet context={{ getCenter: () => center, showRegion }} />}>
+              <Route path="*" element={<ReadinessBody mapId={MAP} />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('button', { name: '음식점 추천받기' })
+    return { client, showRegion }
+  }
+
+  async function setRegion(region: typeof SEOUL) {
+    await fetch(`http://localhost/maps/${MAP}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ region }) })
+  }
+
+  it('원 전체가 여행 지역 밖이면 크레딧 창 대신 안내하고, 「여행 지역으로 가기」는 지도만 옮긴다', async () => {
+    await setRegion(SEOUL)
+    const posts: string[] = []
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST') posts.push(new URL(request.url).pathname)
+    })
+    const { client, showRegion } = await renderInShell({ lat: 35.1796, lng: 129.0756 })
+    await waitFor(() => expect(client.getQueryData(['region-boundary', '11'])).toBeDefined())
+
+    await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '여행 지역 밖이에요' })
+    expect(within(dialog).getByText('서울특별시로 돌아가서 추천받아 주세요')).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: '여행 지역으로 가기' }))
+
+    expect(showRegion).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(posts).toEqual([])
+    server.events.removeAllListeners()
+  })
+
+  it('지역 안이면 크레딧 창에 찾는 범위를 알린다', async () => {
+    await setRegion(SEOUL)
+    const { client } = await renderInShell(SEOUL)
+    await waitFor(() => expect(client.getQueryData(['region-boundary', '11'])).toBeDefined())
+
+    await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' })
+    expect(within(dialog).getByText('지도 가운데 반경 3km 안에서 찾아요')).toBeInTheDocument()
+  })
+
+  it('추천 요청이 실패하면 「추천 장소를 찾지 못했어요」 한 줄', async () => {
+    // 지역을 고르지 않은 지도라 지역 밖 안내는 없다. 서버가 요청을 거절한다(422).
+    server.use(
+      http.post('*/maps/:mapId/runs', () =>
+        HttpResponse.json({ code: 'VALIDATION_ERROR', message: '추천을 받을 수 없는 위치예요' }, { status: 422 }),
+      ),
+    )
+    await renderInShell(SEOUL)
+    await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+    await confirmCredit()
+
+    expect(await screen.findByText('추천 장소를 찾지 못했어요')).toBeInTheDocument()
+    expect(useAiStore.getState().runs[MAP]).toBeUndefined()
   })
 })
