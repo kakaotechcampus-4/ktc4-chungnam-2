@@ -1,4 +1,5 @@
 import type { PlaceSearchResultDto } from '@/features/search/model'
+import { LIKE_PATH } from '@/ui/Mark'
 import { PIN_PATH } from '@/ui/pinPath'
 import { PINGO_MARK } from '@/ui/pingoMark'
 
@@ -6,15 +7,13 @@ import { kindLabel, type Pin } from './model'
 
 type PinKind = Pin['kind']
 
-const HEART = 'M12 14.2l-.6-.5C9.3 11.8 8 10.6 8 9.2 8 8.1 8.9 7.2 10 7.2c.6 0 1.2.3 1.6.7l.4.4.4-.4c.4-.4 1-.7 1.6-.7 1.1 0 2 .9 2 2 0 1.4-1.3 2.6-3.4 4.5l-.6.5z'
-
 /**
  * 지도 위 핀은 모양 2가지다 — 색의 진하기는 **참여율**로 나타낸다.
  * - 일반·AI 추천: 빨강 실선 테두리 + 속은 참여율만큼 회색→빨강(oklch 로 섞어야 중간이 탁해지지 않는다)
  *   + 머리 가운데 진한 빨간 점. AI 추천은 「지도에 올리기」로 모두의 핀이 된 뒤라 일반 핀과 같게 그린다.
  *   올리기 전 후보만 핑고 핀으로 따로 그린다(createCandidateMarkerElement).
- * - 확정: 골드 채움 + 갈색 윤곽선 + 갈색 ♥. 참여율과 무관하다. 흰 테두리는 없앴다(#1355) — 골드는 어두운 타일에서도 밝고,
- *   밝은 땅 위는 갈색 윤곽선이 가른다(#299). ♥는 색을 못 가르는 사람에게 확정을 알린다(흑백이면 참여 50% 핀과 밝기가 같다).
+ * - 확정: 골드 채움 + 갈색 윤곽선 + 갈색 하트(좋음 하트 `LIKE_PATH`를 0.6배로). 참여율과 무관하다. 흰 테두리는 없앴다(#1355) — 골드는 어두운 타일에서도 밝고,
+ *   밝은 땅 위는 갈색 윤곽선이 가른다(#299). 하트는 색을 못 가르는 사람에게 확정을 알린다(흑백이면 참여 50% 핀과 밝기가 같다).
  *   그림자는 없다 — 이름표처럼 윤곽선으로 가른다
  * 구성원별 색 구분은 없다(#26).
  */
@@ -40,7 +39,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
       <path d="${PIN_PATH}" stroke-linejoin="round"
             style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${shape.width}" />
-      ${shape.heart ? `<path d="${HEART}" style="fill:var(--pin-confirmed-mark)" />` : `<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`}
+      ${shape.heart ? `<path d="${LIKE_PATH}" transform="translate(7.2 5.7) scale(.6)" style="fill:var(--pin-confirmed-mark)" />` : `<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`}
     </svg>`
   el.addEventListener('click', onClick)
   return el

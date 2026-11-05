@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router'
-import { Check } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { timeAgo } from '@/features/map/model'
@@ -20,6 +19,7 @@ import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 import { useCreditsQuery } from '@/features/credits/queries'
+import Mark from '@/ui/Mark'
 
 import { useAiStore } from './aiStore'
 import {
@@ -86,8 +86,8 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
         const current = i === at
         return (
           <li key={label} className={`flex items-center gap-2 ${current ? 'font-bold text-ink-900' : 'text-ink-700'}`}>
-            <span aria-hidden="true" className={current ? 'animate-pulse' : ''}>
-              {current ? '●' : '✓'}
+            <span aria-hidden="true" className={`flex w-3.5 justify-center ${current ? 'animate-pulse' : ''}`}>
+              {current ? <span className="size-2 rounded-full bg-current" /> : <Mark kind="check" size={14} />}
             </span>
             {label}
             {current && <span className="ml-auto text-xs text-brand-600">진행 중</span>}
@@ -274,7 +274,11 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
           {card.category}
           <span className={`tag ${card.ready ? 'tag-good' : 'tag-warn'}`}>{card.ready ? '준비 완료' : `${short}곳 더 필요`}</span>
         </span>
-        {selected && <Check size={16} className="text-brand-600" aria-label="선택됨" />}
+        {selected && (
+          <span role="img" aria-label="선택됨" className="text-brand-600">
+            <Mark kind="check" size={16} />
+          </span>
+        )}
       </p>
       <div className="mt-2 h-1.5 rounded-full bg-ink-200">
         <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />

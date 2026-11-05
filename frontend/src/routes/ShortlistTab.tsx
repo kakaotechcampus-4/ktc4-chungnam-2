@@ -22,6 +22,7 @@ import ShortlistList from '@/features/shortlist/ShortlistList'
 import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
+import Mark from '@/ui/Mark'
 
 /**
  * 확정된 장소 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 체크박스로 골라 그날로 넣는다.
@@ -112,7 +113,7 @@ export default function ShortlistTab() {
             <div className="flex shrink-0 gap-2">
               {/* AI 코스 짜기는 따로 탭이다(「AI 코스」). 「일정 짜기」 패널은 넓은 화면에만 있다 — 휴대폰은 체크박스로 넣고 동선 보기로 고친다. */}
               <button type="button" aria-pressed={routeOn} aria-disabled={!routeOn && scheduled === 0} onClick={toggleRoute} className="chip">
-                동선 보기{routeOn && ' ✓'}
+                동선 보기{routeOn && <Mark kind="check" size={14} />}
               </button>
               {desktop && (
                 // 다시 누르면 닫힌다(패널의 ✕·Esc와 같다).
