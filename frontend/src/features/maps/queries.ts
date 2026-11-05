@@ -6,6 +6,7 @@ import { acceptInvite, createInvite, createMap, deleteMap, fetchInvites, fetchIn
 import { ApiError } from '@/api'
 import { agentKeys } from '@/features/agent/queries'
 import { forgetImport } from '@/features/kakaoImport/queries'
+import { shortlistKeys } from '@/features/shortlist/queries'
 import { forgetSchedule } from '@/features/shortlist/scheduleStore'
 
 import { inviteProblem, toInviteRowView, toInviteView, toMapHeaderView, toMapListView, toMemberView, toTrashView, type InviteDto, type MapCreateRequest, type MapDto, type MapUpdateRequest } from './model'
@@ -40,12 +41,17 @@ export function useCreateMapMutation() {
 /**
  * 지도 수정(방장, #465). 상세만 응답으로 바로 바꾼다. 내 지도 목록은 내게도 오는 map.updated를 받아
  * realtime의 표(refetchTable)대로 다시 받는다.
+ * 날짜를 고치면 서버가 기간 밖 일정을 빼고 일정 version도 바뀐다. 확정 리스트·일정(`['shortlist', mapId]` 아래)을 다시 받아야
+ * 빠진 장소가 확정 리스트로 돌아오고, 다음 일정 저장이 옛 version으로 409가 나지 않는다.
  */
 export function useUpdateMapMutation(mapId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: MapUpdateRequest) => updateMap(mapId, body),
-    onSuccess: (map) => queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map),
+    onSuccess: (map) => {
+      queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map)
+      void queryClient.invalidateQueries({ queryKey: shortlistKeys.list(mapId) })
+    },
   })
 }
 

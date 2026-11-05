@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { Pin } from '@/features/map/model'
 
 import { scheduleDrawing } from './model'
-import { dayOf, droppedCount, EMPTY_SCHEDULE, place, prune, routeDay, scheduledIds, tripDays, type Schedule } from './schedule'
+import { dayOf, droppedCount, EMPTY_SCHEDULE, place, routeDay, scheduledIds, tripDays, type Schedule } from './schedule'
 
 const S = (days: Schedule['days']): Schedule => ({ days })
 
@@ -56,32 +56,8 @@ describe('그날 동선 그림', () => {
   })
 })
 
-describe('일정 — 여행 날짜가 바뀌면 빠진 날의 장소만 확정 리스트로 돌아간다', () => {
+describe('일정 — 여행 날짜를 고치기 전에 빠질 장소 수를 미리 센다', () => {
   const planned = S({ '2026-11-01': ['a', 'b'], '2026-11-02': ['c'], '2026-11-03': ['d'] })
-
-  it('11/1~3 → 11/2~4: 11/1 의 장소만 빠지고, 11/2·11/3 의 장소는 그 날짜에 남는다', () => {
-    const r = prune(planned, tripDays('2026-11-02', '2026-11-04'), ['a', 'b', 'c', 'd'])
-    expect(r.schedule.days).toEqual({ '2026-11-02': ['c'], '2026-11-03': ['d'] })
-    expect(r.moved).toBe(2)
-  })
-
-  it('일수가 줄면 끝 날의 장소만 빠진다', () => {
-    const r = prune(planned, tripDays('2026-11-01', '2026-11-02'), ['a', 'b', 'c', 'd'])
-    expect(r.schedule.days).toEqual({ '2026-11-01': ['a', 'b'], '2026-11-02': ['c'] })
-    expect(r.moved).toBe(1)
-  })
-
-  it('일수가 늘거나 그대로면 바뀌지 않는다(같은 객체)', () => {
-    const r = prune(planned, tripDays('2026-10-31', '2026-11-04'), ['a', 'b', 'c', 'd'])
-    expect(r.schedule).toBe(planned)
-    expect(r.moved).toBe(0)
-  })
-
-  it('확정 해제된 핀은 빼되 옮긴 수에는 세지 않는다', () => {
-    const r = prune(planned, tripDays('2026-11-01', '2026-11-03'), ['a', 'c', 'd'])
-    expect(r.schedule.days['2026-11-01']).toEqual(['a'])
-    expect(r.moved).toBe(0)
-  })
 
   it('날짜를 고치기 전에, 빠지는 날에 넣어 둔 장소 수를 센다', () => {
     const now = tripDays('2026-11-01', '2026-11-03')

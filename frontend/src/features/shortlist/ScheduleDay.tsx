@@ -113,7 +113,7 @@ function ScheduleRow({
     </>
   )
   return (
-    <li data-pin={pinId} className={`flex items-center gap-2 rounded-lg bg-white py-0.5 pl-2 pr-0.5 ring-1 ring-ink-200 ${dragging ? 'opacity-40' : ''}`}>
+    <li data-pin={pinId} className={`flex items-center gap-2 rounded-xl bg-white py-0.5 pl-2 pr-0.5 ring-1 ring-ink-200 ${dragging ? 'opacity-40' : ''}`}>
       {/* 번호 원은 AI 코스 날짜별 카드와 같다(ink-100 면). 순서는 목록(ol)이 읽어 준다. */}
       <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-100 text-xs font-bold text-ink-700">
         {n}
