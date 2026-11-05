@@ -196,8 +196,14 @@ function readAbove(above: string[]): { name?: string; address?: string } {
     const nameLine = lines[at + 1]
     return { address: lines[at].trim().slice(0, 200), name: nameLine ? clean(nameLine, 100) : undefined }
   }
-  // 주소가 없어도 바로 위가 공유 머리줄에 상호명이 붙은 줄이면(구글 「[지도] 이름」) 이름만 읽는다.
   const top = lines[0]
+  // 「이름 주소」가 한 줄인 공유 글(카카오맵 링크 복사, 「성수동대림창고갤러리 서울 성동구 성수이로 78 1층」). 바로 위 줄만 본다.
+  const words = top?.replace(SHARE_HEAD, '').trim().split(/\s+/) ?? []
+  for (let i = 1; i < words.length - 1; i++) {
+    const address = words.slice(i).join(' ')
+    if (isAddress(address)) return { name: clean(words.slice(0, i).join(' '), 100), address: address.slice(0, 200) }
+  }
+  // 주소가 없어도 바로 위가 공유 머리줄에 상호명이 붙은 줄이면(구글 「[지도] 이름」) 이름만 읽는다.
   if (top && SHARE_HEAD.test(top)) return { name: clean(top, 100) }
   return {}
 }

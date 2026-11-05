@@ -27,6 +27,15 @@ describe('카톡 대화에서 링크와 공유 글 읽기(#1046)', () => {
     expect(by('https://kko.to/UPShtpIfbq')).toMatchObject({ provider: 'kakao', name: '우슬', address: '대전 중구 중앙로138번길 48 (대흥동)' })
   })
 
+  it('이름과 주소가 한 줄인 카카오맵 공유 글도 나눠 읽는다(place.map.kakao.com 링크)', () => {
+    const text = '2026년 11월 2일 오전 1:05, 도윤 : 성수동대림창고갤러리 서울 성동구 성수이로 78 1층\n\nhttps://place.map.kakao.com/1038283810'
+    expect(readShares(text, DAY).shares[0]).toMatchObject({
+      provider: 'kakao',
+      name: '성수동대림창고갤러리',
+      address: '서울 성동구 성수이로 78 1층',
+    })
+  })
+
   it('구글은 「이름 - 링크」 한 줄과, 바로 앞 메시지의 「[지도] 이름」을 이름으로 읽는다(주소는 없다)', () => {
     expect(by('https://maps.app.goo.gl/uezSZd')).toMatchObject({ name: '우슬' })
     expect(by('https://maps.app.goo.gl/uezSZd')?.address).toBeUndefined()
