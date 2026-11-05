@@ -181,19 +181,20 @@ def get_readiness(
     `center`가 있으면 그 수를 run 생성의 center와 같은 원으로 센다(#1331). `radius_m`이 있으면 그 반경으로 센다(없으면 기본 3,000m, #1416).
     응답의 `radius_m`은 기본값이고 `radius_min_m`·`radius_max_m`은 사용자가 고를 수 있는 범위다. ready·answered_count는 위치·반경과 무관하다."""
     result = {}
+    near_cache: dict = {}   # 같은 center의 근처 동네(검색 링크)를 세 분류가 한 번만 계산해 나눠 쓴다(#1353)
     for category in CATEGORIES:
         readiness = readiness_for_category(db, map_id=map_id, category=category)
         result[category] = {
             **readiness, "radius_m": core.DEFAULT_RADIUS_M, "radius_min_m": core.MIN_RADIUS_M, "radius_max_m": core.WIDEN_LIMIT_M,
             **_curated_nearby(db, map_id=map_id, category=category, readiness=readiness, place_search=place_search, center=center,
-                              radius_m=radius_m),
+                              radius_m=radius_m, near_cache=near_cache),
         }
     return result
 
 
 def _curated_nearby(
     db: Session, *, map_id: str, category: str, readiness: dict, place_search: PlaceSearchGateway,
-    center: tuple[float, float] | None = None, radius_m: int | None = None,
+    center: tuple[float, float] | None = None, radius_m: int | None = None, near_cache: dict | None = None,
 ) -> dict:
     """기본 지역(create_run과 같은 원)에서 정예 장소 수(#798). **radius_m(사용자가 고른 반경, #1416)이 있으면 그 반경 원 안의 수**다 —
     화면의 숫자가 고른 반경을 따라야 해서 후보 풀을 넓히지 않는다. 없으면 지금처럼 반경 넓히기 상한(5,000m)까지 본다(풀 반경과 같은
@@ -214,24 +215,23 @@ def _curated_nearby(
     )
     if count:
         return {"curated_nearby": count}
-    external = _external_search(db, map_id=map_id, category=category, place_search=place_search, center=center)
+    external = _external_search(db, map_id=map_id, category=category, place_search=place_search, center=center, near_cache=near_cache)
     return {"curated_nearby": 0, "external_search": external.model_dump()}
 
 
 def _area_near_center(db: Session, center: tuple[float, float]) -> str | None:
     """중심 근처의 동네 이름(#1353) — 카카오를 부르지 않고 자체 DB만 읽는다(#53, 쿼터). 가까운 영업 중 자체 DB 장소(분류 무관)의 주소에서
-    `places_api.neighborhood`로 동네("해운대구 우동")를 뽑는다. 찾는 반경은 `sido_at`의 되돌아가기와 같은 10km(`places_api.SIDO_AT_RADIUS_M`)
-    까지이고, 가까운 곳부터 넓혀(1/8 → 1/4 → 1/2 → 전체) 가까운 장소가 있으면 큰 반경을 읽지 않는다. 그 안에 장소가 없으면
-    `sido_at(center)`의 시·도 이름으로 되돌아가고(`places_api.sido_at`, 경계 표가 있으면 경계가 먼저), 그것도 None이면 None이다."""
-    for fraction in (8, 4, 2, 1):
-        radius_m = places_api.SIDO_AT_RADIUS_M / fraction
-        area = [Area(lat=center[0], lng=center[1], radius_m=radius_m)]
-        refs = [ref for category in CATEGORIES for ref in places_api.search_nearby_own(category, area, db=db)]
-        if not refs:
-            continue
-        refs.sort(key=lambda ref: (geo.haversine_distance_m(center[0], center[1], ref.lat, ref.lng), ref.place_id))
-        infos = places_api.get_places([ref.place_id for ref in refs[:_NEAREST_FOR_AREA]], db=db)
-        for ref in refs[:_NEAREST_FOR_AREA]:   # 주소가 없는 곳이면 다음으로 가까운 곳
+    `places_api.neighborhood`로 동네("해운대구 우동")를 뽑는다. 찾는 반경은 `sido_at`의 되돌아가기와 같은 10km(`places_api.SIDO_AT_RADIUS_M`)이고,
+    분류마다 반경 안 장소를 **한 번씩만** 읽어(3번) 거리순(→ place_id)으로 정렬한 뒤, 가장 가까운 곳부터 주소를 묶음으로 가져와
+    동네를 뽑을 수 있는 **첫 장소**를 쓴다 — 주소가 없는 장소가 아무리 많아도 10km 안의 유효한 다음 장소를 놓치지 않는다.
+    10km 안에 그런 장소가 없으면 `sido_at(center)`의 시·도 이름(경계 표가 있으면 경계가 먼저), 그것도 None이면 None이다."""
+    area = [Area(lat=center[0], lng=center[1], radius_m=places_api.SIDO_AT_RADIUS_M)]
+    refs = [ref for category in CATEGORIES for ref in places_api.search_nearby_own(category, area, db=db)]
+    refs.sort(key=lambda ref: (geo.haversine_distance_m(center[0], center[1], ref.lat, ref.lng), ref.place_id))
+    for start in range(0, len(refs), _AREA_ADDRESS_CHUNK):
+        chunk = refs[start:start + _AREA_ADDRESS_CHUNK]
+        infos = places_api.get_places([ref.place_id for ref in chunk], db=db)
+        for ref in chunk:   # 가까운 순서 그대로 — 주소에서 동네를 못 뽑는 곳은 건너뛴다
             info = infos.get(ref.place_id)
             name = places_api.neighborhood(info.address) if info else None
             if name:
@@ -239,17 +239,24 @@ def _area_near_center(db: Session, center: tuple[float, float]) -> str | None:
     return places_api.sido_at(*center, db=db)
 
 
-_NEAREST_FOR_AREA = 5   # 가장 가까운 곳의 주소가 비어도 다음 곳으로 정하도록 조금 더 읽는다(places.api._SIDO_AT_FETCH와 같은 생각)
+_AREA_ADDRESS_CHUNK = 50   # 가까운 순서로 주소를 읽는 묶음 크기 — 보통 첫 묶음에서 끝나고, 앞쪽이 모두 주소가 없을 때만 다음 묶음을 읽는다
 
 
 def _search_area(
     db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway, center: tuple[float, float] | None = None,
+    near_cache: dict | None = None,
 ) -> str | None:
     """카카오맵 검색어의 동네(#800 결정). **center가 있으면 그 근처 동네**(#1353, `_area_near_center`)가 먼저다 — 보고 있는 곳의 동네여야 해서다.
     없거나 근처를 모르면 ① 이 지도에서 그 카테고리 핀들의 장소 주소에 가장 많은 동네 — 기본 지역이 그
-    핀들의 중심이라 실제 후보가 있는 곳이다 ② 없으면(실시간 핀만 있는 등) 지도의 지역 이름 ③ 그것도 없으면 None(말만)."""
+    핀들의 중심이라 실제 후보가 있는 곳이다 ② 없으면(실시간 핀만 있는 등) 지도의 지역 이름 ③ 그것도 없으면 None(말만).
+    near_cache를 주면 같은 center의 근처 동네를 한 번만 계산한다 — 동네는 분류와 상관없어서 readiness가 세 분류에 같은 값을 쓴다."""
     if center is not None:
-        near = _area_near_center(db, center)
+        if near_cache is not None and center in near_cache:
+            near = near_cache[center]
+        else:
+            near = _area_near_center(db, center)
+            if near_cache is not None:
+                near_cache[center] = near
         if near:
             return near
     places = place_search.get_places(sorted(pins_api.list_place_ids_on_map(db, map_id=map_id)))
@@ -261,10 +268,11 @@ def _search_area(
 
 def _external_search(
     db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway, center: tuple[float, float] | None = None,
+    near_cache: dict | None = None,
 ) -> schemas.ExternalSearch:
     """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」) — 검색어는 `{동네} {카테고리 말}` 하나다(#904). center가 있으면
     그 근처 동네다(#1353)."""
-    area = _search_area(db, map_id=map_id, category=category, place_search=place_search, center=center)
+    area = _search_area(db, map_id=map_id, category=category, place_search=place_search, center=center, near_cache=near_cache)
     query = core.external_search_query(area, category)
     return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query))
 
