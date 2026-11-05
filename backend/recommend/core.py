@@ -28,19 +28,31 @@ from recommend.schemas import Check
 # #707 — run 하나에 「+」로 직접 추가하는 글은 10개까지(×로 뺀 것도 센다). 「+」도 ②로 모델을 불러서다. 출발값이고,
 # 크레딧(#432) 뒤에도 남는 보호다(「+」는 크레딧을 쓰지 않는다, docs/credits-reviews.md 4절). 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
 MANUAL_EVIDENCE_LIMIT = 10
-# 반경 넓히기 상수 — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
-# 때 루트에게 알린다). 기본값 원은 도보 15분에서 시작해 한 번에 5분씩, 30분까지.
-DEFAULT_RADIUS_WALK_MIN = 15
-WIDEN_STEP_MIN = 5
-WIDEN_LIMIT_MIN = 30
-# 카테고리별 (기본, 상한) 도보 분 — 여기 없는 카테고리는 위 값이다. 관광지는 반경 안 후보가 적어 넓게 시작한다(#1055).
-# 쓰는 곳은 radius_walk_mins(category)로 받는다.
-_RADIUS_WALK_MIN_BY_CATEGORY: dict[str, tuple[int, int]] = {"관광지": (25, 45)}
+# 반경 넓히기 상수(#1385, 단위 m, 모든 카테고리 같다) — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
+# 때 루트에게 알린다). 기본값 원은 3,000m에서 시작해 한 번에 1,000m씩, 5,000m까지. 이 값을 정하는 곳은 여기 하나다.
+DEFAULT_RADIUS_M = 3000
+WIDEN_STEP_M = 1000
+WIDEN_LIMIT_M = 5000
+# 사용자가 「추천 받기」 요청에서 고를 수 있는 반경(#1416) — 최소는 여기, 최대는 넓히기 상한과 같다(WIDEN_LIMIT_M). 서버는 사용자가
+# 어떻게 고르는지 모르고 정수 하나만 받는다. 요청 모델(schemas.RunCreateRequest.radius_m)의 ge/le는 순환 import라 같은 값을 적고 test_core가 맞는지 본다.
+MIN_RADIUS_M = 2000
 
 
-def radius_walk_mins(category: str) -> tuple[int, int]:
-    """카테고리의 (기본 반경, 넓히기 상한) 도보 분(#1055). 이 값을 정하는 곳은 여기 하나다."""
-    return _RADIUS_WALK_MIN_BY_CATEGORY.get(category, (DEFAULT_RADIUS_WALK_MIN, WIDEN_LIMIT_MIN))
+def request_radius_m(radius_m: int | None) -> int:
+    """요청의 반경(m). 없으면 기본 3,000m. 범위 검사는 요청 모델과 라우터(readiness 쿼리)가 하고, 여기는 값만 고른다."""
+    return DEFAULT_RADIUS_M if radius_m is None else radius_m
+
+
+def radius_walk_min_compat(radius_m: int) -> int:
+    """호환용 도보 분(`default_radius_walk_min` 응답 칸) = round(m / 80). 도보 분은 정본이 아니고 곧 없앤다(#1385)."""
+    return round(radius_m / WALKING_SPEED_M_PER_MIN)
+
+
+def run_radius_m(run: RecommendRun) -> int:
+    """run의 현재 기본값 원 반경(m). 미터 칸이 비어 있는 옛 run(#1385 이전)은 도보 분 × 80m로 읽는다."""
+    if run.default_radius_m is not None:
+        return run.default_radius_m
+    return run.default_radius_walk_min * WALKING_SPEED_M_PER_MIN
 
 
 def check_run_ready(run: RecommendRun) -> None:
@@ -142,27 +154,36 @@ def merge_circles(circles: list[Circle]) -> Circle:
     return Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=round(radius))
 
 
-def radius_m_for_walk_min(walk_min: int) -> int:
-    """기본값 원의 도보 시간(분) → 반경(m). common.geo의 보정계수를 그대로 쓴다."""
-    return walk_min * WALKING_SPEED_M_PER_MIN
+def run_radius_fields(run: RecommendRun) -> dict[str, int | None]:
+    """응답의 반경 칸 세 개 — `default_radius_m`(지금), `next_default_radius_m`(넓히면, 상한이면 None), 호환용
+    `default_radius_walk_min`(#1385, #1370, #1164). RecommendRun과 RunSummary가 같은 값을 낸다."""
+    current = run_radius_m(run)
+    return {"default_radius_m": current, "next_default_radius_m": next_default_radius_m(current)}
 
 
-def next_default_radius_walk_min(current_walk_min: int, category: str) -> int:
-    """반경 넓히기(5-6-1, 가드레일4) — 기본값 원의 다음 도보 시간. 이미 상한이면 409
-    WIDEN_LIMIT — 상한을 넘겨 완화하는 건 AI도 코드도 하지 않는다(사람이 「근거 고치기」/
-    「직접 찍기」로 간다). "사람이 명시한 원은 넓히지 않는다"는 구분은 이 함수가 아니라 호출부가
-    넘기는 대상에 달려 있다(flows.widen_run)."""
-    _default, limit = radius_walk_mins(category)
-    if current_walk_min >= limit:
-        raise AppError("WIDEN_LIMIT", detail={"default_radius_walk_min": current_walk_min})
-    return min(current_walk_min + WIDEN_STEP_MIN, limit)
+def next_default_radius_m(current_m: int) -> int | None:
+    """반경 넓히기(5-6-1, 가드레일4)가 만들 다음 기본값 원 반경(m) — 지금 + 1,000m, 상한 5,000m. 이미 상한이면 None(응답의
+    `next_default_radius_m`이 null이고, 화면은 「반경 넓히기」를 막는다, #1370)."""
+    if current_m >= WIDEN_LIMIT_M:
+        return None
+    return min(current_m + WIDEN_STEP_M, WIDEN_LIMIT_M)
 
 
-def pool_radius_factor(current_walk_min: int, category: str) -> float:
-    """후보 풀을 가져오는 원의 배율 = 상한 도보 분 / 지금 도보 분(#792). 반경 넓히기가 갈 수 있는 끝까지만 가져와야
+def widened_radius_m(current_m: int) -> int:
+    """반경 넓히기 한 번 뒤의 반경(m). 이미 상한이면 409 WIDEN_LIMIT — 상한을 넘겨 완화하는 건 AI도 코드도 하지 않는다(사람이
+    「근거 고치기」/「직접 찍기」로 간다). "사람이 명시한 원은 넓히지 않는다"는 구분은 이 함수가 아니라 호출부가 넘기는 대상에
+    달려 있다(flows.widen_run)."""
+    next_m = next_default_radius_m(current_m)
+    if next_m is None:
+        raise AppError("WIDEN_LIMIT", detail={"default_radius_m": current_m, "default_radius_walk_min": radius_walk_min_compat(current_m)})
+    return next_m
+
+
+def pool_radius_factor(current_m: int) -> float:
+    """후보 풀을 가져오는 원의 배율 = 상한(m) / 지금 반경(m)(#792). 반경 넓히기가 갈 수 있는 끝까지만 가져와야
     「반경 밖 제거」가 지금 반경 밖(상한 안)의 장소를 센다 — 지금 반경으로 가져오면 늘 0이다. 결과는 여전히 지금 반경
     안에서만 나오고(is_within_any_region), 상한 밖은 풀에도 없다(가드레일 4). 이미 상한이면 1이다."""
-    return max(radius_walk_mins(category)[1] / current_walk_min, 1.0)
+    return max(WIDEN_LIMIT_M / current_m, 1.0)
 
 
 def is_within_any_region(lat: float, lng: float, regions: list[Circle]) -> bool:
@@ -515,11 +536,16 @@ IDEMPOTENCY_RETENTION = timedelta(hours=24)   # run이 연결된 행의 보관 �
 ReservationDecision = Literal["conflict", "reuse", "in_progress", "takeover"]
 
 
-def idempotency_request_hash(map_id: str, category: str, execute: bool = False, center: tuple[float, float] | None = None) -> str:
-    """요청 동일성 = (지도, category, execute, center — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
+def idempotency_request_hash(
+    map_id: str, category: str, execute: bool = False, center: tuple[float, float] | None = None, radius_m: int | None = None,
+) -> str:
+    """요청 동일성 = (지도, category, execute, center, radius_m — execute 생략은 false, radius_m 생략은 기본 3,000m). 같은 키로 이 값이
+    다르면 IDEMPOTENCY_CONFLICT다. 명시한 3000은 생략과 같은 요청이라 해시에 넣지 않는다(#1416)."""
     value = f"{map_id}{category}{int(bool(execute))}"   # center 없는 요청은 예전 해시와 같아야 한다 — 배포 직전에 만든 키(24시간 보관)의 재시도가 409가 되지 않게
     if center is not None:
         value += f"\x1f{center[0]:.17g}\x1f{center[1]:.17g}"
+    if radius_m is not None and radius_m != DEFAULT_RADIUS_M:   # radius_m 없는 요청의 해시는 예전 값 그대로
+        value += f"\x1fr{radius_m}"
     return hashlib.sha256(value.encode()).hexdigest()
 
 

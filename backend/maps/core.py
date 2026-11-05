@@ -20,6 +20,9 @@ WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 # 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
 MAP_LIMIT = 20
 
+# 여행 기간 상한 일수(#1371) — 시작일·종료일을 포함한다. 422 TRIP_TOO_LONG의 detail.limit과 GET /maps의 trip_max_days가 같은 값이다.
+TRIP_MAX_DAYS = 90
+
 # 삭제한 지도를 복구할 수 있는 기간(#464). 정리 작업(maps.purge)이 지우는 기준과 같은 값이다 — 한 곳에서 정한다.
 TRASH_RETENTION = timedelta(days=30)
 
@@ -77,17 +80,20 @@ class InviteRecord:
 
 
 def validate_map_create(
-    title: str, start_date: date, end_date: date, region: MapRegion | None = None
+    title: str, start_date: date, end_date: date, region: MapRegion | None = None, *, check_trip_length: bool = True
 ) -> NewMap:
     """공백만 있는 제목은 없는 것과 같다 취급(pins/core.py의 반응 사유 검증과 같은 원칙).
     end_date는 start_date와 같은 날도 허용한다(당일치기) — CHECK 제약과 동일한 `>=`.
     region이 왔으면 label 공백 여부·lat/lng 범위를 pins/core.py::validate_create의 좌표
-    검증과 같은 기준으로 검사한다(가드레일과 무관한 단순 입력 검증)."""
+    검증과 같은 기준으로 검사한다(가드레일과 무관한 단순 입력 검증).
+    기간이 TRIP_MAX_DAYS를 넘으면 422 TRIP_TOO_LONG(#1371). check_trip_length=False는 날짜를 바꾸지 않는 수정용이다."""
     normalized_title = title.strip()
     if not normalized_title:
         raise AppError("VALIDATION_ERROR", "제목을 입력해 주세요")
     if end_date < start_date:
         raise AppError("VALIDATION_ERROR", "끝나는 날은 시작하는 날과 같거나 그 뒤여야 해요")
+    if check_trip_length and (end_date - start_date).days + 1 > TRIP_MAX_DAYS:
+        raise AppError("TRIP_TOO_LONG", detail={"limit": TRIP_MAX_DAYS})
 
     normalized_region = None
     if region is not None:
@@ -114,7 +120,8 @@ def validate_map_update(
     region: MapRegion | None,
 ) -> NewMap:
     """PATCH(#465) — 보낸 필드(None이 아닌 것)를 기존 값에 합친 결과를 생성과 같은 규칙으로 검사한다.
-    종료일만 보내도 기존 시작일과 비교한다. region은 바꾸기만 된다 — 안 보내면 기존 값을 그대로 둔다."""
+    종료일만 보내도 기존 시작일과 비교한다. 기간 상한(#1371)은 시작일이나 종료일을 보낸 요청에서만 본다 — 이미 상한을
+    넘은 지도의 제목만 고치는 요청은 막지 않는다. region은 바꾸기만 된다 — 안 보내면 기존 값을 그대로 둔다."""
     current_region = None
     if current.region_label is not None:
         current_region = MapRegion(label=current.region_label, lat=current.region_lat, lng=current.region_lng)
@@ -123,6 +130,7 @@ def validate_map_update(
         current.start_date if start_date is None else start_date,
         current.end_date if end_date is None else end_date,
         current_region if region is None else region,
+        check_trip_length=start_date is not None or end_date is not None,
     )
 
 
@@ -286,6 +294,8 @@ def map_permissions(principal: Principal, successor: str | None) -> Permissions:
         can_delete=can(principal, "map.delete", resource),
         can_leave=can(principal, "map.leave", resource) and can_leave(principal.role, successor),
         can_edit=can(principal, "map.settings.edit", resource),
+        can_manage_invites=can(principal, "invite.revoke", resource),
+        can_transfer_owner=can(principal, "owner.transfer", resource),
     )
 
 

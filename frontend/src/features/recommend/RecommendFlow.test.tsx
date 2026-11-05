@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
+import { http, HttpResponse } from 'msw'
 import { useState, type ReactNode } from 'react'
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -145,7 +146,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
 
     expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '후기 쓰러 가기' })).toHaveAttribute('href', `/maps/${MAP}/shortlist`)
-    expect(screen.queryByText('추천을 시작하지 못했어요')).not.toBeInTheDocument()
+    expect(screen.queryByText('추천 장소를 찾지 못했어요')).not.toBeInTheDocument()
     expect(useAiStore.getState().runs[MAP]).toBeUndefined()
   })
 
@@ -224,5 +225,76 @@ describe('크레딧을 쓰기 전에 묻기, 다시 추천 버튼(#1363)', () =>
     await waitFor(() => expect(retries).toBe(1))
     server.events.removeAllListeners()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안내(#1385)', () => {
+  const SEOUL = { label: '서울특별시', lat: 37.5665, lng: 126.978 }
+
+  /** 지도 셸처럼 getCenter·showRegion 을 내리고, 경계를 받을 때까지 기다린다(누를 때 판정한다). */
+  async function renderInShell(center: { lat: number; lng: number }, showRegion = vi.fn()) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Routes>
+            <Route element={<Outlet context={{ getCenter: () => center, showRegion }} />}>
+              <Route path="*" element={<ReadinessBody mapId={MAP} />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('button', { name: '음식점 추천받기' })
+    return { client, showRegion }
+  }
+
+  async function setRegion(region: typeof SEOUL) {
+    await fetch(`http://localhost/maps/${MAP}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ region }) })
+  }
+
+  it('원 전체가 여행 지역 밖이면 크레딧 창 대신 안내하고, 「여행 지역으로 가기」는 지도만 옮긴다', async () => {
+    await setRegion(SEOUL)
+    const posts: string[] = []
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST') posts.push(new URL(request.url).pathname)
+    })
+    const { client, showRegion } = await renderInShell({ lat: 35.1796, lng: 129.0756 })
+    await waitFor(() => expect(client.getQueryData(['region-boundary', '11'])).toBeDefined())
+
+    await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '여행 지역 밖이에요' })
+    expect(within(dialog).getByText('서울특별시로 돌아가서 추천받아 주세요')).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: '여행 지역으로 가기' }))
+
+    expect(showRegion).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(posts).toEqual([])
+    server.events.removeAllListeners()
+  })
+
+  it('지역 안이면 크레딧 창에 찾는 범위를 알린다', async () => {
+    await setRegion(SEOUL)
+    const { client } = await renderInShell(SEOUL)
+    await waitFor(() => expect(client.getQueryData(['region-boundary', '11'])).toBeDefined())
+
+    await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' })
+    expect(within(dialog).getByText('지도 가운데 반경 3km 안에서 찾아요')).toBeInTheDocument()
+  })
+
+  it('추천 요청이 실패하면 「추천 장소를 찾지 못했어요」 한 줄', async () => {
+    // 지역을 고르지 않은 지도라 지역 밖 안내는 없다. 서버가 요청을 거절한다(422).
+    server.use(
+      http.post('*/maps/:mapId/runs', () =>
+        HttpResponse.json({ code: 'VALIDATION_ERROR', message: '추천을 받을 수 없는 위치예요' }, { status: 422 }),
+      ),
+    )
+    await renderInShell(SEOUL)
+    await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+    await confirmCredit()
+
+    expect(await screen.findByText('추천 장소를 찾지 못했어요')).toBeInTheDocument()
+    expect(useAiStore.getState().runs[MAP]).toBeUndefined()
   })
 })

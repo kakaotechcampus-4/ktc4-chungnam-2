@@ -23,7 +23,7 @@ import {
   retryRun,
   widenRun,
 } from './api'
-import { runErrorMessage, type EvidencePatchRequest, type RecommendCategory, type RecommendResultDto, type RecommendRunDto } from './model'
+import { rerunErrorMessage, type EvidencePatchRequest, type RecommendCategory, type RecommendResultDto, type RecommendRunDto } from './model'
 
 export const recommendKeys = {
   readiness: (mapId: string) => ['recommend', mapId, 'readiness'] as const,
@@ -126,7 +126,7 @@ function useRunningMutation(mapId: string, fn: (runId: string) => Promise<Recomm
         return
       }
       setRun(mapId, ctx.before)
-      showToast(runErrorMessage(err))
+      showToast(rerunErrorMessage(err))
     },
   })
 }

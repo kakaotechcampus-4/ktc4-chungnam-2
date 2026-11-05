@@ -72,7 +72,10 @@ class RecommendRun(Base):
     # 반경 넓히기 누적 상태(docs/constraints.md "반경 넓히기 상수") — 기본값 원의 현재 도보
     # 시간(분). 응답 RecommendRun.default_radius_walk_min의 정본이다(#158). regions.radius_m은
     # 이 값에서 파생되지만, 사람이 명시한 원이 생기면 그 원은 이 값과 무관하므로 따로 둔다.
-    default_radius_walk_min: Mapped[int] = mapped_column(Integer, nullable=False, default=15, server_default="15")
+    default_radius_walk_min: Mapped[int] = mapped_column(Integer, nullable=False, default=38, server_default="15")
+    # #1385 — 기본값 원의 현재 반경(m). 이제 이쪽이 정본이고 위 도보 분은 호환용(round(m/80))이다. 비어 있으면 옛 run이라
+    # default_radius_walk_min × 80m로 읽는다(core.run_radius_m). expand 단계라 nullable이다.
+    default_radius_m: Mapped[int | None] = mapped_column(Integer, nullable=True, default=3000)
     last_funnel: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # #845, #847 — 마지막 execute/widen/retry가 실제로 쓴 근거 줄의 스냅샷(줄 id·작성자·글·방향·badge·enforced·사유)과 새로 찾은
     # 후보 수. 둘 다 파생값(다음 실행이 덮는다). 스냅샷에 작성자 id와 사용자 글이 들어가므로 탈퇴·지도 나가기 때 그 사람의 줄을

@@ -19,11 +19,13 @@ from recommend import core
 from recommend.models import Candidate, EvidenceLine, Exclusion, IdempotencyKey, RecommendRun, Region
 
 
-def create_run(db: Session, *, map_id: str, category: str, requested_by: str, attempt_no: int) -> RecommendRun:
+def create_run(
+    db: Session, *, map_id: str, category: str, requested_by: str, attempt_no: int, radius_m: int = core.DEFAULT_RADIUS_M,
+) -> RecommendRun:
     run = RecommendRun(
         map_id=map_id, category=category, requested_by=requested_by,
         status="collecting_evidence", attempt_no=attempt_no,
-        default_radius_walk_min=core.radius_walk_mins(category)[0],
+        default_radius_m=radius_m, default_radius_walk_min=core.radius_walk_min_compat(radius_m),
     )
     db.add(run)
     db.flush()
@@ -399,8 +401,10 @@ def bump_attempt_no(db: Session, run: RecommendRun) -> int:
 
 # ---------- candidates ----------
 
-def set_default_radius_walk_min(db: Session, run: RecommendRun, walk_min: int) -> None:
-    run.default_radius_walk_min = walk_min
+def set_default_radius_m(db: Session, run: RecommendRun, radius_m: int) -> None:
+    """기본값 원의 반경(m)을 저장한다. 호환용 도보 분 칸도 같이 맞춘다(#1385)."""
+    run.default_radius_m = radius_m
+    run.default_radius_walk_min = core.radius_walk_min_compat(radius_m)
     db.flush()
 
 
