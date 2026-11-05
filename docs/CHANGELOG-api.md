@@ -2,6 +2,14 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-05, 추천 반경을 사용자가 2~5km에서 정해 보낸다 — `radius_m` (#1416)
+
+- **`POST /maps/{mapId}/runs`** 요청에 선택 필드 `radius_m: integer`(2000 이상 5000 이하)를 더했다. 상위 호환 — 없으면 기본 3000(지금 동작). 범위 밖이거나 정수가 아니면 422 `VALIDATION_ERROR`. 값이 있으면 후보를 찾는 원의 반경, `OUTSIDE_TRIP_REGION` 판정의 반경, 저장되는 `default_radius_m`이 이 값이다. 반경 넓히기는 이 값에서 +1000m씩, 상한 5000m(그대로). 멱등 판정에 이 값이 들어간다(같은 키로 다른 반경은 409 `IDEMPOTENCY_CONFLICT`. 기본값 3000을 명시한 요청은 생략한 요청과 같은 요청이다. 반경 없는 요청은 이전과 같다).
+- **`GET /maps/{mapId}/recommend/readiness`** 에 선택 쿼리 `radius_m`(같은 범위)을 더했다 — 「근처 정예 수」를 그 반경으로 센다. 응답 `Readiness`에 선택 필드 `radius_min_m`(2000)·`radius_max_m`(5000)을 더했다. 기존 `radius_m`은 **기본값**(3000) 그대로다. 화면은 이 세 값으로 범위를 정하고 코드에 숫자를 적지 않는다.
+- **타입 공유**: FE와 서버가 같은 형식을 쓰도록 `contracts/src/types/api.d.ts`가 재생성된다. `radius_m`은 정수(`number`)이고 범위는 계약의 `minimum`·`maximum`이다.
+- 사용자가 반경을 고르는 방법(슬라이더 등)은 서버가 모른다. 서버는 화면이 넘기는 정수 하나만 받는다.
+- 목 서버는 같은 범위를 검사하고(422), 고른 반경에서 `default_radius_m`·`next_default_radius_m`을 낸다. 서버 구현은 backend/recommend 후속(#1416).
+
 ## 2026-11-05, `POST /maps/{mapId}/runs` — `center` 필수로 (#1331)
 
 - 요청 본문의 `center: {lat, lng}`가 **필수**가 됐다(`required: [category, center]`, `null` 불가). 서버는 PR #1351부터 `center`가 없거나 null이면 422 `VALIDATION_ERROR`로 거절하고 있었고, FE가 「추천받기」에 `center`를 보내기 시작해서(PR #1366) 계약을 서버와 맞춘다. 요청·응답의 나머지는 그대로다.

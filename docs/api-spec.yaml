@@ -1121,6 +1121,7 @@ paths:
         - { $ref: "#/components/parameters/MapId" }
         - { name: center_lat, in: query, required: false, schema: { type: number, minimum: 33, maximum: 39 }, description: "지도 중심 앵커로 계산하려면 `center_lat`·`center_lng`를 **함께** 보낸다(#1331). 있으면 근처 정예 수(`curated_nearby`)를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다(중심이 없는 호출용). 하나만 보내거나 위도 33~39·경도 124~132 밖이면 422 VALIDATION_ERROR" }
         - { name: center_lng, in: query, required: false, schema: { type: number, minimum: 124, maximum: 132 }, description: "center_lat과 함께 보낸다" }
+        - { name: radius_m, in: query, required: false, schema: { type: integer, minimum: 2000, maximum: 5000 }, description: "추천 범위(원의 반경, 미터, #1416). 있으면 `curated_nearby`(근처 정예 수)를 이 반경으로 센다. 없으면 기본 3000. 2000~5000의 정수가 아니면 422 VALIDATION_ERROR. center_lat·center_lng가 있을 때 의미가 있다" }
       responses:
         "200":
           description: OK
@@ -1184,6 +1185,7 @@ paths:
               properties:
                 category: { $ref: "#/components/schemas/RecommendCategory" }
                 execute: { type: boolean, default: false, description: "true면 근거 조립 뒤 곧바로 첫 검색까지 실행해 done run을 돌려준다(#845). 새 화면은 항상 true" }
+                radius_m: { type: integer, minimum: 2000, maximum: 5000, description: "추천 범위(원의 반경, 미터, #1416). 2000 이상 5000 이하의 **정수**만 받는다 — 범위 밖이거나 정수가 아니면 422 VALIDATION_ERROR. 없으면 기본 3000(`Readiness.radius_m`). 사용자가 이 값을 어떻게 고르는지(슬라이더 등)는 화면의 일이고 서버는 모른다. 값이 있으면 후보를 찾는 원의 반경, 여행 지역 밖 판정(`OUTSIDE_TRIP_REGION`), 저장되는 `default_radius_m`이 모두 이 값이다. 반경 넓히기는 이 값에서 +1000m씩, 상한 5000m. 멱등 판정(`Idempotency-Key`)에 이 값이 들어간다(같은 키로 다른 반경은 409 IDEMPOTENCY_CONFLICT, 기본값 3000을 명시한 요청은 생략한 요청과 같은 요청으로 본다 — 같은 키로 보내도 충돌하지 않는다. 반경을 보내지 않는 요청은 이전과 같다)" }
                 center:
                   type: object
                   required: [lat, lng]
@@ -2676,6 +2678,8 @@ components:
         ready: { type: boolean, description: "answered_count >= required_count (2026-10-07, #360)" }
         answered_count: { type: integer, description: "그 카테고리에서 ♥ 또는 🚫 의견이 달린 핀의 수. 삭제된 핀·나간 구성원·탈퇴자의 반응은 세지 않는다. 혼자 쓰는 지도도 똑같다" }
         required_count: { type: integer, description: "항상 1. 구성원 수에 비례하던 ceil(N/2)는 폐기했다(#360). 필드를 남긴 것은 FE 호환(「의견 핀 0/1」 표기)용이다" }
+        radius_min_m: { type: integer, description: "사용자가 고를 수 있는 추천 반경의 하한(m, #1416). 지금 2000. 화면이 이 값을 코드에 적지 않고 응답으로 받는다. 선택 필드(구버전 서버에는 없다)" }
+        radius_max_m: { type: integer, description: "사용자가 고를 수 있는 추천 반경의 상한(m, #1416). 지금 5000(반경 넓히기 상한과 같다). 선택 필드" }
         radius_m: { type: integer, description: "그 카테고리의 기본 추천 반경(m). 지금은 모든 카테고리 3000(#1385). 화면이 run을 만들기 전에 지도에 원을 그리는 데 쓴다 — 정책 값은 응답으로 받는다. 선택 필드(구버전 서버에는 없다)" }
         curated_nearby: { type: integer, minimum: 0, description: "추천 기본 지역(그 카테고리 의견 핀들의 중심)에서 반경 넓히기 상한(5000m, #1385) 안의 추천 가능 장소(정예) 수(#798). 의견 핀이 없어 기본 지역이 없으면 필드가 없다. 0이면 추천해도 결과가 0곳이다 — 화면은 추천 버튼을 막지 않고 external_search를 함께 보여 준다" }
         external_search: { $ref: "#/components/schemas/ExternalSearch", description: "curated_nearby가 0일 때만" }
