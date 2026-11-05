@@ -89,13 +89,13 @@ def env(test_engine, monkeypatch):
 
     monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
 
-    def create(planner, *, center=None, map_id, category="음식점", key="key-00000001", user=USER):
+    def create(planner, *, center=None, map_id, category="음식점", key="key-00000001", user=USER, radius_m=None):
         map_ids.add(map_id)
         session = Session()
         try:
             run = flows.create_run(
                 session, map_id=map_id, category=category, requested_by=user, evidence_planner=planner,
-                idempotency_key=key, center=center,
+                idempotency_key=key, center=center, radius_m=radius_m,
             )
             session.commit()
             return run.id
@@ -400,3 +400,20 @@ def test_old_key_without_center_still_replays_its_run_but_a_new_key_without_cent
         IdempotencyKey.key == "key-00000002")).scalar_one() == 0
     session.close()
     assert planner.calls == 1
+
+
+def test_same_key_with_another_radius_conflicts_and_an_explicit_default_is_the_same_request_1416(env):
+    Session, create = env
+    planner = _Planner()
+    first = create(planner, map_id="idem_radius", center=(35.0, 129.0), radius_m=2000)
+    assert create(planner, map_id="idem_radius", center=(35.0, 129.0), radius_m=2000) == first   # 같은 키 + 같은 반경 = 같은 run
+    with pytest.raises(AppError) as conflict:
+        create(planner, map_id="idem_radius", center=(35.0, 129.0), radius_m=2500)               # 같은 키 + 다른 반경
+    assert conflict.value.code == "IDEMPOTENCY_CONFLICT"
+    with pytest.raises(AppError) as omitted:
+        create(planner, map_id="idem_radius", center=(35.0, 129.0))                              # 반경 생략(= 3000)도 2000과 다르다
+    assert omitted.value.code == "IDEMPOTENCY_CONFLICT"
+
+    default_first = create(planner, map_id="idem_radius", center=(35.0, 129.0), key="key-00000002")
+    assert create(planner, map_id="idem_radius", center=(35.0, 129.0), key="key-00000002", radius_m=3000) == default_first
+    assert planner.calls == 2   # 두 run만 모델을 불렀다

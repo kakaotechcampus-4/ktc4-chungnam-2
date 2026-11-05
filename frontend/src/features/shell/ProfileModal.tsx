@@ -7,6 +7,7 @@ import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { useMeQuery } from '@/features/auth/queries'
 import FeedbackSheet from '@/features/feedback/FeedbackSheet'
+import PinTrashSheet from '@/features/map/PinTrashSheet'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import InviteLinks from '@/features/maps/InviteLinks'
 import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm, TransferOwnerConfirm } from '@/features/maps/MapLifecycle'
@@ -16,7 +17,7 @@ import Avatar from '@/ui/Avatar'
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 
-type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | null
+type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | 'trash' | null
 
 /**
  * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
@@ -57,10 +58,11 @@ function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Conf
   if (which === 'name') return <EditNameDialog onCancel={onCancel} />
   if (which === 'owner' && members) return <TransferOwnerConfirm mapId={mapId} members={members} onCancel={onCancel} />
   if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
+  if (which === 'trash') return <PinTrashSheet mapId={mapId} onClose={onCancel} />
   return null
 }
 
-/** 지도 정보 시트·메뉴 공통 내용 — 초대 링크, 구성원, 나가기·삭제, 계정. */
+/** 지도 정보 시트·메뉴 공통 내용 — 초대 링크, 구성원, 핀 휴지통, 나가기·삭제, 계정. */
 function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
   const map = useMapQuery(mapId)
   const members = useMembersQuery(mapId)
@@ -140,8 +142,13 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
         ))}
       </ul>
 
+      {/* 삭제한 핀 되돌리기(#864). 내가 되돌릴 수 있는 핀만 보이고 비어 있을 수 있다. 조용한 글자 버튼이다(지도 휴지통 입구와 같다). */}
+      <button type="button" onClick={() => onConfirm('trash')} className="btn-text mt-4 w-full text-center text-body">
+        삭제한 핀
+      </button>
+
       {map.data && (
-        <div className="mt-6 flex gap-2 border-t border-ink-200 pt-4">
+        <div className="mt-4 flex gap-2 border-t border-ink-200 pt-4">
           {/* 넘길 사람이 없는 방장은 나갈 수 없다 — 나가기 자리에 이유를 적고 삭제를 안내한다. */}
           {map.data.canLeave ? (
             <button type="button" onClick={() => onConfirm('leave')} className="btn-neutral btn-md flex-1">

@@ -6,6 +6,9 @@ import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { fetchSchedule } from '@/features/shortlist/api'
+import { saveSchedule, scheduleKeys } from '@/features/shortlist/scheduleQueries'
+
 import CourseBody from './CourseBody'
 import { useCourseViewStore } from './courseMapStore'
 
@@ -203,6 +206,7 @@ describe('AI 코스 짜기 시트', () => {
     )
     const user = userEvent.setup({ delay: null })
     renderSheet()
+    await user.type(await screen.findByRole('textbox'), '둘째 날은 실내 위주로')
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     await confirmCourse(user)
     expect(await screen.findByText('코스를 만들지 못했어요')).toBeInTheDocument()
@@ -210,6 +214,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByText('이미 짜고 있는 코스를 보여 드려요')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '다시 짜기' }))
     expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeInTheDocument() // 진입으로 돌아감
+    expect(screen.getByRole('textbox')).toHaveValue('둘째 날은 실내 위주로') // 쓴 요청이 남는다
   })
 
   it('최근 코스가 없으면 링크가 없고, 있으면 결과를 바로 연다(stale 이면 「다시 짜기」)', async () => {
@@ -292,5 +297,41 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.queryByText('확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요')).not.toBeInTheDocument()
     release()
     expect(await screen.findByText('확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요')).toBeInTheDocument()
+  })
+})
+
+describe('일정 저장이 가는 중에 코스를 짜면(#1424 e2e)', () => {
+  it('저장이 끝난 뒤에 코스를 요청한다 — 서버가 날짜에 넣은 곳을 알고 모드를 정한다', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const dto = await client.fetchQuery({ queryKey: scheduleKeys.one('map_1'), queryFn: () => fetchSchedule('map_1') })
+    // 일정 저장(PUT)을 붙잡아 둔다. 처리기가 아무것도 돌려주지 않으면 목 서버의 원래 처리기가 저장한다.
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const order: string[] = []
+    server.use(
+      http.put(`${BASE}/maps/map_1/shortlist/schedule`, async () => {
+        await gate
+        order.push('일정 저장')
+      }),
+    )
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === '/maps/map_1/courses') order.push('코스 요청')
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CourseBody mapId="map_1" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    saveSchedule(client, 'map_1', { days: { [dto.start_date]: ['pin_1'] } })
+    await userEvent.click(await screen.findByRole('button', { name: '코스 짜기' }))
+    await confirmCourse()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(order).toEqual([])
+
+    release()
+    await waitFor(() => expect(order).toEqual(['일정 저장', '코스 요청']))
   })
 })

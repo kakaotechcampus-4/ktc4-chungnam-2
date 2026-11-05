@@ -78,7 +78,7 @@ def validate_live_create(req: PinCreateLive) -> None:
 
 
 PIN_NOT_EDITABLE_MESSAGE = "AI 추천 핀과 확정 핀은 고칠 수 없어요"
-CATEGORY_NOT_EDITABLE_MESSAGE = "자체 DB 장소의 분류는 장소가 정해요. 분류는 직접 찍은 핀에서만 바꿀 수 있어요"
+CATEGORY_NOT_EDITABLE_MESSAGE = "분류는 직접 찍은 핀에서만 바꿀 수 있어요"
 CATEGORY_HAS_REACTIONS_MESSAGE = "의견이 달린 핀은 분류를 바꿀 수 없어요"
 
 
@@ -264,7 +264,7 @@ def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_i
     if reaction_type != "against":
         return
     if reason_content(reason_text) is None and not reason_chip_ids:
-        raise AppError("EVIDENCE_REQUIRED", "반대 반응에는 사유가 필요합니다")
+        raise AppError("EVIDENCE_REQUIRED", "반대에는 사유가 필요해요")
 
 
 def validate_reactable(category: str) -> None:
@@ -280,7 +280,7 @@ def validate_chip_ids(category: str, reason_chip_ids: list[str] | None) -> None:
     unknown = chips.unknown_chip_ids(category, reason_chip_ids or [])
     if unknown:
         raise AppError(
-            "VALIDATION_ERROR", "이 핀의 카테고리에 없는 반대 사유 칩입니다", detail={"reason_chip_id": unknown[0]}
+            "VALIDATION_ERROR", "이 핀에서는 고를 수 없는 반대 사유 칩이에요", detail={"reason_chip_id": unknown[0]}
         )
 
 

@@ -50,6 +50,7 @@ const pin = (id: string, x: number, y: number, extra: Partial<Pin> = {}) =>
     lng: x,
     created_at: '2026-10-01T00:00:00Z',
     reaction_summary: { like: 0, against: 0 },
+    permissions: { can_delete: false },
     ...extra,
   }) as unknown as Pin
 

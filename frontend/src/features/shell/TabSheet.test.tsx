@@ -22,7 +22,7 @@ afterAll(() => {
   vi.unstubAllGlobals()
 })
 
-const shell: ShellContext = { mapId: 'map_1', activeControl: null, onControl: () => {}, connection: { state: 'open', reconnect: () => {} }, getCenter: () => null }
+const shell: ShellContext = { mapId: 'map_1', activeControl: null, onControl: () => {}, connection: { state: 'open', reconnect: () => {} }, getCenter: () => null, showRegion: () => {} }
 
 describe('「핑고 AI 조언」 버튼(#1162)', () => {
   it.each<TabKey>(['map', 'recommend', 'shortlist', 'course'])('지도가 떠 있는 %s 탭에서도 보인다', async (tab) => {

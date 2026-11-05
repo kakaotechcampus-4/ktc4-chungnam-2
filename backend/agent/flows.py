@@ -518,7 +518,7 @@ def _draft(
             return _Step(None, core.failed_outcome(out.reason), which | {"reason": out.reason, "detail": out.detail},
                          used_model=True, tool_calls=ctx.calls, usage=reply.usage)
         verified = core.verify_diagnosis(out, top, snap, ctx.results, member_names=names, comparison=comparison,
-                                         preview=preview, fits=core.schedule_fits_of(ctx.calls))
+                                         preview=preview, fits=core.schedule_fits_of(ctx.calls), calls=ctx.calls)
         draft = verified.draft
         if draft is not None:
             draft = replace(draft, facts=_facts(ctx, top, comparison))

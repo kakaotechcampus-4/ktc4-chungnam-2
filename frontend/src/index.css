@@ -389,6 +389,20 @@
     .pingo-hands {
         animation: enter-fade 150ms cubic-bezier(0, 0, 0.2, 1) 200ms backwards;
     }
+    /* 휴지통으로 끄는 핀(#1012). 집혀 있는 동안 끝을 붙든 채 좌우로 떤다 — "지금 옮기는 중" 상태 표시라 0.5초 상한 밖(DESIGN Motion 예외). */
+    .pin-wobble {
+        transform-origin: 50% 100%;
+        animation: pin-wobble 150ms ease-in-out infinite alternate;
+    }
+    /* 휴지통 뚜껑(TrashDropZone). 핀이 위에 오면 왼쪽 끝을 붙든 채 열리고, 핀이 들어가면 닫힌다. */
+    .trash-lid {
+        transform-box: view-box;
+        transform-origin: 3px 6px;
+        transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .trash-lid[data-open='true'] {
+        transform: translateY(-1px) rotate(-28deg);
+    }
     @media (prefers-reduced-motion: reduce) {
         .enter-fade,
         .enter-pop,
@@ -397,10 +411,20 @@
         .pin-bounce,
         .pingo-rise,
         .pingo-sink,
-        .pingo-hands {
+        .pingo-hands,
+        .pin-wobble {
             animation: none;
         }
+        .trash-lid,
+        .trash-lid[data-open='true'] {
+            transition: none;
+            transform: none;
+        }
     }
+}
+@keyframes pin-wobble {
+    from { transform: rotate(-4deg); }
+    to { transform: rotate(4deg); }
 }
 @keyframes enter-fade {
     from { opacity: 0; }

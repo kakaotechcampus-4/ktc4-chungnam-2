@@ -547,8 +547,8 @@ def test_get_readiness_counts_opinion_pins_per_category(db_session):
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
 
-    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 1}
-    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 1}
+    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000, "curated_nearby": 1}
+    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000}
 
 
 def test_get_readiness_opens_for_a_solo_map_with_one_opinion_pin(db_session):
@@ -557,7 +557,7 @@ def test_get_readiness_opens_for_a_solo_map_with_one_opinion_pin(db_session):
     _react(db_session, pin, user_id="user_1", type="like")
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
-    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 1}
+    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000, "curated_nearby": 1}
 
 
 def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_session):
@@ -602,8 +602,8 @@ def test_create_run_succeeds_assembles_evidence_and_default_region(db_session):
     assert regions[0].confirmed is True
     assert regions[0].center_lat == pytest.approx(35.2)
     assert regions[0].center_lng == pytest.approx(129.3)
-    assert regions[0].radius_m == core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)
-    assert run.default_radius_walk_min == core.DEFAULT_RADIUS_WALK_MIN
+    assert regions[0].radius_m == core.DEFAULT_RADIUS_M == 3000   # 모든 카테고리 3km(#1385)
+    assert (run.default_radius_m, run.default_radius_walk_min) == (3000, core.radius_walk_min_compat(3000))
 
 
 def _no_plan_call(raw):
@@ -888,7 +888,7 @@ def test_readiness_counts_a_live_pin_with_an_opinion(db_session):
 
     # 좌표가 없어 기본 지역이 없다 — 정예 장소 수(#798)를 내지 않는다
     assert flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)["카페"] == {
-        "ready": True, "answered_count": 1, "required_count": 1,
+        "ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000,
     }
 
 
@@ -1384,9 +1384,9 @@ def test_get_result_marks_can_publish_false_once_already_published(db_session):
 
 # ---------- widen ----------
 
-def test_widen_run_adds_five_walk_minutes_and_regenerates_candidates(db_session):
-    run = _make_run(db_session, status="collecting_evidence")
-    region = _make_region(db_session, run, radius_m=15 * 80)
+def test_widen_run_adds_1000_meters_and_regenerates_candidates(db_session):
+    run = _make_run(db_session, status="collecting_evidence", default_radius_m=3000, default_radius_walk_min=38)
+    region = _make_region(db_session, run, radius_m=3000)
     places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
     place_search = _FakePlaceSearch(places)
     place_facts = _FakePlaceFacts()
@@ -1394,29 +1394,29 @@ def test_widen_run_adds_five_walk_minutes_and_regenerates_candidates(db_session)
     returned = flows.widen_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
 
     db_session.refresh(region)
-    assert region.radius_m == 20 * 80  # 15분 → 20분(+5분)
+    assert region.radius_m == 4000  # 3,000m → 4,000m(+1,000m)
     db_session.refresh(run)
     assert returned is run
-    assert run.default_radius_walk_min == 20
+    assert (run.default_radius_m, run.default_radius_walk_min) == (4000, 50)   # 호환용 도보 분은 round(m/80)
     assert run.status == "done"
     assert service.list_candidates(db_session, str(run.id))[0].place_id == "p1"
 
 
 def test_widen_run_steps_to_limit_then_raises_widen_limit_without_changing_anything(db_session):
-    run = _make_run(db_session, status="done")
-    region = _make_region(db_session, run, radius_m=15 * 80)
+    run = _make_run(db_session, status="done", default_radius_m=3000, default_radius_walk_min=38)
+    region = _make_region(db_session, run, radius_m=3000)
     kwargs = {"place_search": _FakePlaceSearch([]), "place_facts": _FakePlaceFacts()}
 
-    for expected in (20, 25, 30):
+    for expected in (4000, 5000):
         flows.widen_run(db_session, run_id=str(run.id), **kwargs)
-        assert run.default_radius_walk_min == expected
+        assert run.default_radius_m == expected
 
     with pytest.raises(AppError) as exc_info:
         flows.widen_run(db_session, run_id=str(run.id), **kwargs)
     assert exc_info.value.code == "WIDEN_LIMIT"
     db_session.refresh(region)
-    assert region.radius_m == 30 * 80  # 상한을 넘겨 완화하지 않는다(가드레일 4)
-    assert run.default_radius_walk_min == 30
+    assert region.radius_m == 5000  # 상한을 넘겨 완화하지 않는다(가드레일 4)
+    assert run.default_radius_m == 5000
 
 
 def test_widen_run_without_regions_raises_not_ready(db_session):
@@ -1502,20 +1502,19 @@ class _RecordingPlaceFacts(_FakePlaceFacts):
         return {}
 
 
-# 중심 (35.0, 129.0), 기본 반경 도보 15분(1,200m). ring은 약 1,500m라 지금 반경 밖·넓히기 한 번(1,600m) 안이고,
-# beyond는 약 2,800m라 상한(30분, 2,400m) 밖이다.
+# 중심 (35.0, 129.0), 기본 반경 3,000m(#1385). ring은 약 3,500m라 지금 반경 밖·넓히기 한 번(4,000m) 안이고,
+# beyond는 약 6,500m라 상한(5,000m) 밖이다.
 POOL_PLACES = [
-    PlaceStub(place_id="inside", lat=35.0045, lng=129.0),
-    PlaceStub(place_id="ring", lat=35.0135, lng=129.0),
-    PlaceStub(place_id="beyond", lat=35.025, lng=129.0),
+    PlaceStub(place_id="inside", lat=35.0225, lng=129.0),
+    PlaceStub(place_id="ring", lat=35.0315, lng=129.0),
+    PlaceStub(place_id="beyond", lat=35.0585, lng=129.0),
 ]
 
 
 def _pool_run(db_session, **run_overrides):
     _make_members(db_session, user_ids=["user_1"])   # 여행 날짜가 있어 영업 여부를 읽는다
     run = _make_run(db_session, status="collecting_evidence", **run_overrides)
-    walk_min = run_overrides.get("default_radius_walk_min", core.DEFAULT_RADIUS_WALK_MIN)
-    _make_region(db_session, run, radius_m=core.radius_m_for_walk_min(walk_min))
+    _make_region(db_session, run, radius_m=run_overrides.get("default_radius_m", core.DEFAULT_RADIUS_M))
     return run, _CirclePlaceSearch(POOL_PLACES), _RecordingPlaceFacts()
 
 
@@ -1524,8 +1523,7 @@ def test_pool_and_current_radius_are_both_checked_by_gateway(db_session):
 
     flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
 
-    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)],
-                            [core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)]]
+    assert search.radii == [[core.WIDEN_LIMIT_M], [core.DEFAULT_RADIUS_M]]
     assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 1
     assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["inside"]   # 결과는 지금 반경 안만
     assert facts.read == {"inside"}   # 반경 밖 장소의 라벨·영업시간은 읽지 않는다
@@ -1539,35 +1537,34 @@ def test_widening_once_brings_the_counted_place_into_the_result(db_session):
 
     assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
     assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 0
-    assert search.radii[-1] == [core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN + core.WIDEN_STEP_MIN)]
+    assert search.radii[-1] == [core.DEFAULT_RADIUS_M + core.WIDEN_STEP_M]
     assert "beyond" not in facts.read
 
 
 def test_pool_of_a_run_already_at_the_limit_is_its_radius(db_session):
-    run, search, facts = _pool_run(db_session, default_radius_walk_min=core.WIDEN_LIMIT_MIN)
+    run, search, facts = _pool_run(db_session, default_radius_m=core.WIDEN_LIMIT_M)
 
     flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
 
-    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]] * 2
+    assert search.radii == [[core.WIDEN_LIMIT_M]] * 2
     assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 0
     assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
 
 
 def test_simulation_uses_the_same_pool_and_one_press_matches_the_widen_button(db_session):
     run, search, facts = _pool_run(db_session)
-    one_press = (core.DEFAULT_RADIUS_WALK_MIN + core.WIDEN_STEP_MIN) / core.DEFAULT_RADIUS_WALK_MIN
+    one_press = (core.DEFAULT_RADIUS_M + core.WIDEN_STEP_M) / core.DEFAULT_RADIUS_M
 
     result = flows.simulate_filter(
         db_session, run_id=str(run.id), radius_factor=one_press, disable_line_ids=[], place_search=search, place_facts=facts,
     )
 
-    limit = core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)
-    assert search.radii == [[limit], [core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN)],
-                            [limit], [core.radius_m_for_walk_min(core.DEFAULT_RADIUS_WALK_MIN + core.WIDEN_STEP_MIN)]]
+    limit = core.WIDEN_LIMIT_M
+    assert search.radii == [[limit], [core.DEFAULT_RADIUS_M], [limit], [core.DEFAULT_RADIUS_M + core.WIDEN_STEP_M]]
     assert (result["before"]["passed_count"], result["after"]["passed_count"]) == (1, 2)
     with pytest.raises(ValueError):   # 상한을 넘는 배율은 셀 수 없다(풀 밖)
         flows.simulate_filter(
-            db_session, run_id=str(run.id), radius_factor=core.WIDEN_LIMIT_MIN / core.DEFAULT_RADIUS_WALK_MIN + 0.01,
+            db_session, run_id=str(run.id), radius_factor=core.WIDEN_LIMIT_M / core.DEFAULT_RADIUS_M + 0.01,
             disable_line_ids=[], place_search=search, place_facts=facts,
         )
 
@@ -1595,14 +1592,14 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
 
     by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     sourced, bare = by_place["sourced"], by_place["bare"]
-    assert sourced.reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함"
+    assert sourced.reason == "통과한 실격 조건: 붐비는 대형 장소 아님. 맞는 선호: 조용함"
     # user_1은 실격 사유(너무 붐벼요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장은 인원을 말하지 않는다(#631).
     assert _satisfied_view(sourced.member_fulfillment) == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": True},
     ]}
     assert sourced.place_source == source
     # 조용함을 모르는 후보 — 구성원은 집계 대상이지만 충족으로 세지 않고, 안 본 것을 이유로 들지 않는다.
-    assert bare.reason == "실격 조건 통과: 붐비는 대형 장소 아님"
+    assert bare.reason == "통과한 실격 조건: 붐비는 대형 장소 아님"
     assert _satisfied_view(bare.member_fulfillment) == {"satisfied": 1, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
     ]}
@@ -2666,8 +2663,8 @@ def test_restaurant_heart_convenience_labels_do_not_outrank_a_written_preference
 
     candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     assert candidates["sushi"].rank == 1 and candidates["buffet"].rank == 2
-    assert candidates["sushi"].reason == "선호 충족: 일식"
-    assert "선호 충족" not in candidates["buffet"].reason
+    assert candidates["sushi"].reason == "맞는 선호: 일식"
+    assert "맞는 선호" not in candidates["buffet"].reason
     assert "franchise" not in {c["fact_key"] for c in candidates["buffet"].checks}  # ♥에서 빠진 키는 응답 체크에도 없다
 
 

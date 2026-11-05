@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { allInside, fitCenter, fitLevel, fitPadding, groupNear, zoomSteps } from './camera'
 import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
+import { usePinDragStore } from './pinDrag'
 import {
   createCandidateMarkerElement,
   createSearchGroupMarkerElement,
@@ -18,6 +19,7 @@ import Pingo from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
 
 import { isPlaced, type Pin } from './model'
+import { circleExtremes, type LatLngTuple, type RegionBoundary } from './regionGeo'
 
 /** 핀이 하나라도 있으면 곧바로 bounds 로 덮어쓴다. 빈 지도에서만 보이는 값이다(v1 장소 데이터는 서울). */
 const FALLBACK_CENTER = { lat: 37.5665, lng: 126.978 }
@@ -52,6 +54,34 @@ export type SearchMarker = {
  * - 핑고(30px) 눈 바로 아래(위에서 약 20)에 머리 위끝이 오게 → 핑고 위끝 64.5
  */
 const HUG = { size: 30, top: 64.5, circleMid: 32.7 }
+
+/**
+ * 지도 가운데는 2단계 시트 뒤에 숨는다. 고른 곳은 검색창 아래 ~ 시트 윗변 사이 가운데에 오게 가운데보다 이만큼(px) 위에 둔다.
+ * 넓은 화면은 지도 영역에 가리는 시트가 없어서 가운데 그대로다.
+ */
+function sheetLift() {
+  if (isDesktopNow()) return 0
+  const h = window.innerHeight
+  return Math.round(h / 2 - (VISIBLE_TOP + h * 0.41) / 2)
+}
+
+/** 보이는 영역의 가운데 — 모바일은 시트에 가린 아래쪽을 뺀다(#1331). 추천·검색·광고가 「지금 보는 곳」으로 쓰고, 추천 원이 여기 선다. */
+function visibleCenter(maps: typeof kakao.maps, map: kakao.maps.Map) {
+  const proj = map.getProjection()
+  const p = proj.containerPointFromCoords(map.getCenter())
+  return proj.coordsFromContainerPoint(new maps.Point(p.x, p.y - sheetLift()))
+}
+
+/** 여행 지역 밖을 어둡게 덮는 넓은 사각형(한반도 둘레). 지역 고리를 구멍으로 뚫는다. 시계 방향 — 지역 외곽(반시계)과 반대다. */
+const DIM_WORLD: LatLngTuple[] = [
+  [45, 115],
+  [45, 140],
+  [25, 140],
+  [25, 115],
+]
+
+/** AI 추천 탭의 지도 그림 — 여행 지역 경계와 그 밖 어둡게, 지도 가운데 반경 원(`radiusM` 이 null 이면 원 없음). */
+export type RecommendArea = { boundary: RegionBoundary | null; radiusM: number | null }
 
 /** 올리기 전 AI 후보(#843) — 요청한 사람의 화면에만 핑고 핀으로 그린다. */
 export type CandidateMarker = { id: string; rank: number; name: string; lat: number; lng: number; selected: boolean; onClick: () => void }
@@ -89,6 +119,7 @@ export default function MapCanvas({
   tapBubble = null,
   leftInset = 0,
   startCenter,
+  recommendArea = null,
 }: {
   pins: Pin[]
   /** 핀 색(참여율)의 분모 — 지도 전체 구성원 수. */
@@ -116,6 +147,8 @@ export default function MapCanvas({
   leftInset?: number
   /** 핀이 없을 때 첫 화면 가운데 — 지도 만들 때 고른 지역(시청·도청). 없으면 서울이다. 핀이 있으면 핀들에 맞춘다. */
   startCenter?: { lat: number; lng: number }
+  /** AI 추천 탭에서만 준다 — 여행 지역 경계·그 밖 어둡게·지도 가운데 반경 원. 다른 탭은 null. */
+  recommendArea?: RecommendArea | null
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const layerRef = useRef<MarkerLayer | null>(null)
@@ -134,6 +167,8 @@ export default function MapCanvas({
     startCenterRef.current = startCenter
   })
   const mapRef = useRef<{ maps: typeof kakao.maps; map: kakao.maps.Map } | null>(null)
+  // 지도 빈 곳 누름. 도형(지역 밖 어둡게·추천 원)도 이걸 부른다 — 아래 init 에서 채운다.
+  const mapClickRef = useRef<(e?: kakao.maps.event.MouseEvent) => void>(() => {})
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<Error | null>(null)
 
@@ -203,8 +238,18 @@ export default function MapCanvas({
           callbacks.current.onMovingChange(true)
         }
         const onIdle = () => callbacks.current.onMovingChange(false)
-        const onClick = (e?: { latLng: { getLat(): number; getLng(): number } }) =>
-          callbacks.current.onMapClick(e ? { lat: e.latLng.getLat(), lng: e.latLng.getLng() } : null)
+        // 도형 위를 누르면 카카오가 지도 click 대신(또는 함께) 도형 click 을 준다 — 어느 쪽이 와도 한 번만 알린다.
+        let clickQueued = false
+        const onClick = (e?: kakao.maps.event.MouseEvent) => {
+          if (clickQueued) return
+          clickQueued = true
+          const at = e ? { lat: e.latLng.getLat(), lng: e.latLng.getLng() } : null
+          window.setTimeout(() => {
+            clickQueued = false
+            callbacks.current.onMapClick(at)
+          })
+        }
+        mapClickRef.current = onClick
         maps.event.addListener(map, 'dragstart', onDragStart)
         maps.event.addListener(map, 'idle', onIdle)
         maps.event.addListener(map, 'click', onClick)
@@ -218,13 +263,6 @@ export default function MapCanvas({
         }
 
         mapRef.current = { maps, map }
-        // 지도 가운데는 2단계 시트 뒤에 숨는다. 고른 곳은 검색창 아래 ~ 시트 윗변 사이 가운데에 오게 가운데보다 이만큼(px) 위에 둔다.
-        // 넓은 화면은 지도 영역에 가리는 시트가 없어서 가운데 그대로다.
-        const sheetLift = () => {
-          if (isDesktopNow()) return 0
-          const h = window.innerHeight
-          return Math.round(h / 2 - (VISIBLE_TOP + h * 0.41) / 2)
-        }
         /** 그 곳이 보이는 자리(가운데보다 sheetLift 위)에 오게 하는 지도 가운데(지금 축척 기준). */
         const liftedCenter = (to: kakao.maps.LatLng) => {
           const proj = map.getProjection()
@@ -258,11 +296,8 @@ export default function MapCanvas({
             }
             runMoves([panMove(liftedCenter(target)), ...zoomMoves(to, target)])
           },
-          // 보이는 영역의 가운데 — 모바일은 시트에 가린 아래쪽을 뺀다(#1331, 위 sheetLift). 추천·검색·광고가 「지금 보는 곳」으로 쓴다.
           getCenter: () => {
-            const proj = map.getProjection()
-            const p = proj.containerPointFromCoords(map.getCenter())
-            const c = proj.coordsFromContainerPoint(new maps.Point(p.x, p.y - sheetLift()))
+            const c = visibleCenter(maps, map)
             return { lat: c.getLat(), lng: c.getLng() }
           },
           // 점 전체가 보이게 맞춘다. 이미 다 보이면 그대로 둔다(누른 사람이 원한 「전체 핀 보기」만 force).
@@ -335,6 +370,12 @@ export default function MapCanvas({
   useEffect(() => {
     if (ready) layerRef.current?.select(selectedPinId)
   }, [selectedPinId, pins, ready])
+
+  // 핀을 휴지통으로 끄는 동안 지도가 손을 따라 움직이지 않게 한다(#1012).
+  const pinDragging = usePinDragStore((s) => s.drag !== null)
+  useEffect(() => {
+    if (ready) mapRef.current?.map.setDraggable(!pinDragging)
+  }, [pinDragging, ready])
 
   // 패널을 접고 펼치면 지도 틀의 왼쪽 끝이 움직인다. 카카오맵은 CSS 로 바뀐 크기를 모르니 다시 재게 하고,
   // 보던 장소가 화면에서 같은 자리에 남게 한다. relayout 은 가운데가 아니라 틀 왼쪽 위를 붙잡고 있어서,
@@ -479,6 +520,86 @@ export default function MapCanvas({
     })
     return () => overlays.forEach((o) => o.setMap(null))
   }, [candidates, ready])
+
+  // AI 추천 탭: 여행 지역 경계(action-fill 2px)와 그 밖 어둡게(ink-900 12%). 넓은 사각형에 지역 고리를 구멍으로 뚫은 다각형 하나다.
+  // 경계 파일의 방향(외곽 반시계·구멍 시계)이 사각형(시계)과 맞물려 섬과 구멍도 맞게 칠해진다(regionBoundaries/README.md).
+  const areaBoundary = recommendArea?.boundary ?? null
+  useEffect(() => {
+    const m = mapRef.current
+    if (!ready || !m || !areaBoundary) return
+    const { maps, map } = m
+    const css = getComputedStyle(document.documentElement)
+    const path = (ring: LatLngTuple[]) => ring.map(([lat, lng]) => new maps.LatLng(lat, lng))
+    const rings = areaBoundary.flat()
+    const dim = new maps.Polygon({
+      path: [path(DIM_WORLD), ...rings.map(path)],
+      strokeWeight: 0,
+      strokeOpacity: 0,
+      fillColor: css.getPropertyValue('--ink-900').trim() || '#1F1C19',
+      fillOpacity: 0.12,
+      zIndex: 1,
+    })
+    const edge = css.getPropertyValue('--action-fill').trim() || '#2A57C4'
+    const lines = rings.map(
+      (ring) => new maps.Polyline({ path: path([...ring, ring[0]]), strokeWeight: 2, strokeColor: edge, strokeOpacity: 0.9, zIndex: 2 }),
+    )
+    const onClick = (e?: kakao.maps.event.MouseEvent) => mapClickRef.current(e)
+    dim.setMap(map)
+    lines.forEach((l) => l.setMap(map))
+    maps.event.addListener(dim, 'click', onClick)
+    return () => {
+      maps.event.removeListener(dim, 'click', onClick)
+      dim.setMap(null)
+      lines.forEach((l) => l.setMap(null))
+    }
+  }, [areaBoundary, ready])
+
+  // AI 추천 탭: 보이는 가운데(getCenter 와 같은 자리) 반경 원 — 추천은 이 안에서 찾는다. 지도를 옮기면 따라간다.
+  // 탭에 들어왔을 때 원이 화면보다 크면 가운데를 붙든 채 원이 보일 만큼만 물러난다(가까이 가지는 않는다).
+  const areaRadius = recommendArea?.radiusM ?? null
+  useEffect(() => {
+    const m = mapRef.current
+    const el = containerRef.current
+    if (!ready || !m || !el || areaRadius == null) return
+    const { maps, map } = m
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--action-fill').trim() || '#2A57C4'
+    const center = visibleCenter(maps, map)
+    const circle = new maps.Circle({
+      center,
+      radius: areaRadius,
+      strokeWeight: 2,
+      strokeColor: color,
+      strokeOpacity: 1,
+      strokeStyle: 'dash',
+      fillColor: color,
+      fillOpacity: 0.06,
+      zIndex: 3,
+    })
+    circle.setMap(map)
+
+    const proj = map.getProjection()
+    const edge = circleExtremes({ lat: center.getLat(), lng: center.getLng() }, areaRadius).map((p) =>
+      proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)),
+    )
+    const level = map.getLevel()
+    const to = fitLevel(edge, { w: el.clientWidth, h: el.clientHeight }, fitPadding(window.innerHeight, isDesktopNow()), level, level)
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (to > level) map.setLevel(to, { anchor: center, animate: still ? false : { duration: ZOOM_MS } })
+
+    const follow = () => circle.setPosition(visibleCenter(maps, map))
+    const onClick = (e?: kakao.maps.event.MouseEvent) => mapClickRef.current(e)
+    maps.event.addListener(map, 'center_changed', follow)
+    maps.event.addListener(map, 'zoom_changed', follow)
+    maps.event.addListener(circle, 'click', onClick)
+    window.addEventListener('resize', follow)
+    return () => {
+      maps.event.removeListener(map, 'center_changed', follow)
+      maps.event.removeListener(map, 'zoom_changed', follow)
+      maps.event.removeListener(circle, 'click', onClick)
+      window.removeEventListener('resize', follow)
+      circle.setMap(null)
+    }
+  }, [areaRadius, ready])
 
   // 동선(Figma 7절): brand-600 4px 직선, 순서 번호는 골드 + 갈색 숫자, 구간 "약 N분" 흰 알약.
   // AI 코스(#683)는 날짜마다 색과 선 모양을 달리하고, 번호 원과 알약 테두리도 그날 색이다.

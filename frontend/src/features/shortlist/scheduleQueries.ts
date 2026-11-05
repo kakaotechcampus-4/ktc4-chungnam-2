@@ -31,6 +31,11 @@ const getDraft = (mapId: string) => useDrafts.getState().drafts[mapId]
 
 /** 저장을 보내는 중인 지도(지도별 하나의 약속) — 그동안은 일정 받기를 시작하지 않고 끝나길 기다린다. */
 const running = new Map<string, Promise<void>>()
+/**
+ * 보내는 중인 일정 저장이 끝나길 기다린다(없으면 바로). 서버가 지금 일정을 읽고 정하는 요청(AI 코스 짜기)이 화면에 먼저 보인 고침보다
+ * 앞서 가지 않게 한다 — 날짜에 넣자마자 코스를 짜면 넣은 곳을 모르는 코스가 나왔다(#1424 e2e). 저장이 실패해도 막지 않는다(실패는 flush 가 알린다).
+ */
+export const scheduleSaved = (mapId: string): Promise<void> => running.get(mapId) ?? Promise.resolve()
 /** 저장이 시작되거나 끝날 때마다 오르는 번호(지도별) — 일정을 받는 동안 바뀌었으면 그 응답은 저장보다 앞선 것이라 다시 받는다. */
 const generations = new Map<string, number>()
 const bump = (mapId: string) => generations.set(mapId, (generations.get(mapId) ?? 0) + 1)
@@ -139,6 +144,20 @@ export function saveSchedule(queryClient: QueryClient, mapId: string, next: Sche
     bump(mapId)
   })
   running.set(mapId, job)
+}
+
+/**
+ * 저장 루프 밖에서 일정을 저장할 때(AI 코스 「반영」, #1322) 쓴다. 보내는 중인 저장이 끝나길 기다렸다가 보내고,
+ * 앞뒤로 번호를 올려 그동안 받은 일정 응답이 저장한 일정을 덮지 않게 한다.
+ */
+export async function saveScheduleOutside<T>(mapId: string, save: () => Promise<T>): Promise<T> {
+  await running.get(mapId)
+  bump(mapId)
+  try {
+    return await save()
+  } finally {
+    bump(mapId)
+  }
 }
 
 /** 일정 고치기 함수 — `useScheduleEdit`과 화면이 쓴다. */

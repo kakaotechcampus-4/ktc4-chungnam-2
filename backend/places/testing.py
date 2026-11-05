@@ -172,6 +172,9 @@ class FakePlaces:
         near = self.own_places_near(lat, lng, SIDO_AT_RADIUS_M, len(self.rows))
         return next((v for v in (core.sido(c.address) for c in near) if v), None)
 
+    def circle_outside_region(self, lat: float, lng: float, radius_m: float, sido: str, *, db: Session | None = None) -> bool | None:
+        return None   # 대역에는 경계가 없다 = 모름(막지 않는다). 판정을 보려면 테스트가 monkeypatch로 값을 준다
+
     def own_places_by_kakao_id(self, kakao_place_id: str, *, db: Session | None = None) -> list[Candidate]:
         return [self._candidate(r, None) for r in self.rows if r.status == "open" and r.kakao_place_id == kakao_place_id]
 
@@ -244,7 +247,7 @@ class FakePlaces:
         from places import api
 
         for name in ("match_place", "record_kakao_match", "pinnable_flags", "get_places", "search_nearby_own", "count_curated", "get_facts", "get_hours",
-                     "get_week_open_status", "get_open_status_on_weekdays", "sido", "sido_at",
+                     "get_week_open_status", "get_open_status_on_weekdays", "sido", "sido_at", "circle_outside_region",
                      "own_places_near", "own_places_by_kakao_id", "match_by_name_address", "match_address_candidates", "record_external_id", "purge_external_id_votes", "own_places_by_external_id"):
             monkeypatch.setattr(api, name, getattr(self, name))
         return self

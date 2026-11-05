@@ -78,8 +78,11 @@ export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
 export function createErrorMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
   switch (error.code) {
-    case 'COURSE_NOT_ENOUGH_PLACES':
-      return '위치가 확인된 장소가 확정 리스트에 2곳 이상 있어야 해요'
+    case 'COURSE_NOT_ENOUGH_PLACES': {
+      // 몇 곳부터인지는 서버 값(detail.min)이다 — 화면에 숫자를 적지 않는다. 문구는 docs/errors.md 표.
+      const min = error.detail?.min
+      return typeof min === 'number' ? `확정 리스트에 장소를 ${min}곳 이상 담아 주세요` : '확정 리스트에 장소를 더 담아 주세요'
+    }
     default:
       return null
   }
