@@ -133,9 +133,10 @@ function LoginScreen({ notice }: { notice?: string }) {
           <KakaoButton retry={Boolean(loginError)} />
           <button type="button" onClick={() => setSheet('guest')} className="btn-neutral btn-md w-full">
             <UserRound size={16} aria-hidden="true" /> 게스트로 시작하기
-            {/* 360px 아래에선 버튼 글자가 두 줄로 깨져서 덧말을 뺀다. */}
+            {/* 게스트는 초대 링크로만 들어간다(#485). 「이름 입력」에 밑줄을 두면 눌리는 칸처럼 보여서 덧말만 둔다(#1427).
+                360px 아래에선 버튼 글자가 두 줄로 깨져서 덧말을 뺀다. */}
             <span className="font-normal text-ink-500 max-[359px]:hidden">
-              · <span className="underline underline-offset-2">이름 입력</span>
+              · 초대 링크로
             </span>
           </button>
         </div>
