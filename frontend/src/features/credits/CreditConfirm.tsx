@@ -6,18 +6,20 @@ import { useCreditsQuery } from './queries'
 /**
  * 크레딧을 쓰는 AI 실행(「추천받기」·「코스 짜기」) 전에 묻는 창. 쓸 크레딧과 남은 크레딧을 보인다(#1363).
  * 숫자는 GET /credits/me 응답 그대로다(#733). 잔액이 모자란지는 여기서 판단하지 않는다 — 판정은 서버(402)이고 안내는 CreditGate 가 한다.
- * 잔액을 못 받아도 막지 않는다.
+ * 잔액을 못 받아도 막지 않는다. `note`는 버튼 위 한 줄 — 추천은 찾는 범위를 알린다.
  */
 export default function CreditConfirm({
   feature,
   title,
   ok,
+  note,
   onOk,
   onCancel,
 }: {
   feature: CreditFeature
   title: string
   ok: string
+  note?: string
   onOk: () => void
   onCancel: () => void
 }) {
@@ -34,6 +36,7 @@ export default function CreditConfirm({
         ) : undefined
       }
       body={credits.data ? undefined : credits.isPending ? '남은 크레딧을 확인하는 중이에요' : '남은 크레딧을 불러오지 못했어요'}
+      note={note}
       ok={ok}
       onOk={onOk}
       onCancel={onCancel}
