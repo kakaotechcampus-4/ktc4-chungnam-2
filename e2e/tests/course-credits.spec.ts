@@ -21,7 +21,8 @@ test('확정 장소 하나만 날짜에 넣고 코스를 짜면, 남은 곳을 �
     await planner.getByRole('link', { name: '확정된 장소' }).click()
     await planner.getByRole('checkbox', { name: `${PLACES[0]} 고르기` }).check()
     await planner.getByRole('button', { name: '1곳 넣기' }).click()
-    await expect(planner.getByText('3곳 · 일정에 넣은 곳 1')).toBeVisible()
+    // 머리 글의 「N곳」은 아직 일정에 넣지 않은 곳이다(DESIGN.md 「확정 리스트 = 아직 안 넣은 곳」).
+    await expect(planner.getByText('2곳 · 일정에 넣은 곳 1')).toBeVisible()
   })
 
   await test.step('AI 코스에서 쓸 크레딧과 남은 크레딧을 확인하고 코스를 짠다', async () => {
