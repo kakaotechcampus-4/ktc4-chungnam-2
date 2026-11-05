@@ -186,27 +186,29 @@ def get_readiness(
         result[category] = {
             **readiness, "radius_m": core.DEFAULT_RADIUS_M, "radius_min_m": core.MIN_RADIUS_M, "radius_max_m": core.WIDEN_LIMIT_M,
             **_curated_nearby(db, map_id=map_id, category=category, readiness=readiness, place_search=place_search, center=center,
-                              radius_m=core.request_radius_m(radius_m)),
+                              radius_m=radius_m),
         }
     return result
 
 
 def _curated_nearby(
     db: Session, *, map_id: str, category: str, readiness: dict, place_search: PlaceSearchGateway,
-    center: tuple[float, float] | None = None, radius_m: int = core.DEFAULT_RADIUS_M,
+    center: tuple[float, float] | None = None, radius_m: int | None = None,
 ) -> dict:
-    """기본 지역(create_run과 같은 원)에서 반경 넓히기 상한 안의 정예 장소 수(#798). 풀 반경과 같은 배율이라
-    (core.pool_radius_factor, #792) 실행이 끝까지 넓혀도 볼 수 있는 장소 수다. 0이면 카카오맵 검색 링크를 함께 준다.
+    """기본 지역(create_run과 같은 원)에서 정예 장소 수(#798). **radius_m(사용자가 고른 반경, #1416)이 있으면 그 반경 원 안의 수**다 —
+    화면의 숫자가 고른 반경을 따라야 해서 후보 풀을 넓히지 않는다. 없으면 지금처럼 반경 넓히기 상한(5,000m)까지 본다(풀 반경과 같은
+    배율, core.pool_radius_factor, #792 — 실행이 끝까지 넓혀도 볼 수 있는 장소 수). 0이면 카카오맵 검색 링크를 함께 준다(같은 수를 따른다).
     center가 있으면 그 점 한 곳의 원이다(`_center_region`, create_run과 같은 함수, #1331). 없으면 의견 핀이 없거나 좌표 있는 핀이
     없어 기본 지역이 없을 때 둘 다 없다."""
+    circle_radius_m = core.request_radius_m(radius_m)
     if center is not None:
-        circle, anchors = _center_region(center, radius_m)
+        circle, anchors = _center_region(center, circle_radius_m)
     else:
-        default_region = _default_circle_and_anchors(db, map_id=map_id, category=category, radius_m=radius_m) if readiness["answered_count"] else None
+        default_region = _default_circle_and_anchors(db, map_id=map_id, category=category, radius_m=circle_radius_m) if readiness["answered_count"] else None
         if default_region is None:
             return {}
         circle, anchors = default_region
-    pool_radius_m = round(circle.radius_m * core.pool_radius_factor(round(circle.radius_m)))
+    pool_radius_m = circle.radius_m if radius_m is not None else round(circle.radius_m * core.pool_radius_factor(round(circle.radius_m)))
     count = place_search.count_curated(
         category=category, circles=[Circle(anchor_lat=lat, anchor_lng=lng, radius_m=pool_radius_m) for lat, lng in anchors],
     )
