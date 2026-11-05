@@ -34,6 +34,9 @@ def world(members, place_ids, fake_planner, db_session, real_client):
     item_id = a.get(f"/maps/{map_id}/shortlist").json()[0]["id"]
     evidence = a.get(f"/runs/{run_id}/evidence").json()
     invite = a.post(f"/maps/{map_id}/invite").json()
+    # 대표 이미지(#1445)도 하나 올려 둔다 — 없으면 GET cover가 구성원에게도 404라 대조군이 성립하지 않는다.
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
+    assert a.put(f"/maps/{map_id}/cover", content=png, headers={"Content-Type": "image/png"}).status_code == 200
     yield {
         "a": a, "b": b, "c": c, "anon": anon, "map": map_id, "run": run_id, "pin": pin_id, "item": item_id,
         "candidate": candidates[0]["id"], "evidence": evidence[0]["id"], "token": invite["token"],

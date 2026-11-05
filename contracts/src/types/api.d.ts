@@ -4359,7 +4359,7 @@ export interface components {
             created_by_me?: boolean;
             /** @description 방장이 고른 지도 색 #RRGGBB (#1445). 모든 구성원이 같은 색을 본다. 고르지 않았으면 키가 없다(null도 같은 뜻) — 화면이 기본 색을 쓴다 */
             color?: string | null;
-            /** @description 방장이 올린 대표 이미지 주소 (#1445). API 기준 상대 경로 `/maps/{id}/cover?v=<갱신 시각>` — 이미지가 바뀌면 v도 바뀌어 영구 캐시해도 된다. 올린 이미지가 없으면 키가 없다(null도 같은 뜻) — 화면이 지역 기본 이미지를 그린다 */
+            /** @description 방장이 올린 대표 이미지 주소 (#1445). API 기준 상대 경로 `/maps/{id}/cover?v=<갱신 시각(밀리초)>` — 이미지가 바뀌면 v도 바뀌어 영구 캐시해도 된다. 올린 이미지가 없으면 키가 없다(null도 같은 뜻) — 화면이 지역 기본 이미지를 그린다 */
             cover_url?: string | null;
             /** @description 지금 방장의 표시 이름 (#1445) — 초대받은 지도 카드의 「○○님의 지도」. memberships.role 기준이라 위임되면 바뀐다. 방장이 탈퇴했으면 '탈퇴한 구성원'. 목록과 상세 모두 채운다 */
             owner_display_name?: string;
