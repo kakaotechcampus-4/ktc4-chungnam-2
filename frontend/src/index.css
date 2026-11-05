@@ -218,6 +218,18 @@
     --animate-pingo-waddle: pingo-waddle 600ms ease-in-out infinite;
     --animate-pingo-step: pingo-step 600ms ease-in-out infinite;
     --animate-pingo-flutter: pingo-flutter 700ms ease-in-out infinite;
+    /* 지도 위 3D 핑고 걷기(MapPingo, #1433) — 걸음마다 들썩이고, 측면 걷기 그림 1·2·3·2 를 0.15초씩 바꾼다. */
+    --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
+    --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
+    --animate-pingo-frame-b: pingo-frame-b 600ms step-end infinite;
+    @keyframes pingo-frame-a {
+        0% { opacity: 1; }
+        25%, 100% { opacity: 0; }
+    }
+    @keyframes pingo-frame-b {
+        0%, 50%, 100% { opacity: 0; }
+        25%, 75% { opacity: 1; }
+    }
     @keyframes pingo-bob {
         50% { transform: translateY(-2px) rotate(-3deg); }
     }
