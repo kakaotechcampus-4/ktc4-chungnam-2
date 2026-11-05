@@ -582,10 +582,11 @@ def r20_user_radius():
     before = _credits(c)["balance"]
     out = c.post(f"/maps/{mid}/runs", json={"category": "음식점", "center": HAEUNDAE})
     code = out.json().get("code") if out.headers.get("content-type", "").startswith("application/json") else None
+    after_out = _credits(c)["balance"]   # 지역 안 요청은 크레딧을 쓰므로 거절 직후에 잰다
     inside = c.post(f"/maps/{mid}/runs", json=run_body(mid))
-    check("R23", out.status_code == 422 and code == "OUTSIDE_TRIP_REGION" and _credits(c)["balance"] == before + 0 and inside.status_code == 202,
+    check("R23", out.status_code == 422 and code == "OUTSIDE_TRIP_REGION" and after_out == before and inside.status_code == 202,
           "부산 중심 422 OUTSIDE_TRIP_REGION(크레딧 그대로), 지역 안은 202",
-          f"부산 {out.status_code} {code}(202면 sido_boundaries 17행 적재 확인) / 지역 안 {inside.status_code} / 크레딧 {before}→{_credits(c)['balance']}")
+          f"부산 {out.status_code} {code}(202면 sido_boundaries 17행 적재 확인) / 지역 안 {inside.status_code} / 거절 직후 크레딧 {before}→{after_out}")
 
 
 # ───────── 크레딧 원장(W, #1091) — docs/credits-reviews.md 3·5절 ─────────
