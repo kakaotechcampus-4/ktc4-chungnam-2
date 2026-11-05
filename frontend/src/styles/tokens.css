@@ -63,7 +63,7 @@
   --pingo-line: var(--brand-300);
   --pingo-text: var(--brand-700);
   --pingo-outline: var(--ink-300); /* 평면 핑고 외곽선. brand-50 면 위에서도 몸이 묻히지 않게 */
-  --advice-alert: var(--brand-600); /* 「핑고 AI 조언」 새 조언 「!」 말풍선(MapPingo, #1433). AI 색 — 귤색은 지도 위에서 김치색처럼 낡아 보였다. 흰 「!」 6.4:1 */
+  --advice-alert: var(--notify-dot); /* 「핑고 AI 조언」 새 조언 「!」 말풍선(MapPingo, #1433). 새 소식 귤색 그대로, 흰 「!」 5.2:1 */
   --notify-dot: #C2410C;          /* 새 소식 점(알림 종 안 읽음 #1036, 핑고 AI 조언 새 조언). 귤색 — 빨강은 핀·반대·되돌릴 수 없는 동작 몫(#1223). 흰 바탕 5.2:1 */
   --pingo-alert: #DC6A6A;          /* 핑고 ALERT 모자·핀(시안 Alert Pink). 핑고 그림 전용 */
 

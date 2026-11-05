@@ -11,7 +11,7 @@ for (const src of [back, walk1, walk2, walk3, wave]) new Image().src = src
 
 const IMG = 'absolute inset-0 size-full select-none'
 
-/** 새 조언이 있다는 표시 — 평면 「!」 말풍선(AI 색 `--advice-alert`, 흰 테두리). 핑고 머리 오른쪽 위에 떠서 천천히 들썩인다. */
+/** 새 조언이 있다는 표시 — 평면 「!」 말풍선(새 소식 귤색 `--advice-alert`, 흰 테두리). 핑고 머리 오른쪽 위에 떠서 천천히 들썩인다. */
 function AlertBubble() {
   return (
     <svg viewBox="0 0 24 24" className="enter-pop absolute -right-[16%] -top-[6%] size-[42%] overflow-visible drop-shadow-[0_1px_2px_rgba(31,28,25,0.25)]">
