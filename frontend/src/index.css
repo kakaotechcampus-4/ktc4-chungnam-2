@@ -222,9 +222,15 @@
     --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
     --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
     --animate-pingo-frame-b: pingo-frame-b 600ms step-end infinite;
+    /* 아래로 걸을 때 반측면과 뒤집은 반측면을 걸음마다(0.3초) 바꾼다. */
+    --animate-pingo-frame-half: pingo-frame-half 600ms step-end infinite;
     @keyframes pingo-frame-a {
         0% { opacity: 1; }
         25%, 100% { opacity: 0; }
+    }
+    @keyframes pingo-frame-half {
+        0% { opacity: 1; }
+        50%, 100% { opacity: 0; }
     }
     @keyframes pingo-frame-b {
         0%, 50%, 100% { opacity: 0; }
