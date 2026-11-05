@@ -40,7 +40,7 @@ beforeEach(async () => {
   }
 })
 
-const shell: ShellContext = { mapId: MAP, activeControl: null, onControl: () => {}, connection: { state: 'open', reconnect: () => {} }, getCenter: () => null }
+const shell: ShellContext = { mapId: MAP, activeControl: null, onControl: () => {}, connection: { state: 'open', reconnect: () => {} }, getCenter: () => null, showRegion: () => {} }
 
 function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

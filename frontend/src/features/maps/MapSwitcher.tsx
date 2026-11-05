@@ -9,7 +9,7 @@ import { MAP_LIMIT_HINT } from './model'
 import { useMapsQuery } from './queries'
 
 const ITEM =
-  'flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm outline-none data-[highlighted]:bg-ink-100 data-[disabled]:cursor-not-allowed data-[disabled]:text-ink-400'
+  'flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2.5 text-sm outline-none data-[highlighted]:bg-ink-100 data-[disabled]:cursor-not-allowed data-[disabled]:text-ink-400'
 
 /**
  * 넓은 화면 패널 헤더의 지도 제목 = 지도 바꾸기 메뉴. 내 지도 목록은 처음 지도를 고를 때만 거치고,
