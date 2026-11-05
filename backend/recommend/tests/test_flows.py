@@ -547,8 +547,8 @@ def test_get_readiness_counts_opinion_pins_per_category(db_session):
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
 
-    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "curated_nearby": 1}
-    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 1, "radius_m": 3000}
+    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000, "curated_nearby": 1}
+    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000}
 
 
 def test_get_readiness_opens_for_a_solo_map_with_one_opinion_pin(db_session):
@@ -557,7 +557,7 @@ def test_get_readiness_opens_for_a_solo_map_with_one_opinion_pin(db_session):
     _react(db_session, pin, user_id="user_1", type="like")
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
-    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "curated_nearby": 1}
+    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000, "curated_nearby": 1}
 
 
 def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_session):
@@ -888,7 +888,7 @@ def test_readiness_counts_a_live_pin_with_an_opinion(db_session):
 
     # 좌표가 없어 기본 지역이 없다 — 정예 장소 수(#798)를 내지 않는다
     assert flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)["카페"] == {
-        "ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000,
+        "ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000,
     }
 
 
