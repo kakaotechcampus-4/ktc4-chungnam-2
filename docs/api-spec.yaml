@@ -342,6 +342,33 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /maps/{mapId}/copy:
+    post:
+      tags: [maps]
+      summary: |
+        **지도 복사 — 방장만**(#1446, docs/permissions.md map.copy). 요청 본문은 없다. 응답은 새 지도(요청자 기준, 복사한 사람이 방장).
+        - **옮기는 것**: 날짜, 지역(이름·중심), 색, 올린 대표 이미지(있으면, 새 `cover_url`), 핀 — 지우지 않은(휴지통에 없는) 공개 핀만.
+          핀은 장소(자체 DB 장소 또는 실시간 핀의 카카오 장소 ID·검색어)·카테고리·메모를 옮기고, 찍은 사람은 복사한 사람이다.
+          확정 핀과 AI 추천 핀도 **일반 핀**으로 옮긴다 — AI 근거(조건별 충족·구성원 충족 집계·출처)는 원래 지도 구성원 기준이라 옮기지 않는다.
+        - **옮기지 않는 것**: 반응(의견), 구성원(복사한 사람 혼자), 확정 리스트와 일정, 추천·코스 기록, 계획 보조 에이전트, 초대 링크, 알림.
+        - **제목**: `원래 제목 (n)`. 원래 제목 끝의 ` (k)`는 떼고 붙인다. n은 1부터, 내가 구성원인 지도(삭제된 지도 제외)에 같은 제목이 없는 가장 작은 수. 100자를 넘으면 원래 제목 쪽을 자른다.
+        - 새 지도를 늘리는 일이라 만들기(`POST /maps`)와 같은 제한을 따른다: 게스트 403 `GUEST_NOT_ALLOWED`, 내 지도가 이미 상한이면 409 `MAP_LIMIT`(`detail.limit`). 여행 기간 상한은 다시 보지 않는다(날짜를 그대로 옮긴다).
+        - 방장이 아닌 구성원은 403 `FORBIDDEN`, 구성원이 아니거나 없는·삭제된 지도는 404. 이벤트는 보내지 않는다. 화면은 `permissions.can_copy`로 메뉴를 그린다.
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      responses:
+        "201":
+          description: Created. 새 지도
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "403":
+          description: FORBIDDEN — 방장이 아님. 또는 GUEST_NOT_ALLOWED — 게스트 계정
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/MapLimit" }
+
   /maps/{mapId}/cover:
     get:
       tags: [maps]
@@ -2064,6 +2091,7 @@ components:
         can_edit: { type: boolean, description: "map: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465). pin: 핀 메모·분류 수정(pin.edit), 그 핀을 찍은 사람만 true이고 AI 추천·확정 핀은 false (#466)" }
         can_manage_invites: { type: boolean, description: "map 전용: 초대 링크 목록 보기·끄기(invite.revoke), 방장만 true (#467, #1154). 선택 필드 — 구버전 서버는 보내지 않는다" }
         can_transfer_owner: { type: boolean, description: "map 전용: 방장 직접 넘기기(owner.transfer), 방장만 true (#468, #1154). 선택 필드 — 구버전 서버는 보내지 않는다" }
+        can_copy: { type: boolean, description: "map 전용: 지도 복사(map.copy, POST /maps/{mapId}/copy), 방장만 true (#1446). 선택 필드 — 구버전 서버는 보내지 않는다" }
 
     User:
       type: object

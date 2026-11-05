@@ -631,6 +631,24 @@ def test_map_cover_and_color_match_the_openapi_spec(clients):
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_map_copy_matches_the_openapi_spec(clients, pin_body):
+    """지도 복사(#1446) — 201(Map, 제목 「(1)」·핀 수), 에러 봉투(구성원 403, 모르는 지도 404)."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "강릉", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    assert a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).status_code == 201
+
+    copied = a.post(f"/maps/{map_id}/copy")
+    assert copied.status_code == 201
+    assert (copied.json()["title"], copied.json()["pin_count"], copied.json()["member_count"]) == ("강릉 (1)", 1, 1)
+    assert b.post(f"/maps/{map_id}/copy").status_code == 403
+    assert a.post("/maps/no_such_map/copy").status_code == 404
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_pin_trash_list_matches_the_openapi_spec(clients, pin_body):
     """핀 휴지통 목록(#1013, 스펙 PinTrash) — 일반 구성원은 내가 찍은 지운 핀만, 방장은 전부. 에러 봉투(모르는 지도 404)."""
     a, b, problems = clients

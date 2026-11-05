@@ -216,6 +216,49 @@ describe("지도 색과 대표 이미지(#1445)", () => {
   });
 });
 
+describe("지도 복사(#1446)", () => {
+  const copy = (mapId = "map_1") => fetch(`${BASE}/maps/${mapId}/copy`, { method: "POST" });
+
+  it("방장이 복사하면 제목 (n)·날짜·색·이미지·공개 핀을 옮기고, 반응·구성원·확정 리스트는 옮기지 않는다", async () => {
+    store.maps["map_1"].color = "#3D7BF5";
+    const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+    await fetch(`${BASE}/maps/map_1/cover`, { method: "PUT", body: webp, headers: { "Content-Type": "image/webp" } });
+    const source = store.maps["map_1"];
+    const sourcePins = Object.values(store.pins).filter((p) => p.map_id === "map_1" && p.visibility === "public");
+
+    const res = await copy();
+    expect(res.status).toBe(201);
+    const map = await res.json();
+    expect(map.title).toBe(`${source.title} (1)`);
+    expect([map.start_date, map.end_date, map.region, map.color]).toEqual([source.start_date, source.end_date, source.region, "#3D7BF5"]);
+    expect(map.cover_url).toMatch(new RegExp(`^/maps/${map.id}/cover\\?v=\\d+$`));
+    expect(map.my_role).toBe("owner");
+    expect(map.permissions.can_copy).toBe(true);
+    expect([map.member_count, map.confirmed_count, map.pin_count]).toEqual([1, 0, sourcePins.length]);
+
+    const pins = await (await fetch(`${BASE}/maps/${map.id}/pins`)).json();
+    expect(pins.every((p: { kind: string; created_by: string; reaction_summary: { like: number; against: number } }) =>
+      p.kind === "일반" && p.created_by === ME_USER_ID && p.reaction_summary.like + p.reaction_summary.against === 0)).toBe(true);
+
+    // 복사본을 또 복사해도 끝의 (k)를 떼고 다음 빈 번호
+    expect((await (await copy(map.id)).json()).title).toBe(`${source.title} (2)`);
+  });
+
+  it("구성원은 403, 비구성원은 404, 상한이면 409 MAP_LIMIT", async () => {
+    store.members["map_1"].forEach((m) => { m.role = m.user_id === ME_USER_ID ? "member" : m.role; });
+    store.members["map_1"].find((m) => m.user_id === "u_2")!.role = "owner";
+    expect((await copy()).status).toBe(403);
+    expect((await copy("map_nope")).status).toBe(404);
+    store.members["map_1"].forEach((m) => { m.role = m.user_id === ME_USER_ID ? "owner" : "member"; });
+    while (Object.keys(store.maps).filter((id) => store.members[id]?.some((m) => m.user_id === ME_USER_ID)).length < MAP_LIMIT) {
+      await fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "채우기", start_date: "2026-10-10", end_date: "2026-10-12" }) });
+    }
+    const full = await copy();
+    expect(full.status).toBe(409);
+    expect((await full.json()).detail.limit).toBe(MAP_LIMIT);
+  });
+});
+
 describe("에러 시나리오", () => {
   it("evidence-limit — 「+」는 선호로 붙고, 한 번에 글 5개, run 하나에 글 10개까지(#707)", async () => {
     const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());
@@ -379,7 +422,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
 
   it("지도 응답에 요청자 기준 permissions가 붙고, 상세에서만 next_owner가 온다", async () => {
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true, can_manage_invites: true, can_transfer_owner: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true, can_manage_invites: true, can_transfer_owner: true, can_copy: true });
     expect(detail.next_owner.user_id).toBe("u_2");
     const list = (await (await fetch(`${BASE}/maps`)).json()).items;
     expect(list[0].permissions.can_delete).toBe(true);
@@ -415,7 +458,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
   it("넘길 사람이 없는 방장은 409 OWNER_CANNOT_LEAVE, can_leave=false", async () => {
     store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me");
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true, can_manage_invites: true, can_transfer_owner: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true, can_manage_invites: true, can_transfer_owner: true, can_copy: true });
     const r = await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" });
     expect(r.status).toBe(409);
     expect((await r.json()).code).toBe("OWNER_CANNOT_LEAVE");

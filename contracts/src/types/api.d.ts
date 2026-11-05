@@ -726,6 +726,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * **지도 복사 — 방장만**(#1446, docs/permissions.md map.copy). 요청 본문은 없다. 응답은 새 지도(요청자 기준, 복사한 사람이 방장).
+         *     - **옮기는 것**: 날짜, 지역(이름·중심), 색, 올린 대표 이미지(있으면, 새 `cover_url`), 핀 — 지우지 않은(휴지통에 없는) 공개 핀만.
+         *       핀은 장소(자체 DB 장소 또는 실시간 핀의 카카오 장소 ID·검색어)·카테고리·메모를 옮기고, 찍은 사람은 복사한 사람이다.
+         *       확정 핀과 AI 추천 핀도 **일반 핀**으로 옮긴다 — AI 근거(조건별 충족·구성원 충족 집계·출처)는 원래 지도 구성원 기준이라 옮기지 않는다.
+         *     - **옮기지 않는 것**: 반응(의견), 구성원(복사한 사람 혼자), 확정 리스트와 일정, 추천·코스 기록, 계획 보조 에이전트, 초대 링크, 알림.
+         *     - **제목**: `원래 제목 (n)`. 원래 제목 끝의 ` (k)`는 떼고 붙인다. n은 1부터, 내가 구성원인 지도(삭제된 지도 제외)에 같은 제목이 없는 가장 작은 수. 100자를 넘으면 원래 제목 쪽을 자른다.
+         *     - 새 지도를 늘리는 일이라 만들기(`POST /maps`)와 같은 제한을 따른다: 게스트 403 `GUEST_NOT_ALLOWED`, 내 지도가 이미 상한이면 409 `MAP_LIMIT`(`detail.limit`). 여행 기간 상한은 다시 보지 않는다(날짜를 그대로 옮긴다).
+         *     - 방장이 아닌 구성원은 403 `FORBIDDEN`, 구성원이 아니거나 없는·삭제된 지도는 404. 이벤트는 보내지 않는다. 화면은 `permissions.can_copy`로 메뉴를 그린다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Created. 새 지도 */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Map"];
+                    };
+                };
+                /** @description FORBIDDEN — 방장이 아님. 또는 GUEST_NOT_ALLOWED — 게스트 계정 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["MapLimit"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/cover": {
         parameters: {
             query?: never;
@@ -4254,6 +4312,8 @@ export interface components {
             can_manage_invites?: boolean;
             /** @description map 전용: 방장 직접 넘기기(owner.transfer), 방장만 true (#468, #1154). 선택 필드 — 구버전 서버는 보내지 않는다 */
             can_transfer_owner?: boolean;
+            /** @description map 전용: 지도 복사(map.copy, POST /maps/{mapId}/copy), 방장만 true (#1446). 선택 필드 — 구버전 서버는 보내지 않는다 */
+            can_copy?: boolean;
         };
         User: {
             id: string;

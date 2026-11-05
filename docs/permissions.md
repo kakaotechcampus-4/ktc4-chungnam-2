@@ -61,6 +61,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
     - map.restore               # 삭제한 지도 복구(#464). 방장만, 삭제한 지 30일 안에만. 삭제된 지도는 일반 지도 조회가 404라 복구용 조회(get_deleted_map)를 따로 둔다
     - invite.revoke             # 초대 링크 목록 보기·끄기(#467). 방장만. 발급(invite.create)은 구성원 누구나. 응답 칸 `permissions.can_manage_invites`(#1154)
     - owner.transfer            # 방장 직접 넘기기(#468). 방장만. 응답 칸 `permissions.can_transfer_owner`(#1154)
+    - map.copy                  # 지도 복사(#1446). 방장만. 복사본은 복사한 사람 혼자 방장이고 날짜·지역·색·대표 이미지·공개 핀만 옮긴다. 응답 칸 `permissions.can_copy`
 ```
 
 역할은 배타적이지 않고 누적된다 — 한 사용자는 `member` + (자기 evidence·candidate·run에 한해) `author` + (자기 지도에 한해) `owner`를 동시에 가질 수 있다. 판정은 "이 액션이 이 리소스의 scope 안에 있는가"로 계산한다.

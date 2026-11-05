@@ -54,6 +54,8 @@ export type MapHeaderView = Pick<MapDto, 'id' | 'title'> & {
   isOwner: boolean
   /** 지도 삭제는 방장만(#369). */
   canDelete: boolean
+  /** 지도 복사는 방장만(#1446, permissions.md map.copy). */
+  canCopy: boolean
   /** 넘길 사람이 없는 방장은 나갈 수 없다 — 지도를 삭제해야 한다. */
   canLeave: boolean
   /** 방장이 나가면 방장이 될 사람의 이름. 요청자가 방장이고 넘길 사람이 있을 때만 있다. */
@@ -75,6 +77,7 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
     isOwner: map.my_role === 'owner',
     regionCenter: map.region ? { lat: map.region.lat, lng: map.region.lng } : undefined,
     canDelete: map.permissions.can_delete === true,
+    canCopy: map.permissions.can_copy === true,
     canLeave: map.permissions.can_leave !== false,
     nextOwnerName: map.next_owner?.display_name,
   }
@@ -176,6 +179,13 @@ export function restoreMapErrorMessage(err: unknown, retentionDays: number): str
   if (err instanceof ApiError && err.code === 'MAP_LIMIT') return mapLimitMessage(err)
   if (err instanceof ApiError && err.code === 'MAP_PURGED') return `삭제한 지 ${retentionDays}일이 지나 복구할 수 없어요`
   return '지도를 복구하지 못했어요'
+}
+
+/** 지도 복사 실패 문구(#1446). 복사도 지도를 하나 늘려서 상한(409 MAP_LIMIT)에 걸릴 수 있다. */
+export function copyMapErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  if (err instanceof ApiError && err.code === 'GUEST_NOT_ALLOWED') return '게스트는 지도를 복사할 수 없어요. 카카오로 로그인해 주세요'
+  return '지도를 복사하지 못했어요'
 }
 
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */

@@ -15,6 +15,7 @@ from authz.schemas import Permissions
 
 # 지도 색 "#RRGGBB"(#1445) — docs/api-spec.yaml Map.color·MapUpdateRequest.color의 pattern과 같다.
 COLOR_PATTERN = r"^#[0-9A-Fa-f]{6}$"
+TITLE_MAX_LENGTH = 100  # 지도 제목 상한 — 스펙 maxLength와 같다. 복사본 제목(core.copy_title)도 이 안에 맞춘다(#1446)
 
 
 class MapRegion(BaseModel):
@@ -29,7 +30,7 @@ class MapRegion(BaseModel):
 
 
 class MapCreateRequest(BaseModel):
-    title: str = Field(max_length=100)
+    title: str = Field(max_length=TITLE_MAX_LENGTH)
     start_date: date
     end_date: date
     region: MapRegion | None = None
@@ -45,7 +46,7 @@ class MapUpdateRequest(BaseModel):
     명시적 null은 422다(null로 region을 지우는 건 지원하지 않는다 — 바꾸기만). color만 예외로 null이 「색 지우기」다(#1445) —
     보냈는지는 model_fields_set으로 가린다."""
 
-    title: str | None = Field(default=None, min_length=1, max_length=100)  # 스펙 minLength 1(#733)
+    title: str | None = Field(default=None, min_length=1, max_length=TITLE_MAX_LENGTH)  # 스펙 minLength 1(#733)
     start_date: date | None = None
     end_date: date | None = None
     region: MapRegion | None = None
@@ -69,7 +70,7 @@ class NextOwner(BaseModel):
 
 class Map(BaseModel):
     id: str
-    # 요청자 기준. map은 can_delete·can_leave(넘길 사람이 없는 방장은 false)·can_edit·can_manage_invites·can_transfer_owner를 채운다(#369, #1154).
+    # 요청자 기준. map은 can_delete·can_leave(넘길 사람이 없는 방장은 false)·can_edit·can_manage_invites·can_transfer_owner·can_copy를 채운다(#369, #1154, #1446).
     permissions: Permissions
     # 요청자의 지금 역할(memberships.role) — 방장을 위임하면 바뀐다. 내 지도 목록의 방장 배지용(#391).
     my_role: Literal["owner", "member"] | None = None

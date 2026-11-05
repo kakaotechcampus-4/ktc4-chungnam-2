@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
-import { ME_USER_ID, emitEvent, nextId, store, type MapEntity, type MapRegion } from "../store";
-import { apiError, getMapOr404 } from "../util";
+import { ME_USER_ID, emitEvent, nextId, store, type MapEntity, type MapRegion, type Pin } from "../store";
+import { apiError, getMapOr404, pinPermissions } from "../util";
 
 /** 지도 응답의 핀 수는 저장값이 아니라 지금 있는 핀에서 센다(핀을 찍거나 지우면 바로 달라진다). */
 const pinCount = (mapId: string) => Object.values(store.pins).filter((p) => p.map_id === mapId && p.visibility === "public").length;
@@ -43,6 +43,16 @@ function ownerGate(mapId: string) {
   return null;
 }
 
+/** 복사본 제목(#1446) — 실서버 maps.core.copy_title과 같은 규칙. 끝의 「 (k)」를 떼고, 내 지도에 없는 가장 작은 n으로 「제목 (n)」. 100자 안. */
+export function copyTitle(source: string, taken: Set<string>) {
+  const base = source.replace(/ \((\d+)\)$/, "");
+  for (let n = 1; ; n += 1) {
+    const suffix = ` (${n})`;
+    const title = base.slice(0, 100 - suffix.length).trimEnd() + suffix;
+    if (!taken.has(title)) return title;
+  }
+}
+
 /** 지도 응답 — 핀 수와 요청자(나) 기준 permissions를 붙이고, 상세에서만 next_owner를 채운다(#369). */
 function toMapResponse(map: MapEntity, { detail = false } = {}) {
   const owner = isOwner(map.id);
@@ -56,7 +66,7 @@ function toMapResponse(map: MapEntity, { detail = false } = {}) {
     ...(ownerName ? { owner_display_name: ownerName } : {}), // #1445: 초대받은 지도 카드의 「○○님의 지도」
     my_role: owner ? ("owner" as const) : ("member" as const),
     created_by_me: createdBy === ME_USER_ID, // #340·회의 14번: 만든 사람이 위임해도 값은 그대로다(my_role과 달라질 수 있다)
-    permissions: { can_delete: owner, can_leave: !owner || next !== null, can_edit: owner, can_manage_invites: owner, can_transfer_owner: owner },
+    permissions: { can_delete: owner, can_leave: !owner || next !== null, can_edit: owner, can_manage_invites: owner, can_transfer_owner: owner, can_copy: owner },
     ...(detail && next ? { next_owner: { user_id: next.user_id!, display_name: next.display_name ?? "" } } : {}),
   };
 }
@@ -220,6 +230,39 @@ export const mapsHandlers = [
     delete store.maps[mapId];
     delete store.members[mapId];
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  // #1446 지도 복사 — 방장만. 날짜·지역·색·대표 이미지·공개 핀만 옮긴다(핀은 내가 찍은 일반 핀으로). 반응·구성원·확정 리스트·추천 기록은 옮기지 않는다.
+  http.post("*/maps/:mapId/copy", ({ params }) => {
+    const mapId = params.mapId as string;
+    const gate = ownerGate(mapId);
+    if (gate) return gate;
+    if (store.users[ME_USER_ID]?.is_guest) return apiError(403, "GUEST_NOT_ALLOWED", "지도를 만들려면 카카오로 로그인해 주세요");
+    if (myMapCount() >= MAP_LIMIT) return mapLimitError();
+    const source = store.maps[mapId];
+    const taken = new Set(Object.values(store.maps).filter((m) => (store.members[m.id] ?? []).some((x) => x.user_id === ME_USER_ID)).map((m) => m.title));
+    const newId = nextId("map");
+    store.maps[newId] = {
+      id: newId, title: copyTitle(source.title, taken), start_date: source.start_date, end_date: source.end_date,
+      ...(source.region ? { region: source.region } : {}), ...(source.color ? { color: source.color } : {}),
+      member_count: 1, pin_count: 0, confirmed_count: 0, created_by: ME_USER_ID,
+    };
+    store.members[newId] = [{ user_id: ME_USER_ID, role: "owner", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true, is_guest: false }];
+    store.shortlist[newId] = [];
+    const cover = store.mapCovers[mapId];
+    if (cover) store.mapCovers[newId] = { ...cover, updated_at: Math.floor(Date.now() / 1000) };
+    for (const pin of Object.values(store.pins).filter((p) => p.map_id === mapId && p.visibility === "public")) {
+      const { checks: _c, reason: _r, member_fulfillment: _f, place_source: _s, my_reaction: _m, ...rest } = pin;
+      const copy: Pin = {
+        ...rest, id: nextId("pin"), map_id: newId, kind: "일반", created_by: ME_USER_ID,
+        created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나", created_at: new Date().toISOString(),
+        checks: [], reaction_summary: { like: 0, against: 0 },
+      };
+      copy.permissions = pinPermissions(copy);
+      store.pins[copy.id] = copy;
+      store.reactions[copy.id] = [];
+    }
+    return HttpResponse.json(toMapResponse(store.maps[newId]), { status: 201 });
   }),
 
   http.post("*/maps/:mapId/restore", ({ params }) => {
