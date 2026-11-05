@@ -62,7 +62,7 @@ class NextOwner(BaseModel):
 
 class Map(BaseModel):
     id: str
-    # 요청자 기준. map은 can_delete(방장만)·can_leave(넘길 사람이 없는 방장은 false)만 채운다(#369).
+    # 요청자 기준. map은 can_delete·can_leave(넘길 사람이 없는 방장은 false)·can_edit·can_manage_invites·can_transfer_owner를 채운다(#369, #1154).
     permissions: Permissions
     # 요청자의 지금 역할(memberships.role) — 방장을 위임하면 바뀐다. 내 지도 목록의 방장 배지용(#391).
     my_role: Literal["owner", "member"] | None = None
@@ -87,6 +87,8 @@ class MapList(BaseModel):
     items: list[Map]
     # maps/core.py::MAP_LIMIT — 409 MAP_LIMIT의 detail.limit과 같은 값이다.
     limit: int
+    # maps/core.py::TRIP_MAX_DAYS — 422 TRIP_TOO_LONG의 detail.limit과 같은 값이다(#1371).
+    trip_max_days: int
 
 
 class TrashedMap(BaseModel):
