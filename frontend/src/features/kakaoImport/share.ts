@@ -32,6 +32,13 @@ export type Share = {
   context?: string[]
 }
 
+/**
+ * 링크 없이 이름만 온 공유(카카오맵에서 채팅방으로 바로 보낸 카드는 내보내기에 「[지도] 이름」만 남는다).
+ * 줄 구분값은 링크 대신 그 머리줄이다 — 서버에 링크로 보내지 않고 이름으로만 찾는다. 미리 체크하지 않는다.
+ */
+export const isNameOnly = (url: string) => !/^https?:\/\//i.test(url)
+const NAME_ONLY = /^\[지도\]\s*\S/
+
 /** 대화 하나에서 확인하는 링크 수(link-preview 설명의 50개). 화면 문구에는 이 숫자를 적지 않는다. */
 export const LINK_MAX = 50
 
@@ -253,6 +260,17 @@ export function readShares(text: string, range: DayRange): { shares: Share[]; fo
       }
     })
   })
+  // 링크가 없는 메시지의 「[지도] 이름」 — 구글 분리형처럼 다음 메시지 링크의 이름으로 이미 읽었으면 넣지 않는다.
+  const linkedNames = new Set([...byUrl.values()].map((s) => s.name))
+  for (const message of messages) {
+    if (message.some((l) => HAS_LINK.test(l.text))) continue
+    for (const line of message) {
+      const name = NAME_ONLY.test(line.text) ? clean(line.text, 100) : undefined
+      if (!name || linkedNames.has(name)) continue
+      const key = `[지도] ${name}`
+      if (!byUrl.has(key)) byUrl.set(key, { url: key, provider: 'kakao', name })
+    }
+  }
   const shares = [...byUrl.values()]
   return { shares: shares.slice(0, LINK_MAX), found: shares.length, dated: all.some((m) => m.day !== undefined) }
 }

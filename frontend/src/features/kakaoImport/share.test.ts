@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { DAYS_SAMPLE, EXPORT_SAMPLE, PC_DAYS_SAMPLE, PC_SAMPLE } from './__fixtures__/kakaotalkExport'
-import { isAddress, LINK_MAX, normalizeUrl, readShares } from './share'
+import { isAddress, isNameOnly, LINK_MAX, normalizeUrl, readShares } from './share'
 
 /** 픽스처 대화가 오간 날(2026-11-02) 하루. */
 const DAY = { from: '2026-11-02', to: '2026-11-02' }
@@ -34,6 +34,20 @@ describe('카톡 대화에서 링크와 공유 글 읽기(#1046)', () => {
       name: '성수동대림창고갤러리',
       address: '서울 성동구 성수이로 78 1층',
     })
+  })
+
+  it('링크 없는 「[지도] 이름」은 이름만 든 줄로 한 번 읽고, 링크 없는 다른 말이나 구글 분리형 이름은 넣지 않는다', () => {
+    const text = [
+      '2026년 11월 2일 오전 1:06, 도윤 : [지도] 성수동대림창고갤러리',
+      '2026년 11월 2일 오전 1:07, 도윤 : [지도] 성수동대림창고갤러리',
+      '2026년 11월 2일 오전 1:08, 준영 : 마를리',
+      '2026년 11월 2일 오전 1:08, 준영 : 서울 성동구 연무장길 47 홍원빌딩 1층',
+    ].join('\n')
+    const { shares } = readShares(text, DAY)
+    expect(shares).toEqual([{ url: '[지도] 성수동대림창고갤러리', provider: 'kakao', name: '성수동대림창고갤러리' }])
+    expect(isNameOnly(shares[0].url)).toBe(true)
+    // 픽스처의 구글 분리형 「[지도] 강남면옥 정동점」은 링크 줄의 이름이 됐을 뿐 따로 늘지 않는다(위 8개).
+    expect(found).toBe(8)
   })
 
   it('구글은 「이름 - 링크」 한 줄과, 바로 앞 메시지의 「[지도] 이름」을 이름으로 읽는다(주소는 없다)', () => {

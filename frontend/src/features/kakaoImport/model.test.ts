@@ -22,6 +22,10 @@ describe('상태 — 4단 해결 순서(#1046)', () => {
     expect(rowState(row(naver, ok({ provider: 'naver', matches: [], needs_search_query: true })))).toBe('search')
     expect(rowState(row({ url: 'https://naver.me/b', provider: 'naver' }, ok({ provider: 'naver', matches: [], needs_search_query: true })))).toBe('needsName')
   })
+  it('링크 없이 이름만 온 줄은 미리보기 없이 바로 이름으로 찾는다(checking에 머물지 않는다)', () => {
+    expect(rowState(row({ url: '[지도] 우슬', provider: 'kakao', name: '우슬' }))).toBe('search')
+    expect(rowState(row({ url: 'https://kko.to/a', provider: 'kakao', name: '우슬' }))).toBe('checking')
+  })
   it('구글은 서버가 준 링크 속 이름으로도 찾고, 링크를 못 읽어도 이름을 알면 숨기지 않는다', () => {
     const google: Share = { url: 'https://maps.app.goo.gl/x', provider: 'google' }
     expect(rowState(row(google, ok({ provider: 'google', name_hint: '강남면옥 정동점', matches: [], needs_search_query: false })))).toBe('search')
