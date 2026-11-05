@@ -67,7 +67,7 @@ def get_maps(
     db=DbSession,
 ):
     # 상한을 함께 내려 화면이 "n / limit"을 그리고 상한이면 「새 지도」를 미리 막는다(#623).
-    return MapList(items=service.list_maps(db, user_id=user.user_id), limit=core.MAP_LIMIT)
+    return MapList(items=service.list_maps(db, user_id=user.user_id), limit=core.MAP_LIMIT, trip_max_days=core.TRIP_MAX_DAYS)
 
 
 # /maps/trash는 /maps/{mapId}보다 앞에 둔다 — 경로 파라미터가 "trash"를 먹지 않게.

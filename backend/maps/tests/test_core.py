@@ -181,9 +181,9 @@ def test_owner_successor_is_only_computed_for_the_owner():
 @pytest.mark.parametrize(
     "role, successor, expected",
     [
-        ("owner", "next", {"can_delete": True, "can_leave": True, "can_edit": True}),
-        ("owner", None, {"can_delete": True, "can_leave": False, "can_edit": True}),
-        ("member", None, {"can_delete": False, "can_leave": True, "can_edit": False}),
+        ("owner", "next", {"can_delete": True, "can_leave": True, "can_edit": True, "can_manage_invites": True, "can_transfer_owner": True}),
+        ("owner", None, {"can_delete": True, "can_leave": False, "can_edit": True, "can_manage_invites": True, "can_transfer_owner": True}),
+        ("member", None, {"can_delete": False, "can_leave": True, "can_edit": False, "can_manage_invites": False, "can_transfer_owner": False}),
     ],
 )
 def test_map_permissions(role, successor, expected):
@@ -246,3 +246,38 @@ def test_guest_cannot_create_a_map():
     with pytest.raises(AppError) as exc_info:
         core.check_can_create_map(True)
     assert exc_info.value.code == "GUEST_NOT_ALLOWED"
+
+
+# ---- 여행 기간 상한(#1371) ----
+
+def _days_after(start: date, days: int) -> date:
+    """시작일 포함 days일짜리 기간의 종료일."""
+    return start + timedelta(days=days - 1)
+
+
+@pytest.mark.parametrize("days, blocked", [(1, False), (core.TRIP_MAX_DAYS, False), (core.TRIP_MAX_DAYS + 1, True)])
+def test_trip_length_limit_on_create(days, blocked):
+    start = date(2026, 10, 1)
+    if not blocked:
+        assert core.validate_map_create("여행", start, _days_after(start, days)).end_date == _days_after(start, days)
+        return
+    with pytest.raises(AppError) as exc_info:
+        core.validate_map_create("여행", start, _days_after(start, days))
+    assert (exc_info.value.code, exc_info.value.detail) == ("TRIP_TOO_LONG", {"limit": core.TRIP_MAX_DAYS})
+
+
+def _long_record() -> core.MapRecord:
+    start = date(2026, 1, 1)
+    return core.MapRecord(id="m1", title="긴 여행", start_date=start, end_date=_days_after(start, 120), created_by="u")
+
+
+def test_update_title_only_skips_trip_length_check_even_when_already_too_long():
+    updated = core.validate_map_update(_long_record(), title="새 제목", start_date=None, end_date=None, region=None)
+    assert updated.title == "새 제목"
+
+
+def test_update_checks_trip_length_when_a_date_is_sent():
+    record = _long_record()
+    with pytest.raises(AppError) as exc_info:
+        core.validate_map_update(record, title=None, start_date=None, end_date=record.end_date, region=None)
+    assert exc_info.value.code == "TRIP_TOO_LONG"

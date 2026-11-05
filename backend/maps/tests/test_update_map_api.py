@@ -156,3 +156,47 @@ def test_invalid_date_change_does_not_notify_shortlist(app_client, monkeypatch):
     monkeypatch.setattr(service.shortlist_api, "unassign_outside_dates", lambda *args, **kwargs: calls.append(1))
     assert _patch(app_client, map_id, {"end_date": "2026-10-09"}).status_code == 422
     assert calls == []
+
+
+# ---- 여행 기간 상한(#1371) ----
+
+def _post(app_client, start, end):
+    return app_client.post("/maps", json={"title": "긴 여행", "start_date": start, "end_date": end}, cookies=_auth("user_1"))
+
+
+def test_create_allows_90_days_and_blocks_91(app_client):
+    assert _post(app_client, "2026-01-01", "2026-03-31").status_code == 201  # 90일(1/1~3/31)
+    resp = _post(app_client, "2026-01-01", "2026-04-01")  # 91일
+    assert resp.status_code == 422
+    body = resp.json()
+    assert (body["code"], body["detail"]) == ("TRIP_TOO_LONG", {"limit": 90})
+
+
+def test_create_one_day_trip_is_fine(app_client):
+    assert _post(app_client, "2026-05-05", "2026-05-05").status_code == 201
+
+
+def test_patch_blocks_dates_over_the_limit_and_allows_90(app_client):
+    map_id = _post(app_client, "2026-01-01", "2026-01-10").json()["id"]
+    assert _patch(app_client, map_id, {"end_date": "2026-03-31"}).status_code == 200  # 90일
+    resp = _patch(app_client, map_id, {"end_date": "2026-04-01"})  # 종료일만 늘려 91일
+    assert resp.status_code == 422
+    assert (resp.json()["code"], resp.json()["detail"]) == ("TRIP_TOO_LONG", {"limit": 90})
+    assert _patch(app_client, map_id, {"start_date": "2025-12-31"}).status_code == 422  # 시작일만 당겨도 91일
+
+
+def test_patch_title_only_is_allowed_on_a_map_already_over_the_limit(app_client, db_session):
+    from sqlalchemy import update
+
+    from maps.models import Map as MapRow
+
+    map_id = _post(app_client, "2026-01-01", "2026-01-10").json()["id"]
+    db_session.execute(update(MapRow).where(MapRow.id == map_id).values(end_date=date(2026, 6, 30)))  # 181일
+    db_session.commit()
+    resp = _patch(app_client, map_id, {"title": "제목만 수정"})
+    assert resp.status_code == 200 and resp.json()["title"] == "제목만 수정"
+
+
+def test_list_maps_reports_trip_max_days(app_client):
+    resp = app_client.get("/maps", cookies=_auth("user_1"))
+    assert resp.json()["trip_max_days"] == 90
