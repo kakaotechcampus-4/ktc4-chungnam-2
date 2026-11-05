@@ -43,6 +43,11 @@ CI가 같은 점검을 매주·의존성 변경 때 돈다. 아래는 이 문서
 
 **contracts, e2e** — 0건.
 
+**처리 결과 (#1432, 2026-11-06)**
+- 프런트: `npm audit fix`(주 버전 변경 없는 것만, 잠금 파일만 갱신)로 19건 → 6건(낮음 2·보통 4, 높음·치명 0). 치명 2건(`seroval`·`solid-js`)은 `@tanstack/react-query-devtools`가 끌어오는 하위 의존성이었고, 개발자 도구는 `import.meta.env.DEV && USE_MOCK`일 때만 켜지며(`frontend/src/main.tsx`) 운영 번들(`dist`)에도 운영 이미지(caddy가 정적 파일만 서빙)에도 들어가지 않는다. 남은 6건은 `shadcn` CLI 하위 패키지로, 해결에 `shadcn` 주 버전 변경이 필요해 남겨 둔다
+- backend: `python-dotenv` 1.0.1 → 1.2.2(우리는 `.env`를 읽기만 하고 `set_key`·`unset_key`를 쓰지 않아 실제 영향은 없었다). 전체 pytest 5794개 통과
+- 남김: `pytest` 8.3.3 → 9.x(주 버전, `pytest-asyncio` 호환 확인 필요). 근본 조치는 테스트 도구를 운영 이미지 `requirements.txt`에서 분리하는 것(`Dockerfile`·CI 변경이 따라온다)
+
 처리 원칙: 취약점이 나왔다고 바로 올리지 않는다. 운영 코드에 닿는지, 올려도 테스트가 통과하는지 확인한 뒤 PR 단위로 처리한다.
 
 ## 4. 다음 단계 (결정 대기)
