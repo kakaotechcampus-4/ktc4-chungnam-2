@@ -3,12 +3,16 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
-import { MemoryRouter } from 'react-router'
+import { Link, MemoryRouter, Route, Routes } from 'react-router'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import CourseBody from './CourseBody'
 import { useAppliedFixStore, useCourseViewStore } from './courseMapStore'
 import { applyMoves } from './applyFix'
+import DayRoute from '@/features/shortlist/DayRoute'
+import { useRouteStore } from '@/features/shortlist/routeStore'
+import { useSheetStore } from '@/features/shell/sheetStore'
+import { seedSchedule } from '@/features/shortlist/__fixtures__/serverSchedule'
 
 const BASE = 'http://localhost'
 
@@ -18,6 +22,8 @@ afterEach(() => {
   resetScenario('happy-path')
   useCourseViewStore.setState({ runs: {} })
   useAppliedFixStore.setState({ applied: {} })
+  useRouteStore.setState({ on: false, day: null })
+  useSheetStore.setState(useSheetStore.getInitialState())
 })
 afterAll(() => server.close())
 
@@ -40,8 +46,11 @@ function open(run: Record<string, unknown>, fresh: Record<string, unknown> = {})
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <CourseBody mapId="map_1" />
+      <MemoryRouter initialEntries={['/maps/map_1/course']}>
+        <Routes>
+          <Route path="/maps/map_1/course" element={<CourseBody mapId="map_1" />} />
+          <Route path="/maps/map_1/shortlist" element={<><DayRoute mapId="map_1" onOpen={() => {}} /><Link to="/maps/map_1/course">점검으로 돌아가기</Link></>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -50,6 +59,27 @@ function open(run: Record<string, unknown>, fresh: Record<string, unknown> = {})
 const schedule = async () => (await (await fetch(`${BASE}/maps/map_1/shortlist/schedule`)).json()) as { items: { pin: { id: string }; scheduled_date: string | null }[] }
 
 describe('AI 코스 — 모드별 결과(#1322)', () => {
+  it.each([false, true])('review: 고칠 점이 없어도 현재 일정 동선을 열고 점검으로 돌아온다(stale=%s)', async (stale) => {
+    await seedSchedule('map_1', { days: { [days[1]]: ['pin_2', 'pin_1'] } })
+    // 다른 날을 보던 상태가 있어도 현재 일정에서 장소가 있는 첫날을 연다.
+    useRouteStore.setState({ on: false, day: days[0] })
+    useSheetStore.getState().setStage('shortlist', 1)
+    open({ mode: 'review', headline: '일정을 점검했어요', fixes: [], checked: [], stale })
+    const user = userEvent.setup({ delay: null })
+    await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
+    const route = await screen.findByRole('link', { name: '현재 일정 동선 보기' })
+    expect(route).toHaveAttribute('href', '/maps/map_1/shortlist')
+    await user.click(route)
+    expect(await screen.findByRole('button', { name: '둘째 날' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('우진해장국')).toBeInTheDocument()
+    expect(screen.getByText('흑돼지식당')).toBeInTheDocument()
+    expect(useRouteStore.getState().on).toBe(true)
+    expect(useSheetStore.getState().stages.shortlist).toBe(2)
+    await user.click(screen.getByRole('link', { name: '점검으로 돌아가기' }))
+    expect(await screen.findByText('일정을 점검했어요')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '최근 코스 보기' })).not.toBeInTheDocument()
+  })
+
   it('review: 서버 headline 그대로, 하드 카드가 먼저, 고치지 않는 카드는 「반영」 없이 이유만, 괜찮아요가 보인다', async () => {
     const user = userEvent.setup({ delay: null })
     open({
@@ -70,6 +100,24 @@ describe('AI 코스 — 모드별 결과(#1322)', () => {
     expect(cards[1]).toHaveTextContent('그대로 둬요')
     expect(screen.getByText(/하루 이동 시간은 모두 괜찮아요/)).toBeInTheDocument()
     expect(screen.queryByText('날짜별 순서')).not.toBeInTheDocument()
+  })
+
+  it('review: 카드 반영 후의 일정 동선을 보고 돌아와도 반영 상태가 남는다', async () => {
+    await seedSchedule('map_1', { days: { [days[0]]: ['pin_1', 'pin_2'] } })
+    open({
+      mode: 'review', headline: '고칠 점 1개', checked: [],
+      fixes: [{ id: 'fix_1', kind: 'closed', strength: 'hard', text: '쉬어요', moves: [{ pin_id: 'pin_1', from_date: days[0], to_date: days[1] }], resolved_text: '휴무가 풀려요', remaining_text: null, not_fixed_reason: null }],
+    })
+    const user = userEvent.setup({ delay: null })
+    await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
+    await user.click(await screen.findByRole('button', { name: '반영' }))
+    expect(await screen.findByText('반영했어요')).toBeInTheDocument()
+    await user.click(screen.getByRole('link', { name: '현재 일정 동선 보기' }))
+    await user.click(await screen.findByRole('button', { name: '둘째 날' }))
+    expect(await screen.findByText('흑돼지식당')).toBeInTheDocument()
+    expect(screen.queryByText('우진해장국')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('link', { name: '점검으로 돌아가기' }))
+    expect(await screen.findByText('반영했어요')).toBeInTheDocument()
   })
 
   it('mode·fixes·checked 가 없으면 plan 으로 그린다', async () => {
