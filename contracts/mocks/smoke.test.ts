@@ -179,6 +179,43 @@ describe("핀 휴지통(#864)", () => {
   });
 });
 
+describe("지도 색과 대표 이미지(#1445)", () => {
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20]);
+  const putCover = (body: BodyInit, type: string) =>
+    fetch(`${BASE}/maps/map_1/cover`, { method: "PUT", body, headers: { "Content-Type": type } });
+
+  it("시드 지도는 색·이미지가 없고 방장 이름이 있다. 색은 바꾸고 null로 지운다", async () => {
+    const map = await (await fetch(`${BASE}/maps/map_1`)).json();
+    expect(map.color).toBeUndefined();
+    expect(map.cover_url).toBeUndefined();
+    expect(map.owner_display_name).toBe("황경");
+    const patch = (body: object) => fetch(`${BASE}/maps/map_1`, { method: "PATCH", body: JSON.stringify(body) });
+    expect((await (await patch({ color: "#3D7BF5" })).json()).color).toBe("#3D7BF5");
+    expect((await patch({ color: "blue" })).status).toBe(422);
+    expect((await patch({ title: null })).status).toBe(422);
+    expect((await (await patch({ color: null })).json()).color).toBeUndefined();
+  });
+
+  it("올린 이미지를 cover_url로 받고, 지우면 404. 형식이 틀리면 422 COVER_INVALID(detail에 상한)", async () => {
+    const put = await putCover(webp, "image/webp");
+    expect(put.status).toBe(200);
+    const { cover_url: url } = await put.json();
+    expect(url).toMatch(/^\/maps\/map_1\/cover\?v=\d+$/);
+    const got = await fetch(`${BASE}${url}`);
+    expect(got.headers.get("content-type")).toBe("image/webp");
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(webp);
+    expect((await (await fetch(`${BASE}/maps`)).json()).items.find((m: { id: string }) => m.id === "map_1").cover_url).toBe(url);
+
+    const bad = await putCover(webp, "image/png");
+    expect(bad.status).toBe(422);
+    expect((await bad.json()).detail).toEqual({ limit_bytes: 524288, types: ["image/webp", "image/jpeg", "image/png"] });
+
+    const deleted = await fetch(`${BASE}/maps/map_1/cover`, { method: "DELETE" });
+    expect((await deleted.json()).cover_url).toBeUndefined();
+    expect((await fetch(`${BASE}/maps/map_1/cover`)).status).toBe(404);
+  });
+});
+
 describe("에러 시나리오", () => {
   it("evidence-limit — 「+」는 선호로 붙고, 한 번에 글 5개, run 하나에 글 10개까지(#707)", async () => {
     const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());

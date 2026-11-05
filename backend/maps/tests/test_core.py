@@ -281,3 +281,34 @@ def test_update_checks_trip_length_when_a_date_is_sent():
     with pytest.raises(AppError) as exc_info:
         core.validate_map_update(record, title=None, start_date=None, end_date=record.end_date, region=None)
     assert exc_info.value.code == "TRIP_TOO_LONG"
+
+
+# ---- 지도 대표 이미지(#1445) ----
+
+_WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 "
+
+
+@pytest.mark.parametrize("content_type,data,kind", [
+    ("image/webp", _WEBP, "image/webp"),
+    ("IMAGE/WEBP; charset=binary", _WEBP, "image/webp"),
+    ("image/png", b"\x89PNG\r\n\x1a\n...", "image/png"),
+    ("image/jpeg", b"\xff\xd8\xff\xe0...", "image/jpeg"),
+])
+def test_check_cover_accepts_matching_type_and_bytes(content_type, data, kind):
+    assert core.check_cover(content_type, data) == kind
+
+
+@pytest.mark.parametrize("content_type,data", [
+    ("image/gif", b"GIF89a"), (None, _WEBP), ("image/webp", b"\x89PNG\r\n\x1a\n"), ("image/webp", b""),
+    ("image/webp", _WEBP + b"\x00" * core.COVER_MAX_BYTES),
+])
+def test_check_cover_rejects_with_policy_detail(content_type, data):
+    with pytest.raises(AppError) as exc:
+        core.check_cover(content_type, data)
+    assert exc.value.code == "COVER_INVALID"
+    assert exc.value.detail == {"limit_bytes": core.COVER_MAX_BYTES, "types": ["image/webp", "image/jpeg", "image/png"]}
+
+
+def test_cover_url_is_versioned_by_update_time():
+    assert core.cover_url("m1", None) is None
+    assert core.cover_url("m1", datetime(2026, 11, 6, tzinfo=timezone.utc)) == "/maps/m1/cover?v=1793923200000"

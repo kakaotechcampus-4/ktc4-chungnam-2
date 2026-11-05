@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     UniqueConstraint,
     func,
@@ -56,6 +57,8 @@ class Map(Base):
     # 탈퇴가 후임 없는 방장의 지도를 지웠으면 그 탈퇴자의 user id(#1000). 계정을 되살리면 이 표식으로 지도도 되살린다.
     # 직접 지운 지도·살아 있는 지도는 NULL — delete_map과 restore_map이 매번 맞춘다. users 모듈 경계라 FK 없음(created_by와 같다).
     deleted_by_withdrawal_of: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 지도 색(#1445) — "#RRGGBB". NULL이면 고르지 않았다(화면이 기본 색을 쓴다). 방장만 바꾼다.
+    color: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index(
@@ -113,3 +116,18 @@ class Invite(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("ix_invites_map_id", "map_id"),)  # 지도별 목록·내 링크 재사용 조회
+
+
+class MapCover(Base):
+    """지도 대표 이미지(#1445) — 지도당 한 행, 방장이 올린 것만. 기본 이미지는 화면이 지역으로 그려 저장하지 않는다.
+    S3 없이 Postgres에 바이트로 둔다(인프라 미정, #1203). 브라우저가 1200px 이하 WebP로 줄여 올리고 서버는 512KiB까지 받는다.
+    지도를 soft delete하면 남고(복구), 정리(purge_map_data)할 때 지운다."""
+
+    __tablename__ = "map_covers"
+
+    map_id: Mapped[str] = mapped_column(String, ForeignKey("maps.id"), primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

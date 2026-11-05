@@ -43,10 +43,10 @@ describe('내 지도 목록 — 카드 「⋯」 메뉴와 두 묶음(#1444)', (
 
     await userEvent.click(menu)
     const items = within(screen.getByRole('menu')).getAllByRole('menuitem')
-    expect(items.map((i) => i.textContent)).toEqual(['이름·날짜 수정', '지도 삭제'])
+    expect(items.map((i) => i.textContent)).toEqual(['이름·날짜 수정', '대표 이미지 편집', '색상 변경', '지도 삭제'])
     expect(screen.queryByRole('menuitem', { name: '지도 나가기' })).not.toBeInTheDocument()
 
-    await userEvent.click(items[1])
+    await userEvent.click(items[3])
     expect(await screen.findByRole('alertdialog', { name: '지도를 삭제할까요?' })).toBeInTheDocument()
   })
   it('카드 메뉴에서 이름을 고치면 목록 카드도 바로 바뀐다', async () => {
@@ -58,5 +58,15 @@ describe('내 지도 목록 — 카드 「⋯」 메뉴와 두 묶음(#1444)', (
     await userEvent.type(title, '부산 먹방')
     await userEvent.click(screen.getByRole('button', { name: '저장' }))
     expect(await screen.findByRole('button', { name: '부산 먹방 메뉴' })).toBeInTheDocument()
+  })
+  it('색상 변경에서 견본을 누르면 바로 저장되고 카드 바탕이 그 색이 된다', async () => {
+    setup()
+    await userEvent.click(await screen.findByRole('button', { name: '제주도 여행 메뉴' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '색상 변경' }))
+    await userEvent.click(await screen.findByRole('radio', { name: '민트' }))
+    expect(await screen.findByRole('radio', { name: '민트', checked: true })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '닫기' }))
+    const card = (await screen.findByRole('button', { name: '제주도 여행 메뉴' })).closest('li')!.querySelector('a')!
+    await vi.waitFor(() => expect(card.style.background).not.toBe(''))
   })
 })

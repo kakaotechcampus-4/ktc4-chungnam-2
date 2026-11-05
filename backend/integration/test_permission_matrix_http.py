@@ -53,6 +53,9 @@ def _endpoints(w):
         ("POST owner", "POST", f"/maps/{m}/owner", {"user_id": "user_b"}),
 
         ("PATCH map", "PATCH", f"/maps/{m}", {"title": "새 제목"}),
+        ("PUT cover", "PUT", f"/maps/{m}/cover", {}),   # #1445 — 본문 검사(COVER_INVALID)보다 권한이 먼저다
+        ("DELETE cover", "DELETE", f"/maps/{m}/cover", None),
+        ("GET cover", "GET", f"/maps/{m}/cover", None),
         ("POST invite", "POST", f"/maps/{m}/invite", None),
         ("GET invites", "GET", f"/maps/{m}/invites", None),
         ("DELETE invite", "DELETE", f"/invites/{w['token']}", None),

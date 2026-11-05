@@ -1,5 +1,5 @@
 """
-docs/api-spec.yaml `maps` 태그 8개 엔드포인트. 경로 파라미터는 반드시 `mapId`(camelCase)다 —
+docs/api-spec.yaml `maps` 태그 엔드포인트. 경로 파라미터는 반드시 `mapId`(camelCase)다 —
 authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩해서, `map_id`로
 쓰면 기동 시점에 바로 실패한다.
 
@@ -16,7 +16,7 @@ authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Path, Request, Response
+from fastapi import APIRouter, Depends, Header, Path, Request, Response
 
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
@@ -106,6 +106,50 @@ def patch_map(
     db=DbSession,
 ):
     return service.update_map(db, map_id=mapId, req=body, viewer_id=principal.user_id)
+
+
+async def cover_body(request: Request) -> bytes:
+    """PUT /maps/{mapId}/cover 본문(이미지 바이트). 상한보다 1바이트 더 읽으면 멈춘다 — 큰 파일을 메모리에 다 올리지 않는다.
+    상한을 넘었는지는 core.check_cover가 길이로 판정한다(COVER_INVALID)."""
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > core.COVER_MAX_BYTES:
+            break
+    return bytes(data[: core.COVER_MAX_BYTES + 1])
+
+
+@router.put("/maps/{mapId}/cover", response_model=Map, response_model_exclude_none=True)
+def put_cover(
+    mapId: str = Path(...),
+    principal: Principal = MapToEdit,
+    content_type: str | None = Header(default=None),
+    data: bytes = Depends(cover_body),
+    db=DbSession,
+):
+    return service.put_cover(db, map_id=mapId, content_type=content_type, data=data, viewer_id=principal.user_id)
+
+
+@router.delete("/maps/{mapId}/cover", response_model=Map, response_model_exclude_none=True)
+def delete_cover(
+    mapId: str = Path(...),
+    principal: Principal = MapToEdit,
+    db=DbSession,
+):
+    return service.delete_cover(db, map_id=mapId, viewer_id=principal.user_id)
+
+
+@router.get("/maps/{mapId}/cover", response_class=Response)
+def get_cover(
+    mapId: str = Path(...),
+    _principal: Principal = MapForRead,
+    db=DbSession,
+):
+    # 주소에 갱신 시각(v)이 붙어 이미지가 바뀌면 주소도 바뀐다(core.cover_url) — 그래서 영구 캐시를 허락한다.
+    # 구성원만 볼 수 있어 공유 캐시(CDN)에는 남기지 않는다(private).
+    data, content_type = service.get_cover(db, map_id=mapId)
+    return Response(content=data, media_type=content_type,
+                    headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
 @router.delete("/maps/{mapId}", status_code=204)

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useMeQuery } from '@/features/auth/queries'
 
-import { acceptInvite, createInvite, createMap, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, restoreMap, revokeInvite, transferOwner, updateMap } from './api'
+import { acceptInvite, createInvite, createMap, deleteCover, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, putCover, restoreMap, revokeInvite, transferOwner, updateMap } from './api'
 import { ApiError } from '@/api'
 import { agentKeys } from '@/features/agent/queries'
 import { forgetImport } from '@/features/kakaoImport/queries'
@@ -52,6 +52,18 @@ export function useUpdateMapMutation(mapId: string) {
       queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map)
       void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
       void queryClient.invalidateQueries({ queryKey: shortlistKeys.list(mapId) })
+    },
+  })
+}
+
+/** 대표 이미지 올리기·지우기(#1445). 수정과 같이 상세를 응답으로 바꾸고 목록을 다시 받는다. */
+export function useCoverMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (image: Blob | null) => (image ? putCover(mapId, image) : deleteCover(mapId)),
+    onSuccess: (map) => {
+      queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map)
+      void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
     },
   })
 }
