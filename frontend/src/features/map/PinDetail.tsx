@@ -21,7 +21,7 @@ import TextField from '@/ui/TextField'
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
 import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery, useUpdatePinMutation } from './queries'
+import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
@@ -300,11 +300,15 @@ export function PinDetailBody({
   )
 }
 
-/** 핀 삭제 — 구성원 누구나 남의 핀도 지울 수 있다(기획안 #25). 지우면 그 핀의 의견과 확정 리스트 항목도 함께 사라진다. */
+/**
+ * 핀 삭제 — 찍은 사람과 방장만(`can_delete`). 휴지통으로 옮겨져 보관 기간 안에 되살릴 수 있다(#864).
+ * 끌어서 버리기(TrashDropZone)의 키보드·스크린리더 대안이라 확인 창을 남긴다. 되돌릴 수 있어서 빨간 버튼은 쓰지 않는다(DESIGN 영역 분리 규칙).
+ */
 function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: () => void }) {
   const [asking, setAsking] = useState(false)
-  const del = useDeletePinMutation(mapId, pin.id)
-  const name = pin.place_name ?? '이 핀'
+  const del = useTrashPinMutation(mapId)
+  // 보관 일수는 서버 값으로 적는다(화면에 숫자를 두지 않는다). 확인 창을 열 때만 받는다.
+  const days = usePinTrashQuery(mapId, asking).data?.retention_days
   return (
     <div className="border-t border-ink-200 pt-3 text-center">
       <button type="button" onClick={() => setAsking(true)} className="btn-text text-body underline">
@@ -313,19 +317,17 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
       {asking && (
         <ConfirmDialog
           title="이 핀을 삭제할까요?"
-          body={`${name} 핀과 남긴 의견이 모두에게서 사라져요. 확정 리스트에 있으면 거기서도 빠져요.`}
+          body={days ? `삭제해요. ${days}일 안에 되돌릴 수 있어요` : '삭제해요. 지도 정보의 「삭제한 핀」에서 되돌릴 수 있어요'}
           ok="삭제"
-          danger
           pending={del.isPending}
           onCancel={() => setAsking(false)}
           onOk={() =>
-            del.mutate(undefined, {
+            // 알림·되돌리기·실패 알림은 훅이 띄운다.
+            del.mutate(pin, {
               onSuccess: () => {
                 setAsking(false)
-                showToast(`${name}${josa(name, '을', '를')} 삭제했어요`)
                 onDone()
               },
-              onError: () => showToast('핀을 삭제하지 못했어요'),
             })
           }
         />

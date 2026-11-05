@@ -1,9 +1,11 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 
 import { useMeQuery } from '@/features/auth/queries'
 import Mark from '@/ui/Mark'
 
-import { toPinCard, type Pin, type PinCardView, type ReactionType } from './model'
+import { participationRatio, toPinCard, type Pin, type PinCardView, type ReactionType } from './model'
+import { attachTrashDrag } from './pinDrag'
+import { createPinMarkerElement } from './pinMarker'
 
 /** 반응 용어·기호는 고정(기획안 9절). 색은 지도 밖 UI 전용 반응 토큰(colors.md). */
 const REACTION: Record<ReactionType | 'unknown', { mark: ReactNode; label: string; color: string; chip: string }> = {
@@ -28,7 +30,7 @@ export default function PinList({
     <ul className="space-y-2.5 pb-[100px]">
       {pins.map((pin) => (
         <li key={pin.id}>
-          <PinCard card={toPinCard(pin, memberCount, myId)} onSelect={() => onSelect(pin.id)} />
+          <PinCard card={toPinCard(pin, memberCount, myId)} onSelect={() => onSelect(pin.id)} drag={pin.permissions.can_delete ? { pin, memberCount } : null} />
         </li>
       ))}
     </ul>
@@ -40,7 +42,8 @@ export default function PinList({
  * 확정된 카드는 같은 자리에 골드 테두리 + 「✓ 확정됨」이다. 의견을 안 남겼어도 확정 표시가 먼저다(#859).
  * 내가 고른 반응은 그 반응 색 칩으로 감싸고 "· 나"를 붙인다 — "내 선택" 배지는 쓰지 않는다.
  */
-function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }) {
+function PinCard({ card, onSelect, drag }: { card: PinCardView; onSelect: () => void; drag: { pin: Pin; memberCount: number } | null }) {
+  const ref = useTrashDrag(drag)
   const todo = !card.confirmed && card.mine === null
   const border = card.confirmed
     ? 'border-[1.5px] border-[var(--pin-confirmed)]'
@@ -48,7 +51,7 @@ function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }
       ? 'border-[1.5px] border-brand-600'
       : 'border border-ink-200'
   return (
-    <button type="button" onClick={onSelect} className={`press w-full rounded-xl bg-white p-3.5 text-left ${border}`}>
+    <button ref={ref} type="button" onClick={onSelect} className={`press w-full rounded-xl bg-white p-3.5 text-left ${border}`}>
       <div className="flex items-start justify-between gap-2">
         <p className="truncate font-bold text-ink-900">{card.name}</p>
         {card.confirmed && (
@@ -87,4 +90,28 @@ function PinCard({ card, onSelect }: { card: PinCardView; onSelect: () => void }
 function summaryLabel(card: PinCardView) {
   const parts = ORDER.map((t) => `${REACTION[t].label} ${card.counts[t]}`)
   return `${parts.join(', ')}${card.mine ? `, 내 의견 ${REACTION[card.mine].label}` : ', 아직 의견 없음'}`
+}
+
+/**
+ * 카드를 끌어 휴지통에 버린다(#1012, 지도 핀과 같은 함수). 끄는 그림은 지도에 그려진 그 핀 모양이다.
+ * 붙인 뒤 바뀐 핀은 최신 값을 쓰도록 ref 로 둔다 — 의견이 달릴 때마다 다시 붙이면 끄는 도중 끊긴다.
+ */
+function useTrashDrag(drag: { pin: Pin; memberCount: number } | null) {
+  const ref = useRef<HTMLButtonElement>(null)
+  const latest = useRef(drag)
+  useEffect(() => {
+    latest.current = drag
+  })
+  const on = drag !== null
+  useEffect(() => {
+    const el = ref.current
+    if (!el || !on) return
+    const now = () => latest.current!
+    return attachTrashDrag(
+      el,
+      () => now().pin,
+      () => createPinMarkerElement(now().pin, participationRatio(now().pin, now().memberCount), () => {}).innerHTML,
+    )
+  }, [on])
+  return ref
 }

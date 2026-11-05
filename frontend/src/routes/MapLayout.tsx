@@ -16,6 +16,7 @@ import { CategoryChips } from '@/features/map/PinFilterControls'
 import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
+import TrashDropZone from '@/features/map/TrashDropZone'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import { boundaryCorners, useRegionBoundary } from '@/features/map/regionGeo'
 import MapSwitcher from '@/features/maps/MapSwitcher'
@@ -603,6 +604,8 @@ export default function MapLayout() {
           {/* 조언은 지도 단위라 네 탭 모두(#1162). */}
           <AgentButton docked mapId={mapId} hidden={modalOpen} fading={mapMoving} />
           {!modalOpen && <Toaster docked controlsVisible={!mapMoving} />}
+          {/* 핀을 끌 때만 지도 영역 아래 가운데에 나타난다(#1012). 지도 버튼은 오른쪽이라 겹치지 않는다. */}
+          <TrashDropZone mapId={mapId} placement="docked" />
         </div>
       )}
 
