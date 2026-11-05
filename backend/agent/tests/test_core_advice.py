@@ -81,13 +81,13 @@ def test_same_category_runs_counts_up_to_this_run_only():
     (30, None), (35, None),   # 이미 상한 — 버튼이 넓힐 수 없다
 ])
 def test_next_radius_factor(walk, next_factor):
-    meta = {"default_radius_walk_min": walk, "widen_limit_walk_min": 30, "widen_step_walk_min": 5}
+    meta = {"default_radius_m": walk * 80, "widen_limit_m": 30 * 80, "widen_step_m": 5 * 80}
     assert core.next_radius_factor(meta) == next_factor
 
 
 def test_next_radius_factor_is_not_rounded():
     """시뮬레이션 반경이 버튼 한 번 뒤의 반경과 같아야 한다(#677) — 1200m × 20/15는 반올림하면 1600m, 1.33이면 1596m다."""
-    factor = core.next_radius_factor({"default_radius_walk_min": 15, "widen_limit_walk_min": 30, "widen_step_walk_min": 5})
+    factor = core.next_radius_factor({"default_radius_m": 15 * 80, "widen_limit_m": 30 * 80, "widen_step_m": 5 * 80})
     assert factor == 20 / 15 and round(1200 * factor) == 20 * 80
 
 

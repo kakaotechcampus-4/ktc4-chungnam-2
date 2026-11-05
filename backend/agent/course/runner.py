@@ -139,7 +139,7 @@ def run_course(
         found = worklog.review_records(trip, tuple(known.values()), reviewed, judge=judge, decision=result.judgment, asked=result.asked_model)
         records.extend(found)
         emit(found)
-    closing = narrator.closing(result)
+    closing = narrator.closing(result, reviewed=reviewed)
     records.extend(closing)
     emit(closing)
     model, prompt_version = _usage_meta(setter, decider)

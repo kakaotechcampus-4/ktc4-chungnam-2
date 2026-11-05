@@ -127,13 +127,14 @@ def test_post_run_with_execute_returns_a_done_run_and_the_result_carries_the_sna
 def test_widen_returns_run_with_default_radius_and_409_at_limit(app_client, db_session):
     _seed_ready_map(db_session)
     created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth()).json()
-    assert created["default_radius_walk_min"] == 15
+    assert (created["default_radius_m"], created["next_default_radius_m"]) == (3000, 4000)   # 모든 카테고리 3km(#1385, #1370)
+    assert created["default_radius_walk_min"] == 38   # 호환용 round(m/80)
     run_id = created["id"]
 
-    for expected in (20, 25, 30):
+    for expected, next_expected in ((4000, 5000), (5000, None)):
         resp = app_client.post(f"/runs/{run_id}/widen", cookies=_auth())
         assert resp.status_code == 202
-        assert resp.json()["default_radius_walk_min"] == expected
+        assert (resp.json()["default_radius_m"], resp.json()["next_default_radius_m"]) == (expected, next_expected)
 
     resp = app_client.post(f"/runs/{run_id}/widen", cookies=_auth())
     assert resp.status_code == 409
@@ -460,6 +461,25 @@ def test_center_run_readiness_and_private_result(app_client, db_session, monkeyp
     assert "origin_lat" not in created.json() and "origin_lng" not in created.json()
     result = app_client.get(f"/runs/{created.json()['id']}/result", cookies=_auth("user_2"))
     assert result.status_code == 403
+
+
+def test_run_outside_the_trip_region_is_422_with_the_label_and_resending_the_key_is_the_same_422_1385(app_client, db_session, monkeypatch):
+    """원 전체가 여행 지역 밖이면 422 OUTSIDE_TRIP_REGION(detail.region_label)이고 run이 없다. 같은 Idempotency-Key로 다시 보내도
+    같은 422다(예약을 만들었다 지우므로 REQUEST_IN_PROGRESS가 남지 않는다)."""
+    from recommend import flows
+    _seed_ready_map(db_session)
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "서울")
+    monkeypatch.setattr(flows.maps_api, "get_map_region_center", lambda db, map_id: (37.5665, 126.978))
+    monkeypatch.setattr(flows.maps_api, "get_map_region_label", lambda db, map_id: "서울")
+    monkeypatch.setattr(flows, "_circle_outside_region", lambda db, **kw: True)
+    headers = {"Idempotency-Key": "outside-0001-abc"}
+    center = {"lat": 35.1587, "lng": 129.1604}
+
+    for _ in range(2):
+        resp = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": center}, headers=headers, cookies=_auth("user_1"))
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "OUTSIDE_TRIP_REGION" and resp.json()["detail"] == {"region_label": "서울"}
+    assert app_client.get("/maps/map_1/runs", cookies=_auth("user_1")).json() == []
 
 
 @pytest.mark.no_center_shim

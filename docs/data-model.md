@@ -345,7 +345,8 @@ recommend_runs(
   last_funnel jsonb null,               -- #108 추가: GET /runs/{id}/result가 매번 재계산하지
                                          -- 않도록 마지막 execute/widen/retry의 깔때기 표를
                                          -- 저장해둔다. 파생값이라 정본은 항상 마지막 실행 결과.
-  default_radius_walk_min int default 15,  -- #158: 기본값 원의 지금 도보 분. run을 만들 때 카테고리 기본값을 넣는다(관광지 25, 그 밖 15 — #1055, recommend.core.radius_walk_mins). regions.radius_m은 여기서 파생(분×80m).
+  default_radius_m int null,  -- #1385: 기본값 원의 지금 반경(m). 정본이다. run을 만들 때 3000(모든 카테고리 같다, recommend.core.DEFAULT_RADIUS_M)을 넣고 반경 넓히기마다 +1000, 상한 5000. regions.radius_m은 여기서 파생. expand라 비어 있을 수 있다 — 비어 있는 옛 run은 default_radius_walk_min × 80m로 읽는다(core.run_radius_m).
+  default_radius_walk_min int default 15,  -- #158: 호환용(곧 없앤다). 새 run은 round(default_radius_m / 80)을 넣는다(3000m = 38). 옛 run의 값은 분 그대로 남는다.
                                          -- docs/constraints.md "반경 넓히기 상수"
   origin_lat float null, origin_lng float null,  -- #1331: 「추천 받기」가 보낸 지도 중심. 있으면 중심 지정 run(지역은 원 하나, anchor_points=[[중심]]),
                                          -- null이면 이전 run(핀 기준). 다시 추천·반경 넓히기가 같은 점을 쓴다. 응답에는 싣지 않는다(위치 정보 최소화)

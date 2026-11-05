@@ -65,7 +65,8 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     // 누가 나가면 그 사람의 의견이 지워진다.
     'member.left': [pins, counts, map, members, readiness],
     'owner.changed': [map, members],
-    'map.updated': [map, myMaps],
+    // 날짜가 바뀌면 서버가 기간 밖 일정을 빼고 일정 version(기간 포함)도 바뀐다 — 확정 리스트 키 아래 일정도 다시 받는다(#1273).
+    'map.updated': [map, myMaps, { queryKey: shortlistKeys.list(mapId) }],
     'map.deleted': [myMaps],
     // 확정 리스트는 다른 구성원이 바꿀 수 있다(5-10). 동선은 이 기기의 일정 순서라(2026-11-03) 서버 동선(route.recalculated)은 받지 않는다.
     // 일정도 이 이벤트로 바뀐다. 열려 있는 AI 코스 결과는 일정이 바뀌면 stale 이 되어 「반영」을 막아야 해서 최근 코스와 run 상세도 다시 받는다(#1322).
@@ -73,9 +74,12 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
   }
 }
 
-/** 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번). */
+/**
+ * 끊긴 동안 놓친 변화는 이벤트로 다시 오지 않을 수 있어 새로 받는다(docs/events.md 전달 보장 8번).
+ * 열려 있는 AI 코스 결과도 다시 받는다 — 그동안 일정이 바뀌었으면 stale 로 「일정이 바뀌었어요」를 보여야 해서다(#1322).
+ */
 function refreshMap(queryClient: QueryClient, mapId: string) {
-  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId)]) {
+  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId), courseKeys.latest(mapId), courseKeys.runs]) {
     void queryClient.invalidateQueries({ queryKey })
   }
 }

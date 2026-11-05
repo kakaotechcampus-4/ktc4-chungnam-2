@@ -234,14 +234,92 @@ def test_one_letter_name_is_not_matched():
     ({"type": "search_place", "category": "카페", "pin_ids": None, "basis": ["c1"]}, "category"),   # split은 그 핀의 카테고리만
     ({"type": "open_evidence", "category": None, "pin_ids": None, "basis": ["c1"]}, "type"),
     ({"type": "open_recommend", "category": "숙소", "pin_ids": None, "basis": ["c1"]}, "category"),
-    ({"type": "open_recommend", "category": "음식점", "pin_ids": None, "basis": []}, "basis"),
-    ({"type": "open_recommend", "category": "음식점", "pin_ids": None, "basis": ["c9"]}, "basis"),
+    ({"type": "search_place", "category": "음식점", "pin_ids": None, "basis": []}, "basis"),   # 채울 기록 없음(#1380)
+    ({"type": "search_place", "category": "음식점", "pin_ids": None, "basis": ["c9"]}, "basis"),   # 채울 기록 없음(#1380)
 ])
 def test_disallowed_action_is_removed(action, reason):
     v = _verify(_out(actions=[GOOD_ACTIONS[0], action]))
 
     assert _removed(v, "actions") == {1: reason}
     assert v.record["actions"]["kept"] == 1
+
+
+# ---------------------------------------------------------------- 6단계: 버튼 근거는 코드가 채운다 (#1380)
+
+READY = {"category": "음식점", "ready": True, "answered_count": 1, "required_count": 1}
+
+
+def _basis_verify(action, *, p1=None, ready=None, claims=(C_QUOTE,)):
+    """정체 진단 하나 — 이번 관찰 기록은 미리 돌려 보기 p1(passed_count)과 get_readiness t2(있을 때만)."""
+    results, calls = {}, []
+    if p1 is not None:
+        results["p1"] = {"passed_count": p1, "funnel": []}
+        calls.append({"call_id": "p1", "name": "preview_filter"})
+    if ready is not None:
+        results["t2"] = ready
+        calls.append({"call_id": "t2", "name": "get_readiness"})
+    out = _out(claims=list(claims), advice=[GOOD_LINES[1]], actions=[action], diagnosis="stall")
+    return core.verify_diagnosis(out, STALL, SNAP, results, member_names=NAMES, preview=results.get("p1"), calls=calls)
+
+
+def _button(type_, basis):
+    return {"type": type_, "category": None, "pin_ids": None, "basis": basis}
+
+
+@pytest.mark.parametrize("basis", [[], ["c9"]])   # 비었거나 claims에 없는 id
+@pytest.mark.parametrize("type_, tools, evidence", [
+    ("open_recommend", {"p1": 3}, ("p1", "passed_count", 3)),
+    ("open_recommend", {"p1": 3, "ready": READY}, ("p1", "passed_count", 3)),   # p1이 먼저
+    ("open_recommend", {"ready": READY | {"ready": False}}, ("t2", "ready", False)),   # p1이 없으면 readiness
+    ("search_place", {"ready": READY, "p1": 0}, ("t2", "ready", True)),   # readiness가 먼저
+    ("search_place", {"p1": 0}, ("p1", "passed_count", 0)),
+])
+def test_button_basis_is_filled_from_this_run(type_, tools, evidence, basis):
+    v = _basis_verify(_button(type_, basis), **tools)
+
+    assert v.outcome == "suggested" and [a["type"] for a in v.draft.actions] == [type_]
+    assert v.record["basis_filled"] == 1 and v.record["actions"]["removed"] == []
+    filled = v.draft.claims[-1]
+    assert filled == {"id": "c4", "kind": "tool_result", "call_id": evidence[0], "path": evidence[1], "value": evidence[2]}
+    assert v.draft.advice[0]["slot_text"] == GOOD_LINES[1]["text"]   # 문장은 그대로
+
+
+@pytest.mark.parametrize("basis", [[], ["c9"]])
+@pytest.mark.parametrize("type_, tools", [
+    ("open_recommend", {}),
+    ("open_recommend", {"ready": READY | {"category": "카페"}}),   # 다른 카테고리의 준비 확인은 근거가 아니다
+    ("search_place", {}),
+    ("search_place", {"p1": 3}),   # 남는 곳이 있다는 수는 「장소 검색」의 근거가 아니다
+])
+def test_button_without_evidence_in_this_run_is_removed(type_, tools, basis):
+    v = _basis_verify(_button(type_, basis), **tools)
+
+    assert v.record["actions"]["removed"] == [{"index": 0, "reason": "basis"}] and v.record["basis_filled"] == 0
+    assert all(c["id"] != "c4" for c in v.draft.claims)
+
+
+def test_model_basis_that_holds_is_kept_as_is():
+    v = _basis_verify(_button("open_recommend", ["c3"]), p1=3, ready=READY)
+
+    assert [a["type"] for a in v.draft.actions] == ["open_recommend"] and v.record["basis_filled"] == 0
+    assert [c["id"] for c in v.draft.claims] == ["c3"]
+
+
+def test_filled_basis_reuses_a_kept_claim_and_new_ids_skip_removed_ones():
+    p1 = {"id": "c5", "kind": "tool_result", "call_id": "p1", "path": "passed_count", "value": 3}
+    v = _basis_verify(_button("open_recommend", ["c6"]), p1=3, claims=[C_QUOTE, p1])
+    assert v.record["basis_filled"] == 1 and [c["id"] for c in v.draft.claims] == ["c3", "c5"]
+
+    wrong = p1 | {"id": "c7", "value": 4}   # 값이 틀려 제거된 c7 — 새 id는 그 뒤
+    v = _basis_verify(_button("open_recommend", []), p1=3, claims=[C_QUOTE, wrong])
+    assert v.record["claims"]["removed"] == [{"id": "c7", "reason": "tool_mismatch"}]
+    assert v.draft.claims[-1]["id"] == "c8"
+
+
+def test_zero_preview_still_removes_open_recommend_even_with_readiness():
+    v = _basis_verify(_button("open_recommend", []), p1=0, ready=READY)
+
+    assert v.record["actions"]["removed"] == [{"index": 0, "reason": "preview_empty"}] and v.record["basis_filled"] == 0
 
 
 def test_duplicate_actions_collapse_and_labels_come_from_code():

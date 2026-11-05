@@ -372,10 +372,11 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     assert a.get(f"/runs/{run_id}/result").status_code == 200
-    walk = [a.post(f"/runs/{run_id}/widen") for _ in range(4)]
-    assert [r.status_code for r in walk] == [202, 202, 202, 409]
-    assert [r.json()["default_radius_walk_min"] for r in walk[:3]] == [20, 25, 30]
-    assert walk[3].json()["code"] == "WIDEN_LIMIT"
+    walk = [a.post(f"/runs/{run_id}/widen") for _ in range(3)]
+    assert [r.status_code for r in walk] == [202, 202, 409]
+    assert [r.json()["default_radius_m"] for r in walk[:2]] == [4000, 5000]
+    assert [r.json()["next_default_radius_m"] for r in walk[:2]] == [5000, None]
+    assert walk[2].json()["code"] == "WIDEN_LIMIT"
     retry = a.post(f"/runs/{run_id}/retry")
     assert retry.status_code == 202 and retry.json()["attempt_no"] >= 2
     result = a.get(f"/runs/{run_id}/result").json()

@@ -423,10 +423,10 @@ def _label(trip: Trip, goal: Goal) -> str:
     day = core.day_label(trip, goal.day) if goal.day else ""
     names = [trip.place(p).name for p in goal.places]
     return {
-        "day_indoor": f"{day}은 실내 위주로",
+        "day_indoor": f"{attach(day, '은/는')} 실내 위주로",
         "night_end": f"{day} 마지막은 야경 명소",
         "daily_walk_low": "하루 걷는 시간 줄이기",
-        "day_light": f"{day}은 여유 있게",
+        "day_light": f"{attach(day, '은/는')} 여유 있게",
         "place_on_day": f"{attach(names[0], '을/를')} {day}에" if goal.kind == "place_on_day" else "",
         "together": f"{', '.join(names)} 같은 날" if goal.kind == "together" else "",
         "day_has": f"{day}에 {tag_noun(goal.tag)} 장소 넣기" if goal.kind == "day_has" else "",

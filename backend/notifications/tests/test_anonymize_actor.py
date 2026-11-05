@@ -25,8 +25,8 @@ def test_rewrites_message_and_clears_actor_for_each_type(db_session):
 
     assert api.anonymize_actor(db_session, user_id="gone") == 4
 
-    assert _row(db_session, like).message == "탈퇴한 구성원님이 내 핀에 ♥를 남겼어요"
-    assert _row(db_session, against).message == "탈퇴한 구성원님이 내 핀에 🚫 반대를 남겼어요"
+    assert _row(db_session, like).message == "탈퇴한 구성원님이 내 핀에 좋음을 남겼어요"
+    assert _row(db_session, against).message == "탈퇴한 구성원님이 내 핀에 반대 의견을 남겼어요"
     assert _row(db_session, plain).message == "탈퇴한 구성원님이 내 핀에 반응을 남겼어요"
     assert _row(db_session, joined).message == "탈퇴한 구성원님이 지도에 들어왔어요"
     assert all(_row(db_session, n).actor_id is None for n in (like, against, plain, joined))
@@ -64,6 +64,14 @@ def test_actor_id_is_not_exposed_in_the_response_schema():
 
 
 def test_name_that_mimics_the_template_does_not_confuse_the_reaction_lookup():
-    message = core.compose_message("pin_reaction", actor_name="x님이 내 핀에 ♥를 남겼어요 그리고 y", reaction=None)
+    message = core.compose_message("pin_reaction", actor_name="x님이 내 핀에 좋음을 남겼어요 그리고 y", reaction=None)
     assert core.anonymize_message("pin_reaction", message) == "탈퇴한 구성원님이 내 핀에 반응을 남겼어요"
     assert core.anonymize_message("owner_changed", "내가 이 지도의 방장이 되었어요") == "내가 이 지도의 방장이 되었어요"
+
+
+def test_old_stored_sentences_with_symbols_are_still_recognized():
+    """#1341 전에 저장된 문장(♥·🚫)도 반응 종류를 되찾는다."""
+    like = core.anonymize_message("pin_reaction", "지우님이 내 핀에 ♥를 남겼어요")
+    against = core.anonymize_message("pin_reaction", "지우님이 내 핀에 🚫 반대를 남겼어요")
+    assert like == "탈퇴한 구성원님이 내 핀에 좋음을 남겼어요"
+    assert against == "탈퇴한 구성원님이 내 핀에 반대 의견을 남겼어요"

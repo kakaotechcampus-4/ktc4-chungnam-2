@@ -354,7 +354,7 @@ def verify(world: World, key: str, out: Any, tools: FixtureTools) -> core.Verifi
     comparison = world.comparison(top.pin_id) if top.diagnosis == "split" else None
     names = MEMBER_NAMES[:world.snap.member_count]
     return core.verify_diagnosis(out, top, world.snap, tools.results, member_names=names, comparison=comparison,
-                                 preview=world.preview(key), fits=tools.schedule_fits())
+                                 preview=world.preview(key), fits=tools.schedule_fits(), calls=tools.calls)
 
 
 # ---------------------------------------------------------------- 결정 지시 (#717)

@@ -278,11 +278,12 @@ class Narrator:
             out.append(_rec("끝", DIRECT, MODEL if step.by == "model" else CODE, ended))
         return out
 
-    def closing(self, result: DirectResult) -> list[StepRecord]:
+    def closing(self, result: DirectResult, *, reviewed: Any = None) -> list[StepRecord]:
+        """reviewed는 일정 점검(review·fill)의 결과다. 이 계산은 사람이 넣은 날을 고정한 채 한 것이라, 옮기면 풀리는 카드가 있으면 「풀 수 없다」는 줄을 내지 않는다(#1392)."""
         self.by_id.update({g.id: g for g in result.state.goals})
         out = []
-        if result.chosen.walk_infeasible:
-            out.append(_rec("결과", COMPUTE, CODE, f"도보 구간 {LEG_MAX_MIN}분·하루 도보 {DAY_WALK_MAX_MIN}분·하루 이동 {DAY_TRAVEL_MAX_MIN}분(대중교통 포함, 약) 상한과 "
+        if result.chosen.walk_infeasible and not (reviewed is not None and any(f.step is not None for f in reviewed.fixes)):
+            out.append(_rec("결과", COMPUTE, CODE, f"{'넣어 둔 날 그대로는 ' if reviewed is not None else ''}도보 구간 {LEG_MAX_MIN}분·하루 도보 {DAY_WALK_MAX_MIN}분·하루 이동 {DAY_TRAVEL_MAX_MIN}분(대중교통 포함, 약) 상한과 "
                             "구성원 조건, 확인된 휴무를 모두 지키는 순서는 이 장소 구성으로는 없다는 것을 모든 경우를 따져 확인했어요. 장소나 날짜 수가 바뀌어야 풀려요."))
         for i in core.meal_less_days(self.trip, result.course):     # 식당이 없는 날 알림(#918) — 장소를 더하거나 빼지 않고 알리기만 한다
             out.append(_rec("확인", VERIFY, CODE, meal_less_text(self.trip, i)))
@@ -331,9 +332,9 @@ def problem_text(trip: core.Trip, goals: Sequence[goals_mod.Goal], p: Any) -> st
         place = trip.place(p.places[0]).name
         return f"{attach(place, '은/는')} {core.day_label(trip, p.day)}에 쉬어요"
     if p.kind == "travel":
-        return f"{core.day_label(trip, p.day)}은 이동이 상한을 넘어요"
+        return f"{attach(core.day_label(trip, p.day), '은/는')} 이동이 상한을 넘어요"
     if p.kind == "member":
-        return f"{core.day_label(trip, p.day)}은 걷는 시간이 구성원이 고른 상한을 넘어요"
+        return f"{attach(core.day_label(trip, p.day), '은/는')} 걷는 시간이 구성원이 고른 상한을 넘어요"
     if p.kind in ("condition", "goal"):
         goal = next(g for g in goals if g.id == p.goal_id)
         return f"{goals_mod.label(trip, goal)} 목표를 지키지 못했어요"
@@ -348,7 +349,7 @@ def _move_text(trip: core.Trip, fix: Any) -> str:
     if fix.step == 1:
         days = sorted({m.from_day for m in fix.moves} | {m.to_day for m in fix.moves})
         a, b = (core.day_label(trip, core.day_alias(i)) for i in days)
-        return f"{a}와 {b}를 통째로 바꿔 보는 중이에요"
+        return f"{attach(a, '와/과')} {attach(b, '을/를')} 통째로 바꿔 보는 중이에요"
     if fix.step == 2:
         return f"{names[0]}만 {core.day_label(trip, core.day_alias(fix.moves[0].to_day))}로 옮겨 보는 중이에요"
     return f"{attach(names[0], '와/과')} {attach(names[1], '을/를')} 서로 바꿔 보는 중이에요"

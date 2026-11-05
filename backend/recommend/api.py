@@ -85,17 +85,17 @@ def get_recent_runs(db: Session, *, run_id: str, limit: int = 10) -> list[dict]:
 
 def get_run_meta(db: Session, *, run_id: str) -> dict:
     """그 run 자신의 정보 `{run_id, map_id, category, requested_by, status, result_count, created_at,
-    default_radius_walk_min, widen_limit_walk_min, widen_step_walk_min, attempt_no}`(#587). attempt_no는 다시 추천(retry)마다 오르는
-    횟수(#1103 — agent가 조언을 결과 상태별로 저장하는 키에 쓴다). agent가 조언 대상인지(완료, 결과 수)와 요청자
-    본인인지, 반경 넓히기 상한(카테고리별, core.radius_walk_mins)을 넘는 배율인지, 반경 넓히기 한 번(도보 5분,
-    core.WIDEN_STEP_MIN)이 몇 배율인지(#677) 본다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0).
+    default_radius_m, widen_limit_m, widen_step_m, default_radius_walk_min, attempt_no}`(#587, #1385). 반경은 미터가 정본이다
+    (지금 반경, 넓히기 상한 5,000m, 한 번 +1,000m — 모든 카테고리 같다, core). default_radius_walk_min은 호환용 근사(round(m/80))다.
+    attempt_no는 다시 추천(retry)마다 오르는 횟수(#1103 — agent가 조언을 결과 상태별로 저장하는 키에 쓴다). agent가 조언
+    대상인지(완료, 결과 수)와 요청자 본인인지, 반경 넓히기 상한을 넘는 배율인지, 반경 넓히기 한 번이 몇 배율인지(#677) 본다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0).
     권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
     return {
         "run_id": str(run.id), "map_id": run.map_id, "category": run.category, "requested_by": run.requested_by,
         "status": run.status, "result_count": _result_count(db, run), "created_at": run.created_at,
-        "default_radius_walk_min": run.default_radius_walk_min, "widen_limit_walk_min": core.radius_walk_mins(run.category)[1],
-        "widen_step_walk_min": core.WIDEN_STEP_MIN, "attempt_no": run.attempt_no,
+        "default_radius_m": core.run_radius_m(run), "widen_limit_m": core.WIDEN_LIMIT_M, "widen_step_m": core.WIDEN_STEP_M,
+        "default_radius_walk_min": core.radius_walk_min_compat(core.run_radius_m(run)), "attempt_no": run.attempt_no,
     }
 
 
@@ -157,7 +157,7 @@ def simulate_filter(
 
     장소 검색·라벨 Gateway는 생략하면 실행(라우터)과 같은 것을 고른다(recommend.deps, dev는 스텁). 쓰지 않는다 —
     run·후보·근거 줄·지역·제외 목록·last_funnel 모두 그대로다. 그 run의 근거 줄이 아닌 id는 NOT_FOUND, radius_factor가
-    0 이하이거나 반경 넓히기 상한(widen_limit_walk_min / default_radius_walk_min)을 넘으면 ValueError(#792). 권한 판정 없음(위 주석)."""
+    0 이하이거나 반경 넓히기 상한(widen_limit_m / default_radius_m)을 넘으면 ValueError(#792). 권한 판정 없음(위 주석)."""
     return flows.simulate_filter(
         db, run_id=run_id, radius_factor=radius_factor, disable_line_ids=disable_line_ids,
         place_search=place_search or deps.get_place_search_gateway(),

@@ -74,7 +74,7 @@ FE는 이벤트를 받으면 아래 표대로 화면 데이터를 다시 받는�
 | `member.joined` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members` |
 | `member.left` | `GET /maps/{mapId}/pins`, `GET /maps/{mapId}/counts`, `GET /maps/{mapId}`, `GET /maps/{mapId}/members`, `GET /maps/{mapId}/recommend/readiness` |
 | `owner.changed` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members`(방장 표시, #468) |
-| `map.updated` | 지도 상세(페이로드로 갱신), `GET /maps`(내 지도 목록의 제목과 날짜, #465) |
+| `map.updated` | 지도 상세(페이로드로 갱신), `GET /maps`(내 지도 목록의 제목과 날짜, #465), `GET /maps/{mapId}/shortlist`(날짜가 바뀌면 서버가 기간 밖 일정을 빼고, 일정 version도 기간을 담아 바뀐다, #1273) |
 | `map.deleted` | 지도 화면을 닫고 내 지도 목록(`GET /maps`)으로 |
 | `map.restored` | 내 지도 목록(`GET /maps`)과 휴지통(`GET /maps/trash`)을 다시 받는다 |
 | `shortlist.changed` | `GET /maps/{mapId}/shortlist`, `GET /maps/{mapId}/pins`(확정 핀 표시), AI 코스의 `GET /maps/{mapId}/courses/latest`와 보고 있는 `GET /course-runs/{id}`(일정이 바뀌면 `stale`이 되어 고칠 점 카드의 「반영」을 막는다, #1322). 일정 저장(`PUT .../shortlist/schedule`)도 항목마다 `reordered`로 이 이벤트를 보낸다 |
