@@ -108,6 +108,28 @@ export function useSchedule(mapId: string): Schedule {
 export const currentSchedule = (queryClient: QueryClient, mapId: string): Schedule =>
   getDraft(mapId) ?? scheduleFromDto(queryClient.getQueryData<ScheduleDto>(scheduleKeys.one(mapId)))
 
+/** 여행 날짜와 날짜별 핀 순서가 같은가 — 미배정 줄(확정 리스트에 들고 난 장소)은 보지 않는다. */
+function sameDays(a: ScheduleDto, b: ScheduleDto): boolean {
+  const days = (d: ScheduleDto) => JSON.stringify([d.start_date, d.end_date, Object.entries(scheduleFromDto(d).days).sort()])
+  return days(a) === days(b)
+}
+
+/**
+ * 고침 하나를 `base`의 version으로 보낸다. version은 확정 항목 전체로 세서, 날짜 배치가 그대로여도 확정 리스트에 장소가 들고 나면
+ * 409가 난다 — 확정 직후 일정을 다시 받기 전에 넣을 때, 다른 구성원이 확정만 했을 때(#1436). 그러면 최신 일정을 받아 날짜 배치가
+ * 그대로인 때만 그 version으로 한 번 더 보낸다. 날짜 배치가 바뀌었으면 남이 고친 것이라 덮지 않고 409를 그대로 던진다.
+ */
+export async function putOnLatest(mapId: string, base: ScheduleDto, want: Schedule): Promise<ScheduleDto> {
+  try {
+    return await putSchedule(mapId, { version: base.version, groups: groupsFor(base, want).groups })
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === 'SHORTLIST_STALE')) throw error
+    const latest = await fetchSchedule(mapId)
+    if (!sameDays(latest, base)) throw error
+    return putSchedule(mapId, { version: latest.version, groups: groupsFor(latest, want).groups })
+  }
+}
+
 /** 보내기 — 가장 최근 고침을 서버 일정(캐시)의 version으로 보낸다. 보내는 사이 더 고쳤으면 이어서 보낸다. 실패하면 고침을 버리고 서버 일정으로 돌아간다. */
 async function flush(queryClient: QueryClient, mapId: string) {
   const key = scheduleKeys.one(mapId)
@@ -115,7 +137,7 @@ async function flush(queryClient: QueryClient, mapId: string) {
     for (let want = getDraft(mapId); want; want = getDraft(mapId)) {
       const base = queryClient.getQueryData<ScheduleDto>(key)
       if (!base) throw new Error('서버 일정을 아직 받지 못했다')
-      const saved = await putSchedule(mapId, { version: base.version, groups: groupsFor(base, want).groups })
+      const saved = await putOnLatest(mapId, base, want)
       queryClient.setQueryData<ScheduleDto>(key, saved)
       if (getDraft(mapId) === want) setDraft(mapId, undefined)
     }

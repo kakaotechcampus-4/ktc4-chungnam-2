@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '@/api'
+
+import { fetchSchedule, putSchedule } from './api'
 import type { ScheduleDto } from './model'
-import { groupsFor, scheduleFromDto } from './scheduleQueries'
+import { groupsFor, putOnLatest, scheduleFromDto } from './scheduleQueries'
+
+vi.mock('./api', () => ({ fetchSchedule: vi.fn(), putSchedule: vi.fn() }))
 
 type Item = ScheduleDto['items'][number]
 const item = (id: string, pin: string, date: string | null, order: number | null) =>
@@ -38,5 +43,45 @@ describe('서버 일정 ↔ 화면 일정 (#1172)', () => {
       { date: '2026-11-01', item_ids: ['i1'] },
       { date: null, item_ids: [] },
     ])
+  })
+})
+
+describe('409 다시 보내기 (#1436)', () => {
+  const stale = () => new ApiError(409, { code: 'SHORTLIST_STALE', message: 'stale' })
+  const want = { days: { '2026-11-01': ['a'] } }
+
+  beforeEach(() => {
+    vi.mocked(putSchedule).mockReset()
+    vi.mocked(fetchSchedule).mockReset()
+  })
+
+  it('확정 리스트에 장소만 늘었으면(날짜 배치 그대로) 최신 version으로 한 번 더 보낸다', async () => {
+    const base = dto([item('i1', 'a', null, 0)])
+    const latest = { ...dto([item('i1', 'a', null, 0), item('i2', 'b', null, 1)]), version: 'v2' }
+    vi.mocked(putSchedule).mockRejectedValueOnce(stale()).mockResolvedValueOnce(latest)
+    vi.mocked(fetchSchedule).mockResolvedValueOnce(latest)
+
+    await expect(putOnLatest('m1', base, want)).resolves.toBe(latest)
+    expect(vi.mocked(putSchedule).mock.calls[1]).toEqual([
+      'm1',
+      { version: 'v2', groups: [{ date: '2026-11-01', item_ids: ['i1'] }, { date: null, item_ids: ['i2'] }] },
+    ])
+  })
+
+  it('다른 구성원이 날짜 배치를 바꿨으면 덮지 않고 409를 그대로 던진다', async () => {
+    const base = dto([item('i1', 'a', null, 0), item('i2', 'b', null, 1)])
+    const latest = { ...dto([item('i1', 'a', null, 0), item('i2', 'b', '2026-11-02', 0)]), version: 'v2' }
+    vi.mocked(putSchedule).mockRejectedValueOnce(stale())
+    vi.mocked(fetchSchedule).mockResolvedValueOnce(latest)
+
+    await expect(putOnLatest('m1', base, want)).rejects.toMatchObject({ code: 'SHORTLIST_STALE' })
+    expect(putSchedule).toHaveBeenCalledTimes(1)
+  })
+
+  it('409가 아닌 실패는 다시 받지 않고 그대로 던진다', async () => {
+    vi.mocked(putSchedule).mockRejectedValueOnce(new ApiError(422, { code: 'VALIDATION_ERROR', message: 'bad' }))
+
+    await expect(putOnLatest('m1', dto([item('i1', 'a', null, 0)]), want)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+    expect(fetchSchedule).not.toHaveBeenCalled()
   })
 })
