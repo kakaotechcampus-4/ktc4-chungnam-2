@@ -74,6 +74,18 @@ def test_readiness_endpoint_returns_all_categories(app_client, db_session):
     assert body["음식점"]["ready"] is True
 
 
+def test_readiness_with_center_is_200_and_half_or_out_of_range_center_is_422_1331(app_client, db_session):
+    """#1331 — center_lat·center_lng는 함께, 위도 33~39·경도 124~132. 하나만이거나 범위 밖이면 422 VALIDATION_ERROR."""
+    _seed_ready_map(db_session)
+    url = "/maps/map_1/recommend/readiness"
+    ok = app_client.get(url, params={"center_lat": 37.5, "center_lng": 127.0}, cookies=_auth())
+    assert ok.status_code == 200 and ok.json()["음식점"]["ready"] is True
+    for params in ({"center_lat": 37.5}, {"center_lng": 127.0}, {"center_lat": 40, "center_lng": 127.0},
+                   {"center_lat": 37.5, "center_lng": 133}, {"center_lat": 32.9, "center_lng": 127.0}):
+        response = app_client.get(url, params=params, cookies=_auth())
+        assert response.status_code == 422 and response.json()["code"] == "VALIDATION_ERROR", params
+
+
 def test_create_run_for_accommodation_is_422(app_client, db_session):
     """#146 — 숙소는 추천 대상이 아니다(RecommendCategory)."""
     _seed_ready_map(db_session)
@@ -115,13 +127,14 @@ def test_post_run_with_execute_returns_a_done_run_and_the_result_carries_the_sna
 def test_widen_returns_run_with_default_radius_and_409_at_limit(app_client, db_session):
     _seed_ready_map(db_session)
     created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth()).json()
-    assert created["default_radius_walk_min"] == 15
+    assert (created["default_radius_m"], created["next_default_radius_m"]) == (3000, 4000)   # 모든 카테고리 3km(#1385, #1370)
+    assert created["default_radius_walk_min"] == 38   # 호환용 round(m/80)
     run_id = created["id"]
 
-    for expected in (20, 25, 30):
+    for expected, next_expected in ((4000, 5000), (5000, None)):
         resp = app_client.post(f"/runs/{run_id}/widen", cookies=_auth())
         assert resp.status_code == 202
-        assert resp.json()["default_radius_walk_min"] == expected
+        assert (resp.json()["default_radius_m"], resp.json()["next_default_radius_m"]) == (expected, next_expected)
 
     resp = app_client.post(f"/runs/{run_id}/widen", cookies=_auth())
     assert resp.status_code == 409
@@ -424,3 +437,64 @@ def test_run_not_found_is_404(app_client, db_session):
     _seed_ready_map(db_session)
     resp = app_client.get(f"/runs/{'0' * 8}-0000-0000-0000-{'0' * 12}/evidence", cookies=_auth())
     assert resp.status_code == 404
+
+
+@pytest.mark.parametrize("center", [{"lat": 32.9, "lng": 129}, {"lat": 39.1, "lng": 129}, {"lat": 35, "lng": 123.9}, {"lat": 35, "lng": 132.1}])
+def test_center_outside_contract_is_422(app_client, db_session, center):
+    _seed_ready_map(db_session)
+    response = app_client.post("/maps/map_1/runs", json={"category": "\uc74c\uc2dd\uc810", "center": center}, cookies=_auth())
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_center_run_readiness_and_private_result(app_client, db_session, monkeypatch):
+    from recommend import flows
+    _seed_ready_map(db_session)
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    center = {"lat": 35.1, "lng": 129.0}
+    not_ready = app_client.post("/maps/map_1/runs", json={"category": "\uce74\ud398", "center": center}, cookies=_auth())
+    assert not_ready.status_code == 409
+    assert not_ready.json()["code"] == "NOT_READY"
+    assert not_ready.json()["detail"]["ready"] is False
+    created = app_client.post("/maps/map_1/runs", json={"category": "\uc74c\uc2dd\uc810", "center": center}, cookies=_auth("user_1"))
+    assert created.status_code == 202
+    assert "origin_lat" not in created.json() and "origin_lng" not in created.json()
+    result = app_client.get(f"/runs/{created.json()['id']}/result", cookies=_auth("user_2"))
+    assert result.status_code == 403
+
+
+def test_run_outside_the_trip_region_is_422_with_the_label_and_resending_the_key_is_the_same_422_1385(app_client, db_session, monkeypatch):
+    """원 전체가 여행 지역 밖이면 422 OUTSIDE_TRIP_REGION(detail.region_label)이고 run이 없다. 같은 Idempotency-Key로 다시 보내도
+    같은 422다(예약을 만들었다 지우므로 REQUEST_IN_PROGRESS가 남지 않는다)."""
+    from recommend import flows
+    _seed_ready_map(db_session)
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "서울")
+    monkeypatch.setattr(flows.maps_api, "get_map_region_center", lambda db, map_id: (37.5665, 126.978))
+    monkeypatch.setattr(flows.maps_api, "get_map_region_label", lambda db, map_id: "서울")
+    monkeypatch.setattr(flows, "_circle_outside_region", lambda db, **kw: True)
+    headers = {"Idempotency-Key": "outside-0001-abc"}
+    center = {"lat": 35.1587, "lng": 129.1604}
+
+    for _ in range(2):
+        resp = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": center}, headers=headers, cookies=_auth("user_1"))
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "OUTSIDE_TRIP_REGION" and resp.json()["detail"] == {"region_label": "서울"}
+    assert app_client.get("/maps/map_1/runs", cookies=_auth("user_1")).json() == []
+
+
+@pytest.mark.no_center_shim
+def test_run_without_center_is_422_and_charges_nothing_1331(app_client, db_session):
+    """지도 중심이 앵커다(#1331). 준비된 지도여도 center 없는 「추천 받기」는 422 VALIDATION_ERROR이고 run도 차감도 남지 않는다."""
+    _seed_ready_map(db_session)
+    response = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1"))
+    assert response.status_code == 422 and response.json()["code"] == "VALIDATION_ERROR"
+    assert app_client.get("/maps/map_1/runs", cookies=_auth("user_1")).json() == []
+
+
+def test_center_with_unknown_sido_returns_422(app_client, db_session, monkeypatch):
+    from recommend import flows
+    _seed_ready_map(db_session)
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: None)
+    response = app_client.post("/maps/map_1/runs", json={"category": "\uc74c\uc2dd\uc810", "center": {"lat": 35.1, "lng": 129.0}}, cookies=_auth())
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"

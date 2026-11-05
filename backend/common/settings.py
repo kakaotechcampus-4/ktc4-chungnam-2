@@ -10,10 +10,17 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, get_args
+from urllib.parse import parse_qs, urlsplit
 
 Environment = Literal["dev", "test", "staging", "prod"]
 # 운영과 같은 기동 가드와 엄격한 기본값을 받는 환경. staging은 실제 사용자가 없는 시험 서버다(#788, deploy_rules.md「스테이징」).
 _STRICT_ENVIRONMENTS = ("staging", "prod")
+# SESSION_SECRET 최소 길이(#1210). 세션·state 토큰은 HMAC-SHA256으로 서명한다. 키가 해시 출력(32바이트)보다 짧으면 키 공간이
+# 서명 강도를 깎는다(RFC 2104 권고). `openssl rand -hex 32`(64자)가 보통의 생성법이라 그 절반을 바닥으로 잡는다.
+MIN_SESSION_SECRET_LEN = 32
+# DB URL의 sslmode 중 TLS를 요구하는 값. disable·allow·prefer는 평문으로 붙을 수 있다.
+_TLS_SSLMODES = ("require", "verify-ca", "verify-full")
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
 AdapterMode = Literal["dev", "real"]
 # 광고 보고 충전의 광고 제공자(docs/credits-reviews.md 3.7, #1038). ""은 끔. fake는 테스트 광고 창이라 운영에서 막는다.
 CreditAdProvider = Literal["", "fake", "adsense", "gpt"]
@@ -222,8 +229,11 @@ class Settings:
             raise ConfigError(f"{env}에서 CORS_ALLOW_ORIGINS가 비어있다 — FE 도메인을 명시한다")
         if self.session_secret in ("", "change-me-before-deploy"):
             raise ConfigError(f"{env}에서 SESSION_SECRET이 기본값이다")
+        if len(self.session_secret) < MIN_SESSION_SECRET_LEN:
+            raise ConfigError(f"{env}에서 SESSION_SECRET이 너무 짧다 — {MIN_SESSION_SECRET_LEN}자 이상이어야 한다")
         if not self.frontend_base_url:
             raise ConfigError(f"{env}에서 FRONTEND_BASE_URL이 비어있다 — 초대 링크·로그인 리다이렉트가 백엔드 자신의 주소로 샌다")
+        self._check_transport_guards(env)
         # 외부 키는 실제 모드일 때만 필요하다. 비어 있으면 첫 호출에서야 실패하니 기동에서 막는다(#810).
         # places.api.build_sources가 선택한 소스에 넘기는 키만 검사한다. OAuth 키는 장소 검색의 의존성이 아니다.
         needed = {"llm": ("ELICE_ML_API_BASE_URL", "ELICE_ML_API_KEY")}
@@ -238,6 +248,38 @@ class Settings:
             missing = [n for n in names if not getattr(self, n.lower()).strip()]   # 공백만 있는 값도 빈 값이다
             if missing:
                 raise ConfigError(f"{env}에서 {port.upper()}_MODE=real인데 {', '.join(missing)}이(가) 비어있다")
+
+    def _check_transport_guards(self, env: str) -> None:
+        """쿠키·DB·OAuth 주소의 전송 보안(#1210). 오류 문장에는 항목 이름과 이유만 쓰고 값은 싣지 않는다 — URL에 비밀번호가 있다."""
+        if not self.cookie_secure:
+            raise ConfigError(f"{env}에서 COOKIE_SECURE=0 이다 — 세션 쿠키가 평문 HTTP로도 나간다. 켠다")
+        try:
+            db = urlsplit(self.database_url)
+            db_host = (db.hostname or "").lower()
+            sslmodes = parse_qs(db.query).get("sslmode", [])
+        except ValueError:
+            raise ConfigError(f"{env}에서 DATABASE_URL을 해석할 수 없다") from None
+        if db_host not in _LOOPBACK_HOSTS and (not sslmodes or sslmodes[-1] not in _TLS_SSLMODES):
+            raise ConfigError(
+                f"{env}에서 DATABASE_URL이 TLS를 요구하지 않는다 — sslmode={'|'.join(_TLS_SSLMODES)} 중 하나를 붙인다"
+            )
+        try:
+            front = urlsplit(self.frontend_base_url)
+            front_host = front.hostname
+        except ValueError:
+            raise ConfigError(f"{env}에서 FRONTEND_BASE_URL을 해석할 수 없다") from None
+        if front.scheme != "https" or not front_host:
+            raise ConfigError(f"{env}에서 FRONTEND_BASE_URL이 https 주소가 아니다")
+        if self.kakao_redirect_uri:   # 비어 있으면 로그인 시도 때 실패한다(기존 동작) — 여기서는 있는 값만 검사한다
+            try:
+                redirect = urlsplit(self.kakao_redirect_uri)
+                redirect_host = redirect.hostname
+            except ValueError:
+                raise ConfigError(f"{env}에서 KAKAO_REDIRECT_URI를 해석할 수 없다") from None
+            if redirect.scheme != "https" or not redirect_host:
+                raise ConfigError(f"{env}에서 KAKAO_REDIRECT_URI가 https 주소가 아니다")
+            if redirect_host != front_host:
+                raise ConfigError(f"{env}에서 KAKAO_REDIRECT_URI와 FRONTEND_BASE_URL의 호스트가 다르다 — 로그인 쿠키가 FE로 가지 않는다")
 
     @property
     def is_prod(self) -> bool:

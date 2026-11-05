@@ -22,7 +22,12 @@ from agent import core
 from common.errors import AppError
 from pins import chips
 from recommend import api as recommend_api
-from recommend.core import FUNNEL_STAGES, WIDEN_LIMIT_MIN, WIDEN_STEP_MIN, evidence_line_use, passed_count
+from common.geo import WALKING_SPEED_M_PER_MIN
+from recommend.core import FUNNEL_STAGES, evidence_line_use, passed_count
+
+# 케이스 데이터(walk_min, radius_gain)의 눈금 — 실제 정책(3,000m·+1,000m·5,000m)과 따로 정한 시험용 값이다(#1385). 조언 절차는 meta의 값만 읽는다.
+WIDEN_LIMIT_MIN = 30
+WIDEN_STEP_MIN = 5
 
 CASES_PATH = Path(__file__).with_name("cases_advice.json")
 NOW = datetime(2026, 10, 15, 3, 0, tzinfo=timezone.utc)
@@ -141,8 +146,8 @@ def build(case: Mapping[str, Any]) -> AdviceWorld:
     meta = {
         "run_id": run_id, "map_id": "map_eval", "category": case["category"], "requested_by": REQUESTER,
         "status": case.get("status", "done"), "result_count": result_count, "created_at": created,
-        "default_radius_walk_min": case["walk_min"], "widen_limit_walk_min": WIDEN_LIMIT_MIN,
-        "widen_step_walk_min": WIDEN_STEP_MIN,
+        "default_radius_m": case["walk_min"] * WALKING_SPEED_M_PER_MIN, "widen_limit_m": WIDEN_LIMIT_MIN * WALKING_SPEED_M_PER_MIN,
+        "widen_step_m": WIDEN_STEP_MIN * WALKING_SPEED_M_PER_MIN, "default_radius_walk_min": case["walk_min"],
     }
     # 같은 요청자, 같은 카테고리의 run(최근순). 이 run이 맨 앞이고 앞선 run은 하루씩 이르다
     recent = [{"run_id": run_id, "status": meta["status"], "result_count": result_count, "created_at": created}]

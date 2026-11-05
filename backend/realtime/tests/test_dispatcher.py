@@ -283,3 +283,184 @@ async def test_stop_during_retry_wait_is_immediate(monkeypatch):
     await asyncio.sleep(0.02)   # 재시도 대기에 들어간 상태
     d.request_stop()
     await asyncio.wait_for(task, 0.5)
+
+
+# ── #1211: 큐 상한 · 조회 상한 · 스레드 경계 ──
+
+
+def _rows(n, start=1, map_id="map1"):
+    from types import SimpleNamespace
+
+    return [SimpleNamespace(seq=i, map_id=map_id, channel="public", type="x", payload={},
+                            recipient_user_id=None) for i in range(start, start + n)]
+
+
+@pytest.mark.asyncio
+async def test_slow_subscriber_is_closed_at_queue_limit_and_others_unaffected(monkeypatch):
+    import realtime.dispatcher as module
+    from realtime.dispatcher import CLOSED
+
+    monkeypatch.setattr(module, "SUBSCRIBER_QUEUE_MAX", 3)
+    d = Dispatcher()
+    slow = d.subscribe("map1", channel="public", user_id="u1")
+    fast = d.subscribe("map1", channel="public", user_id="u2")
+
+    for row in _rows(10):
+        d._deliver([row])
+        while not fast.queue.empty():   # 빠른 소비자는 바로 비운다
+            fast.queue.get_nowait()
+    # 4번째 행에서 넘쳐 evict: 쌓인 3행은 버려지고 CLOSED 하나만 남는다. 이후 행은 더 받지 않는다.
+    assert slow not in d._subscribers["map1"]
+    assert fast in d._subscribers["map1"]
+    items = [slow.queue.get_nowait() for _ in range(slow.queue.qsize())]
+    assert items == [CLOSED]                # 스트림이 끝나 클라이언트가 재연결한다
+
+    d._deliver(_rows(1, start=11))
+    assert fast.queue.qsize() == 1          # 다른 구독은 계속 받는다
+
+
+@pytest.mark.asyncio
+async def test_full_queue_still_receives_closed_on_member_left(monkeypatch):
+    import realtime.dispatcher as module
+    from realtime.dispatcher import CLOSED
+
+    monkeypatch.setattr(module, "SUBSCRIBER_QUEUE_MAX", 2)
+    d = Dispatcher()
+    sub = d.subscribe("map1", channel="public", user_id="u1")
+    sub.queue.put_nowait("a")
+    sub.queue.put_nowait("b")
+    d.close_subscriptions()   # 가득 차 있어도 QueueFull 없이 닫힌다
+    assert sub.queue.get_nowait() is CLOSED
+
+
+def test_tick_returns_rows_without_touching_state(monkeypatch):
+    import realtime.dispatcher as module
+
+    d = Dispatcher()
+    sub_calls = []
+    monkeypatch.setattr(d, "_deliver", lambda rows: sub_calls.append(rows))
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, stmt):
+            sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            assert "LIMIT" in sql.upper()
+            from types import SimpleNamespace
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: _rows(2)))
+
+    monkeypatch.setattr(module, "SessionLocal", FakeSession)
+    rows = d._tick()
+    assert [r.seq for r in rows] == [1, 2]
+    assert d._last_seen == 0 and sub_calls == []   # worker thread에서는 전달·상태 변경 없음
+
+
+def _fake_clock(monkeypatch, d):
+    """폴링 텀과 스레드 조회를 가짜로 바꾼다 — 대기 시간을 기다리지 않고 요청된 timeout만 기록한다."""
+    import realtime.dispatcher as module
+
+    waits = []
+
+    async def fake_wait_for(aw, timeout):
+        waits.append(timeout)
+        aw.close()
+        if d._stop.is_set():
+            return True
+        raise asyncio.TimeoutError
+
+    async def fake_to_thread(func, *a):
+        return func(*a)
+
+    monkeypatch.setattr(module.asyncio, "wait_for", fake_wait_for)
+    monkeypatch.setattr(module.asyncio, "to_thread", fake_to_thread)
+    return waits
+
+
+@pytest.mark.asyncio
+async def test_backlog_over_row_limit_is_delivered_in_order_without_loss(monkeypatch):
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "TICK_ROW_LIMIT", 4)
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0.3)
+    monkeypatch.setattr(module, "SUBSCRIBER_QUEUE_MAX", 100)
+    d = Dispatcher()
+    waits = _fake_clock(monkeypatch, d)
+    sub = d.subscribe("map1", channel="public", user_id="u1")
+    table = _rows(10)
+    ticks = []
+
+    def tick():
+        rows = [r for r in table if r.seq > d._last_seen][:4]
+        ticks.append(len(rows))
+        if len(ticks) == 3:
+            d.request_stop()
+        return rows
+
+    monkeypatch.setattr(d, "_tick", tick)
+    await d.run_forever()
+    got = [sub.queue.get_nowait().seq for _ in range(sub.queue.qsize())]
+    assert got == list(range(1, 11))
+    assert ticks == [4, 4, 2]
+    assert waits == [0.3, 0, 0]   # 첫 텀 뒤 backlog가 남은 동안은 텀 없이 이어 돈다
+
+
+@pytest.mark.asyncio
+async def test_failure_backoff_starts_from_poll_interval_after_backlog(monkeypatch):
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "TICK_ROW_LIMIT", 2)
+    monkeypatch.setattr(module, "POLL_INTERVAL", 1.0)
+    monkeypatch.setattr(module, "MAX_RETRY_INTERVAL", 8.0)
+    d = Dispatcher()
+    waits = _fake_clock(monkeypatch, d)
+    # backlog 처리(간격 0) → 실패 4번 → 성공(backlog 없음) → 성공 후 정지
+    script = ["backlog", "fail", "fail", "fail", "fail", "ok", "stop"]
+    calls = []
+
+    def tick():
+        step = script[len(calls)]
+        calls.append(step)
+        if step == "fail":
+            raise RuntimeError("db down")
+        if step == "stop":
+            d.request_stop()
+            return []
+        return _rows(2) if step == "backlog" else []
+
+    monkeypatch.setattr(d, "_tick", tick)
+    await d.run_forever()
+    # 각 tick 앞의 대기: 처음 POLL, backlog 뒤 0, 첫 실패 뒤 POLL×2부터 지수로 MAX까지, 성공하면 POLL로 복귀
+    assert waits == [1.0, 0, 2.0, 4.0, 8.0, 8.0, 1.0]
+    assert d.error_count == 4
+
+
+@pytest.mark.asyncio
+async def test_subscriber_list_changes_only_on_event_loop_thread(monkeypatch):
+    import threading
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0.001)
+    d = Dispatcher()
+    d.subscribe("map1", channel="public", user_id="u1")
+    loop_thread = threading.get_ident()
+    seen = {}
+    orig = d._deliver
+
+    def deliver(rows):
+        seen["deliver"] = threading.get_ident()
+        orig(rows)
+
+    def tick():
+        seen["tick"] = threading.get_ident()
+        d.request_stop()
+        return _rows(1)
+
+    monkeypatch.setattr(d, "_deliver", deliver)
+    monkeypatch.setattr(d, "_tick", tick)
+    await asyncio.wait_for(d.run_forever(), 1)
+    assert seen["deliver"] == loop_thread      # 전달은 이벤트 루프 스레드
+    assert seen["tick"] != loop_thread         # 조회만 worker thread

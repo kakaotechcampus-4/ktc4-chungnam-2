@@ -21,3 +21,5 @@ class Permissions(BaseModel):
     can_leave: bool | None = None  # map 전용: 지도 나가기. 넘길 사람이 없는 방장은 false (#369)
     can_publish: bool | None = None  # candidate 전용: recommend.publish, requested_by 본인만 (#64)
     can_edit: bool | None = None  # map 전용: 지도 수정(map.settings.edit), 방장만 (#465)
+    can_manage_invites: bool | None = None  # map 전용: 초대 링크 목록·끄기(invite.revoke), 방장만 (#467, #1154)
+    can_transfer_owner: bool | None = None  # map 전용: 방장 넘기기(owner.transfer), 방장만 (#468, #1154)

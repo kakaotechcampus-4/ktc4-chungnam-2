@@ -342,11 +342,28 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
 
   it("지도 응답에 요청자 기준 permissions가 붙고, 상세에서만 next_owner가 온다", async () => {
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true, can_manage_invites: true, can_transfer_owner: true });
     expect(detail.next_owner.user_id).toBe("u_2");
     const list = (await (await fetch(`${BASE}/maps`)).json()).items;
     expect(list[0].permissions.can_delete).toBe(true);
     expect(list[0].next_owner).toBeUndefined();
+  });
+
+  it("#1371 GET /maps에 trip_max_days 90, 90일 초과 기간은 만들기·날짜 수정에서 422 TRIP_TOO_LONG", async () => {
+    expect((await (await fetch(`${BASE}/maps`)).json()).trip_max_days).toBe(90);
+    const create = (end: string) => fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "긴 여행", start_date: "2026-01-01", end_date: end }) });
+    expect((await create("2026-03-31")).status).toBe(201); // 90일(포함)
+    const tooLong = await create("2026-04-01"); // 91일
+    expect(tooLong.status).toBe(422);
+    const err = await tooLong.json();
+    expect(err.code).toBe("TRIP_TOO_LONG");
+    expect(err.detail).toEqual({ limit: 90 });
+    const patch = (b: object) => fetch(`${BASE}/maps/map_1`, { method: "PATCH", body: JSON.stringify(b) });
+    const start = store.maps["map_1"].start_date;
+    expect((await patch({ end_date: "2099-01-01" })).status).toBe(422);
+    store.maps["map_1"].end_date = "2099-01-01"; // 이미 90일을 넘는 지도
+    store.maps["map_1"].start_date = start;
+    expect((await patch({ title: "제목만" })).status).toBe(200); // 제목만 고치는 것은 막지 않는다
   });
 
   it("방장이 나가면 다음 사람이 방장이 되고 member.left에 실린다", async () => {
@@ -361,7 +378,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
   it("넘길 사람이 없는 방장은 409 OWNER_CANNOT_LEAVE, can_leave=false", async () => {
     store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me");
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true, can_manage_invites: true, can_transfer_owner: true });
     const r = await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" });
     expect(r.status).toBe(409);
     expect((await r.json()).code).toBe("OWNER_CANNOT_LEAVE");
@@ -375,7 +392,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
     expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(204);
     expect((await fetch(`${BASE}/maps/map_1`)).status).toBe(404);
     expect((await (await fetch(`${BASE}/invites/${invite.token}/accept`, { method: "POST" })).json()).code).toBe("INVITE_NOT_FOUND");
-    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT });
+    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT, trip_max_days: 90 });
   });
 });
 
@@ -933,19 +950,106 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
     expect(bad.status).toBe(422);
   });
 
-  it("반경 넓히기는 +5분씩, 도보 30분 상한에서 409 WIDEN_LIMIT", async () => {
+  it("반경 넓히기는 +1000m씩, 5000m 상한에서 409 WIDEN_LIMIT (#1385)", async () => {
     resetScenario("region-conflict");
     const runId = "run_region_conflict";
     const radii: number[] = [];
-    for (let i = 0; i < 3; i++) {
+    const nexts: Array<number | null> = [];
+    for (let i = 0; i < 2; i++) {
       const res = await post(`/runs/${runId}/widen`);
       expect(res.status).toBe(202);
-      radii.push((await res.json()).default_radius_walk_min);
+      const body = await res.json();
+      radii.push(body.default_radius_m);
+      nexts.push(body.next_default_radius_m);
     }
-    expect(radii).toEqual([20, 25, 30]);
+    expect(radii).toEqual([4000, 5000]);
+    expect(nexts).toEqual([5000, null]); // #1370 상한이면 null
     const over = await post(`/runs/${runId}/widen`);
     expect(over.status).toBe(409);
     expect((await over.json()).code).toBe("WIDEN_LIMIT");
+  });
+});
+
+describe("#1385·#1370·#1164 — 추천 반경(m)과 여행 지역 밖 오류", () => {
+  const createRun = (body: object) => fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점", execute: true, ...body }) });
+
+  it("readiness가 카테고리별 기본 반경 radius_m: 3000을 준다", async () => {
+    resetScenario("happy-path");
+    const res = await fetch(`${BASE}/maps/map_1/recommend/readiness`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body["음식점"].radius_m).toBe(3000);
+    expect(body["관광지"].radius_m).toBe(3000);
+  });
+
+  it("run 생성은 default_radius_m 3000·next 4000을 주고, 지난 추천(RunSummary)에도 같은 칸이 있다", async () => {
+    resetScenario("happy-path");
+    const res = await createRun({});
+    expect(res.status).toBe(202);
+    const run = await res.json();
+    expect(run.default_radius_m).toBe(3000);
+    expect(run.next_default_radius_m).toBe(4000);
+    const widened = await (await fetch(`${BASE}/runs/${run.id}/widen`, { method: "POST" })).json();
+    expect(widened.default_radius_m).toBe(4000);
+    const list = await (await fetch(`${BASE}/maps/map_1/runs`)).json();
+    const mine = list.find((r: { id: string }) => r.id === run.id);
+    expect(mine.default_radius_m).toBe(4000);
+    expect(mine.next_default_radius_m).toBe(5000);
+  });
+
+  it("radius_m: 2000~5000 정수만 받는다 — 경계 통과, 범위 밖·소수·문자열은 422(#1416)", async () => {
+    resetScenario("happy-path");
+    for (const ok of [2000, 5000]) {
+      const res = await createRun({ radius_m: ok } as never);
+      expect(res.status).toBe(202);
+    }
+    for (const bad of [1999, 5001, 2500.5, "3000", null, true]) {
+      const res = await createRun({ radius_m: bad } as never);
+      expect(res.status).toBe(422);
+      expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("고른 반경이 run의 default_radius_m이 되고 넓히기는 거기서 +1000, 5000이면 next는 null(#1416)", async () => {
+    resetScenario("happy-path");
+    const low = await (await createRun({ radius_m: 2000 } as never)).json();
+    expect(low.default_radius_m).toBe(2000);
+    expect(low.next_default_radius_m).toBe(3000);
+    const high = await (await createRun({ radius_m: 5000 } as never)).json();
+    expect(high.default_radius_m).toBe(5000);
+    expect(high.next_default_radius_m).toBeNull();
+  });
+
+  it("readiness: radius_min_m 2000·radius_max_m 5000·radius_m 3000, 쿼리 radius_m은 2000~5000 정수 문자열만(#1416)", async () => {
+    resetScenario("happy-path");
+    const ok = await fetch(`${BASE}/maps/map_1/recommend/readiness?center_lat=37.5&center_lng=127&radius_m=2500`);
+    expect(ok.status).toBe(200);
+    const card = (await ok.json())["음식점"];
+    expect([card.radius_m, card.radius_min_m, card.radius_max_m]).toEqual([3000, 2000, 5000]);
+    for (const bad of ["1999", "5001", "2500.5", "abc"]) {
+      const res = await fetch(`${BASE}/maps/map_1/recommend/readiness?center_lat=37.5&center_lng=127&radius_m=${bad}`);
+      expect(res.status).toBe(422);
+    }
+  });
+
+  it("지도가 서울이고 center가 부산이면 422 OUTSIDE_TRIP_REGION — detail.region_label, 크레딧을 쓰지 않는다", async () => {
+    resetScenario("happy-path");
+    store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };
+    const before = (await (await fetch(`${BASE}/credits/me`)).json()).balance;
+    const res = await createRun({ center: { lat: 35.1587, lng: 129.1604 } });
+    expect(res.status).toBe(422);
+    const err = await res.json();
+    expect(err.code).toBe("OUTSIDE_TRIP_REGION");
+    expect(err.detail).toEqual({ region_label: "서울" });
+    expect((await (await fetch(`${BASE}/credits/me`)).json()).balance).toBe(before);
+  });
+
+  it("지도에 여행 지역이 없거나 center가 지역 안이면 막지 않는다", async () => {
+    resetScenario("happy-path");
+    delete store.maps.map_1.region;
+    expect((await createRun({ center: { lat: 35.1587, lng: 129.1604 } })).status).toBe(202);
+    store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };
+    expect((await createRun({ center: { lat: 37.5665, lng: 126.978 } })).status).toBe(202);
   });
 });
 
@@ -1338,6 +1442,67 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     store.runRequestedBy["run_no_results"] = "u_2";
     expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(403);
   });
+
+  it("#1297 작업 기록: 제안에 WorkStep 모양의 단계가 붙고, 코드 유형은 감지로 시작해 재확인으로 끝난다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    const steps = state.active_suggestion.steps;
+    expect(steps.map((s: { stage: string }) => s.stage)).toEqual(["감지", "순위", "재확인"]);
+    for (const s of steps) expect(Object.keys(s).sort()).toEqual(["by", "by_detail", "role", "stage", "text"]);
+  });
+
+  it("#1297 살펴본 상태: 제안이 있으면 안내 문구가 없고, 제안이 없을 때만 최근 관찰의 문구가 실린다", async () => {
+    const notice = "이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요";
+    store.agentObservation["map_1"] = { checked_at: "2026-10-15T00:00:00.000Z", notice };
+    const withSuggestion = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(withSuggestion.observation).toEqual({ checked_at: "2026-10-15T00:00:00.000Z", notice: null });
+
+    await fetch(`${BASE}/agent/suggestions/sug_1/dismiss`, { method: "POST" });
+    const quiet = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(quiet.observation.notice).toBe(notice);
+
+    await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(off.observation.notice).toBeNull(); // 모드가 꺼져 있으면 스위치만 보인다
+  });
+
+  it("#1345 지켜보는 막힌 곳: 첫 제안은 attempt 0이고, tracking은 서버 문구와 since를 싣고, 모드를 끄면 빈 목록이다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.active_suggestion.attempt).toBe(0);
+    expect(state.active_suggestion.tried).toEqual([]);
+    expect(state.tracking.map((t: { status: string }) => t.status)).toEqual(["watching", "resolved"]);
+    for (const t of state.tracking) {
+      expect(Object.keys(t).sort()).toEqual(["category", "diagnosis", "since", "status", "suggestion_id", "text", "tried"]);
+      expect(t.text).not.toMatch(/\d/); // 경과 시간은 FE가 since로 그린다
+    }
+
+    await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(off.tracking).toEqual([]);
+  });
+
+  it("#1356 엮기: open_pin은 핀 하나, open_course는 일정 점검에만 — 수락하면 동작만 돌려준다", async () => {
+    resetScenario("agent-linked");
+    const linked = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(linked.active_suggestion.actions).toEqual([{ index: 0, type: "open_pin", label: "이 핀 보기", params: { pin_ids: ["pin_3"] } }]);
+
+    resetScenario("agent-schedule");
+    const sched = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(sched.active_suggestion.diagnosis).toBe("schedule");
+    expect(sched.active_suggestion.actions.map((a: { type: string }) => a.type)).toEqual(["open_course"]);
+    const res = await fetch(`${BASE}/agent/suggestions/sug_1/accept`, { method: "POST", body: JSON.stringify({ action_index: 0 }) });
+    expect(res.status).toBe(200);
+  });
+
+  it("#1345 충돌 선언(시나리오 agent-declared): attempt 2, 버튼 없음, 해 본 것 두 줄, 후속 확인 단계", async () => {
+    resetScenario("agent-declared");
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    const s = state.active_suggestion;
+    expect(s.attempt).toBe(2);
+    expect(s.actions).toEqual([]);
+    expect(s.tried.map((t: { action_type: string }) => t.action_type)).toEqual(["open_recommend", "search_place"]);
+    expect(s.steps.map((x: { stage: string }) => x.stage)).toContain("후속 확인");
+    expect(state.tracking.map((t: { suggestion_id: string }) => t.suggestion_id)).not.toContain("sug_watch"); // 활성 제안인 막힌 곳은 tracking에 없다
+  });
 });
 
 describe("#623 지도 목록에 상한을 함께", () => {
@@ -1488,6 +1653,96 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
     expect(res.status).toBe(202);
     expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(SEED_BALANCE - 6);
+  });
+});
+
+describe("#1237 AI 코스 — 일정 상태에 따라 plan·fill·review", () => {
+  const confirm = (pinId: string) =>
+    fetch(`${BASE}/maps/map_1/shortlist`, { method: "POST", body: JSON.stringify({ pin_id: pinId }) });
+  const schedule = () => fetch(`${BASE}/maps/map_1/shortlist/schedule`).then((r) => r.json());
+  /** 날짜 → 핀 id 목록으로 일정을 저장한다(나머지는 미배정). */
+  async function setSchedule(byDate: Record<string, string[]>) {
+    const cur = await schedule();
+    const itemOf = (pinId: string) => cur.items.find((i: { pin: { id: string } }) => i.pin.id === pinId).id as string;
+    const placed = Object.values(byDate).flat();
+    const rest = cur.items.map((i: { pin: { id: string } }) => i.pin.id).filter((id: string) => !placed.includes(id));
+    const groups = [...Object.entries(byDate).map(([date, pins]) => ({ date, item_ids: pins.map(itemOf) })), ...(rest.length ? [{ date: null, item_ids: rest.map(itemOf) }] : [])];
+    const res = await fetch(`${BASE}/maps/map_1/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: cur.version, groups }) });
+    expect(res.status).toBe(200);
+  }
+  async function runDone() {
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" })).json();
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    return (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+  }
+  const [d1, d2] = [store.maps["map_1"].start_date, store.maps["map_1"].end_date];
+
+  it("일정이 비어 있으면 plan — fixes·checked는 빈 배열이고 진행 중에는 headline이 null이다", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" })).json();
+    const running = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(running.mode).toBe("plan");
+    expect(running.headline).toBeNull();
+    expect(running.fixes).toEqual([]);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    const final = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(final.mode).toBe("plan");
+    expect(final.headline).toEqual(expect.any(String));
+    expect(final.fixes).toEqual([]);
+    expect(final.checked).toEqual([]);
+  });
+
+  it("일부만 넣었으면 fill — 넣은 장소는 그 날에 그대로, 미배정마다 「넣기」 카드(from_date null)", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    await setSchedule({ [d1]: ["pin_1"] });
+    const done = await runDone();
+    expect(done.mode).toBe("fill");
+    expect(done.days.find((d: { date: string }) => d.date === d1).slots[0].pin_id).toBe("pin_1");
+    expect(done.fixes).toHaveLength(2);
+    for (const fix of done.fixes) {
+      expect(fix.kind).toBe("unassigned");
+      expect(fix.strength).toBe("soft");
+      expect(fix.moves).toHaveLength(1);
+      expect(fix.moves[0].from_date).toBeNull();
+      expect(["pin_2", "pin_3"]).toContain(fix.moves[0].pin_id);
+    }
+    expect(done.steps.map((s: { stage: string }) => s.stage)).toContain("고정");
+  });
+
+  it("모두 넣었으면 review — 고칠 점 카드(날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1)와 괜찮은 항목", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    await setSchedule({ [d1]: ["pin_1"], [d2]: ["pin_2", "pin_3"] });
+    const done = await runDone();
+    expect(done.mode).toBe("review");
+    expect(done.days.find((d: { date: string }) => d.date === d1).slots.map((s: { pin_id: string }) => s.pin_id)).toEqual(["pin_1"]);
+    const [swap, move, skipped] = done.fixes;
+    expect(swap.strength).toBe("hard");
+    expect(swap.moves.map((m: { pin_id: string }) => m.pin_id).sort()).toEqual(["pin_1", "pin_2", "pin_3"]); // 두 날을 통째로
+    expect(swap.moves.find((m: { pin_id: string }) => m.pin_id === "pin_1")).toEqual({ pin_id: "pin_1", from_date: d1, to_date: d2 });
+    expect(move.moves).toHaveLength(1);
+    expect(move.moves[0].to_date).not.toBe(move.moves[0].from_date);
+    expect(skipped.moves).toEqual([]);
+    expect(skipped.not_fixed_reason).toEqual(expect.any(String));
+    expect(skipped.resolved_text).toBeNull();
+    expect(done.checked.map((c: { kind: string }) => c.kind)).toEqual(["member", "condition", "goal", "cluster"]);
+    expect(done.headline).toContain("고칠 점 3개");
+  });
+
+  it("일정이 바뀌면 stale — 날짜만 옮겨도(장소는 그대로) 낡은 코스가 된다", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await setSchedule({ [d1]: ["pin_1"], [d2]: ["pin_2"] });
+    const done = await runDone();
+    expect(done.stale).toBe(false);
+    await setSchedule({ [d1]: ["pin_2"], [d2]: ["pin_1"] });
+    const latest = await (await fetch(`${BASE}/maps/map_1/courses/latest`)).json();
+    expect(latest.stale).toBe(true);
   });
 });
 

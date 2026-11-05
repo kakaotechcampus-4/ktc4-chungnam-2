@@ -10,6 +10,8 @@ import {
   memberConditions,
   noResultsExternalSearch,
   notEnforcedNote,
+  rerunErrorMessage,
+  runErrorMessage,
   toReadinessCards,
   type CandidateDto,
   visibleConditionCount,
@@ -151,5 +153,21 @@ describe('runHistoryLine (#482 지난 추천)', () => {
       '끝내지 못했어요',
       '찾는 중',
     ])
+  })
+})
+
+describe('추천 실패 문구(#1385, #1386 리뷰)', () => {
+  const IN_PROGRESS = '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
+
+  it('「추천받기」 시작: 처리 중만 따로, 그 밖은 「추천 장소를 찾지 못했어요」', () => {
+    expect(runErrorMessage(err('REQUEST_IN_PROGRESS'))).toBe(IN_PROGRESS)
+    expect(runErrorMessage(err('VALIDATION_ERROR'))).toBe('추천 장소를 찾지 못했어요')
+    expect(runErrorMessage(new Error('network'))).toBe('추천 장소를 찾지 못했어요')
+  })
+
+  it('다시 추천·넓히기: 결과가 남아 있어 예전 문구, 넓히기 상한과 처리 중은 따로', () => {
+    expect(rerunErrorMessage(err('WIDEN_LIMIT'))).toBe('더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요')
+    expect(rerunErrorMessage(err('REQUEST_IN_PROGRESS'))).toBe(IN_PROGRESS)
+    expect(rerunErrorMessage(err('INTERNAL'))).toBe('추천을 끝내지 못했어요. 잠시 뒤 다시 눌러 주세요')
   })
 })

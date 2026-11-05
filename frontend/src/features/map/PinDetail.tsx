@@ -13,7 +13,7 @@ import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
-import AgainstMark from '@/ui/AgainstMark'
+import Mark from '@/ui/Mark'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
@@ -21,12 +21,12 @@ import TextField from '@/ui/TextField'
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
 import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery, useUpdatePinMutation } from './queries'
+import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
-  like: { mark: '♥', label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
-  against: { mark: <AgainstMark />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
+  like: { mark: <Mark kind="like" />, label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
+  against: { mark: <Mark kind="against" />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
 }
 const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
@@ -87,10 +87,16 @@ export function PinDetailHeader({
         {canToggle ? (
           // 켜고 끄는 버튼 하나다. 한 버튼이라 눌러도 포커스가 그대로다. 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
           <button type="button" aria-pressed={confirmed} disabled={busy} onClick={toggle} className="btn-confirm btn-sm">
-            {confirmed ? '✓ 확정됨' : '★ 확정 리스트에 넣기'}
+            {confirmed ? (
+              <><Mark kind="check" size={14} /> 확정됨</>
+            ) : (
+              <>
+                <Mark kind="star" size={14} /> 확정 리스트에 넣기
+              </>
+            )}
           </button>
         ) : (
-          confirmed && <span className="btn-confirm btn-sm">✓ 확정됨</span>
+          confirmed && <span className="btn-confirm btn-sm"><><Mark kind="check" size={14} /> 확정됨</></span>
         )}
       </div>
     </div>
@@ -107,9 +113,9 @@ function LiveInfo({ pin }: { pin: Pin }) {
   return (
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
       <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
-      <p className="text-ink-600">우리 장소 데이터에 없는 곳이라 조건 확인·AI 추천·동선에는 쓰이지 않아요. 의견은 그대로 남길 수 있어요.</p>
+      <p className="text-ink-600">조건 확인, AI 추천, 동선에는 쓰이지 않아요. 의견은 남길 수 있어요.</p>
       {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
-      {state === 'missing' && <p className="font-semibold text-warn-text">카카오에서 이 장소의 위치를 다시 찾지 못했어요. 지도에는 표시되지 않아요.</p>}
+      {state === 'missing' && <p className="font-semibold text-warn-text">위치를 찾지 못해서 지도에는 보이지 않아요.</p>}
     </div>
   )
 }
@@ -167,8 +173,8 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
 
   return (
     <ConfirmDialog
-      title={live ? '메모·분류 수정' : '메모 수정'}
-      body="이 핀을 찍은 사람만 고칠 수 있어요. 비우고 저장하면 메모가 지워져요."
+      title={live ? '메모와 분류 수정' : '메모 수정'}
+      body="비우고 저장하면 메모가 지워져요."
       ok="저장"
       pending={update.isPending || !changed}
       onCancel={onCancel}
@@ -254,7 +260,7 @@ export function PinDetailBody({
             </span>
           ))}
           <span className="flex items-center gap-1 font-bold">
-            <span className="text-ink-500">?</span> <span className="text-ink-900">미확인</span>
+            <span className="text-ink-500"><Mark kind="unknown" /></span> <span className="text-ink-900">미확인</span>
             <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}명</span>
           </span>
           {/* 「미확인」이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
@@ -294,11 +300,15 @@ export function PinDetailBody({
   )
 }
 
-/** 핀 삭제 — 구성원 누구나 남의 핀도 지울 수 있다(기획안 #25). 지우면 그 핀의 의견과 확정 리스트 항목도 함께 사라진다. */
+/**
+ * 핀 삭제 — 찍은 사람과 방장만(`can_delete`). 휴지통으로 옮겨져 보관 기간 안에 되살릴 수 있다(#864).
+ * 끌어서 버리기(TrashDropZone)의 키보드·스크린리더 대안이라 확인 창을 남긴다. 되돌릴 수 있어서 빨간 버튼은 쓰지 않는다(DESIGN 영역 분리 규칙).
+ */
 function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: () => void }) {
   const [asking, setAsking] = useState(false)
-  const del = useDeletePinMutation(mapId, pin.id)
-  const name = pin.place_name ?? '이 핀'
+  const del = useTrashPinMutation(mapId)
+  // 보관 일수는 서버 값으로 적는다(화면에 숫자를 두지 않는다). 확인 창을 열 때만 받는다.
+  const days = usePinTrashQuery(mapId, asking).data?.retention_days
   return (
     <div className="border-t border-ink-200 pt-3 text-center">
       <button type="button" onClick={() => setAsking(true)} className="btn-text text-body underline">
@@ -307,19 +317,17 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
       {asking && (
         <ConfirmDialog
           title="이 핀을 삭제할까요?"
-          body={`${name} 핀과 거기에 남긴 의견이 모든 구성원에게서 사라져요. 확정 리스트에 있으면 함께 빠져요.`}
+          body={days ? `삭제해요. ${days}일 안에 되돌릴 수 있어요` : '삭제해요. 지도 정보의 「삭제한 핀」에서 되돌릴 수 있어요'}
           ok="삭제"
-          danger
           pending={del.isPending}
           onCancel={() => setAsking(false)}
           onOk={() =>
-            del.mutate(undefined, {
+            // 알림·되돌리기·실패 알림은 훅이 띄운다.
+            del.mutate(pin, {
               onSuccess: () => {
                 setAsking(false)
-                showToast(`${name}${josa(name, '을', '를')} 삭제했어요`)
                 onDone()
               },
-              onError: () => showToast('핀을 삭제하지 못했어요'),
             })
           }
         />
@@ -350,11 +358,12 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
         <div>
           <div className="flex items-center justify-between text-body">
             <p className="font-medium text-ink-900">
-              <span style={{ color: R.like.line }}>♥</span> {likes.map(nameOf).join(' · ')} 좋아해요
+              <span style={{ color: R.like.line }}>{R.like.mark}</span> {likes.map(nameOf).join(', ')} 좋아해요
             </p>
             {likes.some((l) => l.chips.length || l.text) && (
-              <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text text-xs">
-                {showLikes ? '접기 ▴' : '펼치기 ▾'}
+              <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text inline-flex items-center gap-0.5 text-xs">
+                {showLikes ? '접기' : '펼치기'}
+                {showLikes ? <Mark kind="chevronUp" size={14} /> : <Mark kind="chevronDown" size={14} />}
               </button>
             )}
           </div>
@@ -369,7 +378,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
       )}
       {unknown.some((m) => !m.isMe) && (
         <p className="text-body text-ink-500">
-          ? 아직 안 남겼어요 · {unknown.filter((m) => !m.isMe).map((m) => m.name).join(' · ')}
+          <Mark kind="unknown" /> {unknown.filter((m) => !m.isMe).map((m) => m.name).join(', ')} 아직 안 남겼어요
         </p>
       )}
     </section>
@@ -450,7 +459,7 @@ function MyOpinion({
     const previous: ReactionDto | null | undefined = saved
     react.mutate(null, {
       onSuccess: () =>
-        showToast('의견을 거뒀어요', {
+        showToast('의견을 취소했어요', {
           label: '되돌리기',
           onClick: () =>
             previous &&
@@ -513,7 +522,7 @@ function MyOpinion({
               })}
             </div>
           )}
-          {type === 'against' && chipsError && <ErrorText message="사유 칩을 불러오지 못했어요 — 글로 적어 주세요" error={chipsError} />}
+          {type === 'against' && chipsError && <ErrorText message="사유 칩을 불러오지 못했어요. 이유를 직접 적어 주세요" error={chipsError} />}
           <TextField
             value={text}
             onChange={setText}
@@ -529,7 +538,7 @@ function MyOpinion({
               {MISSING_REASON}
             </p>
           )}
-          {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
+          {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 추천이 정확해져요</p>}
         </div>
       )}
 

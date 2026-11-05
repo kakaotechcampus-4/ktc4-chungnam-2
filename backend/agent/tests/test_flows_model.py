@@ -182,7 +182,7 @@ def test_split_diagnosis_is_verified_and_saved(world, factory):
     assert [s["diagnosis"] for s in run.signals] == ["stall", "split"]
     assert (run.priority["final_order"], run.priority["rule_hits"]) == (["s2", "s1"], ["affected_members"])
     assert run.verification["established"] is True and run.verification["claims"]["removed"] == []
-    assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_reasons"]   # 갈림도 미리 센다(#1317)
     [(type_, payload)] = suggestion_events(world, map_id)   # 모델 유형도 노출(#582)
     assert (type_, payload["id"], payload["diagnosis"]) == ("agent.suggested", str(sug.id), "split")
     # 이벤트도 응답과 같은 조각 모양이고, 인용은 검증한 앞 8글자만 나간다 — 사유 글 전체가 아니다(#717)
@@ -246,7 +246,7 @@ def test_failed_verification_is_invalid_claims(world):
     def made_up(inp, call):
         out = good_stall(inp, call)
         claim = out.claims[0].model_copy(update={"value": False})   # 도구 결과와 다른 값
-        return out.model_copy(update={"claims": [claim]})
+        return out.model_copy(update={"claims": [claim], "actions": []})   # 버튼이 있으면 근거를 코드가 채운다(#1380)
 
     assert observe(world, map_id, FakeGateway(diagnose=made_up)) == "invalid_claims"
 
@@ -254,6 +254,26 @@ def test_failed_verification_is_invalid_claims(world):
     assert run.verification["claims"]["removed"] == [{"id": "c1", "reason": "tool_mismatch"}]
     assert run.verification["failed_step"] == 7
     assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "decision": "suggest"}
+
+
+def test_button_basis_is_filled_from_this_run_when_the_model_claim_fails(world):
+    """모델 claim이 틀려 버튼 basis가 가리킬 곳이 없어도, 이번 관찰 기록(p1이나 get_readiness)으로 근거를 채워 버튼을 남긴다(#1380).
+    문장은 그 claim에 기대므로 빠진다."""
+    map_id, _, _ = _stall_map(world)
+
+    def wrong_claim(inp, call):
+        out = good_stall(inp, call)
+        return out.model_copy(update={"claims": [out.claims[0].model_copy(update={"value": False})]})
+
+    assert observe(world, map_id, FakeGateway(diagnose=wrong_claim)) == "suggested"
+
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
+    assert run.verification["basis_filled"] == 1 and run.verification["lines"]["kept"] == 0
+    sug = world.one(AgentSuggestion, map_id=map_id)
+    assert [a["type"] for a in sug.actions] == ["open_recommend"] and sug.advice == []
+    [filled] = sug.claims
+    assert filled["kind"] == "tool_result" and filled["id"] == "c2"
+    assert filled["call_id"] in {c["call_id"] for c in run.tool_calls}
 
 
 def test_fixed_gateway_reads_reasons_and_stays_silent(world):
@@ -344,21 +364,23 @@ def _model_runs_today(world, map_id):
 
 
 def test_model_use_counts_only_diagnosis(world):
-    """출발 임박이면 카테고리 공백이 1순위라 진단을 부르지 않는다 — 모델 유형 신호가 있어도 모델 사용 0회. 출발이
-    멀면 정체가 1순위라 진단 1회. 우선순위는 어느 쪽이든 세지 않는다."""
+    """모델 사용은 진단만 센다 — 우선순위(코드 규칙)는 어느 쪽이든 세지 않는다. 출발 임박이면 카테고리 공백이 1순위다(urgent_dday).
+    카페 공백은 반대 핀이 후보라 모델 진단이다(#1356, 6.10 — 그 전에는 템플릿이라 0회였다) — 진단 1회. 출발이 멀면 정체가
+    1순위라 진단 1회."""
     near = _gap_and_stall_map(world, days_to_start=2)
     far = _gap_and_stall_map(world, days_to_start=30)
     gateway = FakeGateway(diagnose=silent)
 
-    assert observe(world, near, gateway) == "suggested"
-    assert gateway.calls == []
+    assert observe(world, near, gateway) == "silent"
+    assert gateway.calls == ["diagnose"]
+    assert (gateway.inputs[0]["diagnosis"], gateway.inputs[0]["category"]) == ("category_gap", "카페")
     run = world.one(AgentRun, map_id=near, trigger="activity")
-    assert (run.used_model, run.priority["rule_hits"]) == (False, ["urgent_dday"])
-    assert world.one(AgentSuggestion, map_id=near).diagnosis == "category_gap"
-    assert _model_runs_today(world, near) == 0
+    assert (run.used_model, run.priority["rule_hits"]) == (True, ["urgent_dday"])
+    assert _model_runs_today(world, near) == 1
 
     assert observe(world, far, gateway) == "silent"
-    assert gateway.calls == ["diagnose"]
+    assert gateway.calls == ["diagnose", "diagnose"]
+    assert gateway.inputs[1]["diagnosis"] == "stall"
     run = world.one(AgentRun, map_id=far, trigger="activity")
     assert (run.used_model, run.priority["source"], run.priority["rule_hits"]) == (True, "rules", [])
     assert _model_runs_today(world, far) == 1

@@ -1,6 +1,6 @@
 """
 agent 모듈이 소유하는 테이블 8개 — docs/data-model.md agent 절과 docs/agent-v2.md 13절이 정본이다(마이그레이션 0029,
-agent_map_status와 agent_suggestions.facts는 0056, #1168).
+agent_map_status와 agent_suggestions.facts는 0056, #1168, agent_suggestions.attempt·followup_of·followup은 0062, #1346).
 
 - `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다(docs/architecture.md 1절, #760). `agent_run_advice.run_id`도
   recommend_runs.id지만 모듈 경계라 FK가 없다.
@@ -11,7 +11,7 @@ agent_map_status와 agent_suggestions.facts는 0056, #1168).
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,8 +24,9 @@ RUN_OUTCOMES = (
     "status_updated",   # 현황 문단을 저장함(#1168)
     "error",   # 관찰이나 조언이 예외로 끝남. outcome_detail은 단계와 예외 클래스 이름뿐(#677)
 )
-DIAGNOSES = ("stall", "split", "no_reaction", "category_gap")
+DIAGNOSES = ("stall", "split", "no_reaction", "category_gap", "schedule")   # schedule: 일정 점검(#1356)
 SUGGESTION_STATUSES = ("active", "accepted", "dismissed", "expired", "superseded")
+FOLLOWUP_STATUSES = ("watching", "resolved", "declared", "followed_up")   # agent_suggestions.followup.status(6.9, #1345)
 
 _EMPTY_JSON_LIST = text("'[]'::jsonb")
 
@@ -121,6 +122,13 @@ class AgentSuggestion(Base):
     decided_within_24h: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # 우리 데이터 확인(6.6, #1168). [{pin_id, fact_key}]만 — 라벨 값은 렌더 때 places에서 다시 읽는다
     facts: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=_EMPTY_JSON_LIST)
+    # 후속 관찰(6.9, #1345). attempt 0 첫 제안, 1 다음 방법, 2 충돌 선언. followup_of는 수락한 앞 제안(사슬)
+    attempt: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    followup_of: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_suggestions.id", ondelete="SET NULL"), nullable=True
+    )
+    # {status: FOLLOWUP_STATUSES, at, reason?}. reason은 resolved일 때 new_pin|confirmed|pin_removed|split_gone. 관찰과 수락이 쓴다
+    followup: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class AgentSuggestionView(Base):

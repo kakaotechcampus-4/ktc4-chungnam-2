@@ -77,7 +77,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
           showToast(`${map.title} 초대 링크를 복사했어요`)
         } catch (err) {
           console.error('[account] 링크 복사 실패', err)
-          showToast('링크를 복사하지 못했어요. 지도 안 프로필에서 공유해 주세요')
+          showToast('링크를 복사하지 못했어요. 지도에 들어가 지도 정보에서 공유해 보세요')
         }
       },
     })
@@ -114,7 +114,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
                   disabled={invite.isPending && invite.variables === map.id}
                   className="btn-outline btn-sm"
                 >
-                  {copiedId === map.id ? '✓ 복사됨' : <><Share size={14} aria-hidden="true" /> 링크 복사</>}
+                  {copiedId === map.id ? '복사됨' : <><Share size={14} aria-hidden="true" /> 링크 복사</>}
                 </button>
               </li>
             ))}

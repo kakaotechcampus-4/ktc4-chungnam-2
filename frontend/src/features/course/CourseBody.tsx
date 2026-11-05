@@ -1,14 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import { CHANGED, START_PARAM } from '@/features/agent/actions'
+import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
+import { useCreditsQuery } from '@/features/credits/queries'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
+import { showToast } from '@/features/shell/toast'
 import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import Notice from '@/ui/Notice'
@@ -39,21 +43,23 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   const points = pinPoints(all)
   // 코스는 위치를 아는 확정 장소가 2곳부터다 — 확정 탭 「동선 보기」와 같은 함수로 센다.
   const routable = routableCount(items)
+  // 요청 한 줄은 여기 둔다 — 결과의 「다시 점검」·「다시 짜기」로 입력에 돌아와도 쓴 글이 남는다.
+  const [text, setText] = useState('')
 
   if (viewing) {
     return (
       <div className="space-y-3">
-        {viewing.redirected && <Notice>이미 짜는 중인 코스가 있어서 그걸 보여 드려요</Notice>}
+        {viewing.redirected && <Notice>이미 짜고 있는 코스를 보여 드려요</Notice>}
         <CourseRun mapId={mapId} runId={viewing.runId} names={names} points={points} onRetry={() => close(mapId)} onClose={() => close(mapId)} />
       </div>
     )
   }
   if (shortlist.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
-  return <Entry mapId={mapId} routable={routable} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
+  return <Entry mapId={mapId} routable={routable} text={text} setText={setText} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
 }
 
 /** 코스는 위치를 아는 확정 장소가 2곳부터다 — 안내 화면 제목과 버튼 아래 이유가 같은 말이다. */
-const NOT_ENOUGH = '확정된 장소가 2곳부터 코스를 짤 수 있어요'
+const NOT_ENOUGH = '확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요'
 
 /** 위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다(예전에는 칩을 누르면 토스트로 알렸다). */
 function NotEnough({ mapId }: { mapId: string }) {
@@ -66,19 +72,37 @@ function NotEnough({ mapId }: { mapId: string }) {
         </Link>
       }
     >
-      마킹된 장소에서 「확정 리스트에 넣기」를 누르면 확정된 장소에 모여요
+      마킹된 장소에서 확정 리스트에 넣어 주세요
     </EmptyState>
   )
 }
 
-function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; onRun: (runId: string, fromInProgress?: boolean) => void }) {
-  const [text, setText] = useState('')
+function Entry({
+  mapId,
+  routable,
+  text,
+  setText,
+  onRun,
+}: {
+  mapId: string
+  routable: number
+  text: string
+  setText: (text: string) => void
+  onRun: (runId: string, fromInProgress?: boolean) => void
+}) {
   const queryClient = useQueryClient()
   const map = useMapQuery(mapId).data
   const latestQuery = useLatestCourseQuery(mapId)
   const latest = latestQuery.data
   const create = useCreateCourseMutation(mapId)
   const known = createErrorMessage(create.error)
+  // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧). 확인해야 요청한다.
+  const [asking, setAsking] = useState(false)
+  // 게스트는 버튼 자리가 카카오 안내라 묻지 않는다 — 요청 칸에서 Enter 를 눌러도 확인 창을 띄우지 않는다.
+  const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
+  useAgentStart(routable, () => {
+    if (!guest) setAsking(true)
+  })
 
   function submit() {
     create.mutate(text, {
@@ -105,7 +129,7 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (!create.isPending) submit()
+        if (!create.isPending && !guest) setAsking(true)
       }}
       className="space-y-4"
     >
@@ -118,7 +142,7 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
       )}
       <div className="space-y-1.5">
         <label htmlFor="course-request" className="text-sm font-bold text-ink-900">
-          요청 한 줄 <span className="font-normal text-ink-500">(선택)</span>
+          요청 사항 <span className="font-normal text-ink-500">(선택)</span>
         </label>
         <TextField id="course-request" value={text} onChange={setText} maxLength={REQUEST_MAX} placeholder="둘째 날은 실내 위주로" clearLabel="요청 지우기" />
       </div>
@@ -143,6 +167,42 @@ function Entry({ mapId, routable, onRun }: { mapId: string; routable: number; on
           </div>
         )}
       </div>
+      {asking && (
+        <CreditConfirm
+          feature="course"
+          title="코스를 짤까요?"
+          ok="코스 짜기"
+          onOk={() => {
+            setAsking(false)
+            submit()
+          }}
+          onCancel={() => setAsking(false)}
+        />
+      )}
     </form>
   )
+}
+
+/**
+ * 「핑고 AI 조언」 버튼(open_course)으로 들어오면 손으로 「코스 짜기」를 누를 때와 같이 한 번 시작한다(#1356) — 크레딧 확인 창부터다.
+ * 추천 탭의 같은 버튼(Readiness useAgentStart)과 같은 방식이다. 그새 확정 장소가 모자라졌으면 시작하지 않고 「상황이 바뀌었어요」.
+ */
+function useAgentStart(routable: number, ask: () => void) {
+  const [params, setParams] = useSearchParams()
+  const wanted = params.has(START_PARAM)
+  // 한 번만 시작한다 — ask 는 렌더마다 새로 만들어지고, 개발 모드(StrictMode)는 효과가 두 번 돈다.
+  const started = useRef(false)
+  useEffect(() => {
+    if (!wanted || started.current) return
+    started.current = true
+    setParams(
+      (p) => {
+        p.delete(START_PARAM)
+        return p
+      },
+      { replace: true },
+    )
+    if (routable < 2) showToast(CHANGED)
+    else ask()
+  }, [wanted, routable, ask, setParams])
 }

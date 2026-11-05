@@ -105,6 +105,7 @@
 ## 배포할 때마다
 
 - **스테이징**: develop에 머지하면 `images.yml`이 이미지를 만들고 스테이징에 올린다. 따로 할 일이 없다.
+  - 배포로 API·화면 컨테이너가 다시 뜨는 10~30초 동안 앞단 프록시(Caddy)는 연결을 최대 30초 다시 시도한다(`deploy/Caddyfile`의 `lb_try_duration 30s`, #1403). 그동안 요청은 느려질 뿐 502로 실패하지 않는다. 연결을 잡고 있던 SSE는 끊기고 FE가 마지막 `id`로 다시 연결한다. Caddy 설정은 `sync.sh`가 배포 때마다 다시 읽는다(`caddy reload`).
 - **운영(릴리스)**: 1) develop → main PR(멘토 리뷰)을 머지한다. 2) Actions의 `deploy`를 스테이징, `sha-<main 커밋 7자리>`로 돌린다. 3) Actions의 `staging-check`(QA 하네스를 서버의 스테이징 컨테이너 안에서 공개 주소로 돈다, 비밀은 서버 밖으로 나오지 않는다)를 그 커밋으로 돌린다. 매일 06:00에도 develop으로 돈다. 4) 통과하면 그 main 커밋에 `v0.x.y` 태그를 단다 → `images.yml`이 그 태그로 이미지를 만든다. 5) `deploy`를 운영, `v0.x.y`로 돌린다. 운영은 배포 직전에 DB를 덤프한다(`deploy/backup.sh`).
 - **롤백**: `deploy`를 운영, 이전 `v` 태그로 돌린다. 버그는 그 버전 위에서 고치지 않고 develop에서 고쳐 다음 버전으로 올린다(멘토). 건강 확인에 실패한 배포는 `deploy.sh`가 이전 태그로 되돌린다.
 - **환경 변수를 바꿀 때**: 서버의 `deploy/env/<환경>.env`를 고치고 그 환경을 다시 올린다. 새 키를 더한 PR은 `backend/.env.example`과 `deploy/env/*.env.example`을 같이 고친다. 값은 저장소나 채팅에 남기지 않는다.
@@ -141,12 +142,13 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 ### 장소 데이터 적재
 
-지금 데이터는 정예DB 공유본 2026-10-25판이다(서울, 그리고 v2 범위인 대전, 춘천, 광주, 대구, 부산). 폴더는 저장소 밖에 둔다. 명령은 `backend`에서 돌리고, 윈도는 먼저 `PYTHONUTF8=1`을 켠다. 공유본 안의 `README.md`가 명령의 정본이고, 아래는 그 순서를 옮긴 것이다.
+지금 데이터는 정예DB 최종본 2026-11-04판이다(`정예DB_final_2026-11-04_서울`·`_타지역` 두 묶음, 한 폴더에 합쳐 쓴다)(서울, 그리고 v2 범위인 대전, 춘천, 광주, 대구, 부산). 폴더는 저장소 밖에 둔다. 명령은 `backend`에서 돌리고, 윈도는 먼저 `PYTHONUTF8=1`을 켠다. 공유본 안의 `README.md`가 명령의 정본이고, 아래는 그 순서를 옮긴 것이다.
 
 1. 새 공유본으로 바꿀 때는 새 DB에서 시작한다. 로더는 파일에서 빠진 장소와 라벨을 지우지 않는다(공유본 `서울/README.md` "적재만으로는 지워지지 않는 것"). 새 DB를 만들고 `python -m alembic upgrade head`를 먼저 한다. **운영 DB는 예외다** — 사용자의 지도와 핀이 장소 id를 가리켜 새 DB로 갈아탈 수 없다. 운영에 새 판을 넣는 절차(제자리 갱신: 장소 id 유지, 출처 기록만 더하고, 빠진 정예는 추천 후보에서만 빠짐)는 #886이 끝나야 생긴다. 그 전에는 운영에 새 판을 넣지 않는다.
 2. 서울 정예: `restaurants`, `cafes`, `tourapi` 순서로 `--authoritative --file <장소> --labels <라벨>`. 관광지 라벨은 JSON이 아니라 CSV다. 음식점 다음에 카페를 넣어 두 파일에 겹치는 6곳을 카페로 둔다(#507).
 3. 서울 커버리지: `permit --encoding cp949`에 인허가 파일 3개를 `--file`로 한 번에 준다. 이어서 `restaurant-labels --file permit_cover_labels.json`.
 4. 지역마다(v2): 2와 3을 `--all-regions`를 붙여 같은 순서로 한다(`restaurant-labels`에는 붙이지 않는다).
+0. 시·도 경계(#1385): 장소보다 먼저 `boundaries --dir <폴더>/시도경계`. 통계청 2018 시·도 경계 17개 파일(`11.json` … `39.json`)이고 정본은 화면의 `frontend/src/features/map/regionBoundaries/`다. 데이터 폴더의 `시도경계/`에 그 파일을 **그대로** 복사해 둔다. 로더가 내용 해시를 `places/boundaries.py`의 기대값과 비교해 정본과 다른 파일이나 빠진 파일은 거절한다(17개를 모두 읽은 뒤에만 쓴다). 멱등이라 다시 돌려도 같은 코드는 덮어쓴다. `load-places.sh`는 데이터 폴더에 `시도경계/`가 없으면 경고만 하고 이 단계를 건너뛰며(장소 적재는 계속, 끝에 「경계 미적재」 안내, `DRY_RUN=1`도 같다), `boundaries`만 요청했는데 폴더가 없으면 중단한다. 이 표가 비어 있으면 `sido_at`은 가장 가까운 장소 주소로 시·도를 읽는 옛 방식으로 돌아가고(표가 있어도 경계에 안 드는 해안·섬·바다 점은 같은 방식으로 한 번 더 본다), `circle_outside_region`은 None(모름)이라 아무것도 막지 않는다. **이미 도는 DB(운영 포함)에는 마이그레이션(0064) 뒤에 `deploy/load-places.sh <환경> <데이터 폴더> boundaries`로 이 단계만 넣을 수 있다**(장소·라벨은 건드리지 않는다). 화면 경계 파일을 바꾸면 `places/boundaries.py`의 기대 해시를 같은 PR에서 고치고(`test_sido_boundaries_1385`가 어긋남을 잡는다), 서버 사본과 표를 다시 넣는다.
 5. 영업시간: 장소를 모두 넣은 뒤 `place-hours`. 서울은 음식점 라벨 JSON, 카페 라벨 JSON, 관광지 `tourist_seoul_closed_days.json`. 지역은 음식점, 카페, 관광지 라벨 JSON에 `--all-regions`.
 
 - 모든 명령은 `--dry-run`을 지원한다. 처음 한 명령은 dry-run으로 경로와 건수를 확인한다.
@@ -168,7 +170,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 | 작업 | 명령 | 주기 | 상태 |
 |---|---|---|---|
-| 정기 정리: 지도, 알림, 게스트, 모델 호출 사용량, 멱등 키, 탈퇴 계정, 이벤트, 삭제된 핀(#1063) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
+| 정기 정리: 지도, 알림, 게스트, 모델 호출 사용량, 멱등 키, 탈퇴 계정, 이벤트, 삭제된 핀(#1063) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징). 단계마다 비지 않으면 라운드·시간 상한까지 되풀이하고, 그래도 남으면 로그에 「정리 적체」(WARNING, 탈퇴 정리는 ERROR). 마지막 성공은 로그 「정리 마지막 성공」(#1213) | 서버 cron(`deploy/crontab`) |
 | 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
 | v2 계획 보조 에이전트 관찰 | cron이 `python -m agent.tick`을 부른다(#812). 지도마다 lease와 token으로 겹쳐 돌아도 안전하다 | 5분(`docs/agent-v2.md` 12.1) | 서버 cron |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |

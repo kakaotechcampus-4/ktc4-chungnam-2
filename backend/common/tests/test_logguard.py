@@ -18,6 +18,8 @@ FAKE_CODE = "synthetic-code-7Qx"
 FAKE_STATE = "synthetic-state-3Lm"
 FAKE_TOKEN = "synthetic-invite-token-9Zk"
 FAKE_QUERY = "synthetic-query-5Ab"
+FAKE_LAT = "11.111111"   # 좌표 모양의 합성 값(#1155) — 실제 지도 좌표가 아니다
+FAKE_LNG = "22.222222"
 FAKE_PARAM = "synthetic-sql-param-1Pw"
 
 
@@ -25,6 +27,7 @@ FAKE_PARAM = "synthetic-sql-param-1Pw"
     ("/auth/kakao/callback?code=C&state=S", "/auth/kakao/callback?[redacted]"),
     ("/places/search?q=Q&lat=37.5&lng=127.0", "/places/search?[redacted]"),
     ("/places/nearest?lat=37.5&lng=127.0", "/places/nearest?[redacted]"),
+    ("/places/external-search?q=Q", "/places/external-search?[redacted]"),   # #1155
     ("/invites/TOKEN", "/invites/{token}"),
     ("/invites/TOKEN/accept", "/invites/{token}/accept"),
     ("/api/invites/TOKEN?x=1", "/api/invites/{token}?[redacted]"),   # --root-path /api
@@ -61,6 +64,14 @@ def _app() -> FastAPI:
 
     @app.get("/places/search")
     def search():
+        return {"ok": True}
+
+    @app.get("/places/nearest")
+    def nearest():
+        return {"ok": True}
+
+    @app.get("/maps/{map_id}/ads")
+    def ads(map_id: str):
         return {"ok": True}
 
     @app.get("/boom")
@@ -101,7 +112,9 @@ def test_real_uvicorn_logs_hide_query_token_and_sql_params():
             time.sleep(0.05)
         base = f"http://127.0.0.1:{port}"
         for path in (f"/auth/kakao/callback?code={FAKE_CODE}&state={FAKE_STATE}", f"/invites/{FAKE_TOKEN}",
-                     f"/places/search?q={FAKE_QUERY}", "/boom"):
+                     f"/places/search?q={FAKE_QUERY}&lat={FAKE_LAT}&lng={FAKE_LNG}",
+                     f"/places/nearest?lat={FAKE_LAT}&lng={FAKE_LNG}&category=cafe",
+                     f"/maps/m1/ads?lat={FAKE_LAT}&lng={FAKE_LNG}&category=cafe", "/boom"):
             try:
                 urllib.request.urlopen(base + path, timeout=5).read()
             except urllib.error.HTTPError:
@@ -113,9 +126,11 @@ def test_real_uvicorn_logs_hide_query_token_and_sql_params():
             lg.removeHandler(collect)
 
     text = "\n".join(collect.lines)
-    for value in (FAKE_CODE, FAKE_STATE, FAKE_TOKEN, FAKE_QUERY, FAKE_PARAM):
+    for value in (FAKE_CODE, FAKE_STATE, FAKE_TOKEN, FAKE_QUERY, FAKE_PARAM, FAKE_LAT, FAKE_LNG):
         assert value not in text
     assert "GET /auth/kakao/callback?[redacted] HTTP/1.1" in text and "GET /invites/{token} HTTP/1.1" in text   # 템플릿·상태는 남는다
+    for path in ("/places/search", "/places/nearest", "/maps/m1/ads"):   # #1155: 검색어·좌표가 붙는 경로는 쿼리만 지워진다
+        assert f"GET {path}?[redacted] HTTP/1.1" in text
     assert " 500" in text and "DBAPIError" in text                                                            # 오류는 종류와 위치만 남는다
 
 

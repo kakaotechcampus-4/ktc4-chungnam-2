@@ -10,7 +10,7 @@ from agent.tests.snaps import NOW
 
 POLICY = core.parse_policy({
     "version": 2, "rules": {"urgent_dday": 3},
-    "weights": {"stall": 3, "split": 3, "category_gap": 2, "no_reaction": 1},
+    "weights": {"stall": 3, "split": 3, "category_gap": 2, "schedule": 2, "no_reaction": 1},
 })
 
 

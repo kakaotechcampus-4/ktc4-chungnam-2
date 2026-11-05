@@ -111,15 +111,39 @@ export function evidenceLimitMessage(err: unknown): string | null {
   return typeof limit === 'number' ? `직접 추가는 ${limit}개까지예요` : '직접 추가는 더 할 수 없어요'
 }
 
-/** docs/errors.md — run 시작·실행 실패 문구. */
+/**
+ * AI 추천이 찾는 범위 — 지도 가운데(보이는 가운데, #1331) 반경(m). 화면이 원을 그리고 확인 창에 알린다.
+ * 사용자 결정 2026-11-04(#1385): 모든 카테고리 3km. 서버는 아직 도보 15·25분(1.2·2km)으로 찾는다 —
+ * 서버가 반경을 응답으로 내리면 그 값을 쓴다(#733, 정책 값은 응답으로).
+ */
+export const RECOMMEND_RADIUS_M = 3000
+
+/** 확인 창에 보이는 범위 한 줄. */
+export const recommendAreaNote = () => `지도 가운데 반경 ${RECOMMEND_RADIUS_M / 1000}km 안에서 찾아요`
+
+/**
+ * 서버가 같은 요청을 아직 처리 중이다(409 `REQUEST_IN_PROGRESS`) — 기다려도 안 끝나 멈췄을 때. 실패가 아니다:
+ * 서버가 그 뒤에 추천을 끝내고 크레딧을 쓸 수 있다(#1386 리뷰).
+ */
+const IN_PROGRESS_MESSAGE = '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
+const inProgress = (err: unknown) => err instanceof ApiError && err.code === 'REQUEST_IN_PROGRESS'
+
+/**
+ * docs/errors.md — 「○○ 추천받기」(run 시작) 실패 문구. 사용자 결정(2026-11-04, #1385)으로 실패는 한 줄이다.
+ * 처리 중만 따로 말한다.
+ */
 export function runErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.code === 'NOT_READY') return '아직 의견이 달린 핀이 없어요. 핀에 ♥나 반대 의견을 남기면 다시 눌러 주세요'
-    if (err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 근거를 고치거나 직접 찍어 보세요'
-    if (err.code === 'RECOMMEND_FAILED') return '추천을 끝내지 못했어요. 남긴 의견은 그대로 있고 크레딧도 쓰지 않았어요. 잠시 뒤 다시 눌러 주세요'
-    if (err.code === 'REQUEST_IN_PROGRESS') return '아직 추천을 찾고 있어요. 잠시 뒤 다시 눌러 주세요'
-  }
-  return '추천을 시작하지 못했어요'
+  return inProgress(err) ? IN_PROGRESS_MESSAGE : '추천 장소를 찾지 못했어요'
+}
+
+/**
+ * 다시 추천·반경 넓히기·다시 시도 실패 문구(토스트). 이전 결과가 화면에 남아 있어 「찾지 못했어요」가 결과 옆에 서면 어색하다 —
+ * 예전 문구로 남긴다(#1386 리뷰, 사용자 결정 2026-11-05). 크레딧을 쓰지 않는 실행이라 크레딧 안내는 없다.
+ * 넓히기 상한(`WIDEN_LIMIT`)은 넓히기 버튼이 하는 일이라 다른 길(조건 고치기·직접 찍기)을 알린다.
+ */
+export function rerunErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
+  return inProgress(err) ? IN_PROGRESS_MESSAGE : '추천을 끝내지 못했어요. 잠시 뒤 다시 눌러 주세요'
 }
 
 export type FunnelRow = RecommendResultDto['funnel'][number]
@@ -175,7 +199,7 @@ const PROVIDER: Record<string, string> = { kakao: '카카오맵', naver: '네이
  */
 export function sourceLabel(e: AiEvidence): string {
   const p = e.place_source?.provider
-  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 DB'
+  return (p && PROVIDER[p]) ?? p ?? '핑고 장소 정보'
 }
 
 export type CheckView = { label: string; tone: 'pass' | 'check' | 'fail' }

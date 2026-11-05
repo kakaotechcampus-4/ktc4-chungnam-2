@@ -34,8 +34,9 @@ Category = Literal[categories.all_categories()]  # 스펙의 Category(common/cat
 
 # ---------- API 스키마 (docs/api-spec.yaml agent 태그) ----------
 
-AgentDiagnosis = Literal["stall", "split", "no_reaction", "category_gap"]
-ActionType = Literal["open_recommend", "show_pins", "search_place", "open_route", "widen_radius", "open_evidence"]
+AgentDiagnosis = Literal["stall", "split", "no_reaction", "category_gap", "schedule"]
+ActionType = Literal["open_recommend", "show_pins", "search_place", "open_route", "widen_radius", "open_evidence", "open_pin",
+                     "open_course"]   # open_pin·open_course는 #1356
 ConflictType = Literal["same_axis", "different_axes", "unclear"]
 RunAdviceKind = Literal["radius", "soft_relax", "vague_reason", "exhausted"]
 
@@ -122,6 +123,24 @@ class AgentFactLine(BaseModel):
         return data
 
 
+class WorkStep(BaseModel):
+    """작업 기록 한 줄(api-spec WorkStep, #1297). AI 코스(`course.api_schemas.CourseStep`)와 「핑고 AI 조언」(AgentSuggestion.steps)이
+    같이 쓴다. 문장은 서버 고정 문구와 숫자뿐이다."""
+    stage: str
+    role: Literal["해석", "지휘", "계산", "검증", "결정"]
+    by: Literal["ai", "code", "human"]   # 섞여 있으면 대표값(사람 > 모델 > 코드)이고 by_detail에 원문
+    by_detail: str | None = None         # 예: "모델 → 코드", "코드(목표 세우기 실패)". 단순하면 null
+    text: str
+
+
+class AgentTried(BaseModel):
+    """막힌 곳에서 이미 해 본 것 하나(api-spec AgentTried, #1345) — 수락한 앞 제안의 버튼. 누가 눌렀는지와 추천 결과(비공개 run)는
+    싣지 않는다."""
+    action_type: ActionType
+    label: str = Field(max_length=40)
+    accepted_at: datetime
+
+
 class AgentSuggestion(BaseModel):
     id: str
     diagnosis: AgentDiagnosis
@@ -131,8 +150,23 @@ class AgentSuggestion(BaseModel):
     advice: list[AgentAdviceLine]
     actions: list[AgentAction]
     facts: list[AgentFactLine] = Field(default_factory=list, max_length=2)   # 6.6. 사실 다툼이 아니면 빈 목록
+    steps: list[WorkStep] = Field(default_factory=list)   # 11.3 작업 기록(#1297). run 기록이 지워졌으면 빈 목록
+    attempt: int = Field(default=0, ge=0, le=2)   # 6.9(#1345). 0 첫 제안, 1 다음 방법, 2 충돌 선언(actions 빈 목록)
+    tried: list[AgentTried] = Field(default_factory=list, max_length=2)   # 이 막힌 곳에서 이미 해 본 것, 오래된 것부터
     created_at: datetime
     expires_at: datetime
+
+
+class AgentTracking(BaseModel):
+    """핑고가 지켜보는 막힌 곳 하나(api-spec AgentTracking, 6.9, #1345). text는 서버 고정 문구(core.TRACKING_TEXTS)와 카테고리
+    이름뿐이다. since는 watching이면 마지막 수락 시각, resolved면 풀린 것을 본 시각, declared면 충돌 선언 시각."""
+    suggestion_id: str
+    diagnosis: AgentDiagnosis
+    category: Category | None
+    status: Literal["watching", "resolved", "declared"]
+    text: str = Field(max_length=100)
+    since: datetime
+    tried: list[AgentTried]
 
 
 class AgentSummaryItem(BaseModel):
@@ -184,12 +218,20 @@ class AgentMapStatus(BaseModel):
     updated_at: datetime
 
 
+class AgentObservation(BaseModel):
+    """살펴본 상태(명세 21.3, #1297). notice는 core.observation_notice가 정한 서버 고정 문구다."""
+    checked_at: datetime | None = None   # agent_cursors.last_observed_at. 관찰한 적이 없으면 null
+    notice: str | None = Field(default=None, max_length=100)   # 지금 제안이 있거나 모드가 꺼져 있으면 null
+
+
 class AgentState(BaseModel):
     settings: AgentSettings
     active_suggestion: AgentSuggestion | None  # 모드가 꺼져 있거나 shadow면 null
     has_unseen: bool
     summaries: list[AgentSummary]
     status: AgentMapStatus | None = None  # 8.2. 아직 만든 적이 없으면 null
+    observation: AgentObservation = Field(default_factory=AgentObservation)   # 21.3(#1297)
+    tracking: list[AgentTracking] = Field(default_factory=list)   # 6.9(#1345). 최근 것부터, 모드가 꺼져 있으면 빈 목록
 
 
 class AgentAcceptRequest(BaseModel):

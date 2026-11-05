@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import select, update
 
 from auth.testing import ensure_users, session_cookie
-from maps.core import MAP_LIMIT
+from maps.core import MAP_LIMIT, TRIP_MAX_DAYS
 from maps.models import Map as MapRow
 from maps.models import Membership as MembershipRow
 
@@ -192,7 +192,7 @@ def test_get_map_with_region_round_trips(app_client):
 def test_list_maps_without_membership_is_empty(app_client):
     resp = app_client.get("/maps", cookies=_auth("user_lonely"))
     assert resp.status_code == 200
-    assert resp.json() == {"items": [], "limit": MAP_LIMIT}
+    assert resp.json() == {"items": [], "limit": MAP_LIMIT, "trip_max_days": TRIP_MAX_DAYS}
 
 
 def test_list_maps_limit_matches_the_map_limit_409_detail(app_client):

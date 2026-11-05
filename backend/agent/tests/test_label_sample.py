@@ -52,7 +52,7 @@ def test_export_masks_member_text_and_keeps_agent_words(world, factory, tmp_path
     with factory() as db:
         counts = label_sample.export(db, out, per_type=10, seed=0)
 
-    assert counts == {"stall": 0, "split": 1, "no_reaction": 1, "category_gap": 1}
+    assert counts == {"stall": 0, "split": 1, "no_reaction": 1, "category_gap": 1, "schedule": 0}
     raw = out.read_text(encoding="utf-8-sig")
     for secret in (AGAINST_TEXT, AGAINST_TEXT[:8], LIKE_TEXT, LIVE_QUERY, world.prefix):
         assert secret not in raw
@@ -73,7 +73,7 @@ def test_export_masks_member_text_and_keeps_agent_words(world, factory, tmp_path
     assert json.loads(split["신호 특징값"]) == signal["features"]
     assert rows["no_reaction"]["제안 문장"].splitlines() == [
         "아직 확인되지 않은 핀이 3개 있어요", "- 「[핀]」", "- 「[핀]」", "- 「[핀]」"]
-    assert rows["category_gap"]["버튼"] in ("카페 추천 받기 / 카페 핀 보기", "관광지 추천 받기 / 관광지 핀 보기")
+    assert rows["category_gap"]["버튼"] in ("카페 추천 받기", "관광지 추천 받기")
 
 
 def _sampled(diagnosis: str, i: int) -> label_sample.Sampled:

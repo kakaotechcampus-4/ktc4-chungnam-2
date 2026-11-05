@@ -95,7 +95,7 @@ describe('지도 정보 수정 — 빠지는 날의 일정 안내', () => {
 
     // 서버 일정이 화면에 도착한 뒤(받는 동안은 일정이 비어 있다) 빠지는 날을 만든다.
     fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-11' } })
-    expect(await screen.findByText('빠지는 날에 넣은 2곳은 일정에서 빠져 확정된 장소로 돌아가요')).toBeInTheDocument()
+    expect(await screen.findByText('기간이 줄어 빠지는 날에 넣은 2곳은 확정된 장소로 돌아가요')).toBeInTheDocument()
 
     // 하루 늘리기만 하면 빠지는 날이 없다.
     fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-09' } })

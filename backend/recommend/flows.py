@@ -59,7 +59,7 @@ from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
 from places import api as places_api
-from places.schemas import PlaceInfo
+from places.schemas import Area, PlaceInfo
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import EvidenceLine as EvidenceLineRow
@@ -77,6 +77,7 @@ class _LoadedCandidate:
     obj: Any
 
 
+CENTER_REGION_LABEL = "보던 곳 주변"   # 지도 중심(center)으로 만든 지역의 이름(#1331) — run 생성과 미리 돌려 보기가 같이 쓴다
 DEFAULT_REGION_LABEL = "기본 반경"   # 기본 지역의 이름 — run 생성과 미리 돌려 보기(#1180)가 같이 쓴다
 
 _require_publish = require("recommend.publish", loader=None)  # loader는 안 쓴다 — loaded를 직접 넘긴다
@@ -163,6 +164,7 @@ def list_runs(
         schemas.RunSummary(
             id=str(run.id), map_id=run.map_id, category=run.category, status=run.status, attempt_no=run.attempt_no,
             created_at=run.created_at, candidate_count=candidate_count, published_count=published_count,
+            **core.run_radius_fields(run),
         )
         for run, candidate_count, published_count in service.list_runs_for_requester(
             db, map_id=map_id, requested_by=requested_by, category=category, limit=limit,
@@ -170,40 +172,93 @@ def list_runs(
     ]
 
 
-def get_readiness(db: Session, *, map_id: str, place_search: PlaceSearchGateway) -> dict[str, dict]:
+def get_readiness(
+    db: Session, *, map_id: str, place_search: PlaceSearchGateway, center: tuple[float, float] | None = None,
+    radius_m: int | None = None,
+) -> dict[str, dict]:
     """GET /maps/{mapId}/recommend/readiness (5-4). 카테고리마다 ♥/🚫 의견이 달린 핀이 1곳 이상이면 열린다
-    (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다). 준비 판정에 정예 장소 수(curated_nearby, #798)를 덧붙인다."""
+    (#360 — 구성원 수와 무관, 혼자 쓰는 지도도 같다). 준비 판정에 정예 장소 수(curated_nearby, #798)를 덧붙인다.
+    `center`가 있으면 그 수를 run 생성의 center와 같은 원으로 센다(#1331). `radius_m`이 있으면 그 반경으로 센다(없으면 기본 3,000m, #1416).
+    응답의 `radius_m`은 기본값이고 `radius_min_m`·`radius_max_m`은 사용자가 고를 수 있는 범위다. ready·answered_count는 위치·반경과 무관하다."""
     result = {}
+    near_cache: dict = {}   # 같은 center의 근처 동네(검색 링크)를 세 분류가 한 번만 계산해 나눠 쓴다(#1353)
     for category in CATEGORIES:
         readiness = readiness_for_category(db, map_id=map_id, category=category)
-        result[category] = {**readiness, **_curated_nearby(db, map_id=map_id, category=category,
-                                                             readiness=readiness, place_search=place_search)}
+        result[category] = {
+            **readiness, "radius_m": core.DEFAULT_RADIUS_M, "radius_min_m": core.MIN_RADIUS_M, "radius_max_m": core.WIDEN_LIMIT_M,
+            **_curated_nearby(db, map_id=map_id, category=category, readiness=readiness, place_search=place_search, center=center,
+                              radius_m=radius_m, near_cache=near_cache),
+        }
     return result
 
 
 def _curated_nearby(
     db: Session, *, map_id: str, category: str, readiness: dict, place_search: PlaceSearchGateway,
+    center: tuple[float, float] | None = None, radius_m: int | None = None, near_cache: dict | None = None,
 ) -> dict:
-    """기본 지역(create_run과 같은 원)에서 반경 넓히기 상한 안의 정예 장소 수(#798). 풀 반경과 같은 배율이라
-    (core.pool_radius_factor, #792) 실행이 끝까지 넓혀도 볼 수 있는 장소 수다. 0이면 카카오맵 검색 링크를 함께 준다.
-    의견 핀이 없거나 좌표 있는 핀이 없어 기본 지역이 없으면 둘 다 없다."""
-    default_region = _default_circle_and_anchors(db, map_id=map_id, category=category) if readiness["answered_count"] else None
-    if default_region is None:
-        return {}
-    circle, anchors = default_region
-    pool_radius_m = round(circle.radius_m * core.pool_radius_factor(core.radius_walk_mins(category)[0], category))
+    """기본 지역(create_run과 같은 원)에서 정예 장소 수(#798). **radius_m(사용자가 고른 반경, #1416)이 있으면 그 반경 원 안의 수**다 —
+    화면의 숫자가 고른 반경을 따라야 해서 후보 풀을 넓히지 않는다. 없으면 지금처럼 반경 넓히기 상한(5,000m)까지 본다(풀 반경과 같은
+    배율, core.pool_radius_factor, #792 — 실행이 끝까지 넓혀도 볼 수 있는 장소 수). 0이면 카카오맵 검색 링크를 함께 준다(같은 수를 따른다).
+    center가 있으면 그 점 한 곳의 원이다(`_center_region`, create_run과 같은 함수, #1331). 없으면 의견 핀이 없거나 좌표 있는 핀이
+    없어 기본 지역이 없을 때 둘 다 없다."""
+    circle_radius_m = core.request_radius_m(radius_m)
+    if center is not None:
+        circle, anchors = _center_region(center, circle_radius_m)
+    else:
+        default_region = _default_circle_and_anchors(db, map_id=map_id, category=category, radius_m=circle_radius_m) if readiness["answered_count"] else None
+        if default_region is None:
+            return {}
+        circle, anchors = default_region
+    pool_radius_m = circle.radius_m if radius_m is not None else round(circle.radius_m * core.pool_radius_factor(round(circle.radius_m)))
     count = place_search.count_curated(
         category=category, circles=[Circle(anchor_lat=lat, anchor_lng=lng, radius_m=pool_radius_m) for lat, lng in anchors],
     )
     if count:
         return {"curated_nearby": count}
-    external = _external_search(db, map_id=map_id, category=category, place_search=place_search)
+    external = _external_search(db, map_id=map_id, category=category, place_search=place_search, center=center, near_cache=near_cache)
     return {"curated_nearby": 0, "external_search": external.model_dump()}
 
 
-def _search_area(db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway) -> str | None:
-    """카카오맵 검색어의 동네(#800 결정). ① 이 지도에서 그 카테고리 핀들의 장소 주소에 가장 많은 동네 — 기본 지역이 그
-    핀들의 중심이라 실제 후보가 있는 곳이다 ② 없으면(실시간 핀만 있는 등) 지도의 지역 이름 ③ 그것도 없으면 None(말만)."""
+def _area_near_center(db: Session, center: tuple[float, float]) -> str | None:
+    """중심 근처의 동네 이름(#1353) — 카카오를 부르지 않고 자체 DB만 읽는다(#53, 쿼터). 가까운 영업 중 자체 DB 장소(분류 무관)의 주소에서
+    `places_api.neighborhood`로 동네("해운대구 우동")를 뽑는다. 찾는 반경은 `sido_at`의 되돌아가기와 같은 10km(`places_api.SIDO_AT_RADIUS_M`)이고,
+    분류마다 반경 안 장소를 **한 번씩만** 읽어(3번) 거리순(→ place_id)으로 정렬한 뒤, 가장 가까운 곳부터 주소를 묶음으로 가져와
+    동네를 뽑을 수 있는 **첫 장소**를 쓴다 — 주소가 없는 장소가 아무리 많아도 10km 안의 유효한 다음 장소를 놓치지 않는다.
+    10km 안에 그런 장소가 없으면 `sido_at(center)`의 시·도 이름(경계 표가 있으면 경계가 먼저), 그것도 None이면 None이다."""
+    area = [Area(lat=center[0], lng=center[1], radius_m=places_api.SIDO_AT_RADIUS_M)]
+    refs = [ref for category in CATEGORIES for ref in places_api.search_nearby_own(category, area, db=db)]
+    refs.sort(key=lambda ref: (geo.haversine_distance_m(center[0], center[1], ref.lat, ref.lng), ref.place_id))
+    for start in range(0, len(refs), _AREA_ADDRESS_CHUNK):
+        chunk = refs[start:start + _AREA_ADDRESS_CHUNK]
+        infos = places_api.get_places([ref.place_id for ref in chunk], db=db)
+        for ref in chunk:   # 가까운 순서 그대로 — 주소에서 동네를 못 뽑는 곳은 건너뛴다
+            info = infos.get(ref.place_id)
+            name = places_api.neighborhood(info.address) if info else None
+            if name:
+                return name
+    return places_api.sido_at(*center, db=db)
+
+
+_AREA_ADDRESS_CHUNK = 50   # 가까운 순서로 주소를 읽는 묶음 크기 — 보통 첫 묶음에서 끝나고, 앞쪽이 모두 주소가 없을 때만 다음 묶음을 읽는다
+
+
+def _search_area(
+    db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway, center: tuple[float, float] | None = None,
+    near_cache: dict | None = None,
+) -> str | None:
+    """카카오맵 검색어의 동네(#800 결정). **center가 있으면 그 근처 동네**(#1353, `_area_near_center`)가 먼저다 — 보고 있는 곳의 동네여야 해서다.
+    없거나 근처를 모르면 ① 이 지도에서 그 카테고리 핀들의 장소 주소에 가장 많은 동네 — 기본 지역이 그
+    핀들의 중심이라 실제 후보가 있는 곳이다 ② 없으면(실시간 핀만 있는 등) 지도의 지역 이름 ③ 그것도 없으면 None(말만).
+    near_cache를 주면 같은 center의 근처 동네를 한 번만 계산한다 — 동네는 분류와 상관없어서 readiness가 세 분류에 같은 값을 쓴다."""
+    if center is not None:
+        if near_cache is not None and center in near_cache:
+            near = near_cache[center]
+        else:
+            near = _area_near_center(db, center)
+            if near_cache is not None:
+                near_cache[center] = near
+        if near:
+            return near
     places = place_search.get_places(sorted(pins_api.list_place_ids_on_map(db, map_id=map_id)))
     area = core.most_common_area(
         places_api.neighborhood(info.address) for info in places.values() if info.category == category
@@ -212,16 +267,19 @@ def _search_area(db: Session, *, map_id: str, category: str, place_search: Place
 
 
 def _external_search(
-    db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway,
+    db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway, center: tuple[float, float] | None = None,
+    near_cache: dict | None = None,
 ) -> schemas.ExternalSearch:
-    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」) — 검색어는 `{동네} {카테고리 말}` 하나다(#904)."""
-    area = _search_area(db, map_id=map_id, category=category, place_search=place_search)
+    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」) — 검색어는 `{동네} {카테고리 말}` 하나다(#904). center가 있으면
+    그 근처 동네다(#1353)."""
+    area = _search_area(db, map_id=map_id, category=category, place_search=place_search, center=center, near_cache=near_cache)
     query = core.external_search_query(area, category)
     return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query))
 
 
 def _run_external_search(db: Session, run: RecommendRun, place_search: PlaceSearchGateway) -> schemas.ExternalSearch:
-    return _external_search(db, map_id=run.map_id, category=run.category, place_search=place_search)
+    center = (run.origin_lat, run.origin_lng) if run.origin_lat is not None and run.origin_lng is not None else None   # 요청한 중심(#1331)
+    return _external_search(db, map_id=run.map_id, category=run.category, place_search=place_search, center=center)
 
 
 def readiness_for_category(db: Session, *, map_id: str, category: str) -> dict:
@@ -286,7 +344,7 @@ def _assembled_reaction_lines(raw_reactions: list[dict], planned_groups: list[li
 
 
 def _default_circle_and_anchors(
-    db: Session, *, map_id: str, category: str,
+    db: Session, *, map_id: str, category: str, radius_m: int = core.DEFAULT_RADIUS_M,
 ) -> tuple[Circle, list[tuple[float, float]]] | None:
     """같은 카테고리 핀 좌표와 기본 반경을 읽는다. 반환 중심은 지역 묶음을 만들기 위한 대표값이고,
     실제 후보 조회는 각 핀을 중심으로 한다(#1252). 좌표가 없으면 None이다."""
@@ -296,10 +354,13 @@ def _default_circle_and_anchors(
     anchors = [(lat, lng) for _, lat, lng in coordinates]
     center_lat = sum(lat for lat, _ in anchors) / len(anchors)
     center_lng = sum(lng for _, lng in anchors) / len(anchors)
-    # 기본 반경 = 카테고리의 기본 도보 분(core.radius_walk_mins, #1055)을 common.geo 보정계수로 환산한 거리
-    radius_m = core.radius_m_for_walk_min(core.radius_walk_mins(category)[0])
-    circle = Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=radius_m)
+    circle = Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=radius_m)   # 반경은 모든 카테고리 같다(#1385), 기본 3,000m
     return circle, anchors
+
+
+def _center_region(center: tuple[float, float], radius_m: int = core.DEFAULT_RADIUS_M) -> tuple[Circle, list[tuple[float, float]]]:
+    """지도 중심 한 점의 원 하나(#1331). 반경은 사용자가 고른 값이고 없으면 기본 3,000m(#1416). run 생성·readiness·미리 돌려 보기가 같은 함수로 지역을 만든다."""
+    return Circle(*center, radius_m), [center]
 
 
 def _region_data(circle: Circle, *, label: str, confirmed: bool, anchor_points: list[tuple[float, float]]) -> dict:
@@ -328,8 +389,9 @@ def _clustered_regions(circle: Circle, anchors: Sequence[tuple[float, float]]) -
 
 def create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
-    idempotency_key: str | None = None, execute: bool = False,
+    idempotency_key: str | None = None, execute: bool = False, center: tuple[float, float] | None = None,
     place_search: PlaceSearchGateway | None = None, place_facts: PlaceFactsGateway | None = None,
+    radius_m: int | None = None,
 ) -> RecommendRun:
     """POST /maps/{mapId}/runs. `Idempotency-Key`가 없으면 `_create_run` 그대로(구FE). 있으면 같은 키의 연타·재전송을
     한 번으로 묶는다(#811, docs/data-model.md idempotency_keys):
@@ -341,13 +403,18 @@ def create_run(
        아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS, 처리 기한(90초)이 지났으면 이어받는다.
     3) run_id 연결은 run을 만든 트랜잭션의 **맨 끝**에서 한다 — 자기 세대일 때만 성공하고(늦게 끝난 쪽은 거절),
        실패 정리가 이 행의 잠금과 부딪치지 않는다. run을 못 만들면 자기 세대의 예약만 지워 재시도를 허용한다."""
+    # center 검사는 키를 예약하기 전에 한다(#1331) — 예약을 만들었다 지우는 사이에 같은 키가 409 REQUEST_IN_PROGRESS를 받지 않게.
+    # 같은 키의 기록이 이미 있으면(center가 없던 때 만든 옛 키) 통과시켜 reuse가 그 run을 돌려준다. 기록이 없을 때만 422다.
+    if center is None and (idempotency_key is None or not service.idempotency_key_exists(
+            db, requested_by=requested_by, key=idempotency_key)):
+        raise AppError("VALIDATION_ERROR", "center가 필요합니다", detail={"field": "center"})
     traces: list[uuid.UUID] = []   # ②를 부른 trace — run이 저장되지 못하면 버려진 비용으로 표시한다(#848)
 
     def create() -> RecommendRun:
         with llm_api.plan_deadline():   # create 시작에서 한 번 정한 deadline — ② 묶음 호출 전체가 30초 안에 끝난다(#848)
             run = _create_run(
                 db, map_id=map_id, category=category, requested_by=requested_by, evidence_planner=evidence_planner,
-                traces=traces,
+                traces=traces, center=center, radius_m=core.request_radius_m(radius_m),
             )
         if execute:   # #845, #847 — 근거 조립 뒤 같은 요청·같은 트랜잭션에서 첫 검색까지. 어디서 실패하든 run·횟수·크레딧 차감이 함께 되돌아간다
             assert place_search is not None and place_facts is not None   # 호출부(라우터) 계약
@@ -361,7 +428,7 @@ def create_run(
         except BaseException:
             llm_api.mark_discarded(traces)
             raise
-    request_hash = core.idempotency_request_hash(map_id, category, execute)
+    request_hash = core.idempotency_request_hash(map_id, category, execute, center, radius_m)
     with Session(bind=db.get_bind()) as reservation_db:   # 요청 세션과 다른 연결 — 요청의 커밋·롤백과 무관하게 바로 보인다
         reservation = service.reserve_idempotency_key(
             reservation_db, requested_by=requested_by, key=idempotency_key, request_hash=request_hash,
@@ -388,7 +455,7 @@ def create_run(
 
 def _create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
-    traces: list[uuid.UUID] | None = None,
+    traces: list[uuid.UUID] | None = None, center: tuple[float, float] | None = None, radius_m: int = core.DEFAULT_RADIUS_M,
 ) -> RecommendRun:
     """run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 크레딧 확인(읽기, 게스트 403·부족 402, #432)
@@ -397,9 +464,16 @@ def _create_run(
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다. 뒤에서 실패해도 차감이 run과 함께 롤백되므로
     실패에는 환불 경로가 없다. 환불은 한 곳뿐이다 — 그 run의 **첫 실행이 후보 0곳**일 때 `_search_and_store`가 같은 트랜잭션에서
     돌려준다(#1015, docs/credits-reviews.md 3.3). `Idempotency-Key` 재전송은 이 함수를 다시 타지 않는다."""
+    if center is None:   # 지도 중심이 앵커다(#1331) — 핀으로 지역을 만드는 길은 run 생성에 없다(readiness·미리 돌려 보기만 쓴다)
+        raise AppError("VALIDATION_ERROR", "center가 필요합니다", detail={"field": "center"})
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
+    if places_api.sido_at(*center, db=db) is None:
+        raise AppError("VALIDATION_ERROR")
+    region_label = _outside_trip_region_label(db, map_id=map_id, center=center, radius_m=radius_m)   # 크레딧·모델 호출 전에 막는다(#1385)
+    if region_label is not None:
+        raise AppError("OUTSIDE_TRIP_REGION", detail={"region_label": region_label})
     credits_api.check_can_spend(db, user_id=requested_by, feature="recommend_run")   # 모델(②) 전에 막는다(#949)
 
     raw_reactions = pins_api.list_reasoned_reactions(db, map_id=map_id, category=category)
@@ -417,20 +491,16 @@ def _create_run(
     # 번호를 읽고 INSERT하기까지는 (지도, 요청자) 횟수 잠금 안에서 끝낸다 — 동시 요청이 같은 attempt_no를 쓰지 못하게(#811).
     service.lock_requester_attempts(db, map_id=map_id, requested_by=requested_by)
     current_max = service.max_attempt_no_for_requester(db, map_id=map_id, requested_by=requested_by)
-    run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1)
+    run = service.create_run(db, map_id=map_id, category=category, requested_by=requested_by, attempt_no=current_max + 1,
+                             radius_m=radius_m)
     # 모델을 기다리는 사이 잔액이 줄었으면 여기서 402다(모델은 이미 불렸다 — 드문 경합으로 받아들인다, credits.api.charge)
+    run.origin_lat, run.origin_lng = center
     credits_api.charge(db, user_id=requested_by, feature="recommend_run", run_id=str(run.id))
     service.add_reaction_evidence(db, run_id=run.id, lines=merged)
 
-    default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
-    if default_region is None:
-        raise AppError("NOT_READY")
-    circle, anchors = default_region
-    groups = _clustered_regions(circle, anchors)
+    circle, anchors = _center_region(center, radius_m)
     service.create_regions(db, run_id=run.id, regions_data=[
-        _region_data(group_circle, label=DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
-                     confirmed=True, anchor_points=group_anchors)
-        for i, (group_circle, group_anchors) in enumerate(groups)
+        _region_data(circle, label=CENTER_REGION_LABEL, confirmed=True, anchor_points=anchors),
     ])
 
     return run
@@ -648,7 +718,7 @@ def _pipeline_inputs(
     """저장된 지역과 활성 근거 줄을 _run_pipeline 입력으로 읽는다. 실행(execute/widen/retry)은 그대로 쓰고,
     시뮬레이션(#585)만 반경 배율과 비활성으로 볼 줄을 준다 — 사본과 거른 목록이라 행은 바뀌지 않는다.
     풀 반경은 배율과 무관하게 저장된 반경 × 넓히기 상한 배율이라 시뮬레이션도 실행과 같은 풀을 쓴다(#792)."""
-    pool_factor = core.pool_radius_factor(run.default_radius_walk_min, run.category)
+    pool_factor = core.pool_radius_factor(core.run_radius_m(run))
     regions = [
         _PipelineRegion(
             id=r.id, label=r.label, center_lat=r.center_lat, center_lng=r.center_lng,
@@ -679,6 +749,29 @@ def _within_trip_sido(
     if trip_sido is None:
         return places
     return [p for p in places if place_sido.get(p.place_id) in (None, trip_sido)]
+
+
+def _circle_outside_region(db: Session, *, center: tuple[float, float], radius_m: float, sido: str) -> bool | None:
+    """원 전체가 그 시·도 밖이면 True, 걸치기만 하면 False, 경계를 모르면 None — places가 시·도 경계 데이터로 정한다(#1385).
+    places.api.circle_outside_region을 부르는 자리 한 곳이다. 경계만 보므로 원이 경계에 닿기만 해도 False(막지 않음)다."""
+    return places_api.circle_outside_region(*center, radius_m, sido, db=db)
+
+
+def _outside_trip_region_label(
+    db: Session, *, map_id: str, center: tuple[float, float], radius_m: int = core.DEFAULT_RADIUS_M,
+) -> str | None:
+    """요청 center 기준 요청 반경(기본 3km, 사용자가 고른 값이면 그 반경, #1416) 원 전체가 이 지도의 여행 지역(시·도) 밖이면 여행 지역 이름, 아니면 None(#1385).
+    걸치기만 하면 막지 않고, 지도에 여행 지역이 없거나 그 시·도 또는 경계를 모르면 막지 않는다(모름을 실격으로 읽지 않는다).
+    여행 지역의 시·도는 후보를 시·도로 거르는 곳(`_within_trip_sido`)과 같은 값이다 — 지도 여행 지역 중심을 places.api.sido_at에 넣는다."""
+    trip_center = maps_api.get_map_region_center(db, map_id)
+    if trip_center is None:
+        return None
+    trip_sido = places_api.sido_at(*trip_center, db=db)
+    if trip_sido is None:
+        return None
+    if _circle_outside_region(db, center=center, radius_m=radius_m, sido=trip_sido) is not True:
+        return None
+    return maps_api.get_map_region_label(db, map_id) or trip_sido
 
 
 def _out_of_season_keys(db: Session, map_id: str) -> frozenset[str]:
@@ -1029,8 +1122,8 @@ def execute_run(
 def widen_run(
     db: Session, *, run_id: str, place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
 ) -> RecommendRun:
-    """POST /runs/{runId}/widen (5-6-1, 가드레일4) — 기본값 원을 +5분(도보) 넓힌다. 카테고리 상한(core.radius_walk_mins)에
-    이미 닿았으면 409 WIDEN_LIMIT(core.next_default_radius_walk_min). v1은 사람이 명시한 원과
+    """POST /runs/{runId}/widen (5-6-1, 가드레일4) — 기본값 원을 +1,000m 넓힌다(#1385). 상한(5,000m)에
+    이미 닿았으면 409 WIDEN_LIMIT(core.widened_radius_m). v1은 사람이 명시한 원과
     기본값 원을 구분할 방법이 없어 — 반경 사유가 구조화되기 전이라 명시적 원이 저장되지 않는다 —
     저장된 원 전부가 기본값 원이다. 명시적 원이 생기면 그 원은 여기서 건드리지 않도록 좁혀야
     한다(docs/constraints.md "반경 넓히기 상수", #274)."""
@@ -1039,13 +1132,12 @@ def widen_run(
     regions = service.list_regions(db, run_id)
     if not regions:
         raise AppError("NOT_READY")
-    next_walk_min = core.next_default_radius_walk_min(run.default_radius_walk_min, run.category)  # 409 WIDEN_LIMIT
-    radius_m = core.radius_m_for_walk_min(next_walk_min)
+    radius_m = core.widened_radius_m(core.run_radius_m(run))   # 409 WIDEN_LIMIT
     for region in regions:
         anchors = region.anchor_points or [[region.center_lat, region.center_lng]]
         widened = [Circle(lat, lng, radius_m) for lat, lng in anchors]
         service.update_region_radius(db, region, radius_m=radius_m, signature=core.region_signature(widened))
-    service.set_default_radius_walk_min(db, run, next_walk_min)
+    service.set_default_radius_m(db, run, radius_m)
 
     service.set_run_status(db, run, "executing")
     return _search_and_store(db, run, place_search=place_search, place_facts=place_facts)
@@ -1083,7 +1175,7 @@ def simulate_filter(
     if radius_factor is not None and not radius_factor > 0:
         raise ValueError(f"radius_factor는 0보다 커야 한다: {radius_factor}")
     run = service.get_run_or_404(db, run_id)
-    if radius_factor is not None and radius_factor > core.pool_radius_factor(run.default_radius_walk_min, run.category):
+    if radius_factor is not None and radius_factor > core.pool_radius_factor(core.run_radius_m(run)):
         raise ValueError(f"radius_factor가 넓히기 상한을 넘는다: {radius_factor}")
     try:
         disabled = frozenset(str(uuid.UUID(str(line_id))) for line_id in disable_line_ids)
@@ -1137,6 +1229,7 @@ def _all_labels_true(labels: Sequence, fact_keys: Sequence[str]) -> bool:
 def preview_filter(
     db: Session, *, map_id: str, category: str, text_lines: Mapping[str, Sequence[Mapping[str, Any]]],
     with_keys: Sequence[str] = (), place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+    center: tuple[float, float] | None = None,
 ) -> dict:
     """미리 돌려 보기(docs/agent-v2.md 6.7, #1180) — 지금 「추천 받기」를 누르면 실격 조건까지 남는 곳의 수. run을 만들 때와
     같은 함수로 줄을 조립하고(_assembled_reaction_lines: 칩 줄, #422·#617 내리기) 같은 지역(_default_circle_and_anchors)과 같은
@@ -1156,14 +1249,17 @@ def preview_filter(
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
-    default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
-    if default_region is None:
-        raise AppError("NOT_READY")
-    circle, anchors = default_region
-    pool_factor = core.pool_radius_factor(core.radius_walk_mins(category)[0], category)   # 새 run의 기본 반경과 같다
-    groups = _clustered_regions(circle, anchors)
+    if center is not None:   # run 생성과 같은 중심 한 점의 원(#1331). 없으면 그 카테고리 핀들이 앵커다
+        groups = [_center_region(center)]
+    else:
+        default_region = _default_circle_and_anchors(db, map_id=map_id, category=category)
+        if default_region is None:
+            raise AppError("NOT_READY")
+        circle, anchors = default_region
+        groups = _clustered_regions(circle, anchors)
+    pool_factor = core.pool_radius_factor(core.DEFAULT_RADIUS_M)   # 새 run의 기본 반경과 같다
     regions = [
-        _PipelineRegion(id=None, label=DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
+        _PipelineRegion(id=None, label=CENTER_REGION_LABEL if center is not None else DEFAULT_REGION_LABEL if len(groups) == 1 else f"{DEFAULT_REGION_LABEL} {i + 1:03d}",
                         center_lat=c.anchor_lat, center_lng=c.anchor_lng, radius_m=c.radius_m,
                         pool_radius_m=round(c.radius_m * pool_factor), anchor_points=tuple(group_anchors))
         for i, (c, group_anchors) in enumerate(groups)

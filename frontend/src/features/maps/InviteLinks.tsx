@@ -33,7 +33,7 @@ export default function InviteLinks({ mapId, onRevoked }: { mapId: string; onRev
                   onClick={() =>
                     revoke.mutate(invite.token, {
                       onSuccess: () => {
-                        showToast('초대 링크를 껐어요. 이 링크로는 더 들어올 수 없어요')
+                        showToast('초대 링크를 껐어요')
                         onRevoked(invite.token)
                       },
                       onError: () => showToast('초대 링크를 끄지 못했어요'),

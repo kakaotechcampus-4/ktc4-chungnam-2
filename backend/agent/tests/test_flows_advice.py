@@ -114,11 +114,12 @@ def said(advice) -> list[str]:
     return [line.segments[0].text for line in advice.advice]
 
 
-def make_run(world, map_id, *, execute=True, walk=15, requester="u1", vague=True) -> str:
+def make_run(world, map_id, *, execute=True, radius_m=3000, requester="u1", vague=True) -> str:
     """조언 대상 판. execute=False면 근거 수집 중인 run이다. 이미 제안한 곳은 proposed로 시작하는 장소 전부다."""
     with world.factory() as db:
         run = RecommendRun(map_id=map_id, category="카페", requested_by=world.uid(requester),
-                           status="collecting_evidence", default_radius_walk_min=walk)
+                           status="collecting_evidence", default_radius_m=radius_m,
+                           default_radius_walk_min=round(radius_m / 80))
         db.add(run)
         db.flush()
         db.add(Region(run_id=run.id, signature="sig", label="기본 반경", center_lat=35.0, center_lng=129.0,
@@ -210,12 +211,12 @@ def test_radius_says_what_one_press_of_the_button_gives(world, map_id, places):
     ]
     [row] = advice_runs(world, map_id)
     [sim] = [c for c in row.tool_calls if c["name"] == "simulate_filter"]
-    assert sim["args"] == {"radius_factor": 20 / 15, "disable_line_ids": []}   # 버튼 한 번의 배율 하나만
+    assert sim["args"] == {"radius_factor": 4000 / 3000, "disable_line_ids": []}   # 버튼 한 번의 배율 하나만
 
 
 def test_no_widen_when_the_run_is_already_at_the_limit(world, map_id, places):
     places.places = RADIUS
-    run_id = make_run(world, map_id, walk=30, vague=False)
+    run_id = make_run(world, map_id, radius_m=5000, vague=False)
 
     assert advise(world, run_id) is None
     assert advice_rows(world, run_id)[0].kind is None

@@ -75,7 +75,7 @@ FACTS = {
 
 def _scenario(db_session):
     """실격 두 줄(남의 붐빔, 내 「좁아요」), 비활성 선호 한 줄, 이미 제안한 곳, 요청자가 🚫한 핀이 있는 run."""
-    run = _run(db_session)
+    run = _run(db_session, default_radius_m=1000, default_radius_walk_min=12)   # 지역 반경과 같은 현재 반경이라 넓히기 상한 배율이 5배다
     db_session.add(Region(
         run_id=run.id, signature="sig", label="기본 반경", center_lat=35.0, center_lng=129.0,
         radius_m=1000, anchor_points=[[35.0, 129.0]], confirmed=True,
@@ -362,7 +362,7 @@ def test_get_run_meta_tells_who_where_and_how_far(db_session):
     assert before == {
         "run_id": str(run.id), "map_id": "map_1", "category": "카페", "requested_by": "user_1",
         "status": "collecting_evidence", "result_count": 0, "created_at": run.created_at,
-        "default_radius_walk_min": 15, "widen_limit_walk_min": 30, "widen_step_walk_min": 5, "attempt_no": 1,
+        "default_radius_m": 1000, "widen_limit_m": 5000, "widen_step_m": 1000, "default_radius_walk_min": 12, "attempt_no": 1,
     }
     assert (after["status"], after["result_count"]) == ("done", 2)
 
@@ -466,7 +466,7 @@ def test_simulate_rejects_a_line_of_another_run_and_a_factor_out_of_range(db_ses
         with pytest.raises(AppError) as exc:
             api.simulate_filter(db_session, run_id=str(run.id), disable_line_ids=bad_ids, **_gateways())
         assert exc.value.code == "NOT_FOUND"
-    for factor in (0, -1.0, 2.5):   # 2.5는 넓히기 상한(30분 / 15분 = 2배) 밖이다(#792)
+    for factor in (0, -1.0, 5.5):   # 5.5는 넓히기 상한(5,000m / 1,000m = 5배) 밖이다(#792)
         with pytest.raises(ValueError):
             api.simulate_filter(db_session, run_id=str(run.id), radius_factor=factor, **_gateways())
 

@@ -106,7 +106,7 @@ export function agentEventHandlers(queryClient: QueryClient, mapId: string): Rec
 
 /**
  * 추천 막힘 조언(agent-v2 16.5). run 당 한 번 만들어 저장되니 다시 받지 않는다. 대상이 아니면 204(null).
- * 실패(500)는 다음 요청이 다시 만든다 — 조언 자리를 숨기고 기록만 남긴다.
+ * 실패(500)는 다음 요청이 다시 만든다 — 화면은 「조언을 불러오지 못했어요」 한 줄을 보인다(16.5).
  */
 export function useRunAdviceQuery(runId: string) {
   return useQuery({

@@ -50,7 +50,7 @@ export function SearchResultsHeader({ count }: { count: number | null }) {
 
 /** 검색 결과 목록·장소 상세(Figma 4절). 결과 0개는 0개로 보여준다(가드레일 2). */
 export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] }) {
-  const { source, near, selectedId, select, submit, close } = useSearchStore()
+  const { source, near, selectedId, group, select, showGroup, submit, close } = useSearchStore()
   const search = useSourcePlacesQuery(source, near)
   const create = useCreatePinMutation(mapId)
   const { selectPin } = usePinSelection()
@@ -58,6 +58,8 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   const link = search.data?.link
   const query = source?.kind === 'name' ? source.query : null
   const selected = results.find((r) => r.id === selectedId)
+  // 지도에서 겹쳐 묶인 「N곳」 핀을 눌렀으면 그곳들만 보인다(#1174). 번호는 전체 결과의 번호 그대로다.
+  const listed = results.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => !group || group.includes(r.id))
 
   function pinIt(r: SearchResultView) {
     const req = searchPinRequest(r.dto)
@@ -136,7 +138,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     return (
       <EmptyState
         mood="sorry"
-        title="우리 장소 데이터에서 찾지 못했어요"
+        title="링크의 장소를 찾지 못했어요"
         action={
           hint ? (
             <button type="button" onClick={() => submit(hint, near)} className="btn-outline btn-md">
@@ -169,11 +171,11 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (selected) {
     return (
       <div className="space-y-3">
-        <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => select(null)} />
+        <PanelBackLink label={group ? `이 자리의 장소 ${listed.length}곳` : `검색 결과 ${results.length}곳`} onBack={() => select(null)} />
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
-          {selected.far && <p className="text-body font-semibold text-warn-text">지금 보는 곳에서 멀어요 — 같은 이름의 다른 지역 가게일 수 있어요</p>}
+          {selected.far && <p className="text-body font-semibold text-warn-text">지금 보는 곳에서 멀어요. 다른 지역의 같은 이름 가게일 수 있어요</p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
@@ -196,30 +198,33 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   }
 
   return (
-    <ol className="space-y-2">
-      {results.map((r, i) => (
-        <li
-          key={r.id}
-          className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
-        >
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
-            {i + 1}
-          </span>
-          <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
-            <p className="truncate font-bold text-ink-900">{r.name}</p>
-            <p className="truncate text-xs text-ink-500">{r.meta}</p>
-            {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
-          </button>
-          {r.canLeaveLive && !r.alreadyPinned ? (
-            <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
-              핀 남기기
+    <div className="space-y-3">
+      {group && <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => showGroup(null)} />}
+      <ol className="space-y-2">
+        {listed.map(({ r, n }) => (
+          <li
+            key={r.id}
+            className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
+          >
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
+              {n}
+            </span>
+            <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
+              <p className="truncate font-bold text-ink-900">{r.name}</p>
+              <p className="truncate text-xs text-ink-500">{r.meta}</p>
+              {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
             </button>
-          ) : (
-            <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
-          )}
-        </li>
-      ))}
-    </ol>
+            {r.canLeaveLive && !r.alreadyPinned ? (
+              <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
+                핀 남기기
+              </button>
+            ) : (
+              <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
   )
 }
 
@@ -237,7 +242,7 @@ function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; f
         <div className="flex flex-col items-center gap-2">
           {fixed ? (
             <button type="button" onClick={onRetry} className="btn-primary btn-md">
-              「{fixed}」 찾아보기
+              ‘{fixed}’ 찾아보기
             </button>
           ) : (
             <SearchAgainButton onClose={onClose} label="검색어 지우고 다시 찾기" />
@@ -246,7 +251,7 @@ function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; f
         </div>
       }
     >
-      {fixed ? `혹시 「${fixed}」${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
+      {fixed ? `혹시 ‘${fixed}’${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
     </EmptyState>
   )
 }
@@ -288,8 +293,8 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
   return (
     <div className="space-y-2.5">
       <div className="rounded-xl bg-ink-50 p-3.5 text-body text-ink-700">
-        <p className="font-semibold text-ink-900">우리 장소 데이터에 없는 곳이에요</p>
-        <p className="mt-0.5">장소 정보와 조건 확인, AI 추천, 동선에는 쓰이지 않아요. 그래도 핀으로 남겨서 서로 의견을 나눌 수 있어요.</p>
+        <p className="font-semibold text-ink-900">장소 정보가 없는 곳이에요</p>
+        <p className="mt-0.5">조건 확인, AI 추천, 동선에는 쓰이지 않지만 핀으로 남겨 의견을 나눌 수 있어요.</p>
       </div>
       {askName && (
         <>
@@ -327,7 +332,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
 function PinItButton({ result, filled = false, pending, onPin }: { result: SearchResultView; filled?: boolean; pending: boolean; onPin: () => void }) {
   if (result.alreadyPinned) return <span className="shrink-0 text-xs text-ink-500">이미 지도에 있어요</span>
   if (result.unsupported) {
-    return <span className="shrink-0 text-xs text-ink-500">{result.dto.category ? '핀으로 남길 수 없는 분류예요' : '분류를 알 수 없는 장소예요'}</span>
+    return <span className="shrink-0 text-xs text-ink-500">{result.dto.category ? '핀으로 찍을 수 없는 카테고리예요' : '카테고리를 알 수 없는 장소예요'}</span>
   }
   return (
     <button
