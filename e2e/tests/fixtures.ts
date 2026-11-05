@@ -80,7 +80,7 @@ export function pinRow(page: Page, name: string) {
 export async function confirmPin(page: Page, name: string) {
   // 넣은 뒤 화면이 일정을 다시 받는다. 그 응답 전에 일정을 고치면 예전 version으로 저장해 409(SHORTLIST_STALE)가 난다.
   const refetched = page.waitForResponse((r) => r.url().endsWith('/shortlist/schedule') && r.request().method() === 'GET')
-  await page.getByRole('button', { name: '★ 확정 리스트에 넣기' }).click()
+  await page.getByRole('button', { name: '확정 리스트에 넣기', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: name }).filter({ hasText: '확정 리스트에 넣었어요' })).toBeVisible()
   await refetched
 }
