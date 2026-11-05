@@ -129,6 +129,7 @@ v2 동선 에이전트(「AI 코스 짜기」, #334)는 사람이 요청할 때 
 | `docs/CHANGELOG-api.md` | 스펙 변경 이력 — 구조 변경 시 여기 먼저 |
 | `docs/tech-stack.md` | 기술 스택·버전·인프라·CI 한눈에 보기(근거 파일 표기) |
 | `docs/code-quality.md` | 클린 코드 원칙, AI 작성 코드 리뷰 포인트 |
+| `docs/security.md` | 보안 현황: 지금 있는 방어, 알려진 빈 곳, 의존성 점검 결과, 결정 대기 항목 |
 | `docs/design/colors.md` | 색 결정 이유(값 정본은 `frontend/src/styles/tokens.css`) |
 | `frontend/DESIGN.md` | 화면 디자인 규칙 — 글자·반경·컴포넌트·지도 핀·지도 버튼·토스트, Do/Don't(Impeccable 스킬이 읽음) |
 | `frontend/PRODUCT.md` | 제품 요약 — 사용자·제약·말투·접근성 기준(정본은 기획안, Impeccable 스킬이 읽음) |
