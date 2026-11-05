@@ -59,7 +59,7 @@ from maps import api as maps_api
 from pins import api as pins_api
 from pins.schemas import Pin
 from places import api as places_api
-from places.schemas import PlaceInfo
+from places.schemas import Area, PlaceInfo
 from recommend import constraints, core, schemas, service
 from recommend.models import Candidate as CandidateRow
 from recommend.models import EvidenceLine as EvidenceLineRow
@@ -214,13 +214,44 @@ def _curated_nearby(
     )
     if count:
         return {"curated_nearby": count}
-    external = _external_search(db, map_id=map_id, category=category, place_search=place_search)
+    external = _external_search(db, map_id=map_id, category=category, place_search=place_search, center=center)
     return {"curated_nearby": 0, "external_search": external.model_dump()}
 
 
-def _search_area(db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway) -> str | None:
-    """카카오맵 검색어의 동네(#800 결정). ① 이 지도에서 그 카테고리 핀들의 장소 주소에 가장 많은 동네 — 기본 지역이 그
+def _area_near_center(db: Session, center: tuple[float, float]) -> str | None:
+    """중심 근처의 동네 이름(#1353) — 카카오를 부르지 않고 자체 DB만 읽는다(#53, 쿼터). 가까운 영업 중 자체 DB 장소(분류 무관)의 주소에서
+    `places_api.neighborhood`로 동네("해운대구 우동")를 뽑는다. 찾는 반경은 `sido_at`의 되돌아가기와 같은 10km(`places_api.SIDO_AT_RADIUS_M`)
+    까지이고, 가까운 곳부터 넓혀(1/8 → 1/4 → 1/2 → 전체) 가까운 장소가 있으면 큰 반경을 읽지 않는다. 그 안에 장소가 없으면
+    `sido_at(center)`의 시·도 이름으로 되돌아가고(`places_api.sido_at`, 경계 표가 있으면 경계가 먼저), 그것도 None이면 None이다."""
+    for fraction in (8, 4, 2, 1):
+        radius_m = places_api.SIDO_AT_RADIUS_M / fraction
+        area = [Area(lat=center[0], lng=center[1], radius_m=radius_m)]
+        refs = [ref for category in CATEGORIES for ref in places_api.search_nearby_own(category, area, db=db)]
+        if not refs:
+            continue
+        refs.sort(key=lambda ref: (geo.haversine_distance_m(center[0], center[1], ref.lat, ref.lng), ref.place_id))
+        infos = places_api.get_places([ref.place_id for ref in refs[:_NEAREST_FOR_AREA]], db=db)
+        for ref in refs[:_NEAREST_FOR_AREA]:   # 주소가 없는 곳이면 다음으로 가까운 곳
+            info = infos.get(ref.place_id)
+            name = places_api.neighborhood(info.address) if info else None
+            if name:
+                return name
+    return places_api.sido_at(*center, db=db)
+
+
+_NEAREST_FOR_AREA = 5   # 가장 가까운 곳의 주소가 비어도 다음 곳으로 정하도록 조금 더 읽는다(places.api._SIDO_AT_FETCH와 같은 생각)
+
+
+def _search_area(
+    db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway, center: tuple[float, float] | None = None,
+) -> str | None:
+    """카카오맵 검색어의 동네(#800 결정). **center가 있으면 그 근처 동네**(#1353, `_area_near_center`)가 먼저다 — 보고 있는 곳의 동네여야 해서다.
+    없거나 근처를 모르면 ① 이 지도에서 그 카테고리 핀들의 장소 주소에 가장 많은 동네 — 기본 지역이 그
     핀들의 중심이라 실제 후보가 있는 곳이다 ② 없으면(실시간 핀만 있는 등) 지도의 지역 이름 ③ 그것도 없으면 None(말만)."""
+    if center is not None:
+        near = _area_near_center(db, center)
+        if near:
+            return near
     places = place_search.get_places(sorted(pins_api.list_place_ids_on_map(db, map_id=map_id)))
     area = core.most_common_area(
         places_api.neighborhood(info.address) for info in places.values() if info.category == category
@@ -229,16 +260,18 @@ def _search_area(db: Session, *, map_id: str, category: str, place_search: Place
 
 
 def _external_search(
-    db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway,
+    db: Session, *, map_id: str, category: str, place_search: PlaceSearchGateway, center: tuple[float, float] | None = None,
 ) -> schemas.ExternalSearch:
-    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」) — 검색어는 `{동네} {카테고리 말}` 하나다(#904)."""
-    area = _search_area(db, map_id=map_id, category=category, place_search=place_search)
+    """카카오맵 검색 링크(docs/constraints.md 「카카오맵 검색 링크」) — 검색어는 `{동네} {카테고리 말}` 하나다(#904). center가 있으면
+    그 근처 동네다(#1353)."""
+    area = _search_area(db, map_id=map_id, category=category, place_search=place_search, center=center)
     query = core.external_search_query(area, category)
     return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query))
 
 
 def _run_external_search(db: Session, run: RecommendRun, place_search: PlaceSearchGateway) -> schemas.ExternalSearch:
-    return _external_search(db, map_id=run.map_id, category=run.category, place_search=place_search)
+    center = (run.origin_lat, run.origin_lng) if run.origin_lat is not None and run.origin_lng is not None else None   # 요청한 중심(#1331)
+    return _external_search(db, map_id=run.map_id, category=run.category, place_search=place_search, center=center)
 
 
 def readiness_for_category(db: Session, *, map_id: str, category: str) -> dict:
