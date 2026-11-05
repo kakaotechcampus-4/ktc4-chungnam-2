@@ -1,0 +1,66 @@
+name: security-audit
+# 의존성 취약점 점검(#1430). **알림 전용**이다 — 취약점이 나와도 PR·배포를 막지 않고, 필수 검사(develop 보호 규칙)에도 넣지 않는다.
+# 결과는 각 실행의 요약(Summary)과 로그에서 본다. 현재 상태와 처리 계획은 docs/security.md.
+# 의존성 파일이 바뀐 PR, develop 푸시, 매주 월요일(한국 시간 09시)에 돈다. 비밀값을 쓰지 않는다.
+# 차단으로 올리는 것은 결과가 안정된 뒤 결정한다(docs/security.md 「다음 단계」).
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "backend/requirements.txt"
+      - "**/package-lock.json"
+      - ".github/workflows/security-audit.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "backend/requirements.txt"
+      - "**/package-lock.json"
+      - ".github/workflows/security-audit.yml"
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: backend/.python-version
+      - name: pip-audit (backend/requirements.txt)
+        continue-on-error: true   # 알림 전용 — 취약점이 있어도 실패로 치지 않는다
+        run: |
+          pip install -q pip-audit==2.10.1
+          {
+            echo "### pip-audit — backend/requirements.txt"
+            echo '```'
+            pip-audit -r backend/requirements.txt --no-deps --disable-pip 2>&1 || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [frontend, contracts, e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm audit (${{ matrix.dir }})
+        continue-on-error: true   # 알림 전용
+        working-directory: ${{ matrix.dir }}
+        run: |
+          {
+            echo "### npm audit — ${{ matrix.dir }}"
+            echo '```'
+            npm audit --package-lock-only 2>&1 || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
