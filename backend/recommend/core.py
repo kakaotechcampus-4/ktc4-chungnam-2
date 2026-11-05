@@ -33,6 +33,14 @@ MANUAL_EVIDENCE_LIMIT = 10
 DEFAULT_RADIUS_M = 3000
 WIDEN_STEP_M = 1000
 WIDEN_LIMIT_M = 5000
+# 사용자가 「추천 받기」 요청에서 고를 수 있는 반경(#1416) — 최소는 여기, 최대는 넓히기 상한과 같다(WIDEN_LIMIT_M). 서버는 사용자가
+# 어떻게 고르는지 모르고 정수 하나만 받는다. 요청 모델(schemas.RunCreateRequest.radius_m)의 ge/le는 순환 import라 같은 값을 적고 test_core가 맞는지 본다.
+MIN_RADIUS_M = 2000
+
+
+def request_radius_m(radius_m: int | None) -> int:
+    """요청의 반경(m). 없으면 기본 3,000m. 범위 검사는 요청 모델과 라우터(readiness 쿼리)가 하고, 여기는 값만 고른다."""
+    return DEFAULT_RADIUS_M if radius_m is None else radius_m
 
 
 def radius_walk_min_compat(radius_m: int) -> int:
@@ -528,11 +536,16 @@ IDEMPOTENCY_RETENTION = timedelta(hours=24)   # run이 연결된 행의 보관 �
 ReservationDecision = Literal["conflict", "reuse", "in_progress", "takeover"]
 
 
-def idempotency_request_hash(map_id: str, category: str, execute: bool = False, center: tuple[float, float] | None = None) -> str:
-    """요청 동일성 = (지도, category, execute, center — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
+def idempotency_request_hash(
+    map_id: str, category: str, execute: bool = False, center: tuple[float, float] | None = None, radius_m: int | None = None,
+) -> str:
+    """요청 동일성 = (지도, category, execute, center, radius_m — execute 생략은 false, radius_m 생략은 기본 3,000m). 같은 키로 이 값이
+    다르면 IDEMPOTENCY_CONFLICT다. 명시한 3000은 생략과 같은 요청이라 해시에 넣지 않는다(#1416)."""
     value = f"{map_id}{category}{int(bool(execute))}"   # center 없는 요청은 예전 해시와 같아야 한다 — 배포 직전에 만든 키(24시간 보관)의 재시도가 409가 되지 않게
     if center is not None:
         value += f"\x1f{center[0]:.17g}\x1f{center[1]:.17g}"
+    if radius_m is not None and radius_m != DEFAULT_RADIUS_M:   # radius_m 없는 요청의 해시는 예전 값 그대로
+        value += f"\x1fr{radius_m}"
     return hashlib.sha256(value.encode()).hexdigest()
 
 

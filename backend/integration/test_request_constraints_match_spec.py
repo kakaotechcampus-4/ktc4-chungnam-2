@@ -21,9 +21,6 @@ KEYS = ("maxItems", "minItems", "maxLength", "minLength", "maximum", "minimum")
 
 # (메서드, 경로, 필드.제약) -> 추적 이슈. 비어 가는 것이 정상이다.
 KNOWN_DRIFT: dict[tuple[str, str, str], str] = {
-    # #1416 계약 PR — 서버 요청 모델(RunCreateRequest.radius_m)이 들어오면 recommend PR이 이 두 줄을 지운다.
-    ("POST", "/maps/{mapId}/runs", ".radius_m.minimum"): "#1416",
-    ("POST", "/maps/{mapId}/runs", ".radius_m.maximum"): "#1416",
 }
 
 

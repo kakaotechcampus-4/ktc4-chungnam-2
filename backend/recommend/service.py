@@ -19,11 +19,13 @@ from recommend import core
 from recommend.models import Candidate, EvidenceLine, Exclusion, IdempotencyKey, RecommendRun, Region
 
 
-def create_run(db: Session, *, map_id: str, category: str, requested_by: str, attempt_no: int) -> RecommendRun:
+def create_run(
+    db: Session, *, map_id: str, category: str, requested_by: str, attempt_no: int, radius_m: int = core.DEFAULT_RADIUS_M,
+) -> RecommendRun:
     run = RecommendRun(
         map_id=map_id, category=category, requested_by=requested_by,
         status="collecting_evidence", attempt_no=attempt_no,
-        default_radius_m=core.DEFAULT_RADIUS_M, default_radius_walk_min=core.radius_walk_min_compat(core.DEFAULT_RADIUS_M),
+        default_radius_m=radius_m, default_radius_walk_min=core.radius_walk_min_compat(radius_m),
     )
     db.add(run)
     db.flush()
