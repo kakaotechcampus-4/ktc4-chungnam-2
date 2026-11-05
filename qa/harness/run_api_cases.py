@@ -545,6 +545,49 @@ def r3_republish_exclusion():
           f"1차 {names1} → 2차 {names2} (겹침 {set(names1) & set(names2)})")
 
 
+# ───────── 추천 반경(#1416)·여행 지역 밖(#1385) — 서버가 고른 반경을 받는지, 범위 밖을 막는지 ─────────
+HAEUNDAE = {"lat": 35.1587, "lng": 129.1604}   # 서울 지도에서 원 전체가 여행 지역 밖인 중심(시·도 경계가 적재돼 있어야 한다)
+
+
+def r20_user_radius():
+    """R20~R23: radius_m 2000~5000 정수만(고른 값이 default_radius_m, 넓히기 다음 값), 범위 밖·정수 아님 422, readiness 범위 값, 여행 지역 밖 422.
+    ♥는 사유 글 없이 남겨 ② 호출이 없고 execute 하지 않아 모델 비용 0이다."""
+    _, c = user(); mid = new_map(c)
+    pid = add_pin(c, mid).json()["id"]
+    c.put(f"/pins/{pid}/reaction", json={"type": "like"})
+    # R20: 고른 반경이 run의 반경이 된다
+    low = c.post(f"/maps/{mid}/runs", json=run_body(mid, radius_m=2000))
+    high = c.post(f"/maps/{mid}/runs", json=run_body(mid, radius_m=5000))
+    lj, hj = (low.json() if low.status_code == 202 else {}), (high.json() if high.status_code == 202 else {})
+    check("R20", low.status_code == high.status_code == 202 and (lj.get("default_radius_m"), lj.get("next_default_radius_m")) == (2000, 3000)
+          and (hj.get("default_radius_m"), hj.get("next_default_radius_m")) == (5000, None),
+          "2000 → 기본 2000·다음 3000, 5000 → 기본 5000·다음 없음", f"{low.status_code} {low.text[:120]} / {high.status_code} {high.text[:120]}")
+    # R21: 범위 밖·정수 아님은 422 VALIDATION_ERROR, 크레딧·run을 쓰지 않는다
+    before = _credits(c)["balance"]
+    bad = {}
+    for v in (1999, 5001, 2500.5, "3000", True, None):
+        r = c.post(f"/maps/{mid}/runs", json=run_body(mid, radius_m=v))
+        bad[repr(v)] = (r.status_code, r.json().get("code") if r.headers.get("content-type", "").startswith("application/json") else None)
+    check("R21", all(x == (422, "VALIDATION_ERROR") for x in bad.values()) and _credits(c)["balance"] == before,
+          f"6종 모두 422, 크레딧 그대로({before})", f"{bad} 크레딧 {before}→{_credits(c)['balance']}")
+    # R22: readiness 범위 값과 쿼리 radius_m 검증
+    q = {"center_lat": SEONGSU["lat"], "center_lng": SEONGSU["lng"]}
+    ok = c.get(f"/maps/{mid}/recommend/readiness", params={**q, "radius_m": 2500})
+    card = ok.json().get("음식점", {}) if ok.status_code == 200 else {}
+    bads = {v: c.get(f"/maps/{mid}/recommend/readiness", params={**q, "radius_m": v}).status_code for v in ("1999", "5001", "2500.5", "abc")}
+    check("R22", ok.status_code == 200 and (card.get("radius_m"), card.get("radius_min_m"), card.get("radius_max_m")) == (3000, 2000, 5000)
+          and all(v == 422 for v in bads.values()),
+          "radius_m 3000·min 2000·max 5000, 범위 밖·숫자 아님 422", f"{ok.status_code} {card} / {bads}")
+    # R23: 서울 지도에서 부산 중심은 원 전체가 여행 지역 밖 — 422 OUTSIDE_TRIP_REGION, 크레딧·run을 쓰지 않는다(시·도 경계 적재 필요)
+    before = _credits(c)["balance"]
+    out = c.post(f"/maps/{mid}/runs", json={"category": "음식점", "center": HAEUNDAE})
+    code = out.json().get("code") if out.headers.get("content-type", "").startswith("application/json") else None
+    inside = c.post(f"/maps/{mid}/runs", json=run_body(mid))
+    check("R23", out.status_code == 422 and code == "OUTSIDE_TRIP_REGION" and _credits(c)["balance"] == before + 0 and inside.status_code == 202,
+          "부산 중심 422 OUTSIDE_TRIP_REGION(크레딧 그대로), 지역 안은 202",
+          f"부산 {out.status_code} {code}(202면 sido_boundaries 17행 적재 확인) / 지역 안 {inside.status_code} / 크레딧 {before}→{_credits(c)['balance']}")
+
+
 # ───────── 크레딧 원장(W, #1091) — docs/credits-reviews.md 3·5절 ─────────
 # 숫자(처음 값, 상한, 가격, 보상)는 적지 않고 GET /credits/me에서 받는다. ♥는 사유 글 없이 남겨 ② 호출이 없다.
 BUSAN = {"label": "부산", "lat": 35.1796, "lng": 129.0756}
@@ -1245,7 +1288,7 @@ for _k, _f in (("B07", b07), ("C02", c02), ("W08", w08_s07), ("W09", w09), ("C06
     CASES[_k] = _f
 for _k, _f in (("S01", s01), ("S02", s02)):
     CASES[_k] = _f
-for _k, _f in (("L07", l07), ("L09", l09), ("L10", l10), ("W10", w10), ("LOG01", g01)):
+for _k, _f in (("L07", l07), ("L09", l09), ("L10", l10), ("W10", w10), ("LOG01", g01), ("R20", r20_user_radius)):
     CASES[_k] = _f
 
 if __name__ == "__main__":
