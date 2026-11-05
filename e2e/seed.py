@@ -1,9 +1,10 @@
-"""E2E 시드(#1281): 성수 가상 정예 음식점 6곳(라벨 포함)과 사용자 둘(방장, 구성원)의 세션 쿠키. 쿠키는 JSON으로 출력한다.
+"""E2E 시드(#1281): 성수 가상 정예 음식점 6곳(라벨 포함)과 사용자 넷의 세션 쿠키. 쿠키는 JSON으로 출력한다.
 
 backend 폴더에서 백엔드와 같은 DATABASE_URL, SESSION_SECRET으로 돈다: `cd backend && python ../e2e/seed.py`.
 - 장소는 backend/integration/real_places_fixtures.py와 같은 방식이다(places.repository로 적재하고 정예로 켠다). 다시 돌려도 같은 행이다.
 - 쿠키는 auth.testing.session_cookie가 만든다 — 실제 인증과 같은 서명 토큰과 users 행이다(#126). 카카오 로그인을 대신한다.
   사용자는 실행마다 새로 만든다(테스트끼리 지도가 섞이지 않게).
+- 크레딧은 사람마다 따로라, 잔액을 보는 시나리오는 자기 사용자를 쓴다(#1424). planner는 처음 잔액 그대로, broke는 잔액 0이다.
 """
 
 import json
@@ -18,6 +19,7 @@ from sqlalchemy import update  # noqa: E402
 
 from auth.testing import create_kakao_user, session_cookie  # noqa: E402
 from common.database import SessionLocal, session_scope  # noqa: E402
+from credits.models import CreditAccount  # noqa: E402
 from places import repository  # noqa: E402
 from places.ingest import LabelRow, PlaceRow  # noqa: E402
 from places.models import Place  # noqa: E402
@@ -51,9 +53,11 @@ def main() -> None:
     out = {}
     with session_scope(SessionLocal()) as db:
         seed_places(db)
-        for role, name in (("owner", "방장"), ("member", "구성원")):
+        for role, name in (("owner", "방장"), ("member", "구성원"), ("planner", "코스"), ("broke", "빈털터리")):
             user = create_kakao_user(db, str(uuid.uuid4()), display_name=name)
             out[role] = {"user_id": user.id, "name": name, **session_cookie(user.id)}
+        # 계정 행이 있으면 그 잔액을 쓴다(없으면 처음 쓸 때 30으로 만든다, credits.service)
+        db.add(CreditAccount(user_id=out["broke"]["user_id"], balance=0))
     print(json.dumps(out))
 
 
