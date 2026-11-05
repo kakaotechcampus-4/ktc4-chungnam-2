@@ -222,11 +222,10 @@
     --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
     --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
     --animate-pingo-frame-b: pingo-frame-b 600ms step-end infinite;
-    /* 사다리를 오르내릴 때 뒷모습과 뒤집은 뒷모습을 걸음마다(0.3초) 바꿔 팔을 번갈아 뻗는다. 걸음마다 몸이 한 번 오르거나(내리거나) 가로대가 한 칸 흐른다. */
+    /* 위·아래로 오르내릴 때 뒷모습과 뒤집은 뒷모습을 걸음마다(0.3초) 바꿔 팔을 번갈아 뻗고, 걸음마다 몸이 한 번 오르거나 내려간다. */
     --animate-pingo-frame-half: pingo-frame-half 600ms step-end infinite;
     --animate-pingo-climb: pingo-climb 300ms ease-out infinite;
     --animate-pingo-descend: pingo-descend 300ms ease-out infinite;
-    --animate-ladder-rungs: ladder-rungs 300ms ease-in-out infinite;
     @keyframes pingo-climb {
         0%, 100% { transform: translateY(0); }
         45% { transform: translateY(-7%); }
@@ -234,11 +233,6 @@
     @keyframes pingo-descend {
         0%, 100% { transform: translateY(0); }
         45% { transform: translateY(7%); }
-    }
-    /* 가로대 간격(12, 사다리 SVG 단위)만큼 내려가면 처음과 같은 그림이다. 내려갈 때는 거꾸로 돈다. */
-    @keyframes ladder-rungs {
-        from { transform: translateY(0); }
-        to { transform: translateY(12px); }
     }
     @keyframes pingo-frame-a {
         0% { opacity: 1; }
