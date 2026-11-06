@@ -39,18 +39,29 @@ describe('확정 리스트 줄(일정에 아직 넣지 않은 곳)', () => {
     const doc = document as { elementFromPoint?: Document['elementFromPoint'] }
     doc.elementFromPoint = () => day
 
-    const { container, rerender } = render(<ShortlistList items={items} checked={new Set()} onCheck={() => {}} onOpen={() => {}} onRemove={() => {}} />)
+    // 리스트는 확정 탭의 리스트 자리(UNSET_DAY 칸) 안에 있다.
+    const zone = document.body.appendChild(document.createElement('div'))
+    zone.dataset.day = 'unset'
+    const { container, rerender } = render(<ShortlistList items={items} checked={new Set()} onCheck={() => {}} onOpen={() => {}} onRemove={() => {}} />, {
+      container: zone,
+    })
     expect(container.querySelector('.cursor-grab')).toBeNull()
 
     rerender(<ShortlistList items={items} checked={new Set()} onCheck={() => {}} onOpen={() => {}} onRemove={() => {}} onDrop={onDrop} />)
     const handle = container.querySelectorAll<HTMLElement>('.cursor-grab')[0]
     fireEvent.pointerDown(handle, { clientX: 400, clientY: 100, pointerId: 1 })
     fireEvent.pointerMove(handle, { clientX: 640, clientY: 280, pointerId: 1 })
+    // 끄는 동안 글자 선택이 시작되지 않고(사파리가 지나간 글을 선택해 통째로 끌었다), 끄는 곳이 html에 적힌다(놓을 칸만 밝게).
+    expect(fireEvent(document.body, new Event('selectstart', { bubbles: true, cancelable: true }))).toBe(false)
+    expect(document.documentElement.dataset.scheduleDrag).toBe('list')
     fireEvent.pointerUp(handle, { clientX: 640, clientY: 280, pointerId: 1 })
+    expect(fireEvent(document.body, new Event('selectstart', { bubbles: true, cancelable: true }))).toBe(true)
+    expect(document.documentElement.dataset.scheduleDrag).toBeUndefined()
 
     // 손가락(280)이 줄 가운데(320)보다 위라 그 줄 앞(0번째)이다.
     expect(onDrop).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }), { day: '2026-10-11', index: 0 })
     day.remove()
+    zone.remove()
     delete doc.elementFromPoint
   })
 })

@@ -326,6 +326,19 @@
     .drop-target[data-over='true'] {
         @apply outline-2 outline-dashed outline-[var(--action-fill)];
     }
+    /* 끄는 동안(html[data-schedule-drag], useScheduleDrag) 놓을 수 있는 칸은 처음부터 ink-300 점선이다.
+       놓을 수 없는 곳(지도, 리스트 줄을 끌 때의 리스트 자리)은 --scrim을 절반 세기로 덮는다. */
+    html[data-schedule-drag] .drop-target:not([data-over='true']) {
+        @apply outline-2 outline-dashed outline-ink-300;
+    }
+    html[data-schedule-drag] .map-base,
+    html[data-schedule-drag='list'] .drop-target[data-day='unset'] {
+        @apply relative outline-none;
+    }
+    html[data-schedule-drag] .map-base::after,
+    html[data-schedule-drag='list'] .drop-target[data-day='unset']::after {
+        @apply pointer-events-none absolute inset-0 z-[1000] rounded-[inherit] bg-scrim opacity-50 content-[''];
+    }
 
     /* 입력칸 틀 — 안에 input 하나와 ✕·글자 수·동작 글자를 둔다. 글자는 16px(아이폰이 확대하지 않는 크기). */
     .field {
