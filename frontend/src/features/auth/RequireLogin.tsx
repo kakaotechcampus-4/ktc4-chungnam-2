@@ -47,7 +47,7 @@ export default function RequireLogin() {
 function SessionGate() {
   const { isPending, error } = useMeQuery()
 
-  if (isPending) return <PingoLoading label="로그인 상태를 확인하는 중…" className="min-h-dvh justify-center" />
+  if (isPending) return <PingoLoading label="로그인 상태를 확인하는 중…" mood="space" className="min-h-dvh justify-center" />
   if (isUnauthorized(error)) return <LoginScreen />
   if (error) {
     return (
