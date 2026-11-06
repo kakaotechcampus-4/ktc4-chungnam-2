@@ -3,7 +3,7 @@ import type { components } from '@pingo/contracts/src/types/api'
 import type { PinCreateRequest } from '@/features/map/model'
 import { livePinRequest, searchPinRequest } from '@/features/search/model'
 
-import { isNameOnly, LINK_MAX, shortSido, type Share } from './share'
+import { isNameOnly, LINK_MAX, roadKey, type Share } from './share'
 
 export type LinkPreviewItemDto = components['schemas']['LinkPreviewItem']
 export type LinkParseResultDto = components['schemas']['LinkParseResult']
@@ -98,22 +98,6 @@ export function foundLabel(row: ImportRow): string | null {
 export function hintOf(share: Share): LinkHint | null {
   if (share.provider === 'google' || !share.name || !share.address) return null
   return { name: share.name.slice(0, 100), address: share.address.slice(0, 200) }
-}
-
-/**
- * 도로명 + 건물번호까지(「서울 종로구 창덕궁1길 32」). 층·호수·상호 꼬리와 괄호 속 동 이름은 버리고, 시·도는 줄임말로 맞춘다.
- * 건물번호가 없으면 null — 비교하지 않는다(동 이름만으로 같은 곳이라 하지 않는다).
- */
-export function roadKey(address: string | undefined): string | null {
-  if (!address) return null
-  const tokens = address.replace(/\([^)]*\)/g, ' ').trim().split(/\s+/)
-  tokens[0] = shortSido(tokens[0])
-  const out: string[] = []
-  for (const t of tokens) {
-    out.push(t)
-    if (out.length >= 3 && /^\d+(-\d+)?$/.test(t)) return out.join('')
-  }
-  return null
 }
 
 export const sameRoadAddress = (a: string | undefined, b: string | undefined) => {
