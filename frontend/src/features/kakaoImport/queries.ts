@@ -25,7 +25,7 @@ import {
   type ImportRow,
   type PlaceSearchResultDto,
 } from './model'
-import { readShares, type DayRange } from './share'
+import { isNameOnly, readShares, type DayRange } from './share'
 import { clearImport, loadImport, saveImport } from './storage'
 
 /** idle: 할 일 없음 · checking: 링크 미리보기 중 · saving: 핀 찍는 중. 결과는 같은 목록에 쌓인다(끝난 화면을 따로 두지 않는다, #1045). */
@@ -123,7 +123,7 @@ async function checkRemaining(mapId: string) {
     for (;;) {
       const part = useImportStore
         .getState()
-        .rows.filter((r) => !r.item && !sent.has(r.share.url))
+        .rows.filter((r) => !r.item && !isNameOnly(r.share.url) && !sent.has(r.share.url))
         .slice(0, PREVIEW_CHUNK)
         .map((r) => r.share)
       if (part.length === 0) break
