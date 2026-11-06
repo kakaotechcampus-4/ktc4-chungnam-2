@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { chunk, foundLabel, hintOf, placeKey, roadKey, rowState, rowTitle, sameRoadAddress, toPinRequest, type ImportRow } from './model'
+import { chunk, foundLabel, hintOf, placeKey, rowState, rowTitle, sameRoadAddress, toPinRequest, type ImportRow } from './model'
+import { roadKey } from './share'
 import type { Share } from './share'
 
 describe('chunk', () => {
