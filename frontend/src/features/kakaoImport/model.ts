@@ -3,7 +3,7 @@ import type { components } from '@pingo/contracts/src/types/api'
 import type { PinCreateRequest } from '@/features/map/model'
 import { livePinRequest, searchPinRequest } from '@/features/search/model'
 
-import { LINK_MAX, shortSido, type Share } from './share'
+import { isNameOnly, LINK_MAX, shortSido, type Share } from './share'
 
 export type LinkPreviewItemDto = components['schemas']['LinkPreviewItem']
 export type LinkParseResultDto = components['schemas']['LinkParseResult']
@@ -63,7 +63,7 @@ export const rowName = (row: ImportRow): string | undefined => row.share.name ??
 
 export function rowState(row: ImportRow): RowState {
   const item = row.item
-  if (!item) return 'checking'
+  if (!item) return isNameOnly(row.share.url) ? 'search' : 'checking'
   if (item.already_pinned_pin_id) return 'already'
   const result = item.status === 'ok' ? item.result : undefined
   if (result?.matches.length) return 'found'
