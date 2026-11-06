@@ -56,7 +56,7 @@ export function ReadinessHeader({ mapId }: { mapId: string }) {
   const readiness = useReadinessQuery(mapId)
   const short = readiness.data !== undefined && !toReadinessCards(readiness.data).some((c) => c.ready)
   return short ? (
-    <AiHeader title="의견이 부족해요" sub="핀에 좋음이나 반대 의견이 모이면 추천할 수 있어요" mood="alert" />
+    <AiHeader title="의견이 부족해요" sub="핀에 좋음 또는 반대 의견을 남겨 주시면 AI가 추천을 준비해요" mood="alert" />
   ) : (
     <AiHeader title="AI 추천" sub="추천받을 카테고리를 골라 주세요" />
   )
@@ -148,10 +148,10 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           />
         ))}
       </div>
-      <p className="text-label text-ink-500">지도의 원 안에서 찾아요. 다른 동네는 지도를 옮겨 주세요</p>
-      <p className="text-label text-ink-500">좋음이나 반대 의견이 달린 핀이 카테고리마다 1곳 이상 있어야 추천받을 수 있어요</p>
-      {/* 사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
-      <p className="text-label text-ink-500">의견이 많을수록 추천이 정확해져요</p>
+      <p className="text-label text-ink-500">지도 가운데 원 안에서 추천해요. 다른 지역은 지도를 움직여 보세요.</p>
+      {/* 카테고리마다 의견 핀이 몇 곳 필요한지는 타일(「N곳 더 필요」)이 보여 준다.
+          사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
+      <p className="text-label text-ink-500">구성원의 의견이 모일수록 모두가 만족할 만한 장소를 찾을 수 있어요.</p>
       {/* 사유 정리(②)와 첫 검색을 한 요청에서 끝낸다(#845) — 몇 초 걸린다. 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={START_STEPS} />}
       {/* 실패하면 run 이 생기지 않고 크레딧도 쓰지 않는다 — 같은 버튼을 다시 누르면 새 시도다. 크레딧 오류는 CreditGate 가 보인다. */}
@@ -167,7 +167,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           onClick={() => chosen && ask(chosen, false)}
           className="btn-primary btn-lg w-full"
         >
-          {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
+          {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '의견이 모이면 추천받을 수 있어요'}
         </button>
       </CreditGate>
       {asking && (

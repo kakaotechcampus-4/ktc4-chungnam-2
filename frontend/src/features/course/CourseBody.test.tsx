@@ -85,7 +85,7 @@ describe('AI 코스 짜기 시트', () => {
     // 영업시간을 모르는 장소(needs_check)에는 표시하지 않고, 아는 장소에만 「영업시간 확인됨」(2026-11-02)
     expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
     expect(screen.queryByText('영업시간 확인됨')).not.toBeInTheDocument() // 목 서버는 모든 장소가 영업 여부를 모른다
-    expect(screen.getByText(/^영업시간을 모르는 \d+곳은 가게에 확인해 주세요$/)).toBeInTheDocument()
+    expect(screen.getByText(/^영업시간 정보가 없는 \d+곳은 방문 전 확인을 추천해요\.$/)).toBeInTheDocument()
     expect(screen.queryByText('다시 짜기')).not.toBeInTheDocument() // stale 아님
     expect(screen.queryAllByRole('link', { name: /길찾기/, hidden: true }).every((a) => a.getAttribute('href')?.startsWith('https://map.kakao.com/link/by/') && a.getAttribute('target') === '_blank')).toBe(true)
     // 장소 이름은 이미 받은 확정 리스트에서 찾는다
@@ -210,7 +210,7 @@ describe('AI 코스 짜기 시트', () => {
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     await confirmCourse(user)
     expect(await screen.findByText('코스를 만들지 못했어요')).toBeInTheDocument()
-    expect(screen.getByText('코스 짜기가 중간에 끊겼어요')).toBeInTheDocument()
+    expect(screen.getByText('코스를 짜다가 중간에 끊겼어요. 잠시 후 다시 시도해 주세요')).toBeInTheDocument()
     expect(screen.getByText('이미 짜고 있는 코스를 보여 드려요')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '다시 짜기' }))
     expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeInTheDocument() // 진입으로 돌아감
@@ -240,13 +240,13 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getAllByText('도보 5분')).toHaveLength(2) // 구간 + 하루 합계
     expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
     expect(screen.getAllByText('영업시간 확인됨')).toHaveLength(1) // pin_1 만 영업 여부를 안다
-    expect(screen.queryByText(/영업시간을 모르는/)).not.toBeInTheDocument() // checks 가 비었다
+    expect(screen.queryByText(/영업시간 정보가 없는/)).not.toBeInTheDocument() // checks 가 비었다
   })
 
   it('위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다', async () => {
     resetScenario('happy-path') // 확정 리스트가 빈 상태로
     renderSheet()
-    expect(await screen.findByText('확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요')).toBeInTheDocument()
+    expect(await screen.findByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '확정된 장소 보기' })).toHaveAttribute('href', '/maps/map_1/shortlist')
     expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
   })
@@ -265,7 +265,7 @@ describe('AI 코스 짜기 시트', () => {
     await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
     expect(await screen.findByText('이 장소는 첫째 날에 쉬는 날이에요')).toBeInTheDocument()
     expect(screen.queryByText('영업시간 확인됨')).not.toBeInTheDocument()
-    expect(screen.getByText('영업시간을 모르는 1곳은 가게에 확인해 주세요')).toBeInTheDocument()
+    expect(screen.getByText('영업시간 정보가 없는 1곳은 방문 전 확인을 추천해요.')).toBeInTheDocument()
   })
 
   it('확정 장소가 2곳 미만이어도 최근 코스가 있으면 입력 화면 — 회색 버튼 아래에 이유를 적는다(#1127 리뷰)', async () => {
@@ -278,7 +278,7 @@ describe('AI 코스 짜기 시트', () => {
     server.use(http.get('*/maps/:mapId/courses/latest', () => HttpResponse.json(done)))
     renderSheet()
     expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeDisabled()
-    expect(screen.getByText('확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요')).toBeInTheDocument()
+    expect(screen.getByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '최근 코스 보기' })).toBeInTheDocument()
   })
 
@@ -294,9 +294,9 @@ describe('AI 코스 짜기 시트', () => {
     )
     renderSheet()
     expect(await screen.findByText('불러오는 중…')).toBeInTheDocument()
-    expect(screen.queryByText('확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요')).not.toBeInTheDocument()
+    expect(screen.queryByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).not.toBeInTheDocument()
     release()
-    expect(await screen.findByText('확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요')).toBeInTheDocument()
+    expect(await screen.findByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
   })
 })
 

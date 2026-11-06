@@ -83,7 +83,7 @@ export default function InvitePage() {
         {needsLogin ? (
           <>
             <KakaoButton />
-            <p className="text-xs text-ink-500">로그인하면 바로 이 지도에 참여해요</p>
+            <p className="text-xs text-ink-500">로그인하고 함께 여행 계획을 시작해 보세요</p>
             <GuestJoin token={token} onBroken={setLateProblem} />
           </>
         ) : (

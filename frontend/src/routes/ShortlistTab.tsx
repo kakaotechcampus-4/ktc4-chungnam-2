@@ -64,7 +64,7 @@ export default function ShortlistTab() {
   }
 
   function toggleRoute() {
-    if (!routeOn && scheduled === 0) return showToast('장소를 골라 날짜에 넣으면 동선을 볼 수 있어요')
+    if (!routeOn && scheduled === 0) return showToast('장소를 날짜별 일정에 넣으면 동선을 확인할 수 있어요')
     setRouteOn(!routeOn)
   }
 
@@ -122,7 +122,7 @@ export default function ShortlistTab() {
             </Link>
           }
         >
-          마킹된 장소에서 확정 리스트에 넣은 곳이 여기 모여요
+          가기로 결정한 장소들이 이곳에 모여요. 마킹된 장소에서 확정 리스트에 넣어 보세요.
         </EmptyState>
       )}
       {all.length > 0 && routeOn && <DayRoute mapId={mapId} onOpen={setOpenPin} />}
@@ -143,7 +143,7 @@ export default function ShortlistTab() {
           ) : !edit.ready ? (
             <p className="text-sm text-ink-500">일정을 불러오는 중…</p>
           ) : items.length === 0 ? (
-            <p className="break-keep text-sm text-ink-500">모든 장소를 일정에 넣었어요. 동선 보기를 누르면 날짜별로 보여요</p>
+            <p className="break-keep text-sm text-ink-500">모든 장소를 일정에 넣었어요. 동선 보기로 날짜별 경로를 확인해 보세요.</p>
           ) : (
             <>
               {day ? (

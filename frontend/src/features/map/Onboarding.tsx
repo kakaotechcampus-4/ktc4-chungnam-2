@@ -11,14 +11,14 @@ export type OnboardingKind = 'owner' | 'member'
 /** v1은 지도를 길게 눌러 핀을 찍지 않는다(#191) — Figma 문구에서 그 부분만 뺐다. */
 const STEPS: Record<OnboardingKind, ReactNode[]> = {
   owner: [
-    '위 검색창에 가게 이름을 검색해서 핀을 찍으세요',
-    '친구를 초대하세요. 나중에도 오른쪽 위 구성원 버튼에서 초대할 수 있어요',
-    <>각자 <Mark kind="like" /> <Mark kind="against" />로 의견을 남기면 AI가 대안을 찾아줘요</>,
+    '상단 검색창에서 가고 싶은 장소를 찾아 첫 핀을 찍어 보세요',
+    '친구를 초대해 보세요. 오른쪽 위 구성원 버튼에서도 언제든 초대할 수 있어요',
+    <>각자 <Mark kind="like" /> <Mark kind="against" />로 의견을 남기면 AI가 모두를 위한 대안을 찾아줘요</>,
   ],
   member: [
-    <>핀을 눌러 <Mark kind="like" /> <Mark kind="against" />로 의견을 남겨주세요</>,
-    <><Mark kind="against" /> 반대는 이유가 필요해요. 그 이유로 대안을 찾아요</>,
-    '가고 싶은 곳이 있으면 위 검색창에서 추가하세요',
+    <>등록된 핀을 눌러 <Mark kind="like" /> <Mark kind="against" />로 의견을 들려주세요</>,
+    <><Mark kind="against" /> 반대할 땐 이유를 꼭 남겨 주세요. AI가 그 이유로 더 좋은 곳을 찾아요</>,
+    '직접 가고 싶은 장소가 있다면 검색해서 언제든 핀을 추가해 보세요',
   ],
 }
 

@@ -158,7 +158,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     // 지어내지 않는다(가드레일 2). 없으면 이름 검색으로 남기게 한다(api-spec GET /places/nearest).
     return (
       <EmptyState mood="sorry" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
-        가게 바로 위를 눌러 보거나, 이름으로 찾아보세요
+        지도에서 장소 바로 위를 다시 누르거나, 장소 이름으로 검색해 보세요.
       </EmptyState>
     )
   }
@@ -175,7 +175,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
-          {selected.far && <p className="text-body font-semibold text-warn-text">지금 보는 곳에서 멀어요. 다른 지역의 같은 이름 가게일 수 있어요</p>}
+          {selected.far && <p className="text-body font-semibold text-warn-text">현재 보고 있는 지도 중심에서 멀리 있는 장소예요. 다른 지역의 같은 이름 장소일 수 있어요</p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
@@ -294,7 +294,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
     <div className="space-y-2.5">
       <div className="rounded-xl bg-ink-50 p-3.5 text-body text-ink-700">
         <p className="font-semibold text-ink-900">장소 정보가 없는 곳이에요</p>
-        <p className="mt-0.5">조건 확인, AI 추천, 동선에는 쓰이지 않지만 핀으로 남겨 의견을 나눌 수 있어요.</p>
+        <p className="mt-0.5">상세 데이터가 없어 AI 추천과 동선에는 반영되지 않지만, 지도에 핀을 남겨 함께 이야기를 나눌 수 있어요.</p>
       </div>
       {askName && (
         <>

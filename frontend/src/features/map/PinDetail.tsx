@@ -113,10 +113,10 @@ function LiveInfo({ pin }: { pin: Pin }) {
   const state = locationState(pin, places)
   return (
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
-      <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
-      <p className="text-ink-600">조건 확인, AI 추천, 동선에는 쓰이지 않아요. 의견은 남길 수 있어요.</p>
-      {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
-      {state === 'missing' && <p className="font-semibold text-warn-text">위치를 찾지 못해서 지도에는 보이지 않아요.</p>}
+      <p className="font-semibold text-ink-900">상세 정보가 등록되지 않은 장소예요</p>
+      <p className="text-ink-600">AI 추천이나 동선에는 반영되지 않지만, 구성원 간 의견은 자유롭게 나눌 수 있어요.</p>
+      {state === 'loading' && <p className="text-ink-500">장소 위치를 확인하는 중이에요…</p>}
+      {state === 'missing' && <p className="font-semibold text-warn-text">위치 정보를 확인할 수 없어 지도에 표시되지 않아요.</p>}
     </div>
   )
 }
@@ -337,6 +337,13 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
   )
 }
 
+/** 의견 요약 줄의 주어 — 「현성님, 지우님이」, 나도 있으면 「나와 현성님이」, 나뿐이면 「내가」. */
+function subjectOf(people: { name: string; isMe: boolean }[]) {
+  const others = people.filter((p) => !p.isMe).map((p) => `${p.name}님`).join(', ')
+  if (!others) return '내가'
+  return people.some((p) => p.isMe) ? `나와 ${others}이` : `${others}이`
+}
+
 function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>) {
   // 내 의견은 위 「내 의견」에 이미 있어서 갈린 의견에선 뺀다.
   const split = all.filter((o) => !o.isMe)
@@ -359,7 +366,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
         <div>
           <div className="flex items-center justify-between text-body">
             <p className="font-medium text-ink-900">
-              <span style={{ color: R.like.line }}>{R.like.mark}</span> {likes.map(nameOf).join(', ')} 좋아해요
+              <span style={{ color: R.like.line }}>{R.like.mark}</span> {subjectOf(likes)} 좋아해요
             </p>
             {likes.some((l) => l.chips.length || l.text) && (
               <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text inline-flex items-center gap-0.5 text-xs">
@@ -379,7 +386,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
       )}
       {unknown.some((m) => !m.isMe) && (
         <p className="text-body text-ink-500">
-          <Mark kind="unknown" /> {unknown.filter((m) => !m.isMe).map((m) => m.name).join(', ')} 아직 안 남겼어요
+          <Mark kind="unknown" /> {subjectOf(unknown.filter((m) => !m.isMe))} 아직 의견을 남기지 않았어요
         </p>
       )}
     </section>

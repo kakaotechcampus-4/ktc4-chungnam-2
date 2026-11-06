@@ -69,7 +69,7 @@ export function outcomeText(outcome: NonNullable<CourseRunDto['outcome']>): stri
 }
 
 /** 실패 안내. 계약상 INTERRUPTED(서버 재시작·15분 초과)와 ENGINE_ERROR 는 같은 문구다. */
-export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
+export const FAILURE_TEXT = '코스를 짜다가 중간에 끊겼어요. 잠시 후 다시 시도해 주세요'
 
 /**
  * 코스 요청이 실패했을 때의 안내. 코드가 아닌 HTTP 만으로 갈리지 않는다(docs/errors.md). 모르는 코드는 null 이라 호출부가 ErrorText 로 보인다.

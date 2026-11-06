@@ -33,7 +33,7 @@ export default function PinTrashSheet({ mapId, onClose }: { mapId: string; onClo
     <ModalSheet label="삭제한 핀" onClose={onClose}>
       <SheetTitle>삭제한 핀</SheetTitle>
       <p className="mb-4 mt-1 text-sm text-ink-500">
-        {days ? `삭제한 지 ${days}일 안에는 되돌릴 수 있어요. ` : ''}되돌리면 남긴 의견도 그대로 돌아와요
+        {days ? `삭제 후 ${days}일 동안 보관되며, ` : ''}되돌리면 이전에 남긴 의견도 함께 복원돼요.
       </p>
       {trash.isPending && <CardSkeleton />}
       {trash.error && <ErrorText message="삭제한 핀을 불러오지 못했어요" error={trash.error} />}

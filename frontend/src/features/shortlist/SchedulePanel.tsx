@@ -61,7 +61,7 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-ink-500">일정은 구성원 모두에게 보여요</p>
-      {scheduledIds(edit.schedule).size === 0 && <p className="text-sm text-ink-700">확정된 장소를 끌어 오거나 골라서 넣어요</p>}
+      {scheduledIds(edit.schedule).size === 0 && <p className="text-sm text-ink-700">확정된 장소를 날짜별 칸으로 드래그하거나 선택해서 하루 일정을 완성해 보세요</p>}
       {edit.dates.map((d, i) => {
         const ids = edit.schedule.days[d] ?? []
         return (
