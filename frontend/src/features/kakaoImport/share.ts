@@ -105,6 +105,22 @@ const SIDO = new Set([...Object.values(SIDO_SHORT), ...Object.keys(SIDO_SHORT)])
 export const shortSido = (token: string) => SIDO_SHORT[token] ?? token
 
 /**
+ * 도로명 + 건물번호까지(「서울 종로구 창덕궁1길 32」). 층·호수·상호 꼬리와 괄호 속 동 이름은 버리고, 시·도는 줄임말로 맞춘다.
+ * 건물번호가 없으면 null — 비교하지 않는다(동 이름만으로 같은 곳이라 하지 않는다).
+ */
+export function roadKey(address: string | undefined): string | null {
+  if (!address) return null
+  const tokens = address.replace(/\([^)]*\)/g, ' ').trim().split(/\s+/)
+  tokens[0] = shortSido(tokens[0])
+  const out: string[] = []
+  for (const t of tokens) {
+    out.push(t)
+    if (out.length >= 3 && /^\d+(-\d+)?$/.test(t)) return out.join('')
+  }
+  return null
+}
+
+/**
  * 주소 줄인가 — 첫 낱말이 시·도이고 다음 낱말이 시·군·구다(세종은 바로 도로명). 「서울숲 카페」 같은 상호를 주소로 읽지 않게 둘째 낱말까지 본다.
  */
 export function isAddress(line: string): boolean {
@@ -208,7 +224,8 @@ function readAbove(above: string[]): { name?: string; address?: string } {
   const words = top?.replace(SHARE_HEAD, '').trim().split(/\s+/) ?? []
   for (let i = 1; i < words.length - 1; i++) {
     const address = words.slice(i).join(' ')
-    if (isAddress(address)) return { name: clean(words.slice(0, i).join(' '), 100), address: address.slice(0, 200) }
+    // 잡담(「이번엔 부산 해운대구 쪽으로 가볼까」)을 나누지 않게 건물번호까지 있을 때만 주소로 받는다(#1457).
+    if (isAddress(address) && roadKey(address) !== null) return { name: clean(words.slice(0, i).join(' '), 100), address: address.slice(0, 200) }
   }
   // 주소가 없어도 바로 위가 공유 머리줄에 상호명이 붙은 줄이면(구글 「[지도] 이름」) 이름만 읽는다.
   if (top && SHARE_HEAD.test(top)) return { name: clean(top, 100) }

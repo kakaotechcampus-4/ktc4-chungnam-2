@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { chunk, foundLabel, hintOf, placeKey, roadKey, rowState, rowTitle, sameRoadAddress, toPinRequest, type ImportRow } from './model'
-import type { Share } from './share'
+import { chunk, foundLabel, hintOf, placeKey, rowState, rowTitle, sameRoadAddress, toPinRequest, type ImportRow } from './model'
+import { roadKey, type Share } from './share'
 
 describe('chunk', () => {
   it('요청 크기만큼 나눈다', () => {

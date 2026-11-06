@@ -36,6 +36,17 @@ describe('카톡 대화에서 링크와 공유 글 읽기(#1046)', () => {
     })
   })
 
+  it('한 줄 나누기는 건물번호가 있을 때만 — 지번도 나누고, 잡담 줄은 나누지 않고 같이 온 말로 남긴다(#1457)', () => {
+    const at = (above: string) => readShares(`2026년 11월 2일 오전 1:05, 도윤 : ${above}\nhttps://place.map.kakao.com/1`, DAY).shares[0]
+    expect(at('○○식당 서울 성동구 성수동2가 322-32')).toMatchObject({ name: '○○식당', address: '서울 성동구 성수동2가 322-32' })
+    for (const chat of ['이번엔 부산 해운대구 쪽으로 가볼까', '내일은 부산 해운대구 2시에 가자']) {
+      const share = at(chat)
+      expect(share.name).toBeUndefined()
+      expect(share.address).toBeUndefined()
+      expect(share.context).toEqual([chat])
+    }
+  })
+
   it('링크 없는 「[지도] 이름」은 이름만 든 줄로 한 번 읽고, 링크 없는 다른 말이나 구글 분리형 이름은 넣지 않는다', () => {
     const text = [
       '2026년 11월 2일 오전 1:06, 도윤 : [지도] 성수동대림창고갤러리',
