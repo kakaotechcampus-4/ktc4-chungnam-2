@@ -5,6 +5,8 @@ M0는 범위 B(순서 + 이동시간 검증)만 구현한다. 범위 A(시간 �
 
 from datetime import timedelta
 
+from pydantic import ValidationError
+
 from common import categories
 
 COURSE_MODE = "B"
@@ -109,3 +111,7 @@ EXCLUDED_OVER_LIMIT_MESSAGE = f"한 번에 짤 수 있는 {MAX_PLACES}곳을 넘
 # (llm/client.py의 타임아웃, 재시도 없음) = 90초에 코드 계산이다. 5분은 그 3배 이상의 여유이고, 요청과 조회가 정리하는
 # STALE_AFTER(15분, service.py)보다 짧다. 이보다 어린 run은 다른 프로세스에서 도는 것일 수 있어 시작 정리가 건드리지 않는다.
 STARTUP_ORPHAN_AFTER = timedelta(minutes=5)
+
+# 모델 턴 실패로 보는 예외 — 이 예외면 그 턴은 코드 규칙(기준선)이 대신한다. 목표 루프(loop)와 지휘(direct)가 같은 값을 쓴다(#1475).
+# deps.ModelTurnFailed는 RuntimeError라 여기 든다.
+MODEL_FAILURES = (ValidationError, RuntimeError, TimeoutError)
