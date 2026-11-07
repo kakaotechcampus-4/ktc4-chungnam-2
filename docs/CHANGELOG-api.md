@@ -2,6 +2,12 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-07, `default_radius_walk_min`을 deprecated로 표시, 화면이 쓰는 deprecated 필드 검사 (#1467)
+
+- **`RecommendRun.default_radius_walk_min`** 에 `deprecated: true`를 달았다. 값과 응답은 그대로다(서버는 계속 내린다). 생성 타입에 `@deprecated`가 붙는다. #1385에서 반경을 m로 바꿀 때 글로만 "곧 없앤다"로 적어서 화면이 반경 넓히기 확인 창에 옛 칸(도보 분)과 +5분 계산을 계속 썼다(멘토 리뷰).
+- 화면은 `default_radius_m`, `next_default_radius_m`(넓히면 바뀔 반경, 상한이면 `null`)으로 옮긴다 — FE #1468.
+- **검사**: `contracts/checks/deprecated-fields.test.ts`. 스펙에서 deprecated인 속성·파라미터를 `frontend/src`가 쓰면 `docs/openapi-workflow.md` 「화면이 아직 쓰는 deprecated 필드」 표에 FE 이슈와 함께 있어야 통과한다. 표는 비어 가야 한다. 필드를 대체할 때의 절차는 같은 문서 4절 5번.
+
 ## 2026-11-05, 추천 반경을 사용자가 2~5km에서 정해 보낸다 — `radius_m` (#1416)
 
 - **`POST /maps/{mapId}/runs`** 요청에 선택 필드 `radius_m: integer`(2000 이상 5000 이하)를 더했다. 상위 호환 — 없으면 기본 3000(지금 동작). 범위 밖이거나 정수가 아니면 422 `VALIDATION_ERROR`. 값이 있으면 후보를 찾는 원의 반경, `OUTSIDE_TRIP_REGION` 판정의 반경, 저장되는 `default_radius_m`이 이 값이다. 반경 넓히기는 이 값에서 +1000m씩, 상한 5000m(그대로). 멱등 판정에 이 값이 들어간다(같은 키로 다른 반경은 409 `IDEMPOTENCY_CONFLICT`. 기본값 3000을 명시한 요청은 생략한 요청과 같은 요청이다. 반경 없는 요청은 이전과 같다).

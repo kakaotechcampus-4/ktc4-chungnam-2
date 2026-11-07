@@ -4859,7 +4859,10 @@ export interface components {
             status: "collecting_evidence" | "awaiting_region_confirm" | "executing" | "done" | "failed";
             /** @description 이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 없다(#432 — 크레딧으로 센다) */
             attempt_no: number;
-            /** @description 호환용이다 — 곧 없앤다. 화면은 default_radius_m를 쓴다(#1385). 도보 분 정본은 폐기됐고 값은 default_radius_m를 80m/분으로 나눈 근사다 */
+            /**
+             * @deprecated
+             * @description 호환용이다 — 곧 없앤다(deprecated, #1467 — 화면이 쓰는 곳은 docs/openapi-workflow.md 「화면이 아직 쓰는 deprecated 필드」 표). 화면은 default_radius_m를 쓴다(#1385). 도보 분 정본은 폐기됐고 값은 default_radius_m를 80m/분으로 나눈 근사다
+             */
             default_radius_walk_min?: number;
             /** @description 기본값 원의 현재 반경(m). 모든 카테고리 기본 3000, 반경 넓히기마다 +1000, 상한 5000(#1385, docs/constraints.md). 선택 필드 — 구버전 서버에는 없다 */
             default_radius_m?: number;
