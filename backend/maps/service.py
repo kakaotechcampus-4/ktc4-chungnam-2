@@ -8,7 +8,7 @@ import secrets
 from datetime import datetime, timezone
 
 from geoalchemy2 import Geometry
-from sqlalchemy import cast, delete, func, select, text, update
+from sqlalchemy import cast, delete, func, insert, literal, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -23,7 +23,7 @@ from maps.models import Map as MapRow
 from maps.models import MapCover as MapCoverRow
 from maps.models import Membership as MembershipRow
 from maps.schemas import (
-    Invite, InviteSummary, Map, MapCreateRequest, MapUpdateRequest, Member, TrashedMap,
+    Invite, InviteSummary, Map, MapCreateRequest, MapRegion, MapUpdateRequest, Member, TrashedMap,
 )
 from notifications import api as notifications_api
 from pins import api as pins_api
@@ -209,10 +209,15 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str, creator_i
     new_map = core.validate_map_create(req.title, req.start_date, req.end_date, req.region)
     _lock_map_count(db, creator_id)
     core.check_map_limit(_my_map_count(db, creator_id))
+    map_row = _add_owned_map(db, new_map, owner_id=creator_id)
+    return _map_response(db, map_row, viewer_id=creator_id)
 
+
+def _add_owned_map(db: Session, new_map: core.NewMap, *, owner_id: str, color: str | None = None) -> MapRow:
+    """maps 행 + owner 멤버십 행(만들기·복사가 같이 쓴다). 상한 검사는 호출부가 _lock_map_count 뒤에 한다."""
     map_row = MapRow(
         title=new_map.title, start_date=new_map.start_date, end_date=new_map.end_date,
-        created_by=creator_id,
+        created_by=owner_id, color=color,
         region_label=new_map.region.label if new_map.region else None,
         region_center=(
             func.ST_SetSRID(func.ST_MakePoint(new_map.region.lng, new_map.region.lat), 4326)
@@ -222,10 +227,44 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str, creator_i
     db.add(map_row)
     db.flush()  # map_row.id 확정 — 멤버십 행이 참조해야 한다
 
-    db.add(MembershipRow(map_id=map_row.id, user_id=creator_id, role="owner"))
+    db.add(MembershipRow(map_id=map_row.id, user_id=owner_id, role="owner"))
     db.flush()
+    return map_row
 
-    return _map_response(db, map_row, viewer_id=creator_id)
+
+def copy_map(db: Session, *, map_id: str, user_id: str, user_is_guest: bool) -> Map:
+    """지도 복사(#1446). 방장인지는 라우터의 require_on_map("map.copy")가 봤다. 새 지도를 늘리는 일이라 만들기와 같은
+    게스트 403·지도 수 상한(같은 잠금과 세는 쿼리)을 따른다. 여행 기간 상한은 다시 보지 않는다 — 날짜를 그대로 옮긴다.
+    옮기는 것: 날짜·지역·색·올린 대표 이미지·살아 있는 공개 핀(pins.api.copy_pins_to_map, 찍은 사람은 복사한 사람).
+    옮기지 않는 것: 반응·구성원(복사한 사람 혼자 방장)·확정 리스트와 일정·추천과 코스 기록·에이전트·초대·알림.
+    제목은 core.copy_title — 제목 고르기도 잠금 안에서 해서 같은 사람의 동시 복사가 같은 번호를 받지 않는다.
+    잠금 순서는 복구(restore_map)와 같다: 원본 지도 행 → 사용자 단위 지도 수. 지도 행을 잠근 뒤 역할을 다시 본다 —
+    라우터가 본 뒤 방장 위임·나가기·삭제가 끝났으면 이미 방장이 아닌 사람이 핀과 메모를 가져가게 된다."""
+    core.check_can_create_map(user_is_guest)
+    source_row = get_map_or_404(db, map_id, for_update=True)
+    core.check_role_can(role_in_map(db, map_id=map_id, user_id=user_id), map_id, user_id, "map.copy")
+    source = _map_record(db, source_row)
+    _lock_map_count(db, user_id)
+    core.check_map_limit(_my_map_count(db, user_id))
+    taken = set(db.execute(
+        select(MapRow.title)
+        .join(MembershipRow, MembershipRow.map_id == MapRow.id)
+        .where(MembershipRow.user_id == user_id, MapRow.deleted_at.is_(None))
+    ).scalars())
+    region = (
+        MapRegion(label=source.region_label, lat=source.region_lat, lng=source.region_lng)
+        if source.region_label is not None else None
+    )
+    new_map = core.NewMap(
+        title=core.copy_title(source.title, taken), start_date=source.start_date, end_date=source.end_date, region=region,
+    )
+    map_row = _add_owned_map(db, new_map, owner_id=user_id, color=source.color)
+    db.execute(insert(MapCoverRow).from_select(
+        ["map_id", "data", "content_type"],
+        select(literal(map_row.id), MapCoverRow.data, MapCoverRow.content_type).where(MapCoverRow.map_id == map_id),
+    ))
+    pins_api.copy_pins_to_map(db, from_map_id=map_id, to_map_id=map_row.id, created_by=user_id)
+    return _map_response(db, map_row, viewer_id=user_id)
 
 
 def update_map(db: Session, *, map_id: str, req: MapUpdateRequest, viewer_id: str) -> Map:

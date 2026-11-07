@@ -7,7 +7,7 @@ import { readPendingInvite } from '@/features/auth/pendingInvite'
 import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
-import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
+import { CopyMapConfirm, DeleteMapConfirm, EditMapDialog, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
 import { ColorSheet, CoverSheet, MapCover } from '@/features/maps/MapLook'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery, useTrashQuery } from '@/features/maps/queries'
@@ -214,6 +214,7 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
       {open?.kind === 'edit' && <EditMapDialog map={open.map.header} onCancel={close} />}
       {open?.kind === 'cover' && <CoverSheet map={open.map} onClose={close} />}
       {open?.kind === 'color' && <ColorSheet map={open.map} onClose={close} />}
+      {open?.kind === 'copy' && <CopyMapConfirm mapId={open.map.id} onCancel={close} />}
       {open?.kind === 'delete' && <DeleteMapConfirm mapId={open.map.id} title={open.map.title} onCancel={close} />}
       {open?.kind === 'leave' && <LeaveMapConfirm mapId={open.map.id} nextOwnerName={open.map.header.nextOwnerName} onCancel={close} />}
     </section>
@@ -224,10 +225,10 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
  * 지도 카드 「⋯」 메뉴(#1444). 방장은 고치기와 삭제(빨강, 맨 끝), 구성원은 나가기다.
  * 권한은 지도 응답의 permissions 를 따른다 — 화면이 방장인지로 다시 판정하지 않는다.
  */
-type CardAction = 'edit' | 'cover' | 'color' | 'delete' | 'leave'
+type CardAction = 'edit' | 'cover' | 'color' | 'copy' | 'delete' | 'leave'
 
 function cardActions(map: MapView, open: (kind: CardAction) => void): ActionMenuItem[] {
-  const { canEdit, canDelete, canLeave, isOwner } = map.header
+  const { canEdit, canCopy, canDelete, canLeave, isOwner } = map.header
   return [
     ...(canEdit
       ? [
@@ -236,6 +237,7 @@ function cardActions(map: MapView, open: (kind: CardAction) => void): ActionMenu
           { label: '색상 변경', onSelect: () => open('color') },
         ]
       : []),
+    ...(canCopy ? [{ label: '지도 복사', onSelect: () => open('copy') }] : []),
     ...(!isOwner && canLeave ? [{ label: '지도 나가기', onSelect: () => open('leave') }] : []),
     ...(canDelete ? [{ label: '지도 삭제', danger: true, onSelect: () => open('delete') }] : []),
   ]

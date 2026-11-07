@@ -10,8 +10,8 @@ import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
 
-import { deleteMapBody, mapChanges, tripReady, type MapHeaderView, type MemberView, type TripDraft } from './model'
-import { useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
+import { copyMapErrorMessage, deleteMapBody, mapChanges, tripReady, type MapHeaderView, type MemberView, type TripDraft } from './model'
+import { useCopyMapMutation, useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
 import TripFields from './TripFields'
 
 /**
@@ -122,6 +122,33 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
       }
     >
       {del.error && <ErrorText message="지도를 삭제하지 못했어요" error={del.error} />}
+    </ConfirmDialog>
+  )
+}
+
+/**
+ * 지도 복사 확인 창(방장만, #1446). 무엇을 가져가고 무엇을 두고 오는지 먼저 알린다.
+ * 새 지도의 제목(「제주도 여행 (1)」)은 서버가 정해서 토스트에 그대로 적는다.
+ */
+export function CopyMapConfirm({ mapId, onCancel }: { mapId: string; onCancel: () => void }) {
+  const copy = useCopyMapMutation(mapId)
+  return (
+    <ConfirmDialog
+      title="이 지도를 복사할까요?"
+      body="날짜·지역·대표 이미지·색과 핀을 새 지도로 가져가요. 구성원의 의견, 구성원, 확정 리스트는 가져가지 않아요."
+      ok="복사"
+      pending={copy.isPending}
+      onCancel={onCancel}
+      onOk={() =>
+        copy.mutate(undefined, {
+          onSuccess: (map) => {
+            showToast(`${map.title}${josa(map.title, '을', '를')} 만들었어요`)
+            onCancel()
+          },
+        })
+      }
+    >
+      {copy.error && <ErrorText message={copyMapErrorMessage(copy.error)} error={copy.error} />}
     </ConfirmDialog>
   )
 }

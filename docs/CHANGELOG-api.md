@@ -8,6 +8,17 @@
 - 화면은 `default_radius_m`, `next_default_radius_m`(넓히면 바뀔 반경, 상한이면 `null`)으로 옮긴다 — FE #1468.
 - **검사**: `contracts/checks/deprecated-fields.test.ts`. 스펙에서 deprecated인 속성·파라미터를 `frontend/src`가 쓰면 `docs/openapi-workflow.md` 「화면이 아직 쓰는 deprecated 필드」 표에 FE 이슈와 함께 있어야 통과한다. 표는 비어 가야 한다. 필드를 대체할 때의 절차는 같은 문서 4절 5번.
 
+## 2026-11-06, 지도 복사 — `POST /maps/{mapId}/copy`, `Permissions.can_copy`, 권한 `map.copy` (#1446)
+
+- **새 엔드포인트 `POST /maps/{mapId}/copy`(방장만)**: 본문 없음. 201과 새 지도(`Map`, 요청자 기준 — 복사한 사람이 혼자 방장)를 돌려준다. 방장이 아닌 구성원은 403 `FORBIDDEN`, 비구성원·없는·삭제된 지도는 404.
+- **옮기는 것**: 날짜, 지역(이름·중심), 색, 올린 대표 이미지(새 지도 주소의 `cover_url`), 지우지 않은 공개 핀. 핀은 장소(자체 DB 장소, 실시간 핀이면 카카오 장소 ID·검색어)·카테고리·메모를 옮기고 찍은 사람은 복사한 사람이다. 확정 핀·AI 추천 핀도 **일반 핀**(`kind: 일반`)이 된다 — AI 근거(조건별 충족·구성원 충족 집계·출처)는 원래 지도의 구성원 기준이라 옮기지 않는다.
+- **옮기지 않는 것**: 반응, 구성원, 확정 리스트와 일정, 추천·코스 기록, 계획 보조 에이전트, 초대 링크, 알림. 이벤트도 보내지 않는다.
+- **제목**: `원래 제목 (n)`. 원래 제목 끝의 ` (k)` 하나를 떼고 붙인다. n은 1부터, 복사한 사람이 구성원인 지도(삭제된 지도 제외)에 같은 제목이 없는 가장 작은 수. 100자를 넘으면 원래 제목 쪽을 자른다.
+- **제한**: 지도 만들기와 같다 — 게스트 403 `GUEST_NOT_ALLOWED`, 내 지도가 상한이면 409 `MAP_LIMIT`(`detail: { limit, count }`). 여행 기간 상한(`TRIP_TOO_LONG`)은 보지 않는다 — 날짜를 그대로 옮긴다.
+- **`Permissions.can_copy`**(map 전용, 상위 호환 선택 필드): 방장만 true. 화면은 `my_role` 대신 이 값으로 「복사」 메뉴를 그린다. `docs/permissions.md` owner에 `map.copy`.
+- 스키마 변경 없음(새 열·테이블 없음, 사용자 id 열도 없다). 서버는 `maps.service.copy_map`과 `pins.api.copy_pins_to_map`.
+- 목 서버: 같은 규칙(방장만, 제목 번호, 색·이미지·공개 핀 복사, 상한, 게스트), 지도 응답의 `can_copy`. 타입 재생성 필요(`npm run gen:types`).
+
 ## 2026-11-06, 지도 대표 이미지와 색 — `Map.color`·`cover_url`·`owner_display_name`, `PUT·DELETE·GET /maps/{mapId}/cover`, 422 `COVER_INVALID` (#1445)
 
 - 지도마다 대표 이미지와 색을 둔다. 둘 다 지도 단위라 모든 구성원이 같은 것을 보고, 바꾸는 것은 방장만이다(`map.settings.edit`, `PATCH /maps/{mapId}`와 같다).

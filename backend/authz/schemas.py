@@ -23,3 +23,4 @@ class Permissions(BaseModel):
     can_edit: bool | None = None  # map 전용: 지도 수정(map.settings.edit), 방장만 (#465)
     can_manage_invites: bool | None = None  # map 전용: 초대 링크 목록·끄기(invite.revoke), 방장만 (#467, #1154)
     can_transfer_owner: bool | None = None  # map 전용: 방장 넘기기(owner.transfer), 방장만 (#468, #1154)
+    can_copy: bool | None = None  # map 전용: 지도 복사(map.copy), 방장만 (#1446)

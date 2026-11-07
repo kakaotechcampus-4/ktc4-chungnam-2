@@ -43,6 +43,7 @@ OwnerToTransfer = Depends(require_on_map("owner.transfer"))  # 방장만 — 구
 InvitesToManage = Depends(require_on_map("invite.revoke"))  # 방장만 — 구성원 403(#467)
 MapToEdit = Depends(require_on_map("map.settings.edit"))  # 방장만 — 구성원 403(#465)
 MapToDelete = Depends(require_on_map("map.delete"))  # 방장만 — 구성원 403, 비구성원·삭제된 지도 404
+MapToCopy = Depends(require_on_map("map.copy"))  # 방장만 — 구성원 403, 비구성원·삭제된 지도 404(#1446)
 MapToLeave = Depends(require_on_map("map.leave"))  # 넘길 사람이 없는 방장 409는 maps.core가 판정
 
 
@@ -162,6 +163,16 @@ def delete_map(
     db=DbSession,
 ):
     service.delete_map(db, map_id=mapId, actor_id=principal.user_id)
+
+
+@router.post("/maps/{mapId}/copy", response_model=Map, response_model_exclude_none=True, status_code=201)
+def copy_map(
+    mapId: str = Path(...),
+    principal: Principal = MapToCopy,
+    user: CurrentUser = Depends(get_current_user),
+    db=DbSession,
+):
+    return service.copy_map(db, map_id=mapId, user_id=principal.user_id, user_is_guest=user.is_guest)
 
 
 @router.post("/maps/{mapId}/restore", response_model=Map, response_model_exclude_none=True)

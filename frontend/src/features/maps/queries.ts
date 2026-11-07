@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useMeQuery } from '@/features/auth/queries'
 
-import { acceptInvite, createInvite, createMap, deleteCover, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, putCover, restoreMap, revokeInvite, transferOwner, updateMap } from './api'
+import { acceptInvite, copyMap, createInvite, createMap, deleteCover, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, putCover, restoreMap, revokeInvite, transferOwner, updateMap } from './api'
 import { ApiError } from '@/api'
 import { agentKeys } from '@/features/agent/queries'
 import { forgetImport } from '@/features/kakaoImport/queries'
@@ -53,6 +53,15 @@ export function useUpdateMapMutation(mapId: string) {
       void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
       void queryClient.invalidateQueries({ queryKey: shortlistKeys.list(mapId) })
     },
+  })
+}
+
+/** 지도 복사(#1446). 새 지도가 목록에 바로 보이게 목록을 다시 받는다. */
+export function useCopyMapMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => copyMap(mapId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true }),
   })
 }
 
