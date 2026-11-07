@@ -73,7 +73,7 @@ function ResumeRun({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
         header={
           <>
             <BackToReadiness mapId={mapId} />
-            <AiHeader title="추천을 시작하지 못했어요" sub="잠깐 문제가 생겼어요. 다시 눌러 주세요" mood="flustered" />
+            <AiHeader title="추천 장소를 찾지 못했어요" sub="잠깐 문제가 생겼어요. 다시 눌러 주세요" mood="flustered" />
           </>
         }
       >
