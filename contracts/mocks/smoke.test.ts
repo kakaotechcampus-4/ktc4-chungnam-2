@@ -1142,6 +1142,7 @@ describe("#902 — GET /places/external-search (장소 검색 결과 없음의 �
     expect(await res.json()).toEqual({
       query: "성수 칼국수 & 수제비",
       url: "https://map.kakao.com/link/search/" + encodeURIComponent("성수 칼국수 & 수제비"),
+      naver_url: "https://map.naver.com/p/search/" + encodeURIComponent("성수 칼국수 & 수제비"),
     });
   });
 

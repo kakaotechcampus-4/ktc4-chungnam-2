@@ -1,6 +1,7 @@
 """광고 조회와 클릭 기록 — 실제 places, recommend, pins 데이터 위에서(docs/ads.md 11절 1·2·4·6·7·8·9·12·16번).
 db_session(롤백)만 쓴다."""
 
+from urllib.parse import quote
 import random
 import uuid
 from datetime import timedelta
@@ -203,7 +204,8 @@ def test_item_values_come_from_the_places_row(world):
     assert item["ad_id"] == ad_id
     assert item["place"] == {"place_id": place, "name": "온도 커피 성수", "category": "카페",
                              "address": "서울 성동구 성수이로 1", "lat": pytest.approx(SEONGSU[0]),
-                             "lng": pytest.approx(SEONGSU[1]), "place_url": "https://place.map.kakao.com/5"}
+                             "lng": pytest.approx(SEONGSU[1]), "place_url": "https://place.map.kakao.com/5",
+                             "naver_url": "https://map.naver.com/p/search/" + quote("온도 커피 성수 성동구", safe="")}
     assert "비밀 계약 메모" not in repr(item)
 
 

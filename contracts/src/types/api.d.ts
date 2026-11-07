@@ -4907,6 +4907,8 @@ export interface components {
             place_name?: string;
             /** @description 카카오 장소 페이지 링크. **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관). 자체 DB 핀은 매칭된 장소에 기록된 URL(저장 허용), 실시간 핀(source=live)은 kakao_place_id로 응답 때 만든다(저장하지 않음, #445). 자체 DB 장소에 카카오 URL이 아직 기록되지 않았으면 `{장소 이름} {동네}` 카카오맵 검색 링크다(#798, #801). 이름도 주소도 없으면 필드를 생략한다 */
             place_url?: string;
+            /** @description 「네이버 지도에서 보기」 링크(#1513). `{장소 이름} {동네}` 네이버 지도 검색 링크(https://map.naver.com/p/search/ + 검색어). 자체 DB 핀에만 있고 이름이 없는 실시간 핀(source=live)에는 없다. 없으면 링크를 숨긴다. 외부 브라우저로 연다 */
+            naver_url?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
             /**
@@ -5132,6 +5134,8 @@ export interface components {
             place_source?: components["schemas"]["PlaceSource"];
             /** @description 「카카오맵에서 보기」 링크(#798). 장소에 기록된 카카오 장소 페이지가 있으면 그것, 없으면 `{장소 이름} {동네}` 카카오맵 검색 링크다. 이름도 주소도 없으면 필드가 없다. 외부 브라우저로 연다(앱 안 WebView 금지) */
             place_url?: string;
+            /** @description 「네이버 지도에서 보기」 링크(#1513). `{장소 이름} {동네}` 네이버 지도 검색 링크. 이름이 없으면 필드가 없다. 없으면 링크를 숨긴다 */
+            naver_url?: string;
             /** @enum {string} */
             visibility: "private" | "published";
             /** @description 게시하기 전에는 null이거나 필드가 없다 */
@@ -5168,7 +5172,7 @@ export interface components {
         /**
          * @description 카카오맵 검색 링크(#798). 핀고에 결과가 없거나 적을 때 사람이 밖에서 직접 찾는 출구다 — AI 추천 결과가 아니다. 서버는 카카오를 부르지 않고 저장하지 않는다(#53).
          *     검색어 규칙은 docs/constraints.md 「카카오맵 검색 링크」. 추천(결과, readiness)은 `{동네} {카테고리 말}`(#902 — 원함 조건의 말을 고르던 조건 말 표는 #904에서 지운다), 장소 단위는 `{장소 이름} {동네}`, 장소 검색 결과 없음(`GET /places/external-search`)은 사용자가 친 검색어 그대로다. 다른 구성원의 사유 원문은 들어가지 않는다.
-         *     다른 서비스(네이버 지도 등)를 붙일 때는 링크 목록 필드를 더하는 확장으로 한다(#902, `url`은 유지).
+         *     네이버 지도는 링크 목록 필드 대신 형제 필드 `naver_url`로 붙였다(#1513) — 외부 서비스가 둘뿐이라 목록 구조를 새로 만들지 않았다. `url`은 카카오 그대로다.
          *     **외부 브라우저로 연다 — 앱 안 WebView 금지**(카카오 약관)
          */
         ExternalSearch: {
@@ -5176,6 +5180,8 @@ export interface components {
             query: string;
             /** @description https://map.kakao.com/link/search/ + 검색어 */
             url: string;
+            /** @description https://map.naver.com/p/search/ + 같은 검색어(#1513). 있으면 「네이버 지도에서 찾아보기」를 `url` 옆에 새 창으로 연다. 없으면 그 링크를 숨긴다. 외부 브라우저로 연다(앱 안 WebView 금지) */
+            naver_url?: string;
         };
         ShortlistItem: {
             id: string;
@@ -5229,6 +5235,8 @@ export interface components {
             lng: number;
             /** @description places에 기록된 카카오 장소 링크. 있으면 「카카오맵에서 보기」를 새 창으로 연다(앱 안 WebView 금지). 없으면 그 버튼을 숨긴다 */
             place_url?: string | null;
+            /** @description `{장소 이름} {동네}` 네이버 지도 검색 링크(#1513). 있으면 「네이버 지도에서 보기」를 새 창으로 연다. 없으면 숨긴다 */
+            naver_url?: string | null;
         };
         /** @description 광고 칸 하나. 이유, 조건별 충족 체크, 구성원 충족 집계는 없다(광고는 필터를 거치지 않는다, docs/ads.md 2절 4번). 계약 메모와 집계 값은 내보내지 않는다 */
         Ad: {

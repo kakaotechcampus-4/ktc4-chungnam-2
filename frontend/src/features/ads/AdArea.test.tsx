@@ -89,6 +89,10 @@ describe('추천 탭 광고(#649)', () => {
     await waitFor(() => expect(clicks).toEqual(['/ads/ad_1/clicks']))
     // place_url 이 없는 광고는 링크가 없다.
     expect(screen.getAllByRole('link', { name: /카카오맵에서 보기/ })).toHaveLength(1)
+    // #1513 — 네이버 지도 링크는 place_url 이 없어도 이름 검색 링크가 있으면 뜬다
+    const naver = screen.getAllByRole('link', { name: /네이버 지도에서 보기/ })
+    expect(naver[0]).toHaveAttribute('href', expect.stringMatching(/^https:\/\/map\.naver\.com\/p\/search\//))
+    expect(naver[0]).toHaveAttribute('target', '_blank')
   })
 
   it('지도에 올리면 그 칸은 「이미 지도에 있어요」로 바뀐다(광고 id는 싣지 않는다)', async () => {

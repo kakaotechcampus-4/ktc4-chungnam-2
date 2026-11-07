@@ -153,6 +153,7 @@ class PinRecord:
     search_query: str | None = None
     place_name: str | None = None
     place_url: str | None = None
+    naver_url: str | None = None
     created_by_display_name: str | None = None
     created_at: datetime | None = None
     checks: list[dict] | None = None
@@ -183,6 +184,7 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         search_query=record.search_query,
         place_name=record.place_name,
         place_url=record.place_url,
+        naver_url=record.naver_url,
         created_by=record.created_by,
         created_by_display_name=record.created_by_display_name,
         created_at=record.created_at,

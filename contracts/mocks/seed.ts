@@ -404,10 +404,10 @@ export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings"
 export function buildAdsState(): Pick<StoreState, "ads" | "adStats"> {
   return {
     ads: [
-      { ad_id: "ad_1", on_map: false, place: { place_id: "place_ad_cafe_1", name: "바다정원 카페", category: "카페", address: "제주시 탑동로 11", lat: 33.5146, lng: 126.5236, place_url: "https://place.map.kakao.com/100001" } },
-      { ad_id: "ad_2", on_map: false, place: { place_id: "place_ad_cafe_2", name: "돌담 로스터리", category: "카페", address: "제주시 관덕로 8", lat: 33.5124, lng: 126.5226, place_url: null } },
-      { ad_id: "ad_3", on_map: false, place: { place_id: "place_ad_food_1", name: "한라 국수", category: "음식점", address: "제주시 중앙로 25", lat: 33.5106, lng: 126.5274, place_url: "https://place.map.kakao.com/100003" } },
-      { ad_id: "ad_far", on_map: false, place: { place_id: "place_ad_far", name: "서귀포 끝 카페", category: "카페", address: "서귀포시 남원읍", lat: 33.2797, lng: 126.7183, place_url: null } },
+      { ad_id: "ad_1", on_map: false, place: { place_id: "place_ad_cafe_1", name: "바다정원 카페", category: "카페", address: "제주시 탑동로 11", lat: 33.5146, lng: 126.5236, place_url: "https://place.map.kakao.com/100001", naver_url: "https://map.naver.com/p/search/%EB%B0%94%EB%8B%A4%EC%A0%95%EC%9B%90%20%EC%B9%B4%ED%8E%98" } },
+      { ad_id: "ad_2", on_map: false, place: { place_id: "place_ad_cafe_2", name: "돌담 로스터리", category: "카페", address: "제주시 관덕로 8", lat: 33.5124, lng: 126.5226, place_url: null, naver_url: "https://map.naver.com/p/search/%EB%8F%8C%EB%8B%B4%20%EB%A1%9C%EC%8A%A4%ED%84%B0%EB%A6%AC" } },
+      { ad_id: "ad_3", on_map: false, place: { place_id: "place_ad_food_1", name: "한라 국수", category: "음식점", address: "제주시 중앙로 25", lat: 33.5106, lng: 126.5274, place_url: "https://place.map.kakao.com/100003", naver_url: "https://map.naver.com/p/search/%ED%95%9C%EB%9D%BC%20%EA%B5%AD%EC%88%98" } },
+      { ad_id: "ad_far", on_map: false, place: { place_id: "place_ad_far", name: "서귀포 끝 카페", category: "카페", address: "서귀포시 남원읍", lat: 33.2797, lng: 126.7183, place_url: null, naver_url: "https://map.naver.com/p/search/%EC%84%9C%EA%B7%80%ED%8F%AC%20%EB%81%9D%20%EC%B9%B4%ED%8E%98" } },
     ],
     adStats: {},
   };

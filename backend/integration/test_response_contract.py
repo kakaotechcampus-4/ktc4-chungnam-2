@@ -975,6 +975,8 @@ def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client
     result = a.get(f"/runs/{run_id}/result").json()
     [candidate] = result["candidates"]
     assert candidate["place_url"].startswith("https://map.kakao.com/link/search/")
+    assert candidate["naver_url"].startswith("https://map.naver.com/p/search/")   # #1513
+    assert result["external_search"]["naver_url"].startswith("https://map.naver.com/p/search/")
     assert result["external_search"]["query"] == "성수동 맛집"
     assert not problems, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(problems)
 

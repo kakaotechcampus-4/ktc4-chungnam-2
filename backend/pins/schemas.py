@@ -225,6 +225,7 @@ class Pin(BaseModel):
     search_query: str | None = None     # live 핀만
     place_name: str | None = None
     place_url: str | None = None
+    naver_url: str | None = None   # 「네이버 지도에서 보기」 검색 링크(#1513). live 핀은 이름을 저장하지 않아 없다
     created_by: str
     created_by_display_name: str | None = None
     created_at: datetime | None = None   # 지도에 올라온 시각(AI 추천 핀은 「지도에 올리기」 시각) — 서버가 채우면 항상 있다

@@ -293,6 +293,8 @@ def record_from_row(
         search_query=pin_row.search_query,
         place_name=place.name if place else None,
         place_url=_place_url(pin_row, place),
+        naver_url=(places_api.naver_place_link(place.name, place.address)
+                   if place and pin_row.source != "live" else None),
         created_by_display_name=created_by_display_name,
         created_at=pin_row.created_at,
         checks=pin_row.checks,

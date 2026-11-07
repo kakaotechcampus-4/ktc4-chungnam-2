@@ -81,7 +81,7 @@ export const placesHandlers = [
   http.get("*/places/external-search", ({ request }) => {
     const q = (new URL(request.url).searchParams.get("q") ?? "").trim();
     if (q.length < 1 || q.length > 50) return apiError(422, "VALIDATION_ERROR", "검색어는 1~50자로 입력해 주세요");
-    return HttpResponse.json({ query: q, url: `https://map.kakao.com/link/search/${encodeURIComponent(q)}` });
+    return HttpResponse.json({ query: q, url: `https://map.kakao.com/link/search/${encodeURIComponent(q)}`, naver_url: `https://map.naver.com/p/search/${encodeURIComponent(q)}` });
   }),
 
   http.get("*/places/search", ({ request }) => {
