@@ -4,7 +4,7 @@ import { ChevronLeft } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { createMapErrorMessage, tripReady, type TripDraft } from '@/features/maps/model'
-import { useCreateMapMutation } from '@/features/maps/queries'
+import { useCreateMapMutation, useMapsQuery } from '@/features/maps/queries'
 import TripFields from '@/features/maps/TripFields'
 import EntryFrame from '@/ui/EntryFrame'
 
@@ -16,7 +16,9 @@ export default function MapCreatePage() {
   const navigate = useNavigate()
   const create = useCreateMapMutation()
   const [draft, setDraft] = useState<TripDraft>({ title: '', region: null, startDate: '', endDate: '' })
-  const ready = tripReady(draft)
+  // 여행 기간 상한은 서버 값이다(#1371). 목록 응답에 실려 온다.
+  const maxDays = useMapsQuery().data?.tripMaxDays
+  const ready = tripReady(draft, maxDays)
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,7 +40,7 @@ export default function MapCreatePage() {
         <h1 className="text-2xl font-bold text-ink-900">새 지도</h1>
       </header>
 
-      <TripFields value={draft} onChange={setDraft} />
+      <TripFields value={draft} onChange={setDraft} maxDays={maxDays} />
 
       {create.error && <ErrorText message={createMapErrorMessage(create.error)} error={create.error} />}
 

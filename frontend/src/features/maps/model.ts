@@ -86,11 +86,35 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
 /** 지도 만들기·수정 입력(TripFields). */
 export type TripDraft = { title: string; region: MapRegion | null; startDate: string; endDate: string }
 
-/** ISO 날짜 문자열은 사전순 비교가 곧 날짜 비교다. */
-export const tripDateError = (d: TripDraft) => Boolean(d.startDate && d.endDate && d.endDate < d.startDate)
+const DAY_MS = 86_400_000
+const isoDay = (iso: string) => Date.parse(`${iso}T00:00:00Z`)
 
-/** 빈 칸이 없고 종료일이 시작일보다 앞서지 않는다. 당일치기는 같은 날을 넣는다. */
-export const tripReady = (d: TripDraft) => d.title.trim() !== '' && d.startDate !== '' && d.endDate !== '' && !tripDateError(d)
+/** 시작일부터 maxDays 일째 되는 날(시작일·종료일 포함) — 종료일 칸이 고를 수 있는 끝(#1371). */
+export const tripEndMax = (startDate: string, maxDays: number) => new Date(isoDay(startDate) + (maxDays - 1) * DAY_MS).toISOString().slice(0, 10)
+
+/** 여행 기간 상한 문구 — docs/errors.md TRIP_TOO_LONG 그대로, N은 서버 값(`trip_max_days`·`detail.limit`). */
+const tripTooLong = (limit: number) => `여행 기간은 최대 ${limit}일까지 정할 수 있어요`
+
+/**
+ * 날짜 칸의 잘못 — 종료일이 시작일보다 앞서거나, 기간이 서버가 준 상한(`GET /maps`의 `trip_max_days`, #1371)을 넘으면 그 문구.
+ * 상한을 모르면(구버전 서버) 기간은 보지 않고 서버 검사에 맡긴다. ISO 날짜 문자열은 사전순 비교가 곧 날짜 비교다.
+ */
+export function tripDateError(d: TripDraft, maxDays?: number): string | null {
+  if (!d.startDate || !d.endDate) return null
+  if (d.endDate < d.startDate) return '종료일은 시작일과 같거나 뒤여야 해요'
+  if (maxDays && d.endDate > tripEndMax(d.startDate, maxDays)) return tripTooLong(maxDays)
+  return null
+}
+
+/** 빈 칸이 없고 날짜 칸에 잘못이 없다. 당일치기는 같은 날을 넣는다. */
+export const tripReady = (d: TripDraft, maxDays?: number) =>
+  d.title.trim() !== '' && d.startDate !== '' && d.endDate !== '' && !tripDateError(d, maxDays)
+
+/** 서버가 여행 기간 상한으로 막았을 때(422 TRIP_TOO_LONG) 문구, 아니면 null. */
+export function tripTooLongError(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.code !== 'TRIP_TOO_LONG') return null
+  return typeof err.detail?.limit === 'number' ? tripTooLong(err.detail.limit) : '여행 기간이 너무 길어요'
+}
 
 /** 지도 수정 본문 — 바뀐 칸만 보낸다(#465 부분 수정). 지역은 지우지 못하고 바꾸기만 한다. 바뀐 게 없으면 null. */
 export function mapChanges(
@@ -143,10 +167,12 @@ export type MapListView = {
   limit: number
   /** 상한까지 찼다 — 「새 지도」를 막는다. */
   full: boolean
+  /** 여행 기간 상한(일, #1371). 구버전 서버는 보내지 않는다. */
+  tripMaxDays?: number
 }
 
 export function toMapListView(list: MapListDto): MapListView {
-  return { items: list.items.map(toMapView), limit: list.limit, full: list.items.length >= list.limit }
+  return { items: list.items.map(toMapView), limit: list.limit, full: list.items.length >= list.limit, tripMaxDays: list.trip_max_days }
 }
 
 /** 상한이라 「새 지도 만들기」를 막았을 때 곁에 두는 안내(지도 목록, PC 지도 바꾸기 메뉴). */
@@ -209,7 +235,7 @@ export function createMapErrorMessage(err: unknown): string {
   if (!(err instanceof ApiError)) return '지도를 만들지 못했어요'
   if (err.code === 'MAP_LIMIT') return mapLimitMessage(err)
   if (err.code === 'GUEST_NOT_ALLOWED') return '지도를 만들려면 카카오로 로그인해 주세요'
-  return '지도를 만들지 못했어요'
+  return tripTooLongError(err) ?? '지도를 만들지 못했어요'
 }
 
 export function inviteErrorMessage(err: unknown): string {
