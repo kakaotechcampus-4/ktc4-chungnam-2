@@ -60,7 +60,12 @@ function useMapCenter() {
  */
 export function useReadinessQuery(mapId: string) {
   const center = useMapCenter()
-  return useQuery({ queryKey: recommendKeys.readiness(mapId), queryFn: () => fetchReadiness(mapId, center()), refetchOnMount: 'always' })
+  // 고른 반경은 부를 때 읽는다 — 반경을 바꾸면 준비 화면이 다시 부른다(#1416).
+  return useQuery({
+    queryKey: recommendKeys.readiness(mapId),
+    queryFn: () => fetchReadiness(mapId, center(), useAiStore.getState().radius[mapId]),
+    refetchOnMount: 'always',
+  })
 }
 
 /**
@@ -70,7 +75,8 @@ export function useReadinessQuery(mapId: string) {
 export function useRecommendRadiusM(mapId: string): number | null {
   const readiness = useQuery<Awaited<ReturnType<typeof fetchReadiness>>>({ queryKey: recommendKeys.readiness(mapId), queryFn: skipToken }).data
   const picked = useAiStore((s) => s.picked[mapId])
-  return readiness ? readinessRadiusM(readiness, chosenCategory(toReadinessCards(readiness), picked)) : null
+  const radius = useAiStore((s) => s.radius[mapId])
+  return readiness ? readinessRadiusM(readiness, chosenCategory(toReadinessCards(readiness), picked), radius) : null
 }
 
 /** 서버가 아직 같은 키의 첫 요청을 처리 중이다(409 REQUEST_IN_PROGRESS) — 진행 표시를 두고 같은 키로 다시 묻는다(#811). */
@@ -90,8 +96,8 @@ export function useCreateRunMutation(mapId: string) {
   const center = useMapCenter()
   const mutation = useMutation({
     mutationKey: recommendKeys.create(mapId),
-    mutationFn: ({ category, key, at }: { category: RecommendCategory; key: string; at: Center | null }) =>
-      createRun(mapId, category, key, at),
+    mutationFn: ({ category, key, at, radiusM }: { category: RecommendCategory; key: string; at: Center | null; radiusM?: number }) =>
+      createRun(mapId, category, key, at, radiusM),
     retry: (count, err) => inProgress(err) && count < IN_PROGRESS_TRIES,
     retryDelay: IN_PROGRESS_WAIT_MS,
     onSuccess: (run) => {
@@ -103,10 +109,10 @@ export function useCreateRunMutation(mapId: string) {
   // 요청 중에 탭을 떠났다 오면 이 훅이 새로 붙어 isPending 이 false 다. 그때 다시 누르면 새 키로 run 이 하나 더 생기고
   // 크레딧도 또 빠진다 — 지도마다 진행 중인 요청이 있는지를 캐시에서 본다.
   const creating = useIsMutating({ mutationKey: recommendKeys.create(mapId) }) > 0
-  const start = (category: RecommendCategory, opts?: { onError?: (err: Error) => void }) => {
+  const start = (category: RecommendCategory, opts?: { onError?: (err: Error) => void; radiusM?: number | null }) => {
     if (creating) return
-    // 중심은 누른 순간 한 번 읽는다 — 처리 중이라 다시 묻는 것(retry)은 같은 키·같은 중심이어야 한다(멱등 동일성, #1331).
-    mutation.mutate({ category, key: crypto.randomUUID(), at: center() }, opts)
+    // 중심·반경은 누른 순간 한 번 읽는다 — 처리 중이라 다시 묻는 것(retry)은 같은 키·같은 중심·같은 반경이어야 한다(멱등 동일성, #1331, #1416).
+    mutation.mutate({ category, key: crypto.randomUUID(), at: center(), radiusM: opts?.radiusM ?? undefined }, { onError: opts?.onError })
   }
   return { ...mutation, isPending: mutation.isPending || creating, start }
 }

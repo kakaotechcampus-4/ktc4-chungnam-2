@@ -24,7 +24,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
 afterEach(() => {
   server.resetHandlers()
   resetScenario('happy-path')
-  useAiStore.setState({ runs: {} })
+  useAiStore.setState({ runs: {}, radius: {} })
 })
 afterAll(() => server.close())
 
@@ -281,6 +281,38 @@ describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안�
     await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
     const dialog = await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' })
     expect(within(dialog).getByText('지도 가운데 반경 3km 안에서 찾아요')).toBeInTheDocument()
+  })
+
+  it('「찾는 범위」에서 반경을 고르면 근처 정예 수를 그 반경으로 다시 세고, 확인 창과 추천 요청도 그 반경이다(#1416)', async () => {
+    const readinessQuery: string[] = []
+    const sent: unknown[] = []
+    server.events.on('request:start', async ({ request }) => {
+      const url = new URL(request.url)
+      if (url.pathname === `/maps/${MAP}/recommend/readiness`) readinessQuery.push(url.search)
+      if (request.method === 'POST' && url.pathname === `/maps/${MAP}/runs`) sent.push(await request.clone().json())
+    })
+    await renderInShell(SEOUL)
+    const group = screen.getByRole('group', { name: '찾는 범위' })
+    // 고를 수 있는 값과 처음 값은 서버(목 서버 = docs/constraints.md 값)가 준다 — 처음 켜진 칩이 기본 반경이다.
+    const chips = within(group).getAllByRole('button')
+    expect(chips.length).toBeGreaterThan(1)
+    const first = chips.find((c) => c.getAttribute('aria-pressed') === 'true')!
+    const other = chips.find((c) => c !== first)!
+
+    await userEvent.click(other)
+    expect(other).toHaveAttribute('aria-pressed', 'true')
+    const km = other.textContent!
+    const m = Number(km.replace('km', '')) * 1000
+    await waitFor(() => expect(readinessQuery.at(-1)).toContain(`&radius_m=${m}`))
+
+    await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' })
+    expect(within(dialog).getByText(`지도 가운데 반경 ${km} 안에서 찾아요`)).toBeInTheDocument()
+    await confirmCredit()
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]).toMatchObject({ category: '음식점', radius_m: m })
+    await waitFor(() => expect(useAiStore.getState().runs[MAP]?.default_radius_m).toBe(m))
+    server.events.removeAllListeners()
   })
 
   it('추천 요청이 실패하면 「추천 장소를 찾지 못했어요」 한 줄', async () => {
