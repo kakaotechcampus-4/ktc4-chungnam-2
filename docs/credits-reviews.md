@@ -351,6 +351,7 @@ def reassign_user(db, *, from_user_id: str, to_user_id: str) -> dict[str, int]: 
 |---|---|---|---|
 | `recommend` | `flows._create_run` | 준비 확인 뒤, 모델(②) 전에 `check_can_spend(feature="recommend_run")`. `service.create_run(...)` 직후 같은 트랜잭션에서 `charge(..., run_id=str(run.id))` | #949 |
 | `recommend` | `check_retry_limit` 호출 5곳, `ATTEMPT_LIMIT` | 삭제 | #949 |
+| `recommend` | `flows._search_and_store` | 첫 실행이 0곳이면 같은 트랜잭션에서 `refund(feature="recommend_run")`(3.3). 재추천·넓히기는 차감이 없어 환불도 없다 | #1015 |
 | `agent.course` | `service.request_course` | `COURSE_LIMIT` 검사 삭제. run id를 먼저 만들고 run INSERT와 같은 트랜잭션에서 `charge(feature="course")` | #950 |
 | `agent.course` | `execute_run` 실패 저장, `fail_stale_runs` | 결과 없이 끝난 run마다 `refund(feature="course")` | #950 |
 | `reviews` | `PUT .../reviews/me` 신규 작성 | 같은 트랜잭션에서 `grant_review` | #951 |
@@ -378,7 +379,7 @@ def reassign_user(db, *, from_user_id: str, to_user_id: str) -> dict[str, int]: 
 | D3 | `COURSE_LIMIT`, `RETRY_LIMIT` 삭제 | 폐지 예정으로 표시한 뒤 구현(#949, #950)을 거쳐 #954에서 지웠다 |
 | D4 | 응답의 `attempt_limit` 삭제 | FE(#952)가 안 쓰게 된 뒤 #954에서 지웠다. `attempt_no`는 유지 |
 | D5 | 다시 찾기·근거 고치기는 상한 없이 무료 | 모델 비용은 ＋의 ②뿐이고 run당 글 10개로 묶인다 |
-| D6 | 추천 환불 경로 | 없다(3.3). v1 추천은 실패하면 롤백한다 |
+| D6 | 추천 환불 경로 | 첫 실행이 0곳일 때 하나뿐이다(3.3). 그 밖의 실패는 롤백한다. 처음 결정은 「없다」였고 2026-11-01 #1015에서 바꿨다 |
 | D8 | 후기 숨김은 스크립트로만 | `reports.py`(신고 목록)와 `hide.py`. 자동 숨김 기준은 나중에 |
 | 상한 | 잔액 상한 30(2026-11-01 추가, #981) | 보상·환불은 30까지만, 상한에 걸려 0을 받아도 그 장소 보상은 끝(3.6) |
 | 광고 | 광고 보고 충전(2026-11-02, #1037) | 잔액 바닥일 때만, +10, 하루 3번, 서버 세션 + 7초, 광고는 설정으로 끄고 켠다(3.7) |
