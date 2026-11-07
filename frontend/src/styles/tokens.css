@@ -1,31 +1,34 @@
 /* 색의 단일 소스(docs/design/colors.md 5절). 값을 바꾸면 그 문서의 사본 표도 같이 고친다. */
 :root {
-  /* ── 브랜드 · 파랑 217° ──────────────── */
-  --brand-50:  #EFF5FE;  --brand-100: #DBE8FD;
-  --brand-200: #B8D0F9;  --brand-300: #84AFF5;
-  --brand-400: #5A8FEF;  --brand-500: #3B72E4;
-  --brand-600: #2A57C4;  --brand-700: #1E4197;
-  --brand-800: #142C68;
+  /* ── 브랜드 · 파랑 227°(「핑고 결」, #1521) ──
+     액션 파랑은 토스 파랑(215°)과 겹치지 않게 남보라 쪽으로 옮겼다. 300만 핑고 몸 하늘색(217°) 그대로다 — 캐릭터 색이라서. */
+  --brand-50:  #F0F2FC;  --brand-100: #E2E6FA;
+  --brand-200: #C6CEF3;  --brand-300: #84AFF5;
+  --brand-400: #6A82E3;  --brand-500: #5370DD;
+  --brand-600: #3D5FD8;  --brand-700: #2F4AB0;
+  --brand-800: #233785;
 
-  /* ── 중립 · 35° 저채도(따뜻한 회색, #1223) ── */
-  --ink-50:  #FAF8F5;  --ink-100: #F3F0EB;
-  --ink-200: #E7E4DF;  --ink-300: #D2CDC6;
-  --ink-400: #A8A199;  --ink-500: #625B55;
-  --ink-600: #5C5650;  --ink-700: #403B36;
-  --ink-900: #1F1C19;
+  /* ── 중립 · 230° 저채도(라벤더 회색, #1521) ──
+     따뜻한 베이지(35°, #1223)가 액션 파랑과 맞닿아 흐리게 읽혀서 파랑 쪽으로 기울였다. */
+  --ink-50:  #F1F2F9;  --ink-100: #E9EAF3;
+  --ink-200: #E0E2EC;  --ink-300: #CCD2DB;
+  --ink-400: #9A9EAF;  --ink-500: #5F6377;
+  --ink-600: #4E5266;  --ink-700: #363A4B;
+  --ink-900: #1A1C26;
 
   /* ── 시맨틱 ──────────────────────────── */
   --good-bg: #E6F4ED;  --good-line: #12855A;  --good-text: #0D6B49;
-  --warn-bg: #FBF0DC;  --warn-line: #C77700;  --warn-text: #A35F00;
+  --warn-bg: #FBF0DC;  --warn-line: #C77700;  --warn-text: #9C5A00;
   --bad-bg:  #FBEAEA;  --bad-line:  #D02A2A;  --bad-text:  #A32020;
 
   /* ── 면 ──────────────────────────────── */
   --surface-page:    var(--ink-50);
+  --surface-sheet:   var(--ink-50);    /* 시트 바탕 — 카드·칩·입력칸(흰색)이 떠오르는 면, 60/30/10의 30(#1521) */
   --surface-card:    #FFFFFF;
   --surface-sunken:  var(--ink-100);
   --surface-overlay: #FFFFFF;
-  --toast-bg:        rgba(64, 58, 52, 0.85);
-  --scrim:           rgba(31, 28, 25, 0.32);   /* 지도가 비쳐야 모달이 지도 위에 뜬 맥락이 남는다(#299) */
+  --toast-bg:        rgba(54, 58, 75, 0.88);
+  --scrim:           rgba(26, 28, 38, 0.32);   /* 지도가 비쳐야 모달이 지도 위에 뜬 맥락이 남는다(#299) */
 
   /* ── 글자 ────────────────────────────── */
   --text-primary:   var(--ink-900);
@@ -49,8 +52,8 @@
   --action-fill-pressed:  var(--brand-800);
   --action-danger-hover:  var(--bad-text);
   /* 누르는 면(press, DESIGN.md 「상태」). 어느 바탕 위에서든 잉크를 얇게 덮어 올림·눌림을 보인다 */
-  --press-hover:          rgba(31, 28, 25, 0.04);
-  --press-active:         rgba(31, 28, 25, 0.08);
+  --press-hover:          rgba(26, 28, 38, 0.04);
+  --press-active:         rgba(26, 28, 38, 0.08);
 
   /* ── 선택 상태 ───────────────────────── */
   --selected-bg:   var(--brand-100);
@@ -59,7 +62,7 @@
 
   /* ── 핑고 ────────────────────────────── */
   --pingo-body: var(--brand-300);
-  --pingo-bg:   var(--brand-50);
+  --pingo-bg:   #EFF5FE;          /* AI 자리 면은 핑고 하늘색 그대로(브랜드 50은 라벤더로 옮겼다, #1521) */
   --pingo-line: var(--brand-300);
   --pingo-text: var(--brand-700);
   --pingo-outline: var(--ink-300); /* 평면 핑고 외곽선. brand-50 면 위에서도 몸이 묻히지 않게 */

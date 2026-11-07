@@ -553,11 +553,11 @@ export default function MapCanvas({
       path: [path(DIM_WORLD), ...rings.map(path)],
       strokeWeight: 0,
       strokeOpacity: 0,
-      fillColor: css.getPropertyValue('--ink-900').trim() || '#1F1C19',
+      fillColor: css.getPropertyValue('--ink-900').trim() || '#1A1C26',
       fillOpacity: 0.12,
       zIndex: 1,
     })
-    const edge = css.getPropertyValue('--action-fill').trim() || '#2A57C4'
+    const edge = css.getPropertyValue('--action-fill').trim() || '#3D5FD8'
     const lines = rings.map(
       (ring) => new maps.Polyline({ path: path([...ring, ring[0]]), strokeWeight: 2, strokeColor: edge, strokeOpacity: 0.9, zIndex: 2 }),
     )
@@ -580,7 +580,7 @@ export default function MapCanvas({
     const el = containerRef.current
     if (!ready || !m || !el || areaRadius == null) return
     const { maps, map } = m
-    const color = getComputedStyle(document.documentElement).getPropertyValue('--action-fill').trim() || '#2A57C4'
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--action-fill').trim() || '#3D5FD8'
     const center = visibleCenter(maps, map)
     const circle = new maps.Circle({
       center,
@@ -637,7 +637,7 @@ export default function MapCanvas({
         const line = new maps.Polyline({
           path: r.stops.map((s) => new maps.LatLng(s.lat, s.lng)),
           strokeWeight: r.color ? 5 : 4,
-          strokeColor: getComputedStyle(document.documentElement).getPropertyValue(r.color ?? '--brand-600').trim() || '#2A57C4',
+          strokeColor: getComputedStyle(document.documentElement).getPropertyValue(r.color ?? '--brand-600').trim() || '#3D5FD8',
           strokeOpacity: 1,
           strokeStyle: r.style ?? 'solid',
         })
