@@ -13,6 +13,7 @@ import { inviteErrorMessage, inviteProblem, type InviteProblem, type InviteView 
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
 import EntryFrame from '@/ui/EntryFrame'
 import EmptyState from '@/ui/EmptyState'
+import { josaRo } from '@/ui/josa'
 import PingoLoading from '@/ui/PingoLoading'
 import MapIllustration from '@/ui/MapIllustration'
 import TextField from '@/ui/TextField'
@@ -50,6 +51,8 @@ export default function InvitePage() {
     )
   }
 
+  // 누구로 참여하는지는 버튼 글이 말한다 — 아래 작은 줄로 두면 안 보였다(#1427).
+  const name = me.data?.display_name
   const join = () =>
     // 구성원 온보딩(Figma 2절)은 지도 화면이 이 표시를 보고 띄운다.
     accept.mutate(undefined, {
@@ -92,9 +95,18 @@ export default function InvitePage() {
               disabled={accept.isPending}
               className="btn-primary btn-lg w-full"
             >
-              {accept.isPending ? '참여하는 중…' : '참여하기'}
+              {accept.isPending ? (
+                '참여하는 중…'
+              ) : name ? (
+                // 버튼 높이가 정해져 있어 긴 이름(최대 50자)은 이름만 「…」로 줄인다.
+                <span className="flex min-w-0">
+                  <span className="truncate">{name}</span>
+                  <span className="shrink-0 whitespace-pre">{`${josaRo(name)} 참여하기`}</span>
+                </span>
+              ) : (
+                '참여하기'
+              )}
             </button>
-            <p className="text-xs text-ink-500">{me.data?.display_name} (나)로 참여해요</p>
           </>
         )}
       </div>

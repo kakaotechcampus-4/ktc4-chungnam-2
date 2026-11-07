@@ -33,7 +33,7 @@ CI가 같은 점검을 매주·의존성 변경 때 돈다. 아래는 이 문서
 
 **backend/requirements.txt (pip-audit)** — 2개 패키지 4건(같은 ID 2건씩).
 - `python-dotenv==1.0.1` → 수정 버전 1.2.2 (PYSEC-2026-2270)
-- `pytest==8.3.3` → 수정 버전 9.0.3 (PYSEC-2026-1845). 테스트 도구인데 운영 요구 파일에 들어 있다 — 분리 여부는 별도 판단
+- `pytest==8.3.3` → 수정 버전 9.0.3 (PYSEC-2026-1845). 테스트 도구인데 운영 요구 파일에 들어 있었다 — #1439에서 `requirements-dev.txt`로 분리하고 pytest 9.0.3 + pytest-asyncio 1.3.0으로 올림(전체 5800개 통과)
 
 **frontend (npm audit)** — 개발 도구 포함 19건(낮음 1·보통 8·높음 8·**치명 2**), 개발 도구를 뺀 `--omit=dev` 기준 17건(치명 0). CI는 개발 도구를 포함해 센다. 치명 2건은 `solid-js`→`seroval`(하위 의존성, 개발 도구 쪽)로, 운영 번들에 들어가는지는 확인 못 함 — 별도 조사 후 처리.
 - 대부분 `shadcn` CLI(`dependencies`에 있다)가 끌어오는 하위 패키지다(`@modelcontextprotocol/sdk`, `hono`, `body-parser`, `undici`, `systeminformation`, `zod` 등). 화면 번들에는 들어가지 않는 개발 도구로 보이나, 실제 번들 포함 여부는 확인 못 함
@@ -46,7 +46,7 @@ CI가 같은 점검을 매주·의존성 변경 때 돈다. 아래는 이 문서
 **처리 결과 (#1432, 2026-11-06)**
 - 프런트: `npm audit fix`(주 버전 변경 없는 것만, 잠금 파일만 갱신)로 19건 → 6건(낮음 2·보통 4, 높음·치명 0). 치명 2건(`seroval`·`solid-js`)은 `@tanstack/react-query-devtools`가 끌어오는 하위 의존성이었고, 개발자 도구는 `import.meta.env.DEV && USE_MOCK`일 때만 켜지며(`frontend/src/main.tsx`) 운영 번들(`dist`)에도 운영 이미지(caddy가 정적 파일만 서빙)에도 들어가지 않는다. 남은 6건은 `shadcn` CLI 하위 패키지로, 해결에 `shadcn` 주 버전 변경이 필요해 남겨 둔다
 - backend: `python-dotenv` 1.0.1 → 1.2.2(우리는 `.env`를 읽기만 하고 `set_key`·`unset_key`를 쓰지 않아 실제 영향은 없었다). 전체 pytest 5794개 통과
-- 남김: `pytest` 8.3.3 → 9.x(주 버전, `pytest-asyncio` 호환 확인 필요). 근본 조치는 테스트 도구를 운영 이미지 `requirements.txt`에서 분리하는 것(`Dockerfile`·CI 변경이 따라온다)
+- 처리(#1439): `pytest`·`pytest-asyncio`·`jsonschema`·`import-linter`를 `backend/requirements-dev.txt`로 분리해 운영 이미지에서 뺐다. `pytest` 9.0.3, `pytest-asyncio` 1.3.0으로 올려 전체 pytest 통과 확인
 
 처리 원칙: 취약점이 나왔다고 바로 올리지 않는다. 운영 코드에 닿는지, 올려도 테스트가 통과하는지 확인한 뒤 PR 단위로 처리한다.
 

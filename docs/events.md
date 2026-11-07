@@ -28,7 +28,7 @@
 | `pin.restored` | `Pin` | 지운 핀 복구(#864). `pin.created`와 같은 모양 — 화면은 목록에 다시 올린다 |
 | `pin.updated` | `Pin` | 핀을 찍은 사람이 메모·분류를 고침(#466), 또는 구성원이 실시간 핀을 자체 DB 핀으로 승격함(#501 — `source`가 `live`→`db`, `place_id`·장소 값이 채워지고 반응·확정 항목은 그대로). `pin.created`와 같은 모양이다. 받은 FE는 그 핀을 갈아끼우고 확정 리스트를 다시 받는다. 분류가 바뀌었으면 `FilterCounts`·readiness도 다시 불러온다 |
 | `reaction.changed` | `{ pin_id, reaction_summary, user_id, display_name, type }` | 반응 등록/수정/삭제. `user_id`·`display_name`은 그 반응을 남긴(지운) 구성원, `type`은 `like`·`against`이고 삭제면 `null`이다(2026-10-04, FE 요청 — 「지우님이 반대 의견을 남겼어요」). 반응 내용(사유)은 싣지 않는다 |
-| `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed'\|'reordered' }` | 확정 리스트 변경. `reordered`는 수동 정렬 (#30) |
+| `shortlist.changed` | `{ item: ShortlistItem, action: 'added'\|'removed'\|'reordered' }` | 확정 리스트 변경. `reordered`는 수동 정렬·일정 저장(#30, #1172)이고 요청 한 번에 하나다. `item`은 첫 항목이라 순서는 `GET /maps/{mapId}/shortlist`로 본다(#1274) |
 | `route.recalculated` | `Route[]` | **「동선 짜주기」 실행 시** (#30, `POST /maps/{mapId}/route`). 확정 리스트 변경만으로는 발행하지 않는다. 화면은 일정(#1171) 뒤 `/route`를 부르지 않아 지금은 발행되지 않는다 |
 | `member.joined` | `Member` | 초대 수락 |
 | `member.left` | `{ map_id, user_id, new_owner_user_id \| null }` | 구성원이 지도에서 나감(#369). **방장이 계정을 탈퇴해 그 지도의 방장이 위임된 경우에도 보낸다**(`user_id`는 탈퇴한 사람, 2026-10-07 결정). 방장이 나가거나 탈퇴해 위임됐으면 `new_owner_user_id`에 새 방장, 아니면 null. 탈퇴했는데 넘길 사람이 없어 지도가 삭제되면 이 이벤트 대신 `map.deleted`만 보낸다. 받은 FE는 핀 목록(작성자 표시 포함), 핀 참여율, `FilterCounts`, readiness를 다시 불러온다. 나간 사람의 반응 삭제마다 따로 이벤트를 보내지 않는다 |
@@ -77,7 +77,7 @@ FE는 이벤트를 받으면 아래 표대로 화면 데이터를 다시 받는�
 | `map.updated` | 지도 상세(페이로드로 갱신), `GET /maps`(내 지도 목록의 제목과 날짜, #465), `GET /maps/{mapId}/shortlist`(날짜가 바뀌면 서버가 기간 밖 일정을 빼고, 일정 version도 기간을 담아 바뀐다, #1273) |
 | `map.deleted` | 지도 화면을 닫고 내 지도 목록(`GET /maps`)으로 |
 | `map.restored` | 내 지도 목록(`GET /maps`)과 휴지통(`GET /maps/trash`)을 다시 받는다 |
-| `shortlist.changed` | `GET /maps/{mapId}/shortlist`, `GET /maps/{mapId}/pins`(확정 핀 표시), AI 코스의 `GET /maps/{mapId}/courses/latest`와 보고 있는 `GET /course-runs/{id}`(일정이 바뀌면 `stale`이 되어 고칠 점 카드의 「반영」을 막는다, #1322). 일정 저장(`PUT .../shortlist/schedule`)도 항목마다 `reordered`로 이 이벤트를 보낸다 |
+| `shortlist.changed` | `GET /maps/{mapId}/shortlist`, `GET /maps/{mapId}/shortlist/schedule`(일정), `GET /maps/{mapId}/pins`(확정 핀 표시), AI 코스의 `GET /maps/{mapId}/courses/latest`와 보고 있는 `GET /course-runs/{id}`(일정이 바뀌면 `stale`이 되어 고칠 점 카드의 「반영」을 막는다, #1322). 언제 보내는지는 위 이벤트 목록 표 |
 | `route.recalculated` | 동선(페이로드 `Route[]`로 갱신, 또는 `GET /maps/{mapId}/route`) |
 | `agent.suggested` | 에이전트 상태의 지금 제안(페이로드로 갱신). 시트가 열려 있으면 `POST /agent/suggestions/{id}/view`, 닫혀 있으면 점을 켠다 |
 | `agent.resolved` | 지금 제안의 id가 같으면 비우고 점을 끈다(페이로드로 갱신) |

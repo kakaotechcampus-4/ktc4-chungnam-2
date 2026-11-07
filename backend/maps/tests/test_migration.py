@@ -1,4 +1,4 @@
-"""maps 테이블의 마지막 마이그레이션 0066_map_cover_color(#1445) up/down — 빈 DB에 올리고 내렸다 다시 올린다. models.py와 어긋나지 않았는지도 본다.
+"""maps 테이블의 마지막 마이그레이션 0068_map_cover_color(#1445) up/down — 빈 DB에 올리고 내렸다 다시 올린다. models.py와 어긋나지 않았는지도 본다.
 
 `<PINGO_TEST_DB>_maps_mig` DB를 따로 만들고 끝나면 지운다(llm/tests/test_migration.py와 같은 방식).
 """
@@ -14,7 +14,7 @@ from agent.tests.conftest import BASE_DATABASE_URL, TEST_DB_NAME, replace_dbname
 from maps.models import Map, MapCover
 
 BACKEND = Path(__file__).resolve().parents[2]
-REVISION, PREVIOUS = "0066_map_cover_color", "0065_recommend_run_radius_m"
+REVISION, PREVIOUS = "0068_map_cover_color", "0067_course_run_pin_ids_keep"
 MIG_DB = f"{TEST_DB_NAME}_maps_mig"[:63]
 
 

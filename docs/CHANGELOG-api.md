@@ -2,12 +2,18 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-07, `default_radius_walk_min`을 deprecated로 표시, 화면이 쓰는 deprecated 필드 검사 (#1467)
+
+- **`RecommendRun.default_radius_walk_min`** 에 `deprecated: true`를 달았다. 값과 응답은 그대로다(서버는 계속 내린다). 생성 타입에 `@deprecated`가 붙는다. #1385에서 반경을 m로 바꿀 때 글로만 "곧 없앤다"로 적어서 화면이 반경 넓히기 확인 창에 옛 칸(도보 분)과 +5분 계산을 계속 썼다(멘토 리뷰).
+- 화면은 `default_radius_m`, `next_default_radius_m`(넓히면 바뀔 반경, 상한이면 `null`)으로 옮긴다 — FE #1468.
+- **검사**: `contracts/checks/deprecated-fields.test.ts`. 스펙에서 deprecated인 속성·파라미터를 `frontend/src`가 쓰면 `docs/openapi-workflow.md` 「화면이 아직 쓰는 deprecated 필드」 표에 FE 이슈와 함께 있어야 통과한다. 표는 비어 가야 한다. 필드를 대체할 때의 절차는 같은 문서 4절 5번.
+
 ## 2026-11-06, 지도 대표 이미지와 색 — `Map.color`·`cover_url`·`owner_display_name`, `PUT·DELETE·GET /maps/{mapId}/cover`, 422 `COVER_INVALID` (#1445)
 
 - 지도마다 대표 이미지와 색을 둔다. 둘 다 지도 단위라 모든 구성원이 같은 것을 보고, 바꾸는 것은 방장만이다(`map.settings.edit`, `PATCH /maps/{mapId}`와 같다).
 - **`Map`에 선택 필드 셋(상위 호환, `required` 아님).** 목록(`GET /maps`)과 상세·수정·복구·수락 등 `Map`을 돌려주는 모든 응답에 채운다.
   - `color`: 방장이 고른 색 `#RRGGBB`. 고르지 않았으면 키가 없다.
-  - `cover_url`: 올린 이미지 주소, API 기준 상대 경로 `/maps/{id}/cover?v=<갱신 시각(밀리초)>`. 올린 이미지가 없으면 키가 없다 — 화면이 지역 기본 이미지를 그린다(서버는 기본 이미지를 저장하지 않는다).
+  - `cover_url`: 올린 이미지 주소, API 기준 상대 경로 `/maps/{id}/cover?v=<갱신 시각(마이크로초)>`. 올린 이미지가 없으면 키가 없다 — 화면이 지역 기본 이미지를 그린다(서버는 기본 이미지를 저장하지 않는다).
   - `owner_display_name`: 지금 방장의 표시 이름(memberships.role 기준, 탈퇴했으면 「탈퇴한 구성원」). 초대받은 지도 카드의 「○○님의 지도」용.
 - **`PATCH /maps/{mapId}`** 에 `color`(`^#[0-9A-Fa-f]{6}$` 또는 `null`). **`null`은 색 지우기**(고르지 않은 상태로)다 — 다른 필드는 지금처럼 null이면 422다. 형식이 틀리면 422 `VALIDATION_ERROR`.
 - **새 엔드포인트 셋**
@@ -16,7 +22,7 @@
   - `GET /maps/{mapId}/cover`(구성원 누구나): 이미지 바이트, `Cache-Control: private, max-age=31536000, immutable`. 로그인 쿠키로 인증해 `<img src>`에 `cover_url`을 API 주소 뒤에 붙여 그대로 쓴다. 없으면 404.
 - **새 오류 422 `COVER_INVALID`**(`docs/errors.md`): 형식이 셋 밖이거나(파일 앞부분도 본다) 크기가 상한을 넘음. `detail: { limit_bytes, types }` — 화면은 이 값으로 안내하고 숫자를 적지 않는다.
 - 이미지는 Postgres `map_covers`에 둔다(S3 없음, 인프라 미정 #1203). 지도를 삭제해도 남고 정리 작업이 함께 지운다. `map.updated` 이벤트에는 색과 이미지를 싣지 않는다 — 다른 구성원은 다음에 지도를 다시 받을 때 본다.
-- data-model: `maps.color`, `map_covers` 테이블(마이그레이션 `0066_map_cover_color`).
+- data-model: `maps.color`, `map_covers` 테이블(마이그레이션 `0068_map_cover_color`).
 - 목 서버: 지도 응답의 세 칸, `PATCH` 색, 이미지 올리기·지우기·받기(메모리에 보관). 시드 지도는 색·이미지가 없다. 타입 재생성 필요(`npm run gen:types`).
 
 ## 2026-11-05, 추천 반경을 사용자가 2~5km에서 정해 보낸다 — `radius_m` (#1416)
@@ -131,6 +137,11 @@
 - `CourseStep.role`의 결정 설명을 「사람의 답 또는 기본값」에서 「코드가 고르거나 가정을 세움」으로 바꿨다.
 - `CourseRun.goals` 설명에 지도 근거 목표를 적었다: 요청이 없어도 우리 조건 요약과 야경 라벨로 목표가 생기고, label 끝에 「(지도에서 세운 목표)」가 붙는다(#1131). 「요청이 없으면 빈 배열」은 틀린 설명이었다.
 - 목 서버의 코스 작업 기록을 실서버 흐름(찾기 → 옮겨 보기 → 결정 → 짜기 → 비교 → 끝 → 가정 → 결과, 14줄)으로 바꿨다. 진행 중 조회의 줄 수(2개, 5개)는 그대로다.
+
+## 2026-11-04, `shortlist.changed(reordered)`는 요청 한 번에 하나 (#1274)
+
+- 페이로드 모양은 그대로다. **동작이 바뀐다**: 순서 바꾸기(`PUT /maps/{mapId}/shortlist/order`)와 일정 저장(`PUT /maps/{mapId}/shortlist/schedule`)이 항목마다 내던 `reordered` 이벤트를 요청 한 번에 하나만 낸다. `item`은 첫 항목이다. 확정된 장소가 없으면 내지 않는다.
+- FE 영향 없음 — 이벤트를 받으면 `docs/events.md` 표대로 확정 리스트를 다시 받고 `item`은 쓰지 않는다. 항목마다 내면 확정 20곳에 구성원마다 다시 받기가 최대 40번 시작됐다.
 
 ## 2026-11-03, `EvidenceLine.filters_candidates` 추가 — 후보를 빼는 줄과 순위만 바꾸는 줄 구분 (#1260)
 

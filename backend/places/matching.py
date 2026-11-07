@@ -61,6 +61,8 @@ class Candidate:
     kakao_place_id: str | None = None
     distance_m: float | None = None   # 힌트 좌표까지 DB가 잰 ST_Distance. 카카오 ID로만 붙은 후보는 None(반경 밖일 수 있다)
     address: str | None = None        # 자체 DB의 주소. 힌트 주소와의 비교(#500)에만 쓴다
+    kakao_place_url: str | None = None   # 이미 기록된 카카오 장소 URL. 링크 해석 결과의 place_source.url(#1486)에만 쓴다
+    source: str | None = None             # places.source(permit | tourapi). 링크 해석 결과의 place_source.provider(#1486)에만 쓴다
 
 
 def normalize_name(name: str) -> str:

@@ -125,7 +125,7 @@ class MapCover(Base):
 
     __tablename__ = "map_covers"
 
-    map_id: Mapped[str] = mapped_column(String, ForeignKey("maps.id"), primary_key=True)
+    map_id: Mapped[str] = mapped_column(String, ForeignKey("maps.id", ondelete="CASCADE"), primary_key=True)
     data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     content_type: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
