@@ -24,7 +24,7 @@
 
 ## 2. 백엔드
 
-근거: `backend/requirements.txt`(전부 `==` 고정), `backend/.python-version`, `backend/pyproject.toml`, `backend/main.py`, `backend/Dockerfile`.
+근거: `backend/requirements.txt`(운영, 전부 `==` 고정), `backend/requirements-dev.txt`(테스트·개발 도구, #1439), `backend/.python-version`, `backend/pyproject.toml`, `backend/main.py`, `backend/Dockerfile`.
 
 | 구분 | 패키지 | 버전 | 쓰이는 곳 |
 |---|---|---|---|
@@ -39,7 +39,7 @@
 | HTTP 클라이언트 | httpx | 0.27.2 | 카카오 OAuth, 장소 소스, 링크 해석 |
 | LLM SDK | openai | 3.22.1(파일 표기) | `llm/client.py` — 실제 설치 버전은 확인 못 함 |
 | 설정 | python-dotenv, pyyaml | 1.0.1, 6.0.2 | `common/settings.py`, `agent/core.py` |
-| 테스트 | pytest, pytest-asyncio, jsonschema | 8.3.3, 0.24.0, 4.23.0 | 아래 10절 |
+| 테스트 | pytest, pytest-asyncio, jsonschema | 9.0.3, 1.3.0, 4.23.0 | 아래 10절 |
 | 구조 검사 | import-linter | 2.15 | `backend/pyproject.toml`의 계약, CI `lint-imports` |
 | (사용 안 함) | redis | 5.0.8 | **코드에서 import하는 곳이 없다**(12절) |
 
