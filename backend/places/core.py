@@ -215,11 +215,17 @@ def place_link(name: str | None, address: str | None, kakao_place_url: str | Non
     동네가 없으면 이름만, 이름이 없으면 None."""
     if kakao_place_url:
         return kakao_place_url
+    query = place_search_query(name, address)
+    return kakao_search_url(query) if query else None
+
+
+def place_search_query(name: str | None, address: str | None) -> str | None:
+    """장소 하나를 밖에서 찾는 검색어 "{이름} {동네}"(동네가 없으면 이름만), 이름이 없으면 None. 카카오·네이버 링크가 같이 쓴다."""
     name = (name or "").strip()
     if not name:
         return None
     area = neighborhood(address)
-    return kakao_search_url(f"{name} {area}" if area else name)
+    return f"{name} {area}" if area else name
 
 
 def naver_search_url(query: str) -> str:
@@ -230,11 +236,8 @@ def naver_search_url(query: str) -> str:
 def naver_place_link(name: str | None, address: str | None) -> str | None:
     """장소 하나의 「네이버 지도에서 보기」 링크. "{이름} {동네}" 검색 링크(동네가 없으면 이름만), 이름이 없으면 None.
     네이버 장소 번호는 모으지 않아 늘 검색 링크다(#1513)."""
-    name = (name or "").strip()
-    if not name:
-        return None
-    area = neighborhood(address)
-    return naver_search_url(f"{name} {area}" if area else name)
+    query = place_search_query(name, address)
+    return naver_search_url(query) if query else None
 
 
 # ---- 번호표 신뢰 규칙(#1048) ----
