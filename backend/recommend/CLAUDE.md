@@ -25,8 +25,9 @@
 - 5-6 실격 필터 순서(반경→영업종료→실격조건→중복제외→정렬)를 바꾸지 않는다. 순서가 깔때기 표시(funnel)의 의미를 결정한다.
 - 추천 횟수 상한은 없다. 「추천 받기」 1번에 크레딧 1이다(#432, #949, `docs/credits-reviews.md`): `flows._create_run`이
   모델(②) 전에 `credits.api.check_can_spend`, run INSERT와 같은 트랜잭션에서 `credits.api.charge`를 부른다. 가격 숫자는
-  여기 적지 않는다(`credits/constants.py`). 「다시 찾기」·「근거 고치기」는 크레딧을 쓰지 않는다. 추천에는 환불 경로가 없다
-  (실패하면 run과 차감이 함께 롤백된다). `attempt_no`와 `lock_requester_attempts`(#811)는 번호를 매기려고 남긴다.
+  여기 적지 않는다(`credits/constants.py`). 「다시 찾기」·「근거 고치기」는 크레딧을 쓰지 않는다. 환불은 **첫 실행이 0곳일
+  때 하나뿐이다**(`flows._search_and_store`가 같은 트랜잭션에서 `credits.api.refund`, #1015). 그 밖의 실패는 run과 차감이 함께
+  롤백된다. 차감·환불을 부르는 곳과 환불 조건의 정본은 `docs/credits-reviews.md` 3.2 표다(이유는 3.3절, 검사가 코드와 맞춘다, #1479) — 바꿀 때는 거기를 고치고 여기는 가리키기만 한다. `attempt_no`와 `lock_requester_attempts`(#811)는 번호를 매기려고 남긴다.
 
 ## 완료 정의
 

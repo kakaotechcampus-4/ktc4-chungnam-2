@@ -6,7 +6,12 @@
 
 INITIAL_CREDITS = 30   # 정식 계정이 처음 받는 크레딧. 계정 행은 처음 쓰기 때 만든다
 
-# feature(= llm_calls.feature 라벨) -> 실행 1번에 빠지는 크레딧. 표에 없는 feature는 크레딧을 쓰지 않는다
+# 1크레딧이 감싸는 모델 원가(원). 가격은 이 단가에서 나온다 — 기능 1번의 평균 원가(딸린 「+」·백그라운드 몫 포함)를
+# 이 값으로 나눠 올림한 수(명세 3.2, 결정 #1478). 단가를 바꾸면 PRICES와 명세 3.2 표를 같이 다시 정한다.
+CREDIT_COST_KRW = 1
+
+# feature(= llm_calls.feature 라벨) -> 실행 1번에 빠지는 크레딧. 산정과 환불 조건은 명세 3.2 표(검사가 이 dict와 맞춘다).
+# 표에 없는 feature는 크레딧을 쓰지 않는다
 # (「+」 근거 추가 evidence_add, 백그라운드 agent_diagnose·agent_summary — 부르는 쪽이 charge를 부르지 않는다).
 PRICES: dict[str, int] = {
     "recommend_run": 1,   # 「추천 받기」 POST /maps/{mapId}/runs. 다시 찾기·근거 고치기는 0
