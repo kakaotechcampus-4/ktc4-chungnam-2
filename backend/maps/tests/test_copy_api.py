@@ -5,9 +5,12 @@ POST /maps/{mapId}/copy — 방장만, 제목 「원래 제목 (n)」, 날짜·�
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+import pytest
+from sqlalchemy import delete, select, update
 
 from auth.testing import make_guest
+from common.errors import AppError
+from maps import service
 from maps.core import MAP_LIMIT
 from maps.models import Membership as MembershipRow
 from maps.tests.test_delete_leave_api import _auth, _create_map, _fill_to_limit, _join, _pin, _react
@@ -112,6 +115,23 @@ def test_member_gets_403_and_outsider_or_deleted_map_404(app_client):
 
     assert app_client.delete(f"/maps/{map_id}", cookies=_auth("user_1")).status_code == 204
     assert _copy(app_client, map_id).status_code == 404
+
+
+def test_role_is_checked_again_after_locking_the_source_map(app_client, db_session):
+    """라우터가 방장으로 본 뒤 위임·나가기가 먼저 끝난 경우 — 서비스가 잠근 뒤 지금 역할로 다시 거른다(#1446 리뷰)."""
+    map_id = _create_map(app_client)
+    _join(app_client, map_id, "user_2")
+    owner_row = (MembershipRow.map_id == map_id) & (MembershipRow.user_id == "user_1")
+
+    db_session.execute(update(MembershipRow).where(owner_row).values(role="member"))
+    with pytest.raises(AppError) as demoted:
+        service.copy_map(db_session, map_id=map_id, user_id="user_1", user_is_guest=False)
+    assert demoted.value.code == "FORBIDDEN"
+
+    db_session.execute(delete(MembershipRow).where(owner_row))
+    with pytest.raises(AppError) as left:
+        service.copy_map(db_session, map_id=map_id, user_id="user_1", user_is_guest=False)
+    assert left.value.code == "NOT_FOUND"
 
 
 def test_copy_over_the_map_limit_is_409(app_client):

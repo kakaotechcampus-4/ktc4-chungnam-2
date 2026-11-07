@@ -237,9 +237,13 @@ def copy_map(db: Session, *, map_id: str, user_id: str, user_is_guest: bool) -> 
     게스트 403·지도 수 상한(같은 잠금과 세는 쿼리)을 따른다. 여행 기간 상한은 다시 보지 않는다 — 날짜를 그대로 옮긴다.
     옮기는 것: 날짜·지역·색·올린 대표 이미지·살아 있는 공개 핀(pins.api.copy_pins_to_map, 찍은 사람은 복사한 사람).
     옮기지 않는 것: 반응·구성원(복사한 사람 혼자 방장)·확정 리스트와 일정·추천과 코스 기록·에이전트·초대·알림.
-    제목은 core.copy_title — 제목 고르기도 잠금 안에서 해서 같은 사람의 동시 복사가 같은 번호를 받지 않는다."""
+    제목은 core.copy_title — 제목 고르기도 잠금 안에서 해서 같은 사람의 동시 복사가 같은 번호를 받지 않는다.
+    잠금 순서는 복구(restore_map)와 같다: 원본 지도 행 → 사용자 단위 지도 수. 지도 행을 잠근 뒤 역할을 다시 본다 —
+    라우터가 본 뒤 방장 위임·나가기·삭제가 끝났으면 이미 방장이 아닌 사람이 핀과 메모를 가져가게 된다."""
     core.check_can_create_map(user_is_guest)
-    source = _map_record(db, get_map_or_404(db, map_id))
+    source_row = get_map_or_404(db, map_id, for_update=True)
+    core.check_role_can(role_in_map(db, map_id=map_id, user_id=user_id), map_id, user_id, "map.copy")
+    source = _map_record(db, source_row)
     _lock_map_count(db, user_id)
     core.check_map_limit(_my_map_count(db, user_id))
     taken = set(db.execute(
