@@ -6,6 +6,7 @@ test_flows_summary.py가 끝까지 본다 — 여기서는 분류된 줄(preferr
 """
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -343,3 +344,67 @@ def test_new_notice_kinds_render_fixed_sentences():
 
     assert notices == ["여행 기간에는 해당하지 않는 조건이라 이번 추천에 쓰지 않아요.",
                        "이 카테고리에는 없는 조건이라 이번 추천에 쓰지 않아요."]
+
+
+# ---------------------------------------------------------------- ② 규칙 버전과 고친 사유 (#1095)
+
+def _versioned(category, ids, version, at=NOW - hours(10)):
+    return core.SummaryMeta(category=category, reaction_ids=frozenset(ids), updated_at=at, rules_version=version)
+
+
+def test_rules_version_change_makes_an_unchanged_category_due():
+    """② 규칙이 바뀌면 사유가 그대로여도 다시 만든다. 같은 버전이면 그대로, 옛 요약(버전 없음)은 한 번 다시 만든다."""
+    p, rs, reasons = _reasons(n=1)
+    s = snap(pins=[p], reactions=rs, reasons=reasons)
+    ids = [r.reaction_id for r in rs]
+    assert core.summary_changes(s, "음식점", _versioned("음식점", ids, "v1"), rules_version="v1") is None
+    assert core.summary_changes(s, "음식점", _versioned("음식점", ids, "v1"), rules_version="v2") == 1
+    assert core.summary_changes(s, "음식점", _meta("음식점", ids), rules_version="v2") == 1   # 옛 요약
+    assert core.summary_changes(s, "음식점", _meta("음식점", ids)) is None   # 버전을 모르면 판단하지 않는다
+
+
+def test_rules_version_change_without_reasons_is_not_due():
+    assert core.summary_changes(snap(), "음식점", _versioned("음식점", [], "v1"), rules_version="v2") is None
+
+
+def test_pick_summary_uses_the_rules_version():
+    p, rs, reasons = _reasons(n=1)
+    s = snap(pins=[p], reactions=rs, reasons=reasons)
+    meta = _versioned("음식점", [r.reaction_id for r in rs], "v1")
+    assert core.pick_summary(s, [meta], rules_version="v1") == (None, False)
+    assert core.pick_summary(s, [meta], rules_version="v2") == ("음식점", False)
+
+
+def test_edited_reason_counts_as_new_even_with_the_same_reaction_id():
+    """사유 글을 고친 반응(updated_at이 요약 뒤)은 새 사유다. 3개 고치면 갱신, 2개는 그대로."""
+    p, rs, reasons = _reasons(n=3, at=NOW - hours(30))
+    ids = [r.reaction_id for r in rs]
+
+    def edited(k):
+        return [replace(x, updated_at=NOW - hours(1)) if i < k else x for i, x in enumerate(reasons)]
+
+    assert core.summary_changes(snap(pins=[p], reactions=rs, reasons=edited(2)), "음식점", _meta("음식점", ids)) is None
+    assert core.summary_changes(snap(pins=[p], reactions=rs, reasons=edited(3)), "음식점", _meta("음식점", ids)) == 3
+    # 다시 만든 뒤(요약 시각이 고친 시각 뒤)에는 더 세지 않는다
+    assert core.summary_changes(snap(pins=[p], reactions=rs, reasons=edited(3)), "음식점", _meta("음식점", ids, at=NOW)) is None
+
+
+# ---------------------------------------------------------------- 실패한 카테고리는 뒤로 미룬다 (#1187)
+
+def _two_due():
+    """음식점(사유 4개 — 더 많이 바뀜)과 카페(사유 3개)가 모두 갱신 대상."""
+    p1, rs1, re1 = _reasons("음식점", n=4)
+    p2, rs2, re2 = _reasons("카페", n=3, start=10)
+    return snap(pins=[p1, p2], reactions=rs1 + rs2, reasons=re1 + re2)
+
+
+def test_failed_category_is_deferred_so_the_other_one_is_updated():
+    s = _two_due()
+    assert core.pick_summary(s, []) == ("음식점", True)                       # 평소엔 더 많이 바뀐 쪽
+    assert core.pick_summary(s, [], failed={"음식점"}) == ("카페", True)        # 실패했으면 다른 쪽이 먼저
+
+
+def test_failed_category_is_retried_when_nothing_else_is_due():
+    p, rs, reasons = _reasons("음식점", n=1)
+    s = snap(pins=[p], reactions=rs, reasons=reasons)
+    assert core.pick_summary(s, [], failed={"음식점"}) == ("음식점", False)

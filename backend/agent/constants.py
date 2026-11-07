@@ -38,11 +38,17 @@ NO_REACTION_DAILY_LIMIT = 1        # 지도당
 CATEGORY_GAP_MIN_CONFIRMED = 2
 
 SUMMARY_NEW_REASONS = 3
+SUMMARY_FAILED_RETRY = timedelta(minutes=30)   # 요약 ②가 실패한 카테고리를 다시 시도하기까지의 간격(#1187). 그 동안 다른 카테고리가 먼저 갱신된다
+
+FACT_LINES_MAX = 2   # 우리 데이터 확인(6.6, #1168) — 한 제안에 붙는 줄 수 상한. AgentSuggestion.facts maxItems와 같다
+# 웹 확인(6.8, #1216) — 같은 지도에서 이 시간 안에 같은 (핀, 키)를 확인했으면(found, not_found) 다시 부르지 않고 그 결과를 쓴다.
+# 횟수 상한이 아니다 — 비용은 서비스 일일 예산(llm.api.web_check)이 본다
+WEB_CHECK_REUSE = timedelta(hours=24)
 
 BLOCKED_RUN_MAX_RESULTS = FEW_RESULTS   # 결과가 이 값 미만이면 추천 막힘. 값은 recommend가 정한다(#800)
 BLOCKED_RUN_MIN_SAME_CATEGORY_RUNS = 3   # 또는 같은 사람이 같은 카테고리 run을 이 값 이상 만들었으면 (초안)
-# 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 5회다(#31). attempt_no로 세면 다른 카테고리 시도가 섞이고,
-# 4회면 1회밖에 남지 않는다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).
+# 재시도 상한(attempt_no)은 개인 단위, 카테고리 무관, 10회다(#31, 2026-10-15 5→10회). attempt_no로 세면 다른 카테고리
+# 시도가 섞인다. 그래서 같은 카테고리 run 수를 따로 센다(GET /maps/{mapId}/runs의 기록, #469).
 # 깔때기에서 "뚜렷하게 많이 빠졌다"고 보는 탈락 수(9절 표의 "많음", #588 평가셋 기준, 루트 결정 #749). 이보다 적게 빠진
 # 단계로는 radius, soft_relax, exhausted를 고르지 않는다. soft_relax의 둘째 줄도 이만큼 늘어날 때만 말한다
 ADVICE_CLEAR_DROP = 5
@@ -51,14 +57,22 @@ ADVICE_MAX_RELAX_LINES = 3         # soft_relax에서 하나씩 꺼 보는 조�
 # 진단 1회의 도구 상한(DIAGNOSIS_MAX_TOOL_CALLS 5, STRUCTURE_REASONS_MAX_CALLS 1)은 llm이 강제한다(llm.prompts, #532).
 # 같은 값을 여기 두면 둘이 어긋날 수 있어 두지 않는다(#533)
 TOOL_RESULT_MAX_ITEMS = 30         # 초안
+TRY_IN_SCHEDULE_MAX_PINS = 5       # try_in_schedule 한 번에 끼워 보는 핀 수(6.10, #1356). 넘으면 앞에서 자른다
 
 BACKOFF_HOURS = (2, 6, 24)         # 연속 닫힘 1회, 2회, 3회 이상
 SUGGESTION_TTL = timedelta(hours=24)
 AGENT_RUNS_RETENTION_DAYS = 30
 DECIDED_WINDOW = timedelta(hours=24)   # decided_within_24h의 24시간(12.9, 5절 밖). 제안 시각부터 이 안의 확정만 센다
 
+# 후속 관찰과 충돌 선언(6.9, #1345). 수락한 제안을 막힌 곳 하나로 보고 풀릴 때까지 지켜본다
+FOLLOWUP_DIAGNOSES = ("stall", "split", "category_gap", "schedule")   # 반응 공백은 후속을 하지 않는다(하루 1회 규칙 그대로)
+FOLLOWUP_MIN_WAIT = timedelta(minutes=30)   # 수락 뒤 이만큼은 그대로라고 보지 않는다 — 추천을 받고 올릴지 정할 시간(초안)
+MAX_ATTEMPT = 2                    # 0 첫 제안, 1 다음 방법, 2 충돌 선언(최후, 코드 템플릿)
+TRACKING_WINDOW = timedelta(hours=48)   # AgentState.tracking에 싣는 막힌 곳의 기간(api-spec AgentTracking)
+
 MODEL_TYPES = ("stall", "split")
-CODE_TYPES = ("no_reaction", "category_gap")
+# 코드 유형. 카테고리 공백은 지도에 그 카테고리의 미확정 핀(후보)이 있으면 모델 진단이다(6.10, #1356 — core.uses_model)
+CODE_TYPES = ("no_reaction", "category_gap", "schedule")
 # shadow는 유형별이다(#531). 이 유형의 제안은 저장하되 화면과 이벤트로 내보내지 않는다. 코드 유형은 M1-1(#531)부터,
 # 모델 유형은 #534 평가 뒤 #582부터 노출한다
 SHADOW_DIAGNOSES: tuple[str, ...] = ()

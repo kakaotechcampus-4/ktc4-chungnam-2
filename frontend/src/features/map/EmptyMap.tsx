@@ -4,14 +4,14 @@ import EmptyState from '@/ui/EmptyState'
 export default function EmptyMap() {
   return (
     <EmptyState
-      title="아직 아무도 핀을 찍지 않았어요"
+      title="아직 지도에 핀이 없어요"
       action={
         <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-outline btn-md">
           장소 검색하기
         </button>
       }
     >
-      위 검색창에서 가게 이름을 찾아 핀을 찍어 보세요
+      검색창에서 가고 싶은 장소를 찾아 첫 핀을 찍어 보세요
     </EmptyState>
   )
 }

@@ -1,11 +1,12 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { Bus, ExternalLink, Map as MapIcon } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { AiHeader } from '@/features/recommend/Readiness'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { KAKAO_ROUTE_MAX } from '@/features/shortlist/model'
-import { useRouteStore } from '@/features/shortlist/routeStore'
+import { openRoute } from '@/features/shortlist/routeStore'
 import Notice from '@/ui/Notice'
 import PingoLoading from '@/ui/PingoLoading'
 
@@ -14,9 +15,13 @@ import {
   courseDrawings,
   daySummary,
   dayStops,
+  showHoursKnown,
+  uncheckedPlaceCount,
   dayTitle,
   FAILURE_TEXT,
   goalState,
+  modeOf,
+  stalePrompt,
   legLabel,
   outcomeText,
   transitLink,
@@ -25,6 +30,7 @@ import {
   type CourseRunDto,
 } from './model'
 import { useCourseRunQuery } from './queries'
+import FixCards from './FixCards'
 import WorkLog from './WorkLog'
 
 /**
@@ -65,7 +71,7 @@ export default function CourseRun({ mapId, runId, names, points, onRetry, onClos
 function Progress({ run, error, onRetryLoad }: { run: CourseRunDto; error: Error | null; onRetryLoad: () => void }) {
   return (
     <div className="space-y-3">
-      <AiHeader title="코스를 짜고 있어요" sub="누가 무엇을 했는지 한 줄씩 보여 줘요" mood="thinking" />
+      <AiHeader title="코스를 짜고 있어요" sub="진행 상황을 한 줄씩 보여 드려요" mood="thinking" />
       <WorkLog steps={run.steps} running />
       {error && (
         <div className="space-y-2">
@@ -82,7 +88,7 @@ function Progress({ run, error, onRetryLoad }: { run: CourseRunDto; error: Error
 function Failed({ run, onRetry, onClose }: { run: CourseRunDto; onRetry: () => void; onClose: () => void }) {
   return (
     <div className="space-y-3">
-      <AiHeader title="코스를 만들지 못했어요" sub={FAILURE_TEXT} mood="sorry" />
+      <AiHeader title="코스를 만들지 못했어요" sub={FAILURE_TEXT} mood="flustered" />
       <WorkLog steps={run.steps} running={false} />
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={onClose} className="btn-neutral btn-lg">
@@ -109,22 +115,23 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
   const [showLog, setShowLog] = useState(false)
   const drawings = courseDrawings(run, points)
   const showCourse = useCourseMapStore((s) => s.show)
-  const setRouteOn = useRouteStore((s) => s.set)
   const setStage = useSheetStore((s) => s.setStage)
 
-  // 지도에 날짜별 선을 긋고 시트는 절반으로 내려 지도와 범례가 함께 보이게 한다. 「동선 보기」 선과 같은 자리라 그건 끈다.
+  // 지도에 날짜별 선을 긋고, 시트를 접어 지도와 범례(탭 머리)가 보이게 한다. 결과는 그대로 남아 다시 펼치면 보인다.
+  // 「동선 보기」는 확정 탭에만, 코스 선은 AI 코스 탭에만 그려서 둘이 겹치지 않는다.
   function showOnMap() {
-    setRouteOn(false)
     showCourse(mapId, drawings)
-    setStage('shortlist', 2)
-    onClose()
+    setStage('course', 1)
   }
   const name = (pinId: string) => names.get(pinId) ?? '이 장소'
-  const anyCheck = run.checks.length > 0 || run.days.some((d) => d.slots.some((s) => s.needs_check))
+  const hoursTag = showHoursKnown(run)
+  const unchecked = uncheckedPlaceCount(run)
+  const mode = modeOf(run)
 
   return (
     <div className="space-y-4">
-      <AiHeader title={run.outcome ? outcomeText(run.outcome) : '코스를 짰어요'} sub="순서와 이동 시간만 보여 줘요. 시간 배정은 하지 않아요" mood="happy" />
+      {/* 머리 문구는 서버 headline 그대로(#1237). 없으면(실서버 구현 전) 예전 outcome 문구. */}
+      <AiHeader title={run.headline ?? (run.outcome ? outcomeText(run.outcome) : '코스를 짰어요')} sub={mode === 'review' ? undefined : '날짜별 순서와 이동 시간이에요'} mood="proud" />
 
       {run.stale && (
         <Notice
@@ -134,12 +141,12 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
             </button>
           }
         >
-          확정 리스트가 바뀌었어요. 이 코스는 바뀌기 전 리스트로 짠 거예요
+          {stalePrompt}
         </Notice>
       )}
 
       {run.goals.length > 0 && (
-        <Section title="요청한 것">
+        <Section title="요청 사항">
           <ul className="space-y-1.5">
             {run.goals.map((g) => {
               const state = goalState(g)
@@ -155,23 +162,40 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
       )}
 
       {run.unmatched.length > 0 && (
-        <p className="break-keep text-body text-ink-700">반영하지 못했어요: {run.unmatched.map((u) => `「${u}」`).join(' ')}</p>
+        <p className="break-keep text-body text-ink-700">반영하지 못한 요청: {run.unmatched.join(', ')}</p>
       )}
 
-      <Section title="날짜별 순서">
-        <div className="space-y-2">
-          {run.days.map((day, i) => (
-            <DayCard key={day.date} day={day} index={i} names={names} points={points} />
-          ))}
-        </div>
-        <p className="text-label text-ink-500">이동 시간은 직선거리로 어림한 값이에요. 정확한 길은 카카오맵에서 확인하세요</p>
-        {anyCheck && <p className="text-label text-ink-500">영업 여부를 모르는 장소는 가게에 직접 확인해 주세요</p>}
-        {drawings.length > 0 && (
-          <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
-            <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
-          </button>
-        )}
-      </Section>
+      {mode !== 'plan' && <FixCards mapId={mapId} run={run} names={names} onRetry={onRetry} />}
+
+      {mode === 'review' && (
+        <Link
+          to={`/maps/${mapId}/shortlist`}
+          // 점검 당시 days 대신 확정 탭의 현재 일정을 본다.
+          onClick={openRoute}
+          className="btn-outline btn-md w-full"
+        >
+          <MapIcon size={16} aria-hidden="true" /> 현재 일정 동선 보기
+        </Link>
+      )}
+
+      {/* review 는 현재 일정 동선으로 연결하고, plan/fill 은 제안한 날짜별 순서를 보인다. */}
+      {mode !== 'review' && (
+        <Section title="날짜별 순서">
+          <div className="space-y-2">
+            {run.days.map((day, i) => (
+              <DayCard key={day.date} day={day} index={i} names={names} points={points} hoursTag={hoursTag} />
+            ))}
+          </div>
+          <p className="text-label text-ink-500">이동 시간은 직선거리로 어림했어요. 자세한 길은 카카오맵에서 볼 수 있어요</p>
+          {/* 장소마다 붙이지 않고 한 줄로 — 서버 작업 기록 「가게에 확인해야 하는 곳이 남았어요」와 맞춘다(루트 검수 #1127). */}
+          {unchecked > 0 && <p className="text-label text-ink-500">영업시간 정보가 없는 {unchecked}곳은 방문 전에 확인해 주세요.</p>}
+          {drawings.length > 0 && (
+            <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
+              <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
+            </button>
+          )}
+        </Section>
+      )}
 
       {run.violations.length > 0 && (
         <Section title="지키지 못한 조건">
@@ -213,7 +237,7 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
 }
 
 /** 날짜 하나 — 방문 순서대로 장소, 장소 사이엔 도보·대중교통 분. 시간은 쓰지 않는다. 길찾기는 카카오맵 새 창이다. */
-function DayCard({ day, index, names, points }: { day: CourseRunDto['days'][number]; index: number; names: Map<string, string>; points: Points }) {
+function DayCard({ day, index, names, points, hoursTag }: { day: CourseRunDto['days'][number]; index: number; names: Map<string, string>; points: Points; hoursTag: boolean }) {
   const stops = dayStops(day, names, points)
   const summary = daySummary(stops.flatMap((s) => (s.leg ? [s.leg] : [])))
   const links = walkLinks(stops)
@@ -235,7 +259,7 @@ function DayCard({ day, index, names, points }: { day: CourseRunDto['days'][numb
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="break-keep text-body font-semibold text-ink-900">{s.name}</p>
-                    {s.needsCheck && <span className="tag tag-warn mt-1">? 영업 확인 필요</span>}
+                    {hoursTag && s.hoursKnown && <span className="tag tag-good mt-1">영업시간 확인됨</span>}
                   </div>
                 </div>
                 {s.leg && (
@@ -264,7 +288,7 @@ function DayCard({ day, index, names, points }: { day: CourseRunDto['days'][numb
           {links.map((l) => (
             <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="btn-link text-sm">
               {l.label} <ExternalLink size={14} aria-hidden="true" />
-              {l.cut && <span className="font-normal text-ink-500"> · 앞 {KAKAO_ROUTE_MAX}곳</span>}
+              {l.cut && <span className="font-normal text-ink-500"> (앞 {KAKAO_ROUTE_MAX}곳만)</span>}
             </a>
           ))}
         </div>

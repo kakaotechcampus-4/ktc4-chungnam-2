@@ -75,7 +75,7 @@ def test_request_saves_queued_run_with_snapshot_and_input(world, places):
 
     r = row(world, job.run_id)
     assert (r.status, r.requested_by, r.map_id) == ("queued", world.uid("u1"), map_id)
-    assert set(r.snapshot_pin_ids) == set(pin_ids)
+    assert r.snapshot_version and r.mode == "plan"      # 일정 version(#1237)과 모드. 날짜에 넣은 장소가 없으니 plan
     assert r.input == {"request_text": "둘째 날은 실내로",
                        "member_constraints": [{"kind": "daily_walk_max", "value": 60, "day": "d1"}]}
     assert job.build.trip is not None and len(job.build.trip.places) == 4
@@ -106,7 +106,7 @@ def test_unconfirmed_pins_do_not_count(world, places):
     places.add("place_extra", "남는곳", 37.57, 126.98)
     with world.factory() as db:
         snap = service.read_snapshot(db, map_id)
-    assert extra not in snap.confirmed_pin_ids and len(snap.pins) == 2
+    assert extra not in {p.pin_id for p in snap.pins} and len(snap.pins) == 2
 
 
 def test_in_progress_blocks_and_other_user_is_independent(world, places):
@@ -337,7 +337,7 @@ def test_saved_run_has_no_place_names_in_structured_fields_and_no_coordinates(wo
     service.execute_run(job, session_factory=world.factory, llm=NO_MODEL, gateway=NullOpeningHours())
     r = row(world, job.run_id)
     assert "장소1" not in str(r.days) and "37.56" not in str(r.days) and "126.97" not in str(r.days)
-    assert "장소1" not in str(r.input) and "장소1" not in str(r.snapshot_pin_ids)
+    assert "장소1" not in str(r.input) and "장소1" not in str(r.snapshot_version)
 
 
 def test_engine_error_fails_the_run_without_raising(world, places):
@@ -422,7 +422,7 @@ def test_startup_interrupts_only_old_active_runs(world, places):
         for job in (old_running, recent_running):
             db.get(AgentCourseRun, uuid.UUID(job.run_id)).status = "running"
         db.add(AgentCourseRun(map_id=map_id, requested_by=world.uid("u1"), status="done", outcome="solved", input={},
-                              snapshot_at=old_age, snapshot_pin_ids=[], created_at=old_age))
+                              snapshot_at=old_age, snapshot_version="v", created_at=old_age))
         db.commit()
 
     n = service.interrupt_unfinished_runs(world.factory, now=world.now)
@@ -455,3 +455,42 @@ def test_purge_and_delete_by_user(world, places):
         assert course_api.delete_by_user(db, user_id=world.uid("u2")) == {"agent_course_runs": 1}
         db.commit()
     assert row(world, b2.run_id) is None and row(world, b1.run_id) is not None
+
+
+# ---------------------------------------------------------------- 일정 기준 모드와 version (#1321)
+
+def _mode_of(world, map_id):
+    with world.factory() as db:
+        job = service.request_course(db, map_id=map_id, requested_by=world.uid("u1"), body=CourseRequest(), now=world.now)
+        db.commit()
+    return job, row(world, job.run_id)
+
+
+def test_mode_is_decided_at_request_from_the_schedule_state(world, places):
+    from agent.course.tests.conftest import schedule_pins
+
+    plan_map, _ = confirmed_map(world, places, 4)
+    job, r = _mode_of(world, plan_map)
+    assert (r.mode, job.build.mode, dict(job.build.locks)) == ("plan", "plan", {})
+
+    fill_map, ids = confirmed_map(world, places, 4)
+    schedule_pins(world, fill_map, {ids[0]: 0, ids[1]: 2})
+    job, r = _mode_of(world, fill_map)
+    assert (r.mode, len(job.build.locks)) == ("fill", 2) and set(job.build.locks.values()) == {"d1", "d3"}
+
+    review_map, ids = confirmed_map(world, places, 4)
+    schedule_pins(world, review_map, {ids[0]: 0, ids[1]: 0, ids[2]: 1, ids[3]: 2})
+    job, r = _mode_of(world, review_map)
+    assert r.mode == "review" and job.build.schedule == (("p1", "p2"), ("p3",), ("p4",))
+
+
+def test_snapshot_version_changes_when_only_the_schedule_changes(world, places):
+    from agent.course.tests.conftest import schedule_pins
+
+    map_id, ids = confirmed_map(world, places, 4)
+    with world.factory() as db:
+        before = service.read_snapshot(db, map_id).version
+    schedule_pins(world, map_id, {ids[0]: 1})            # 장소는 그대로, 날짜만 바뀐다
+    with world.factory() as db:
+        after = service.read_snapshot(db, map_id).version
+        assert after != before and service.current_schedule_version(db, map_id) == after

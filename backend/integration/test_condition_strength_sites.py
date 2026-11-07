@@ -43,6 +43,8 @@ KNOWN_SITES: dict[tuple[str, str], str] = {
     ("recommend/flows.py", "_hard_fact_keys_from"): "#732",
     ("recommend/flows.py", "_soft_requirements_from"): "#732",
     ("recommend/flows.py", "_run_pipeline"): "#732",
+    # _run_pipeline의 앞 세 단계(반경 → 영업 종료 → 실격 조건)를 떼어 미리 돌려 보기와 같이 쓴다(#1180). 새 판단이 아니라 옮긴 것이다
+    ("recommend/flows.py", "_filter_places"): "#732",
     ("recommend/core.py", "apply_disqualifier_filters"): "#732",
     ("recommend/core.py", "_check_label"): "#732",
     ("recommend/core.py", "label_checks"): "#732",

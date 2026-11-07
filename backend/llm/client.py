@@ -8,6 +8,8 @@
 에이전트 진단과 추천 막힘 조언(#587)은 도구를 쓴다. gpt-6-luna는 chat.completions에서 도구를 reasoning_effort="none"일 때만
 받는다(그 밖의 값은 400 "Function tools with reasoning_effort are not supported", 2026-10-15 확인). 그래서 이 두 호출은
 reasoning_effort="none"을 넘긴다. 신호 순위 호출(agent_prioritize)은 #582에서 지웠다 — 순위는 agent의 코드 규칙이다.
+지도 현황 문단(agent_status, #1168)은 도구 없이 구조화 출력만 받고 reasoning_effort="none"이다(#1152 실험 3과 같은 설정).
+웹 확인(call_web_check, #1216)만 Responses API(client.responses.create)다 — Chat Completions는 web_search 도구를 받지 않는다(400).
 """
 
 import json
@@ -16,19 +18,24 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Mapping, Optional, Sequence
 
 from openai import APITimeoutError, OpenAI
+from pydantic import ValidationError
 
 from common.settings import settings
 from llm import usage as usage_log
 from llm.prompts import (
-    AGENT_DIAGNOSE_PROMPT_VERSION, COURSE_DIRECT_PROMPT, COURSE_DIRECT_PROMPT_VERSION,
+    WEB_CHECK_PROMPT, WEB_CHECK_PROMPT_VERSION, WEB_CHECK_SCHEMA, WEB_CHECK_TIMEOUT_SECONDS,
+    AGENT_DIAGNOSE_PROMPT_VERSION, AGENT_STATUS_PROMPT, AGENT_STATUS_PROMPT_VERSION, COURSE_DIRECT_PROMPT, COURSE_DIRECT_PROMPT_VERSION,
     COURSE_GOALS_PROMPT, COURSE_GOALS_PROMPT_VERSION, COURSE_TURN_PROMPT, COURSE_TURN_PROMPT_VERSION,
     PLAN_EVIDENCE_PROMPT,
 )
 from llm.schemas import (
     AgentFailureReason, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, PlanningOutput,
+    StatusOutput, WebAnswer, WebCheckOutput,
 )
 
 # POST /runs 요청 안에서 동기로 도는 호출이라 길게 기다리지 않는다. 재시도도 안 한다 —
@@ -116,12 +123,13 @@ def _failure_fields(exc: BaseException) -> str:
 
 def _record(
     call: str, prompt_version: Optional[str], completion: Any, outcome: str, started: float, batch_size: Optional[int] = None,
+    web_searches: int = 0,
 ) -> None:
     """llm_calls 한 행(#870). 실패한 호출도 남긴다 — 응답이 있었으면(잘린 응답, 거절) 그 토큰도 비용이다. batch_size는 ②가
-    한 호출에 보낸 사유 수(#848)."""
+    한 호출에 보낸 사유 수(#848), web_searches는 웹 확인 응답 안의 검색 횟수(#1216)."""
     usage_log.record_call(
         call=call, prompt_version=prompt_version, completion=completion, outcome=outcome, elapsed_ms=_elapsed_ms(started),
-        batch_size=batch_size,
+        batch_size=batch_size, web_searches=web_searches,
     )
 
 
@@ -179,6 +187,61 @@ def _agent_failure_reason(exc: BaseException) -> AgentFailureReason:
     return "call_failed"
 
 
+# ---------- 같은 JSON 두 번(#767 3번 b) ----------
+# 모델이 같은 JSON 객체를 두 번 이어 내면 parse가 json_invalid로 실패한다(#1299 e19). 같은 응답 안의 반복이면 첫 객체를 같은
+# 스키마로 검증해 받는다 — 다시 묻지 않는다(명세 2절 10번). 반복이 아니거나 다른 객체면 지금처럼 실패다. 평가 도구의 깨진 응답
+# 기록(run_eval._broken_response)도 이 판정을 쓴다. 원문은 로그에 남기지 않는다(#390).
+
+REPEATED_JSON_OUTCOME = "ok_repeated_json"   # 받았을 때의 llm_calls.outcome(ok=true) — 운영에서 센다
+
+
+@dataclass(frozen=True)
+class JsonRepeat:
+    """깨진 응답의 모양. first는 앞뒤 공백을 뺀 응답의 첫 JSON 값(못 읽으면 None), first_end는 그 값이 끝나는 위치,
+    repeated는 그 뒤(공백 뺌)가 첫 값과 똑같은 값 하나인지."""
+    first: Any
+    first_end: Optional[int]
+    repeated: bool
+
+
+def read_json_repeat(raw: str) -> JsonRepeat:
+    text = raw.strip()
+    try:
+        first, end = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        return JsonRepeat(None, None, False)
+    rest = text[end:].strip()
+    try:
+        repeated = bool(rest) and json.loads(rest) == first
+    except json.JSONDecodeError:
+        repeated = False
+    return JsonRepeat(first, end, repeated)
+
+
+def json_invalid_input(exc: BaseException) -> Optional[str]:
+    """parse가 낸 ValidationError 중 JSON으로 읽히지 않은 응답(json_invalid)의 원문. pydantic이 input에 응답 원문을 싣는다.
+    부른 쪽은 이 글을 로그에 남기지 않는다."""
+    if not isinstance(exc, ValidationError):
+        return None
+    return next(
+        (e.get("input") for e in exc.errors() if e.get("type") == "json_invalid" and isinstance(e.get("input"), str)), None,
+    )
+
+
+def _repeated_answer(exc: BaseException, response_format: Any) -> Any:
+    """같은 JSON 객체의 반복이면 첫 객체를 response_format으로 검증한 값, 아니면 None."""
+    raw = json_invalid_input(exc)
+    if raw is None or response_format is None:
+        return None
+    shape = read_json_repeat(raw)
+    if not shape.repeated or not isinstance(shape.first, dict):
+        return None
+    try:
+        return response_format.model_validate(shape.first)
+    except ValidationError:
+        return None
+
+
 # agent 호출 한 번의 사용량 모으기(#564). service.agent_diagnose가 metering()으로 열고, 그 안의 왕복마다
 # _agent_parse가 더한다. planner 시그니처를 바꾸지 않고 모으려고 컨텍스트 변수를 쓴다(스텁 planner는 닿지 않아 0이다).
 _usage_meter: ContextVar[Optional[AgentUsage]] = ContextVar("agent_usage_meter", default=None)
@@ -215,7 +278,10 @@ def _agent_parse(client: Any, *, call: str, what: str, context: str, prompt_vers
 
     로그는 ②와 같은 규칙이다(#390): 실패는 모델명·예외 클래스·status_code·request_id·소요 ms만, 성공은 토큰 수만 남긴다.
     입력(신호, 사유)과 응답 본문은 남기지 않는다. 사용량은 응답이 오면 거절·빈 응답이어도 더한다(#564).
-    call은 llm_calls.call(#870)이다."""
+    call은 llm_calls.call(#870)이다.
+
+    응답이 같은 JSON 객체 두 번이면(#767 3번 b) 첫 객체를 받아 parsed로 돌려주고 outcome을 REPEATED_JSON_OUTCOME으로 남긴다.
+    SDK가 검증 실패에 응답(usage)을 붙이지 않아 그 행의 토큰은 0이다 — json_invalid 실패 행과 같다."""
     started = time.monotonic()
     _meter_request(prompt_version)
     try:
@@ -223,6 +289,14 @@ def _agent_parse(client: Any, *, call: str, what: str, context: str, prompt_vers
         _meter_response(completion)
         message = completion.choices[0].message
     except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
+        parsed = _repeated_answer(exc, kwargs.get("response_format"))
+        if parsed is not None:
+            log.warning(
+                "%s 같은 JSON 두 번 — 첫 객체를 받음: model=%s %s elapsed_ms=%d",
+                what, settings.llm_model, context, _elapsed_ms(started),
+            )
+            _record(call, prompt_version, None, REPEATED_JSON_OUTCOME, started)
+            return SimpleNamespace(parsed=parsed, tool_calls=None, refusal=None, content=None)
         log.warning(
             "%s 호출 실패: model=%s %s %s elapsed_ms=%d",
             what, settings.llm_model, context, _failure_fields(exc), _elapsed_ms(started),
@@ -278,6 +352,23 @@ def call_agent_diagnosis_turn(
     )
 
 
+def call_agent_status(client: Any, status_input: Mapping[str, Any]) -> StatusOutput:
+    """지도 현황 문단 한 번(#1168, agent-v2 8.2). 도구 없이 구조화 출력만 받는다. reasoning_effort="none"은 #1152 실험 3과 같은
+    설정이다(약 0.1원·2초). 입력은 코드가 센 칸이고 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다)."""
+    message = _agent_parse(
+        client, call="agent_status", what="지도 현황 문단", context="status", prompt_version=AGENT_STATUS_PROMPT_VERSION,
+        messages=[
+            {"role": "system", "content": AGENT_STATUS_PROMPT},
+            {"role": "user", "content": json.dumps(dict(status_input), ensure_ascii=False, default=str)},
+        ],
+        reasoning_effort="none",
+        response_format=StatusOutput,
+    )
+    if message.parsed is None:  # 도구를 주지 않았는데 도구 호출만 왔다
+        raise LlmCallError("지도 현황 문단 응답이 비어 있다", reason="invalid_schema")
+    return message.parsed
+
+
 def call_course_turn(client: Any, turn_input: Mapping[str, Any], *, turn: int) -> CourseTurn:
     """동선 에이전트 턴 한 번(#334). 도구를 tools로 주지 않고 CourseTurn.action으로 받는다 — 그래서 reasoning_effort를
     넘기지 않는다(우선순위 호출과 같다). 입력은 JSON 문자열로만 넘긴다(프롬프트에 섞지 않는다)."""
@@ -324,3 +415,99 @@ def call_course_direct(client: Any, turn_input: Mapping[str, Any], *, turn: int)
         client, call="course_direct", what="동선 지휘 턴", context=f"turn={turn}", prompt_version=COURSE_DIRECT_PROMPT_VERSION,
         system=COURSE_DIRECT_PROMPT, payload=turn_input, fmt=CourseDirectTurn,
     )
+
+
+# ---------- 웹 확인 (#1216, docs/agent-v2.md 6.8) ----------
+
+# 서울(KR) 기준으로 찾는다. 장소 DB가 서울 밖(대전·부산 등)도 있지만 입력의 동네 이름이 지역을 좁힌다(2026-11-03 실험 설정).
+# city를 장소의 시·도로 주는 것은 평가(run_web_eval --city-sido, #1221)로 서울 고정과 비교한다 — 운영은 아직 서울이다
+WEB_SEARCH_CITY = "Seoul"
+WEB_SEARCH_TOOL = {
+    "type": "web_search",
+    "user_location": {"type": "approximate", "country": "KR", "city": WEB_SEARCH_CITY, "region": WEB_SEARCH_CITY},
+}
+
+
+def web_search_tool(city: str | None = None) -> dict[str, Any]:
+    """web_search 도구 설명. city가 없으면 서울(WEB_SEARCH_TOOL). country는 늘 KR이다."""
+    if not city:
+        return WEB_SEARCH_TOOL
+    return {"type": "web_search", "user_location": {"type": "approximate", "country": "KR", "city": city, "region": city}}
+
+
+def _web_search_calls(response: Any) -> list[Any]:
+    return [item for item in (getattr(response, "output", None) or []) if getattr(item, "type", None) == "web_search_call"]
+
+
+def web_sources(response: Any) -> tuple[str, ...]:
+    """그 호출의 검색 출처 URL(web_search_call.action.sources, include로 받은 것). 순서대로, 겹치면 하나. 출처 대조는 이 목록만 쓴다."""
+    urls: list[str] = []
+    for call in _web_search_calls(response):
+        for source in getattr(getattr(call, "action", None), "sources", None) or []:
+            url = getattr(source, "url", None)
+            if isinstance(url, str) and url and url not in urls:
+                urls.append(url)
+    return tuple(urls)
+
+
+def _refused(response: Any) -> bool:
+    for item in getattr(response, "output", None) or []:
+        if getattr(item, "type", None) == "message":
+            if any(getattr(part, "type", None) == "refusal" for part in getattr(item, "content", None) or []):
+                return True
+    return False
+
+
+def call_web_check(client: Any, check_input: Mapping[str, Any], *, city: str | None = None) -> WebAnswer:
+    """웹 확인 한 번(Responses API). 입력은 장소 이름, 동네, 특징 이름의 JSON 문자열이다(프롬프트에 섞지 않는다).
+
+    tool_choice=required(검색을 하지 않고 답하지 않게), max_tool_calls=1(그래도 검색이 1~2번 나올 수 있다, 실험), reasoning none,
+    strict JSON 스키마, include=web_search_call.action.sources(출처 대조에 꼭 필요하다). 타임아웃 30초, 재시도 없음(클라이언트 기본
+    0). 로그는 다른 출구와 같은 규칙이다(#390) — 입력, 검색어, 응답 본문, URL은 남기지 않고 검색 횟수와 토큰만 남긴다.
+    실패(호출 실패, 시간 초과, 거절, 빈 응답, 스키마 실패)는 LlmCallError다. 응답이 있었으면 검색 횟수와 토큰을 llm_calls에 남긴다.
+    city는 검색 위치(web_search_tool) — 모델 입력이 아니다. 운영은 넘기지 않는다(서울)."""
+    started = time.monotonic()
+    what, call = "웹 확인", "agent_web_check"
+    try:
+        response = client.responses.create(
+            model=settings.llm_model,
+            instructions=WEB_CHECK_PROMPT,
+            input=json.dumps(dict(check_input), ensure_ascii=False),
+            tools=[web_search_tool(city)],
+            tool_choice="required",
+            max_tool_calls=1,
+            reasoning={"effort": "none"},
+            text={"format": {"type": "json_schema", "name": "web_check", "strict": True, "schema": WEB_CHECK_SCHEMA}},
+            include=["web_search_call.action.sources"],
+            timeout=WEB_CHECK_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001 — 예상 못 한 예외도 원인 타입만 남기고 같은 실패로 올린다
+        log.warning("%s 호출 실패: model=%s %s elapsed_ms=%d", what, settings.llm_model, _failure_fields(exc), _elapsed_ms(started))
+        _record(call, WEB_CHECK_PROMPT_VERSION, None, _agent_failure_reason(exc), started)
+        raise LlmCallError(f"{what} 호출 실패: {type(exc).__name__}", reason=_agent_failure_reason(exc)) from exc
+    searches = len(_web_search_calls(response))
+
+    def fail(outcome: str, message: str, reason: AgentFailureReason) -> LlmCallError:
+        log.warning("%s %s: model=%s web_searches=%d elapsed_ms=%d", what, outcome, settings.llm_model, searches, _elapsed_ms(started))
+        _record(call, WEB_CHECK_PROMPT_VERSION, response, outcome, started, web_searches=searches)
+        error = LlmCallError(message, reason=reason)
+        error.web_searches = searches   # 실패해도 검색 요금은 나갔다(평가 기록용)
+        return error
+
+    if _refused(response):
+        raise fail("refusal", f"모델이 {what}을 거절했다", "call_failed")
+    raw = getattr(response, "output_text", None) or ""
+    if not raw.strip():
+        raise fail("empty", f"{what} 응답이 비어 있다", "invalid_schema")
+    try:
+        output = WebCheckOutput.model_validate(json.loads(raw))
+    except ValueError as exc:   # JSON 깨짐, ValidationError(ValueError의 하위)
+        raise fail("invalid_schema", f"{what} 응답이 스키마에 맞지 않는다: {type(exc).__name__}", "invalid_schema") from exc
+    _record(call, WEB_CHECK_PROMPT_VERSION, response, "ok", started, web_searches=searches)
+    usage = getattr(response, "usage", None)
+    log.info(
+        "%s 성공: model=%s web_searches=%d elapsed_ms=%d input_tokens=%s output_tokens=%s",
+        what, settings.llm_model, searches, _elapsed_ms(started),
+        getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None),
+    )
+    return WebAnswer(output=output, sources=web_sources(response), web_searches=searches)

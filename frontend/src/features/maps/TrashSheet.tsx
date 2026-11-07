@@ -45,7 +45,7 @@ export default function TrashSheet({ trash, onClose }: { trash: TrashView; onClo
               <button
                 type="button"
                 onClick={() => revive(m.id, m.title)}
-                disabled={restore.isPending && restore.variables === m.id}
+                disabled={restore.isPending}
                 className="btn-outline btn-sm shrink-0"
               >
                 복구

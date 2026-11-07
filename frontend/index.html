@@ -5,15 +5,24 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>핑고핑고</title>
-    <!-- 초대 링크를 카톡에 붙였을 때 보이는 미리보기. og:image 는 배포 주소(절대 URL)가 정해지면 넣는다. -->
+    <!-- 애드센스 사이트 확인(운영 주소 ktc-pingopingo.duckdns.org). 광고 스크립트는 아니다 — 광고 충전 제공자(#1037)가 생기면 그때 따로 -->
+    <meta name="google-adsense-account" content="ca-pub-3092224486214226" />
+    <!-- 초대 링크를 카톡에 붙였을 때 보이는 미리보기. og:image 는 절대 주소여야 해서 운영 주소를 적는다(#1224, 그림은 public/og-image.png). -->
     <meta name="description" content="친구들과 한 지도에 가고 싶은 곳을 찍고, 의견을 모아 여행 장소를 정해요" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="핑고핑고" />
     <meta property="og:title" content="핑고핑고 — 같이 갈 곳을 한 지도에 모아요" />
     <meta property="og:description" content="친구들과 한 지도에 가고 싶은 곳을 찍고, 의견을 모아 여행 장소를 정해요" />
     <meta property="og:locale" content="ko_KR" />
+    <meta property="og:image" content="https://ktc-pingopingo.duckdns.org/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="핑고핑고 워드마크와 지도 위를 날아가는 펭귄 핑고" />
     <!-- 모바일 브라우저 주소창 색 — 지도 화면 위 흰 컨트롤과 이어지게 흰색. -->
     <meta name="theme-color" content="#FFFFFF" />
+    <!-- 홈 화면에 추가하면 주소창 없이 앱처럼 연다(#1493). 아이콘은 파랑 바탕 흰 핑고, 오프라인 캐시는 두지 않는다. -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
   <body>
     <div id="root"></div>

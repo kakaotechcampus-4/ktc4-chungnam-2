@@ -8,7 +8,7 @@ places는 자체 장소 DB다(#53). 이름·좌표·주소는 인허가 공공�
 import uuid
 from datetime import datetime
 
-from geoalchemy2 import Geography
+from geoalchemy2 import Geography, Geometry
 from sqlalchemy import Boolean, CheckConstraint, Computed, DateTime, Index, Enum, ForeignKey, SmallInteger, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -98,3 +98,49 @@ class PlaceHours(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class PlaceExternalId(Base):
+    """카카오·네이버 장소 번호 → 자체 DB 장소(#1048). 번호만 저장한다 — 이름·좌표·주소는 저장하지 않는다(#53). 모양은 docs/data-model.md."""
+
+    __tablename__ = "place_external_ids"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str] = mapped_column(String, nullable=False)       # 'kakao' | 'naver'
+    external_id: Mapped[str] = mapped_column(String, nullable=False)    # 예 'naver:1412566798'
+    place_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("places.id", ondelete="CASCADE"), nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)         # 'hint' = 서버가 스스로 확정 | 'user' = 사람이 고른 짝(표 2개 이상이어야 신뢰)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "external_id", "place_id", name="uq_place_external_ids_pair"),
+        CheckConstraint("provider IN ('kakao', 'naver')", name="ck_place_external_ids_provider"),
+        CheckConstraint("source IN ('hint', 'user')", name="ck_place_external_ids_source"),
+        Index("idx_place_external_ids_lookup", "provider", "external_id"),
+    )
+
+
+class PlaceExternalIdVote(Base):
+    """'user' 짝의 확인 표(#1048). voter_hash는 사용자 id의 단방향 해시 — id를 그대로 두지 않는다. 계정당 한 표. 탈퇴 정리가 지운다."""
+
+    __tablename__ = "place_external_id_votes"
+
+    external_id_row: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("place_external_ids.id", ondelete="CASCADE"), primary_key=True
+    )
+    voter_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (Index("idx_place_external_id_votes_voter", "voter_hash"),)
+
+
+class SidoBoundary(Base):
+    """시·도 경계(#1385) — 지역 판정의 정본(places.api.sido_at, circle_outside_region). 통계청 2018 시·도 17개 파일을
+    `python -m places.load boundaries`가 넣는다. 전남(36)·광주(24)는 둘 다 name이 "전남광주"다. 표가 비면 가장 가까운 장소 주소로 판정하던 방식으로 돌아간다."""
+
+    __tablename__ = "sido_boundaries"
+
+    code: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    geom = mapped_column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True), nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String, nullable=False)

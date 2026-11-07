@@ -8,11 +8,12 @@ db.flush()만으로 PK/유니크 충돌 등은 여전히 그 자리에서 드러
 """
 
 import uuid
+from datetime import datetime
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pydantic import TypeAdapter
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, insert, literal, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -458,6 +459,7 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     pins_moved = db.execute(
         update(PinRow).where(PinRow.created_by == from_user_id).values(created_by=to_user_id)
     ).rowcount
+    db.execute(update(PinRow).where(PinRow.deleted_by == from_user_id).values(deleted_by=to_user_id))   # 휴지통의 삭제한 사람(#1013)
     pins_already_reacted = select(ReactionRow.pin_id).where(ReactionRow.user_id == to_user_id)
     db.execute(
         delete(ReactionRow).where(ReactionRow.user_id == from_user_id, ReactionRow.pin_id.in_(pins_already_reacted))
@@ -468,7 +470,35 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     return {"pins": pins_moved, "reactions": reactions_moved}
 
 
+# 지도 복사(#1446)가 옮기는 칸 — 장소를 정하는 값과 찍은 사람의 한마디. 반응·확정·AI 근거(checks·reason·
+# member_fulfillment·place_source)는 옮기지 않는다.
+_COPIED_PIN_COLUMNS = ("category", "place_id", "geom", "source", "kakao_place_id", "search_query", "memo")
+
+
+def copy_pins_to_map(db: Session, *, from_map_id: str, to_map_id: str, created_by: str) -> int:
+    """지도 복사(maps, #1446)가 부른다 — from_map의 살아 있는 공개 핀을 to_map에 일반 핀으로 만든다. 만든 수를 돌려준다.
+    지운 핀(휴지통)과 비공개 핀은 빼고, 찍은 사람은 복사한 사람이다. 확정·AI 추천 핀도 kind='일반', origin='direct'다 —
+    AI 근거(구성원 충족 집계 등)는 원래 지도의 구성원 기준이라 새 지도에서 맞지 않아 옮기지 않는다(가드레일 5는 그 지도에서 게시한
+    AI 핀의 약속이다). 쿼리 한 번(INSERT ... SELECT)이고 이벤트는 만들지 않는다 — 새 지도는 아직 아무도 구독하지 않는다. 커밋하지 않는다."""
+    source = select(
+        func.gen_random_uuid(), literal(to_map_id),
+        *(getattr(PinRow, column) for column in _COPIED_PIN_COLUMNS),
+        literal("일반", PinRow.kind.type), literal("direct", PinRow.origin.type),
+        literal("public", PinRow.visibility.type), literal(created_by),
+    ).where(PinRow.map_id == from_map_id, PinRow.deleted_at.is_(None), PinRow.visibility == "public")
+    columns = ["id", "map_id", *_COPIED_PIN_COLUMNS, "kind", "origin", "visibility", "created_by"]
+    return db.execute(insert(PinRow).from_select(columns, source)).rowcount
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(maps.purge, #431)가 부른다 — 이 지도들의 reactions·pins만 지우고 테이블 이름 → 지운 행 수를
     돌려준다. shortlist_items가 핀을 참조하므로 shortlist.api.purge_map_data를 먼저 불러야 한다. 커밋하지 않는다."""
     return service.purge_map_data(db, map_ids=map_ids)
+
+
+def purge_deleted_pins(db: Session, *, now: datetime) -> dict[str, int]:
+    """정기 정리(maintenance, #1013)가 부른다 — 삭제한 지 30일이 지난 핀과 그 반응을 영구 삭제하고 테이블 이름 → 지운 행 수
+    (`reactions`, `pins`)를 돌려준다. 한 번에 1000개까지, 오래된 것부터(남은 것은 다음 실행). 멱등. 30일 안의 핀은 건드리지 않는다.
+    복구와 경합하지 않도록 선택한 핀은 호출자의 commit/rollback까지 잠근다. 다른 트랜잭션이 잠근 핀은 다음 실행으로 넘긴다.
+    지도 정리(`purge_map_data`)와 별개다. 커밋은 호출자."""
+    return service.purge_deleted_pins(db, now=now)

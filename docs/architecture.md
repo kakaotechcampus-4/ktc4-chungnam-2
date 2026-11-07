@@ -38,12 +38,12 @@
 | `places` | 자체 장소 DB(`places`, `place_facts`) 적재·DB 내 검색, 카카오 실시간 검색(표시용 `PlaceSource`) | #14, 멘토 피드백 5, #53 | — (외부 API는 카카오 실시간 표시만, 응답은 저장하지 않음) |
 | `seeding` | 프리시딩 배치 워커, 지도 생성·핀 생성·최초 ♥ 시 큐잉 | 신규(D3), #99 | `places` (예정) |
 | `recommend` | 추천 오케스트레이션(①②③-a-2④), 근거 조립, 검색범위(circles) 계산, 선호 순위 점수(#99), funnel, 제외목록, 재시도 | 3절, 5-5~5-6-1 | `pins` |
-| `llm` | 모델 호출 2곳(② 사유 구조화, ③-a-1 라벨링) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
+| `llm` | 모델 호출(v1 요청 중에는 ② 사유 구조화 하나, ③-a-1 라벨링은 v1 스텁이라 모델을 부르지 않는다, v2 에이전트·AI 코스 호출은 `llm/models.py`의 `CALLS`) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
 | `shortlist` | 확정 리스트 추가/제외, 동선 계산(모델 미사용) | 5-3, 5-10 | `pins` |
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
 | `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
 | `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
-| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 각 모듈 api의 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth` (api.py만) |
+| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 지도·알림·게스트·모델 호출·멱등 키·탈퇴 계정·이벤트·핀 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `llm`, `recommend`, `realtime`, `pins` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
 | `credits` | 사람마다 하나인 AI 실행 크레딧: 잔액·원장, 가격표(`credits/constants.py` 한 곳), 확인·차감·환불·후기 보상(docs/credits-reviews.md, #432). 다른 모듈은 `credits.api`만 부른다 | 신규(v2, 구현 #948) | `auth` (api.py만, 게스트 판정) |
 | `reviews` | 자체 DB 장소에 붙는 후기(별점 + 글), 신고, 숨김 스크립트(docs/credits-reviews.md, #432). 핀으로 부르고 장소를 찾는다 | 신규(v2, 구현 #951) | `pins`, `credits` (api.py만) |
@@ -83,6 +83,7 @@ core.py로 옮긴다.
 |---|---|
 | 핀 CRUD, 반응 등록/삭제 | `pins` + `event_log` |
 | 확정 리스트 순서 변경 | `shortlist_items`만 |
+| 여행 기간 변경 후 범위 밖 일정 미배정 | `maps` + `shortlist_items` + `event_log` |
 | 동선 계산 | 계산 결과 + `event_log` |
 | 근거 추가/토글, 추천 실행 생성 | `recommend` 테이블 + `event_log` |
 | 초대 수락 | `memberships` + `event_log` |
@@ -117,6 +118,10 @@ core.py로 옮긴다.
 | 다른 모듈의 **데이터 조회·변경** | `<module>/api.py`만 | 예: `recommend/flows.py`가 `pins.api.create_ai_pin(...)`을 부른다 |
 | 다른 모듈의 `models.py` | **금지** | DB 테이블이다. 소유 모듈 밖에서 직접 다루면 스키마 변경이 어디까지 번지는지 알 수 없어진다 |
 | 다른 모듈의 `service.py` | **금지** | 공개 접점이 아니다. 필요하면 그 모듈이 `api.py`에 함수를 연다 |
+
+`maps`는 여행 기간 변경 시 지도 행을 잠근 뒤 `shortlist.api.unassign_outside_dates(db, map_id=..., start_date=..., end_date=...)`를 호출한다. 범위 밖 일정은 미배정 뒤에 보존하며 호출자가 같은 트랜잭션을 커밋한다.
+
+`agent/course`는 `shortlist.api.get_schedule_for_agent(db, map_id=...)`로 일정(`start_date`, `end_date`, `version`, 항목별 `scheduled_date`·`visit_order`)을 읽는다. 순서와 `version`은 `GET /maps/{mapId}/shortlist/schedule`과 같고 읽기 전용이다(#1238).
 
 `api.py`가 없는 모듈은 아직 다른 모듈에게 열어줄 데이터가 없다는 뜻이다. 필요해지는 쪽이
 그 모듈 담당에게 이슈로 요청해서 만든다(`backend/CLAUDE.md`, #757).
@@ -256,8 +261,22 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 - **보존 기간 30일, 그 사이 방장이 복구할 수 있다**(#464 — `GET /maps/trash`, `POST /maps/{mapId}/restore`). 30일은 사용 데이터 없이 정한 출발값이다. 복구는 `deleted_at`만 비우면 되도록 정리 작업이 건드리지 않은 데이터가 모두 그대로 있다.
 - **모듈은 자기 테이블만 지운다.** 각 모듈이 `api.py`에 "이 지도들의 데이터 지우기" 공개 함수를 두고, maps의 정리 작업이 자식 테이블부터 순서대로 부른다. 외래키가 연쇄 삭제가 아니고(`NO ACTION`) `map_id`에 외래키가 아예 없는 테이블도 있어서 순서를 지켜 직접 지운다.
 - 지우는 테이블 12개: maps·memberships·invites(maps), pins·reactions(pins), shortlist_items·routes(shortlist), recommend_runs·candidates·evidence_lines·regions·exclusions(recommend), event_log(realtime). **`places`·`place_facts`는 지도에 속하지 않으므로 지우지 않는다.**
-- 실행은 손으로 돌리는 명령이다(`python -m maps.purge --older-than-days 30 [--dry-run]`). 지금 코드에는 예약 실행 장치가 없고, 예약은 배포 환경을 정할 때 붙인다(#168). `--dry-run`은 지울 지도 수와 테이블별 행 수만 보여 준다.
+- 실행은 정기 정리 하나다(`python -m maintenance.run --only maps [--dry-run]`, #168 — 예약 실행은 `deploy_rules.md`). maintenance는 `maps.api.purge_deleted_maps(db, now)`를 부르기만 한다. **기간은 maps가 정한다**(`maps.core.TRASH_RETENTION`, 경계는 `core.purge_cutoff` — 복구 판정, 휴지통 목록, 응답의 `retention_days`가 같은 값을 쓴다). 정리 API는 기간을 인자로 받지 않는다(#1474 — 정리 작업이 30을 따로 적어 넘기던 것을 멘토 리뷰에서 지적받았다). 따로 돌리던 `python -m maps.purge`는 없앴다. `--dry-run`은 같은 삭제를 한 뒤 롤백해 지울 행 수만 보여 준다.
 - 되돌릴 수 없는 작업이라 조건이 엄격하다: `deleted_at`이 있고 기간이 지난 지도만 대상이며, 다른 지도의 데이터에는 손대지 않는다.
+
+## 1.5 핀 휴지통과 정리 (#864, #1013, #1063)
+
+핀을 지우면 `pins.deleted_at`과 함께 지운 사람(`deleted_by`)·삭제 직전 확정 여부(`deleted_was_confirmed`)를 남기고 30일 동안 되살릴 수 있다(`GET /maps/{mapId}/trash`, `POST /pins/{pinId}/restore`). 보관 기간(30일)과 실제 삭제 규칙은 **pins가 소유**한다 — maintenance는 부르기만 하고 값을 복사하지 않는다.
+
+| 공개 함수 | 부르는 곳 | 하는 일 |
+|---|---|---|
+| `pins.api.purge_deleted_pins(db, *, now: datetime) -> dict[str, int]` | maintenance(`pins` 단계, #1063) | 삭제한 지 30일이 지난 핀과 그 반응을 오래된 것부터 한 번에 최대 1000개 영구 삭제한다. 반환 `{"reactions": n, "pins": m}`. 멱등, `now`는 timezone-aware(naive면 ValueError), 커밋은 호출자가 한다 |
+
+30일 안의 핀은 건드리지 않는다. 정리 작업의 dry-run은 호출자가 롤백해 확인한다(다른 단계와 같다).
+
+### 추천 반대 사유와 필요 조건 (#1253)
+
+추천의 hard 레지스트리는 `is_crowded_large` 하나다. 일반 soft 반대 사유는 후보를 거르지 않고 같은 키를 직접 쓴 구성원당 3점을 감점한다. 한 사람이 같은 사유를 여러 번 내도 한 번만 센다. 글·칩에서 나온 `accessible`, `wants=true`, `required`는 예외적으로 known 거짓만 제외하고 모름은 통과 + 확인 필요로 둔다. 알러지·재료 키는 만들지 않고 기존 확인 안내를 유지한다.
 
 ## 2. 장소 데이터 3층 모델
 
@@ -297,7 +316,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 ### `PlaceSource` 어댑터 (v1에서는 카카오 실시간 검색 하나)
 
-`backend/places`의 `PlaceSource` 어댑터는 **카카오 실시간 검색(표시용)**에만 쓴다. `NaverPlaceSource`는 코드에 남아 있지만 켜지 않는다(`PLACES_SOURCES=kakao`, #188에서 기본값을 이렇게 바꾼다). 구글 소스(`GooglePlaceSource`)는 쓰지 않아 #423 작업 중에 지웠다. 자체 DB의 적재와 검색은 어댑터가 아니라 `places` 모듈의 적재 스크립트와 DB 쿼리가 맡는다(#189).
+`backend/places`의 `PlaceSource` 어댑터는 **카카오 실시간 검색(표시용)**에만 쓴다. `NaverPlaceSource`는 코드에 남아 있지만 켜지 않는다(`PLACES_SOURCES=kakao`, #188에서 기본값을 이렇게 바꾼다). **예외 1건(#1048, 2026-11-02 사용자 결정)**: 카톡 링크 가져오기에서 `naver.me` **단축 링크의 리다이렉트를 한 번 따라가** 장소 번호(`pinId`)만 읽는다(`kko.to`·`maps.app.goo.gl`과 같은 처리). 네이버 지도 페이지 본문은 열지 않고, 네이버 검색·장소 API·스크래핑은 여전히 쓰지 않는다(robots.txt가 장소 페이지 접근을 막는다). 구글 소스(`GooglePlaceSource`)는 쓰지 않아 #423 작업 중에 지웠다. 자체 DB의 적재와 검색은 어댑터가 아니라 `places` 모듈의 적재 스크립트와 DB 쿼리가 맡는다(#189).
 
 ### `places` 공개 함수 계약 (v1, #189·#190·#195가 공유)
 
@@ -308,18 +327,27 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 | `match_place(hint) -> PlaceMatch \| None` | pins(핀 생성) | 힌트(`kakao_place_id`, `name`, `lat`, `lng`, `category`, `address`)에 맞는 **자체 DB 장소 한 건**을 찾는다. 읽기 전용. 반경 상한(300m)·후보 수 상한(20)·분류 일치·이름 일치(점수 0.8 이상)를 만족할 때만 돌려준다. **주소**가 있으면 주소가 다른 후보는 뺀다(`address_agreement`가 False) — 주소가 같으면 이름이 모자라도 0.5까지 구제한다. **동명 점포 모호성**: 1등과 점수가 5% 이내인 2등이 30m 안(주소 일치 여부가 같을 때)이면 거절한다. 판정 정본은 `places/matching.py`(`pick_match`) 한 곳이다. 모호하면 None(가드레일 2) |
 | `record_kakao_match(place_id, kakao_place_id, kakao_place_url) -> None` | pins(핀 생성 같은 트랜잭션) | 매칭된 장소에 카카오 장소 ID·URL·확인 일자만 기록한다(`places.kakao_*`). **첫 값 유지**(#248) — 이미 다른 ID가 있으면 덮어쓰지 않고, 같은 ID면 확인 일자만 갱신한다. pins는 `kakao:<숫자 1~20자리>`일 때만 부른다(형식이 틀리면 매칭은 하되 기록하지 않는다). 없는 `place_id`면 `KeyError`다(호출 쪽이 매칭된 id만 넘긴다) |
 | `pinnable_flags(hints) -> list[bool]` | 검색 응답(`GET /places/search`) | 힌트마다 `match_place`가 성공할지 읽기만 해서 계산한다. **카카오 ID를 기록하지 않는다**(`record_kakao_match`와 분리) |
-| `match_by_name_address(name, address, *, db=None) -> list[PlaceSearchResult]` | pins(`POST /maps/{mapId}/pins/link-preview`의 `hints`, #946) | 공유 글의 **상호명 + 주소**로 자체 DB 장소의 짝을 찾는다(좌표가 없다). 규칙은 `pick_match`와 같은 임계값을 쓰되 좌표(거리)가 없어 **주소가 같다고 확인된 후보만** 확정한다 — 입력 주소가 없거나 후보 주소를 비교할 수 없으면(도로명↔지번 등 모름) 빈 목록이다. 유일성은 주소가 다르다고 판명된 후보만 뺀 전부로 본다(점수가 1등과 5% 이내인 다른 후보가 있으면 거절). 후보는 `name_norm` 인덱스로 좁히고 50개를 넘으면 체인점 수준으로 보고 거절한다. 상호명·주소는 저장·로그하지 않는다. 짝이 하나로 확실할 때만 1개(`pinnable=true`) |
+| `match_by_name_address(name, address, *, external_id=None, db=None) -> list[PlaceSearchResult]` | pins(`POST /maps/{mapId}/pins/link-preview`의 `hints`, #946) | 공유 글의 **상호명 + 주소**로 자체 DB 장소의 짝을 찾는다(좌표가 없다). 규칙은 `pick_match`와 같은 임계값을 쓰되 좌표(거리)가 없어 **주소가 같다고 확인된 후보만** 확정한다 — 입력 주소가 없거나 후보 주소를 비교할 수 없으면(도로명↔지번 등 모름) 빈 목록이다. 유일성은 주소가 다르다고 판명된 후보만 뺀 전부로 본다(점수가 1등과 5% 이내인 다른 후보가 있으면 거절). 후보는 `name_norm` 인덱스로 좁히고 50개를 넘으면 체인점 수준으로 보고 거절한다. `external_id`(링크에서 읽은 `kakao:…`·`naver:…` 번호, 선택, #1048)를 함께 주면 서버가 스스로 확정한 짝을 번호표에 `source='hint'`로 기록한다(이때만 쓰기가 있고 호출 쪽 트랜잭션에 참여, 번호 형식이 틀리면 기록만 건너뜀). 상호명·주소·번호는 저장·로그하지 않는다(번호만 번호표에 저장). 짝이 하나로 확실할 때만 1개(`pinnable=true`) |
+| `match_address_candidates(address, *, db=None) -> list[PlaceSearchResult]` | pins(`link-preview`의 `address_candidates`, #1047) | **이름이 안 맞아도** 입력 주소와 같은 도로명주소(건물번호까지)에 영업 중인 음식점·카페·관광지가 **정확히 한 곳**이면 그 하나를 사람이 확인할 후보로 돌려준다(자동 확정 아님, 가드레일 2·4). 같은 주소에 둘 이상(다중 입점 건물)이거나 주소를 비교할 수 없으면 빈 목록. 주소는 짝 찾기에만 쓰고 저장·로그하지 않는다 |
+| `record_external_id(provider, external_id, place_id, *, source, voter_hash=None, db=None) -> None` | pins(`link_ref`가 오면 핀 생성과 같은 트랜잭션, 실패해도 핀은 만들어진다), places 내부(`parse_link`가 힌트로 스스로 확정한 짝, `source='hint'`) | 카카오·네이버 장소 번호 → 자체 DB 장소 짝을 번호표에 기록한다(#1048). `source='user'`는 `voter_hash`당 한 표이고 서로 다른 2표가 쌓여야 `parse_link`가 자동 매칭에 쓴다. 번호만 저장한다(#53) |
+| `purge_external_id_votes(voter_hash, *, db=None) -> int` | auth(탈퇴 7일 뒤 정리) | 탈퇴한 사용자의 번호표 표를 지운다(#1048). 멱등 |
+| `voter_hash(user_id: str) -> str` | pins(번호표 투표), auth(탈퇴 정리) | 사용자 id의 단방향 HMAC-SHA256 해시(hex 64자)를 만든다(#1048). 키는 `SESSION_SECRET`에서 용도 문자열 `places.external_id_votes.v1`로 파생하며, 같은 키·사용자는 같은 값이다. pins는 `record_external_id(..., source='user', voter_hash=places_api.voter_hash(user_id))`, auth는 `purge_external_id_votes(places_api.voter_hash(user_id))`로 호출한다. 키·해시는 로그나 응답에 싣지 않는다. **`SESSION_SECRET` 교체 후에는 기존 표의 해시를 재현할 수 없어 해당 사용자의 탈퇴 정리로 기존 표를 지울 수 없다**(번호표 행은 공용 데이터로 유지) |
 | `get_places(place_ids) -> dict[str, PlaceInfo]` | pins(핀 응답), recommend(후보 응답) | `name`, `lat`, `lng`, `category`, `kakao_place_url`, `address`를 배치로 조회(N+1 금지). 없는 ID는 키에서 빠진다. `address`는 `place_link`가 동네를 자를 때 쓰고 응답에 그대로 싣지 않는다 |
 | `search_nearby_own(category, areas) -> list[PlaceRef]` | recommend(후보 풀) | 반경 안의 **영업 중**(`status='open'`) 장소의 `place_id`·좌표. 카테고리는 음식점·카페·관광지 |
 | `count_curated(category, areas) -> int` | recommend(readiness의 `curated_nearby`) | 원들 안의 영업 중 정예(`curated`) 장소 수(#799). 원 처리는 `search_nearby_own`과 같고 쿼리 한 번이다 |
 | `place_link(place: PlaceInfo) -> str \| None` | recommend(결과 카드), pins(핀 상세) | 「카카오맵에서 보기」 링크(#798, #799). 기록된 카카오 장소 URL이 있으면 그것, 없으면 `{이름} {동네}` 카카오맵 검색 링크(동네가 없으면 이름만), 이름이 없으면 `None`. 카카오를 부르지 않는다 |
 | `neighborhood(address) -> str \| None`, `kakao_search_url(query) -> str` | recommend(지역 단위 검색어와 링크) | 동네는 주소의 시·군·구와 괄호 안 동(읍·면), 괄호가 없으면 시·군·구까지. 검색 링크 형식(`https://map.kakao.com/link/search/` + URL 인코딩)은 `places.core` 한 곳이다 — 다른 모듈은 이 글자를 다시 적지 않는다(`docs/constraints.md` 「카카오맵 검색 링크」) |
+| `sido(address) -> str \| None` | recommend(관광지 후보를 여행 지역 시·도 안으로, #1055·#1059) | 주소의 시·도를 **짧은 이름 하나로 정규화**해 돌려준다("서울특별시 …"와 "서울 …"은 같은 값, "경기도"·"강원특별자치도"·"강원도"도 각각 하나로, 2026 통합 "전남광주통합특별시"도 처리). 이름 표는 함수 설명에 둔다. 규칙은 `places.core`의 시·도 판정(`_SIDO_SHORT`·`_is_sido`, `neighborhood`가 쓰는 것) 한 곳이다. 못 찾으면 `None`. 순수 함수 |
+| `sido_at(lat, lng, *, db=None) -> str \| None` | recommend(여행 지역 중심이나 핀 중심의 시·도, #1059) | 좌표의 시·도(`sido`와 같은 짧은 이름). **시·도 경계 표(`sido_boundaries`, 통계청 2018, #1385)가 적재돼 있으면 경계로 판정**한다 — 장소 데이터가 없는 곳(제주 등)도 판정된다. 경계에 안 들거나 표가 비어 있으면(간소화 경계가 빠뜨린 해안·섬, 바다, 적재 전 환경) 가장 가까운 자체 DB 장소 주소의 `sido`로 한 번 더 정한다(10km, 근사). 못 정하면 `None`. **호출하는 쪽은 `None`이면 거르지 않는다**(모름을 실격으로 읽지 않는다, #1059 루트 결정) |
+| `circle_outside_region(lat, lng, radius_m, sido, *, db=None) -> bool \| None` | recommend(`OUTSIDE_TRIP_REGION`, #1385) | 중심 (lat, lng), 반경 radius_m(m) 원이 그 시·도 경계와 **하나도 겹치지 않으면 `True`**, 걸치기만 해도 `False`. `sido`는 `sido`·`sido_at`의 짧은 이름("전남광주"는 광주·전남 경계 둘을 합쳐 본다). 경계 표가 비었거나 그 시·도 경계를 모르면 **`None` — 막지 않는다**. 원은 geography로 만든다(위도마다 다른 경도 거리 반영). 읽기 전용 |
 | `get_hours(place_ids) -> dict[str, PlaceHours]` | places 안(`get_week_open_status`), 상세 표시 | `place_hours`의 `hours`·`closed_days`·`closed_note`·`hours_note`를 배치로 조회(#690). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용. 영업 여부 판정은 아래 두 함수를 쓴다 |
 | `get_week_open_status(place_ids) -> dict[str, dict[int, str]]` | recommend(「영업 종료 제거」), AI 코스(휴무 요일) | 장소별 요일 판정 `{0=월 … 6=일: open/closed/unknown}`(#747). place_hours를 배치로 읽는다. 행이 없는 장소는 키에서 뺀다(= 모름). 판정 규칙은 `places.core.day_open_status` 한 곳이다(`docs/constraints.md`「영업 중 판정」). 다른 모듈은 요일 이름, 시각 파싱, 자정 넘김을 다시 계산하지 않는다 |
 | `week_open_status(hours, closed_days) -> dict[int, str]` | AI 코스 평가 스크립트(원본 파일을 읽는 쪽) | 위와 같은 판정을 DB 없이 원본 칸에 적용하는 순수 함수(#747) |
 | `get_facts(place_ids) -> dict[str, list[FactLabel]]` | recommend(라벨) | `place_facts`의 `fact_key`·`value`·`confidence`를 그대로(없으면 빈 리스트). 호출하는 쪽이 `unknown_policy`를 적용한다 |
 
 - **`db` 선택 키워드 인자(#199에서 추가, 6개 함수 전부 `*, db: Session | None = None`)**: `db=db`를 넘기면 그 요청 트랜잭션에 참여한다(커밋은 호출한 쪽이 한다). **pins는 `record_kakao_match`를 반드시 `db=db`로 부른다** — 핀 생성과 같은 트랜잭션이어야 한다. 안 넘기면 places가 짧은 세션을 직접 열어 쓰고 닫는다(읽기 전용 호출은 충분하지만 호출마다 연결을 쓴다). `FakePlaces`도 같은 인자를 받는다.
+- **`maps.api.get_map_region_center(db, map_id) -> tuple[float, float] | None`**(#1059): 지도 여행 지역(`maps.region_center`)의 (lat, lng). 여행 지역을 안 고른 지도는 `None`이다. recommend는 이것이 있으면 `places.api.sido_at`으로 여행 지역의 시·도를 정하고, 없으면 첫 기본 지역의 같은 카테고리 핀 무리 중심으로 정한다(#1252).
+- `sido`·`sido_at`·`circle_outside_region`은 `places.testing.FakePlaces`에도 같은 시그니처로 있다(recommend가 대역으로 테스트한다). 대역의 `circle_outside_region`은 항상 `None`(경계 없음 = 모름)이다.
 - `place_id`는 문자열(`places.id`의 UUID). 타입은 `places/schemas.py`의 불변 dataclass: `PlaceHint`, `PlaceMatch`, `PlaceInfo`, `PlaceRef`, `FactLabel`.
 - **카카오 원자료는 이 함수들의 입출력 어디에도 없다.** `kakao_place_id`·`kakao_place_url`만 예외(저장 허용 범위).
 - `places.api`의 실시간 카카오 검색은 `search_by_name`(표시용) 하나만 남는다. 옛 `search_nearby`(카카오 실시간 후보 풀)·`resolve_place`·`get_raw_facts`·`call_counts`는 부르는 곳이 없어 지웠다(#190, #195, #773).
@@ -352,7 +380,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
    5-4: 카테고리별로 ♥/🚫 의견이 달린 핀이 1개 이상이면 추천 버튼 활성화 (2026-10-07, #360)
         ↓
    [트리거 2, #99] 핀이 생기거나 처음 ♥를 받을 때 그 장소도 큐잉
-   ③-b가 ♥ 장소의 라벨을 선호 신호로 쓴다 — 요청 경로에서 라벨링하지 않으려고
+   코드로 옮긴 ③-b 선호 순위(#99)가 ♥ 장소의 라벨을 선호 신호로 쓴다 — 요청 경로에서 라벨링하지 않으려고
    이 시간대에 미리 채운다 (docs/constraints.md "선호 점수 계산" 참고)
         ↓
 「추천 받기」 실행 시점                                  ← 대부분 이미 채워져 있음

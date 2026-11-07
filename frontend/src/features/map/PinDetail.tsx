@@ -1,29 +1,33 @@
-import { useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import type { MemberView } from '@/features/maps/model'
 import { useMeQuery } from '@/features/auth/queries'
+import { AiChecks, AiFulfillment, AiReason } from '@/features/recommend/Evidence'
 import { hasReviews } from '@/features/reviews/model'
 import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
-import { useAddToShortlistMutation } from '@/features/shortlist/queries'
+import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
-import AgainstMark from '@/ui/AgainstMark'
+import Mark from '@/ui/Mark'
+import FieldError from '@/ui/FieldError'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
-import { isLive, locationState, useLivePlaceStore } from './livePlaces'
-import { asReactionType, FILTER_CATEGORIES, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useDeletePinMutation, useMyReactionMutation, useReactionsQuery, useReasonChipsQuery, useUpdatePinMutation } from './queries'
+import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
+import ReactionHelp from './ReactionHelp'
+import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, inputExample, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
-  like: { mark: '♥', label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
-  against: { mark: <AgainstMark />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
+  like: { mark: <Mark kind="like" />, label: '좋음', bg: 'var(--good-bg)', line: 'var(--good-line)', text: 'var(--good-text)' },
+  against: { mark: <Mark kind="against" />, label: '반대', bg: 'var(--bad-bg)', line: 'var(--bad-line)', text: 'var(--bad-text)' },
 }
 const TYPES: ReactionType[] = ['like', 'against']
 const TEXT_MAX = 140
@@ -31,9 +35,10 @@ const TEXT_MAX = 140
 const MISSING_REASON = '반대 이유를 하나 이상 남겨 주세요'
 const MEMO_MAX = 200
 
-const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
-  like: { title: '무엇이 좋았나요? (선택)', placeholder: '예: 국물이 진하고 양이 많아요' },
-  against: { title: '왜 별로인가요? (필수)', placeholder: '예: 지난번 여행 때 가봤어요' },
+/** 입력칸 예시 문장은 카테고리마다 다르다 — `inputExample`(model). */
+const PROMPT: Record<ReactionType, { title: string }> = {
+  like: { title: '무엇이 좋았나요? (선택)' },
+  against: { title: '왜 별로인가요? (필수)' },
 }
 
 /**
@@ -52,38 +57,48 @@ export function PinDetailHeader({
   onBack: () => void
 }) {
   const add = useAddToShortlistMutation(mapId)
+  const remove = useUnconfirm(mapId)
   const confirmed = pin.kind === '확정'
+  const canToggle = confirmed ? pin.permissions.can_remove_from_shortlist : pin.permissions.can_add_to_shortlist
+  const busy = add.isPending || remove.isPending
+  const navigate = useNavigate()
+  const name = pin.place_name ?? '이 장소'
+  // 넣을 때만 토스트로 확정 리스트로 가는 길을 준다(#1030). 뺄 때는 버튼이 그대로 남아 다시 누르면 되므로 글자만 바뀐다.
+  const toggle = () =>
+    confirmed
+      ? remove.unconfirm(pin, { undo: false })
+      : add.mutate(pin.id, {
+          onSuccess: () =>
+            showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
+              label: '확정 리스트 보기',
+              onClick: () => navigate(`/maps/${mapId}/shortlist`),
+            }),
+          onError: () => showToast('확정 리스트에 넣지 못했어요'),
+        })
 
   return (
     <div>
       <PanelBackLink label={backLabel} onBack={onBack} />
       {/* 자리가 없으면(긴 이름·큰 글자) 확정 버튼이 제목 아래 줄로 내려간다(#406). */}
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
-        <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
-        {confirmed ? (
-          <span className="btn-confirm btn-sm">
-            ✓ 확정됨
-          </span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <SheetTitle>{pin.place_name ?? '이름 없는 장소'}</SheetTitle>
+          {/* AI 추천에서 올린 핀은 모두의 핀이 된 뒤에도 AI가 고른 곳임을 알린다(DESIGN.md 「지도 핀」, #1032). */}
+          {hasAiEvidence(pin) && <span className="tag tag-ai">AI</span>}
+        </span>
+        {canToggle ? (
+          // 켜고 끄는 버튼 하나다. 한 버튼이라 눌러도 포커스가 그대로다. 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
+          <button type="button" aria-pressed={confirmed} disabled={busy} onClick={toggle} className="btn-confirm btn-sm">
+            {confirmed ? (
+              <><Mark kind="check" size={14} /> 확정됨</>
+            ) : (
+              <>
+                <Mark kind="star" size={14} /> 확정 리스트에 넣기
+              </>
+            )}
+          </button>
         ) : (
-          pin.permissions.can_add_to_shortlist && (
-            // 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
-            <button
-              type="button"
-              disabled={add.isPending}
-              onClick={() =>
-                add.mutate(pin.id, {
-                  onSuccess: () => {
-                    const name = pin.place_name ?? '이 장소'
-                    showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`)
-                  },
-                  onError: () => showToast('확정 리스트에 넣지 못했어요'),
-                })
-              }
-              className="btn-confirm btn-sm"
-            >
-              ★ 확정 리스트에 넣기
-            </button>
-          )
+          confirmed && <span className="btn-confirm btn-sm"><><Mark kind="check" size={14} /> 확정됨</></span>
         )}
       </div>
     </div>
@@ -94,15 +109,35 @@ export function PinDetailHeader({
  * 실시간 핀(#382) — 자체 장소 데이터에 없는 곳을 사람이 남긴 핀. 조건 확인·AI 추천·동선에는 쓰이지 않는다.
  * 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
  */
-function LiveInfo({ pin }: { pin: Pin }) {
+export function LiveInfo({ pin }: { pin: Pin }) {
   const places = useLivePlaceStore((s) => s.places)
+  const since = useLivePlaceStore((s) => s.since[pin.id])
+  const retry = useLivePlaceStore((s) => s.retry)
   const state = locationState(pin, places)
+  // 찾기 시작한 지 1분이 넘으면(검색 실패로 멈춘 경우 포함) 기다리게 두지 않고 다시 찾을지 묻는다.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (state !== 'loading' || since === undefined) return
+    const wait = since + LOCATE_SLOW_MS - Date.now()
+    if (wait <= 0) return
+    const t = setTimeout(() => setNow(Date.now()), wait)
+    return () => clearTimeout(t)
+  }, [state, since])
+  const slow = state === 'loading' && since !== undefined && now >= since + LOCATE_SLOW_MS
   return (
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
-      <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
-      <p className="text-ink-600">우리 장소 데이터에 없는 곳이라 조건 확인·AI 추천·동선에는 쓰이지 않아요. 의견은 그대로 남길 수 있어요.</p>
-      {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
-      {state === 'missing' && <p className="font-semibold text-warn-text">카카오에서 이 장소의 위치를 다시 찾지 못했어요. 지도에는 표시되지 않아요.</p>}
+      <p className="font-semibold text-ink-900">상세 정보가 등록되지 않은 장소예요</p>
+      <p className="text-ink-600">AI 추천이나 동선에는 반영되지 않지만, 구성원 간 의견은 자유롭게 나눌 수 있어요.</p>
+      {state === 'loading' && !slow && <p className="text-ink-500">장소 위치를 확인하는 중이에요…</p>}
+      {slow && (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-ink-600">위치를 아직 찾지 못했어요. 다시 시도할까요?</p>
+          <button type="button" onClick={retry} className="btn-outline btn-sm shrink-0">
+            다시 시도
+          </button>
+        </div>
+      )}
+      {state === 'missing' && <p className="font-semibold text-warn-text">위치 정보를 확인할 수 없어 지도에 표시되지 않아요.</p>}
     </div>
   )
 }
@@ -111,6 +146,20 @@ function LiveInfo({ pin }: { pin: Pin }) {
  * 핀을 찍은 사람이 남긴 한마디(#466). 찍은 사람만 쓰고 고친다(`can_edit`) — AI 추천·확정 핀은 고칠 수 없다.
  * 메모가 없고 고칠 수도 없으면 줄을 그리지 않는다.
  */
+/**
+ * AI 추천에서 올린 핀의 근거(가드레일 5). 올리기 전 후보 카드와 같은 부품으로 같은 값을 그린다 — 올린 뒤에도 그대로 보인다(#1032).
+ */
+function AiPinEvidence({ pin, members }: { pin: Pin; members: MemberView[] }) {
+  return (
+    <section aria-label="AI 추천 근거" className="mt-2 space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3">
+      <p className="text-xs font-bold text-brand-700">AI가 추천한 이유</p>
+      {pin.reason && <AiReason text={pin.reason} />}
+      <AiChecks evidence={pin} />
+      <AiFulfillment evidence={pin} members={members} />
+    </section>
+  )
+}
+
 function PinMemo({ pin, mapId }: { pin: Pin; mapId: string }) {
   const [editing, setEditing] = useState(false)
   const canEdit = pin.permissions.can_edit === true
@@ -146,8 +195,8 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
 
   return (
     <ConfirmDialog
-      title={live ? '메모·분류 수정' : '메모 수정'}
-      body="이 핀을 찍은 사람만 고칠 수 있어요. 비우고 저장하면 메모가 지워져요."
+      title={live ? '메모와 분류 수정' : '메모 수정'}
+      body="비우고 저장하면 메모가 지워져요."
       ok="저장"
       pending={update.isPending || !changed}
       onCancel={onCancel}
@@ -161,7 +210,7 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
       }
     >
       <div className="pt-2">
-        <TextField value={memo} onChange={setMemo} maxLength={MEMO_MAX} label="메모" placeholder="예: 여기 곱창 맛있대" clearLabel="메모 지우기" />
+        <TextField value={memo} onChange={setMemo} maxLength={MEMO_MAX} label="메모" placeholder={inputExample(category, 'memo')} clearLabel="메모 지우기" />
       </div>
       {live && (
         <div role="group" aria-label="분류" className="flex flex-wrap gap-2 pt-1">
@@ -212,6 +261,7 @@ export function PinDetailBody({
         </p>
         <PinMemo pin={pin} mapId={mapId} />
         {isLive(pin) && <LiveInfo pin={pin} />}
+        {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
           <p className="text-xs font-bold text-ink-600">
@@ -227,13 +277,17 @@ export function PinDetailBody({
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
               <span className={mine === t ? '' : 'text-ink-900'}>{R[t].label}</span>
-              <span style={mine === t ? undefined : { color: R[t].text }}>{s[t]}</span>
+              <span style={mine === t ? undefined : { color: R[t].text }}>{s[t]}명</span>
               {mine === t && '· 나'}
             </span>
           ))}
           <span className="flex items-center gap-1 font-bold">
-            <span className="text-ink-500">?</span> <span className="text-ink-900">미확인</span>
-            <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}</span>
+            <span className="text-ink-500"><Mark kind="unknown" /></span> <span className="text-ink-900">미확인</span>
+            <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}명</span>
+          </span>
+          {/* 「미확인」이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
+          <span className="ml-auto">
+            <ReactionHelp />
           </span>
         </div>
       </div>
@@ -268,11 +322,15 @@ export function PinDetailBody({
   )
 }
 
-/** 핀 삭제 — 구성원 누구나 남의 핀도 지울 수 있다(기획안 #25). 지우면 그 핀의 의견과 확정 리스트 항목도 함께 사라진다. */
+/**
+ * 핀 삭제 — 찍은 사람과 방장만(`can_delete`). 휴지통으로 옮겨져 보관 기간 안에 되살릴 수 있다(#864).
+ * 끌어서 버리기(TrashDropZone)의 키보드·스크린리더 대안이라 확인 창을 남긴다. 되돌릴 수 있어서 빨간 버튼은 쓰지 않는다(DESIGN 영역 분리 규칙).
+ */
 function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: () => void }) {
   const [asking, setAsking] = useState(false)
-  const del = useDeletePinMutation(mapId, pin.id)
-  const name = pin.place_name ?? '이 핀'
+  const del = useTrashPinMutation(mapId)
+  // 보관 일수는 서버 값으로 적는다(화면에 숫자를 두지 않는다). 확인 창을 열 때만 받는다.
+  const days = usePinTrashQuery(mapId, asking).data?.retention_days
   return (
     <div className="border-t border-ink-200 pt-3 text-center">
       <button type="button" onClick={() => setAsking(true)} className="btn-text text-body underline">
@@ -281,25 +339,30 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
       {asking && (
         <ConfirmDialog
           title="이 핀을 삭제할까요?"
-          body={`${name} 핀과 거기에 남긴 의견이 모든 구성원에게서 사라져요. 확정 리스트에 있으면 함께 빠져요.`}
+          body={days ? `삭제해요. ${days}일 안에 되돌릴 수 있어요` : '삭제해요. 지도 정보의 「삭제한 핀」에서 되돌릴 수 있어요'}
           ok="삭제"
-          danger
           pending={del.isPending}
           onCancel={() => setAsking(false)}
           onOk={() =>
-            del.mutate(undefined, {
+            // 알림·되돌리기·실패 알림은 훅이 띄운다.
+            del.mutate(pin, {
               onSuccess: () => {
                 setAsking(false)
-                showToast(`${name}${josa(name, '을', '를')} 삭제했어요`)
                 onDone()
               },
-              onError: () => showToast('핀을 삭제하지 못했어요'),
             })
           }
         />
       )}
     </div>
   )
+}
+
+/** 의견 요약 줄의 주어 — 「현성님, 지우님이」, 나도 있으면 「나와 현성님이」, 나뿐이면 「내가」. */
+function subjectOf(people: { name: string; isMe: boolean }[]) {
+  const others = people.filter((p) => !p.isMe).map((p) => `${p.name}님`).join(', ')
+  if (!others) return '내가'
+  return people.some((p) => p.isMe) ? `나와 ${others}이` : `${others}이`
 }
 
 function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>) {
@@ -324,11 +387,12 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
         <div>
           <div className="flex items-center justify-between text-body">
             <p className="font-medium text-ink-900">
-              <span style={{ color: R.like.line }}>♥</span> {likes.map(nameOf).join(' · ')} 좋아해요
+              <span style={{ color: R.like.line }}>{R.like.mark}</span> {subjectOf(likes)} 좋아해요
             </p>
             {likes.some((l) => l.chips.length || l.text) && (
-              <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text text-xs">
-                {showLikes ? '접기 ▴' : '펼치기 ▾'}
+              <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text inline-flex items-center gap-0.5 text-xs">
+                {showLikes ? '접기' : '펼치기'}
+                {showLikes ? <Mark kind="chevronUp" size={14} /> : <Mark kind="chevronDown" size={14} />}
               </button>
             )}
           </div>
@@ -343,7 +407,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
       )}
       {unknown.some((m) => !m.isMe) && (
         <p className="text-body text-ink-500">
-          ? 아직 안 남겼어요 · {unknown.filter((m) => !m.isMe).map((m) => m.name).join(' · ')}
+          <Mark kind="unknown" /> {subjectOf(unknown.filter((m) => !m.isMe))} 아직 의견을 남기지 않았어요
         </p>
       )}
     </section>
@@ -424,11 +488,14 @@ function MyOpinion({
     const previous: ReactionDto | null | undefined = saved
     react.mutate(null, {
       onSuccess: () =>
-        showToast('의견을 거뒀어요', {
+        showToast('의견을 취소했어요', {
           label: '되돌리기',
           onClick: () =>
             previous &&
-            react.mutate({ type: previous.type, reason_text: previous.reason_text, reason_chip_ids: previous.reason_chip_ids }),
+            react.mutate(
+              { type: previous.type, reason_text: previous.reason_text, reason_chip_ids: previous.reason_chip_ids },
+              { onError: () => showToast('의견을 되돌리지 못했어요') },
+            ),
         }),
       onError: () => showToast('의견을 취소하지 못했어요'),
     })
@@ -454,8 +521,8 @@ function MyOpinion({
               role="radio"
               aria-checked={on}
               onClick={() => setType(t)}
-              className="flex flex-col items-center gap-0.5 rounded-xl border py-2"
-              style={on ? { background: R[t].bg, borderColor: R[t].line } : { background: 'var(--surface-card)', borderColor: 'var(--ink-200)' }}
+              className="press flex flex-col items-center gap-0.5 rounded-xl border py-2"
+              style={on ? { backgroundColor: R[t].bg, borderColor: R[t].line } : { backgroundColor: 'var(--surface-card)', borderColor: 'var(--ink-200)' }}
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
               <span className="text-xs font-bold" style={{ color: on ? R[t].text : 'var(--ink-600)' }}>
@@ -487,23 +554,23 @@ function MyOpinion({
               })}
             </div>
           )}
-          {type === 'against' && chipsError && <ErrorText message="사유 칩을 불러오지 못했어요 — 글로 적어 주세요" error={chipsError} />}
+          {type === 'against' && chipsError && <ErrorText message="사유 칩을 불러오지 못했어요. 이유를 직접 적어 주세요" error={chipsError} />}
           <TextField
             value={text}
             onChange={setText}
             maxLength={TEXT_MAX}
-            placeholder={PROMPT[type].placeholder}
+            placeholder={inputExample(pin.category, type)}
             label={PROMPT[type].title}
             clearLabel="사유 지우기"
             inputRef={reasonRef}
             describedBy={showMissing ? reasonErrorId : undefined}
           />
           {showMissing && (
-            <p id={reasonErrorId} className="text-xs font-semibold text-warn-text">
+            <FieldError id={reasonErrorId}>
               {MISSING_REASON}
-            </p>
+            </FieldError>
           )}
-          {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 더 정확한 추천을 받을 수 있어요</p>}
+          {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 추천이 정확해져요</p>}
         </div>
       )}
 

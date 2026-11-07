@@ -24,6 +24,9 @@ declare module '@pingo/contracts/mocks/scenarios' {
     | 'withdrawn-relogin'
     | 'credits-empty'
     | 'credits-full'
+    | 'agent-declared'
+    | 'agent-linked'
+    | 'agent-schedule'
 }
 
 declare module '@pingo/contracts/mocks/browser' {
@@ -52,6 +55,8 @@ declare module '@pingo/contracts/mocks/node' {
     use(...handlers: import('msw').RequestHandler[]): void
     events: {
       on(type: 'request:start', listener: (args: { request: Request }) => void): void
+      /** 목 서버가 돌려준 응답을 본다(광고 세션 id 처럼 응답에서만 아는 값, #1039). response 는 clone() 해서 읽는다. */
+      on(type: 'response:mocked', listener: (args: { request: Request; response: Response }) => void): void
       removeAllListeners(): void
     }
   }

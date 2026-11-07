@@ -30,6 +30,9 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
  */
 export const USE_MOCK = !BASE_URL
 
+/** 응답이 내려 준 경로(`cover_url` 같은 것)를 <img src> 에 쓸 주소로. 인증은 쿠키라 그대로 붙는다. */
+export const apiUrl = (path: string) => `${BASE_URL}${path}`
+
 async function toApiError(res: Response): Promise<ApiError> {
   try {
     const body = (await res.json()) as ErrorBody
@@ -41,7 +44,7 @@ async function toApiError(res: Response): Promise<ApiError> {
   // 조용히 삼키지 않고 카탈로그의 전역 코드로 세워서 올린다.
   return new ApiError(res.status, {
     code: 'INTERNAL_ERROR',
-    message: `서버 응답을 해석할 수 없어요 (HTTP ${res.status})`,
+    message: `서버 응답을 읽지 못했어요 (HTTP ${res.status})`,
   })
 }
 
@@ -51,16 +54,32 @@ async function toApiError(res: Response): Promise<ApiError> {
  * (최종기획안 13절, api-spec.yaml 의 전역 cookieAuth).
  */
 async function request(path: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  })
-  if (!res.ok) throw await toApiError(res)
-  return res
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...init?.headers,
+      },
+    })
+    if (res.ok) return res
+    const error = await toApiError(res)
+    const delay = GATEWAY_RETRY_DELAYS_MS[attempt]
+    if (delay === undefined || !isGatewayDown(error) || (init?.method ?? 'GET') !== 'GET') throw error
+    await new Promise((resolve) => setTimeout(resolve, delay))
+  }
+}
+
+/**
+ * 배포로 API가 다시 켜지는 30초 남짓 동안 프록시가 공통 봉투 없이 502·503·504를 준다.
+ * 그동안은 조회(GET)만 간격을 늘려 가며 다시 묻는다 — 합쳐 31초. 쓰기는 서버에 닿았는지 몰라서 다시 보내지 않는다.
+ * 서버가 봉투로 준 503(PLACES_UNAVAILABLE 등)은 앱의 답이라 다시 묻지 않는다.
+ */
+const GATEWAY_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000]
+
+function isGatewayDown(error: ApiError): boolean {
+  return [502, 503, 504].includes(error.status) && error.code === 'INTERNAL_ERROR'
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {

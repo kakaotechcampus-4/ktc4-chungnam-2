@@ -15,25 +15,29 @@ from common.errors import AppError
 MAX_URL_LEN = 2000
 MAX_NAME_LEN = 100   # LinkParseResult.name_hint 상한
 
-# 도메인 허용목록 — 정확히 같거나 그 하위 도메인. 네이버(naver.me·map.naver.com)는 일부러 없다(#134).
-_ALLOWED_DOMAINS = ("google.com", "google.co.kr", "goo.gl", "kakao.com", "kko.to")
+# 도메인 허용목록 — 정확히 같거나 그 하위 도메인. 네이버는 naver.com 전체가 아니라 장소 번호를 읽는 세 호스트만(#1048, #134를 이 경우에 한해 갱신).
+_ALLOWED_DOMAINS = ("google.com", "google.co.kr", "goo.gl", "kakao.com", "kko.to", "naver.me", "map.naver.com", "m.place.naver.com")
 # 이 호스트는 리다이렉트를 따라가야 최종 주소를 안다. 그 밖의 허용 호스트는 받은 주소를 바로 읽는다.
-_SHORT_HOSTS = ("maps.app.goo.gl", "goo.gl", "kko.to")
+_SHORT_HOSTS = ("maps.app.goo.gl", "goo.gl", "kko.to", "naver.me")
 
 _COORD_PLACE = re.compile(r"!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)")   # 장소 핀의 좌표(뷰포트 중심보다 정확하다)
 _COORD_VIEW = re.compile(r"@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)")
 _COORDS_ONLY = re.compile(r"-?\d{1,3}(\.\d+)?\s*,\s*-?\d{1,3}(\.\d+)?")
 _KAKAO_ID_PATH = re.compile(r"/(?:m/)?(\d{1,20})/?")
 _KAKAO_ID = re.compile(r"\d{1,20}")
+_NAVER_ID = re.compile(r"\d{1,20}")
+_NAVER_PATH_ID = re.compile(r"/(?:p/entry/)?place/(\d{1,20})(?:/|$)")           # map.naver.com/p/entry/place/<번호>
+_NAVER_PLACE_PATH_ID = re.compile(r"/[a-z]+/(\d{1,20})(?:/|$)")                  # m.place.naver.com/restaurant/<번호>/home
 
 
 @dataclass(frozen=True)
 class ParsedLink:
-    provider: str                       # "google" | "kakao"
+    provider: str                       # "google" | "kakao" | "naver"
     name_hint: str | None = None        # 구글만
     lat: float | None = None            # 구글만, 내부용 — 응답·로그에 싣지 않는다
     lng: float | None = None
     kakao_place_id: str | None = None   # 카카오만 "kakao:<id>"
+    external_id: str | None = None      # 네이버만 "naver:<번호>"(#1048) — 번호뿐이다
 
 
 def split_url(raw: str):
@@ -69,6 +73,8 @@ def parse_resolved(url: str) -> ParsedLink | None:
     host = (parts.hostname or "").lower().rstrip(".")
     if _under(host, "kakao.com"):
         return _parse_kakao(parts)
+    if _under(host, "map.naver.com") or _under(host, "m.place.naver.com"):
+        return _parse_naver(parts)
     if _under(host, "google.com") or _under(host, "google.co.kr"):
         return _parse_google(parts)
     return None
@@ -96,6 +102,22 @@ def _parse_kakao(parts) -> ParsedLink | None:
             raise AppError("LINK_UNRESOLVED")   # 카카오맵 주소지만 장소 ID가 없다(좌표·검색 링크 등)
         return None
     return ParsedLink("kakao", kakao_place_id=f"kakao:{raw}")
+
+
+def _parse_naver(parts) -> ParsedLink:
+    """네이버 지도 주소에서 장소 번호만 읽는다(#1048): `pinId` 쿼리 → `/place/<번호>` → `m.place.naver.com/<분류>/<번호>`. 본문은 열지 않는다.
+    번호가 없으면(좌표·검색 링크) LINK_UNRESOLVED."""
+    raw = None
+    value = (parse_qs(parts.query).get("pinId") or [""])[0]
+    if _NAVER_ID.fullmatch(value):
+        raw = value
+    if raw is None:
+        host = (parts.hostname or "").lower().rstrip(".")
+        m = _NAVER_PATH_ID.search(parts.path) or (_NAVER_PLACE_PATH_ID.match(parts.path) if _under(host, "m.place.naver.com") else None)
+        raw = m.group(1) if m else None
+    if raw is None:
+        raise AppError("LINK_UNRESOLVED")
+    return ParsedLink("naver", external_id=f"naver:{raw}")
 
 
 def _parse_google(parts) -> ParsedLink | None:

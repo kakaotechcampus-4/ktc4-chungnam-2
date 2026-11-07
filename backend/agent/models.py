@@ -1,5 +1,6 @@
 """
-agent 모듈이 소유하는 테이블 7개 — docs/data-model.md agent 절과 docs/agent-v2.md 13절이 정본이다(마이그레이션 0029).
+agent 모듈이 소유하는 테이블 8개 — docs/data-model.md agent 절과 docs/agent-v2.md 13절이 정본이다(마이그레이션 0029,
+agent_map_status와 agent_suggestions.facts는 0056, #1168, agent_suggestions.attempt·followup_of·followup은 0062, #1346).
 
 - `map_id`는 다른 모듈처럼 문자열이고 FK를 걸지 않는다(docs/architecture.md 1절, #760). `agent_run_advice.run_id`도
   recommend_runs.id지만 모듈 경계라 FK가 없다.
@@ -10,20 +11,22 @@ agent 모듈이 소유하는 테이블 7개 — docs/data-model.md agent 절과 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.database import Base
 
-RUN_TRIGGERS = ("activity", "time", "summary", "run_advice")
+RUN_TRIGGERS = ("activity", "time", "summary", "run_advice", "status")   # status: 지도 현황 문단(8.2, #1168)
 RUN_OUTCOMES = (
     "no_signal", "blocked", "silent", "unknown", "invalid_schema", "invalid_claims", "model_failed",
     "stale", "suggested", "summarized", "advised", "trip_ended", "map_deleted",
+    "status_updated",   # 현황 문단을 저장함(#1168)
     "error",   # 관찰이나 조언이 예외로 끝남. outcome_detail은 단계와 예외 클래스 이름뿐(#677)
 )
-DIAGNOSES = ("stall", "split", "no_reaction", "category_gap")
+DIAGNOSES = ("stall", "split", "no_reaction", "category_gap", "schedule")   # schedule: 일정 점검(#1356)
 SUGGESTION_STATUSES = ("active", "accepted", "dismissed", "expired", "superseded")
+FOLLOWUP_STATUSES = ("watching", "resolved", "declared", "followed_up")   # agent_suggestions.followup.status(6.9, #1345)
 
 _EMPTY_JSON_LIST = text("'[]'::jsonb")
 
@@ -117,6 +120,15 @@ class AgentSuggestion(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_action: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     decided_within_24h: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # 우리 데이터 확인(6.6, #1168). [{pin_id, fact_key}]만 — 라벨 값은 렌더 때 places에서 다시 읽는다
+    facts: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=_EMPTY_JSON_LIST)
+    # 후속 관찰(6.9, #1345). attempt 0 첫 제안, 1 다음 방법, 2 충돌 선언. followup_of는 수락한 앞 제안(사슬)
+    attempt: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    followup_of: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_suggestions.id", ondelete="SET NULL"), nullable=True
+    )
+    # {status: FOLLOWUP_STATUSES, at, reason?}. reason은 resolved일 때 new_pin|confirmed|pin_removed|split_gone. 관찰과 수락이 쓴다
+    followup: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class AgentSuggestionView(Base):
@@ -145,12 +157,31 @@ class AgentReasonSummary(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class AgentMapStatus(Base):
+    """지도 현황 문단(명세 8.2, #1168). 지도마다 최신본 하나를 덮어쓴다. cells는 코드가 센 사실(core.status_cells), states는
+    모델이 고른 카테고리별 상태, paragraph는 검증(core.verify_status)을 통과한 문단이다. 사유 원문, 구성원 이름, 장소 이름은
+    없다(명세 2절 11, 13번) — 입력 칸에 없어 모델이 쓸 수 없다. 검증에서 떨어진 문단은 저장하지 않고 지난 행이 그대로 남는다."""
+
+    __tablename__ = "agent_map_status"
+
+    map_id: Mapped[str] = mapped_column(String, primary_key=True)
+    cells: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    cells_hash: Mapped[str] = mapped_column(String, nullable=False)
+    states: Mapped[list] = mapped_column(JSONB, nullable=False)   # [{category, state}]
+    paragraph: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class AgentRunAdvice(Base):
-    """추천 막힘 조언. run당 1행. silent여도 빈 advice로 저장해 다시 만들지 않는다(명세 9절)."""
+    """추천 막힘 조언. run당 1행이고 지금 결과 상태(state_key)의 조언이다(#1103). 넓히기·다시 추천은 같은 run id로 결과를 바꾸므로
+    결과가 달라지면 그 행을 새 조언으로 덮는다(옛 서버의 ON CONFLICT (run_id) DO NOTHING이 그대로 돌게 기본키는 run_id다).
+    silent여도 빈 advice로 저장해 같은 결과로는 다시 만들지 않는다(명세 9절). state_key는 core.advice_state_key."""
 
     __tablename__ = "agent_run_advice"
 
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)  # recommend_runs.id, FK 없음
+    state_key: Mapped[str] = mapped_column(String, nullable=False, default="", server_default="")   # 이 행이 만든 결과 상태(#1103)
     map_id: Mapped[str] = mapped_column(String, nullable=False)
     kind: Mapped[str | None] = mapped_column(String, nullable=True)
     claims: Mapped[list] = mapped_column(JSONB, nullable=False)

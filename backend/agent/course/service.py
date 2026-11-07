@@ -27,11 +27,12 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from agent.course import runner, worklog
+from agent import service as agent_service
+from agent.course import goals as goals_mod, runner, worklog
 from agent.course.api_schemas import CourseRequest, CourseRun
 from agent.course.constants import (
     COURSE_DAYS_MAX, STARTUP_ORPHAN_AFTER, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
-    MAX_PLACES, MIN_PLACES,
+    MAP_SUMMARY_SECTIONS, MAX_PLACES, MIN_PLACES,
 )
 from agent.course.core import MemberConstraint
 from agent.course.gateways import CourseLlm
@@ -44,6 +45,7 @@ from llm import api as llm_api
 from maps import api as maps_api
 from pins import api as pins_api
 from places import api as places_api
+from recommend import api as recommend_api
 from shortlist import api as shortlist_api
 
 log = logging.getLogger("pingo.agent.course")
@@ -61,8 +63,8 @@ STALE_AFTER = timedelta(minutes=15)
 class Snapshot:
     start_date: date
     end_date: date
-    confirmed_pin_ids: tuple[str, ...]      # 확정 항목의 핀 전부(확정 순서). 바뀌었는지(stale) 비교에 쓴다
-    pins: tuple[PinInput, ...]              # 그중 공개이고 지워지지 않은 핀
+    version: str                            # 일정 version(shortlist) — 장소 집합·날짜 배정·순서·여행 기간. 바뀌었는지(stale) 비교에 쓴다
+    pins: tuple[PinInput, ...]              # 그중 공개이고 지워지지 않은 핀(scheduled_date는 사람이 일정에 넣은 날, #1237)
 
 
 def read_snapshot(db: Session, map_id: str) -> Optional[Snapshot]:
@@ -73,25 +75,44 @@ def read_snapshot(db: Session, map_id: str) -> Optional[Snapshot]:
     found = maps_api.get_map_for_agent(db, map_id)
     if found is None or found["deleted"]:
         return None
-    items = shortlist_api.list_items_for_agent(db, map_id=map_id)
+    schedule = shortlist_api.get_schedule_for_agent(db, map_id=map_id)
+    items = sorted(schedule["items"], key=lambda i: i["added_at"])      # 일정은 날짜 순으로 오므로 확정 순서(별칭·MAX_PLACES 기준)로 되돌린다
+    when = {i["pin_id"]: i["scheduled_date"] for i in items}
+    order = {i["pin_id"]: i["visit_order"] for i in items}
     matrix = {p["pin_id"]: p for p in pins_api.list_reaction_matrix(db, map_id=map_id)}
     confirmed = [matrix[i["pin_id"]] for i in items if i["pin_id"] in matrix]
-    place_ids = [p["place_id"] for p in confirmed if p["place_id"]]
+    return Snapshot(found["start_date"], found["end_date"], schedule["version"], _pin_inputs(db, confirmed, when, order))
+
+
+def read_pins(db: Session, map_id: str, pin_ids: list[str]) -> tuple[PinInput, ...]:
+    """이 지도의 핀(확정하지 않은 핀도)을 일정에 넣지 않은 PinInput으로 — 「핑고 AI 조언」이 확정 일정에 끼워 볼 때 쓴다(agent-v2 6.10,
+    #1356). 공개이고 지워지지 않은 핀만, pin_ids 순서로. 좌표 규칙은 read_snapshot과 같다(실시간 핀은 좌표 없음). 읽기 전용."""
+    matrix = {p["pin_id"]: p for p in pins_api.list_reaction_matrix(db, map_id=map_id)}
+    return _pin_inputs(db, [matrix[i] for i in pin_ids if i in matrix], {}, {})
+
+
+def _pin_inputs(db: Session, rows: list[dict], when: dict, order: dict) -> tuple[PinInput, ...]:
+    """핀 행(pins.api.list_reaction_matrix) → PinInput. 장소 이름·좌표·라벨은 places.api에서 한 번에 읽는다. when·order는 일정의 날짜와 순서."""
+    place_ids = [p["place_id"] for p in rows if p["place_id"]]
     infos = places_api.get_places(place_ids, db=db) if place_ids else {}
     facts = places_api.get_facts(place_ids, db=db) if place_ids else {}
     pins = []
-    for p in confirmed:
+    for p in rows:
         info = infos.get(p["place_id"]) if p["place_id"] else None
         if info is None:     # 실시간 핀, 또는 장소가 정리돼 없는 핀
-            pins.append(PinInput(p["pin_id"], None, p["search_query"] or "", p["category"]))
+            pins.append(PinInput(p["pin_id"], None, p["search_query"] or "", p["category"], scheduled_date=when.get(p["pin_id"]), visit_order=order.get(p["pin_id"])))
             continue
         labels = frozenset(f.fact_key for f in facts.get(p["place_id"], ()) if f.confidence == "known" and f.value is True)
-        pins.append(PinInput(p["pin_id"], p["place_id"], info.name, p["category"], info.lat, info.lng, labels))
-    return Snapshot(found["start_date"], found["end_date"], tuple(i["pin_id"] for i in items), tuple(pins))
+        pins.append(PinInput(p["pin_id"], p["place_id"], info.name, p["category"], info.lat, info.lng, labels, when.get(p["pin_id"]), order.get(p["pin_id"])))
+    return tuple(pins)
 
 
-def current_confirmed_pin_ids(db: Session, map_id: str) -> set[str]:
-    return {i["pin_id"] for i in shortlist_api.list_items_for_agent(db, map_id=map_id)}
+def current_schedule_version(db: Session, map_id: str) -> Optional[str]:
+    """지금 일정 version. 지도가 지워졌으면 None(어느 run의 version과도 다르다 → stale)."""
+    try:
+        return shortlist_api.get_schedule_for_agent(db, map_id=map_id)["version"]
+    except AppError:
+        return None
 
 
 # ---------------------------------------------------------------- 입력 만들기 (순수)
@@ -119,7 +140,7 @@ def build_input(snapshot: Snapshot, body: CourseRequest) -> TripBuild:
     pins = [p for p in snapshot.pins if not p.routable or p.pin_id in kept]
     built = build_trip(pins, days, member_constraints(body, len(days)), unknown_hours="check")
     over = tuple(Excluded(p.pin_id, p.name, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE) for p in routable[MAX_PLACES:])
-    return TripBuild(built.trip, built.excluded + over)
+    return TripBuild(built.trip, built.excluded + over, built.locks, built.schedule, built.placed)
 
 
 # ---------------------------------------------------------------- 요청
@@ -132,6 +153,22 @@ class CourseJob:
     request_text: str
     map_id: str            # 사용량 기록(llm_calls, #870)의 라벨
     requested_by: str
+    map_items: tuple[goals_mod.SummaryItem, ...] = ()     # 우리 조건 요약 줄(지도 목표 후보의 근거, #1131 B안)
+
+
+def read_map_items(db: Session, map_id: str) -> tuple[goals_mod.SummaryItem, ...]:
+    """우리 조건 요약(agent_reason_summaries)을 코스가 읽는 자리 — 여기 한 곳이다(#1131 B안). 같은 agent 모듈의 `service.list_summaries`를
+    부르고, 요약에서 키·방향·사람 수만 꺼낸다(MAP_SUMMARY_SECTIONS 칸). 요약에는 사유 원문과 구성원이 없다(명세 2절 13번). 표시 이름은
+    recommend.api.fact_labels(근거 줄·요약 화면과 같은 이름). 어느 키가 목표가 되는지는 goals.map_candidates가 MAP_GOAL_KEYS로 고른다."""
+    labels = recommend_api.fact_labels()
+    return tuple(
+        goals_mod.SummaryItem(row.category, item["fact_key"], bool(item["wants"]), int(item["member_count"]),
+                              labels.get(item["fact_key"], item["fact_key"]), must_keep=section == "must_keep")
+        for row in agent_service.list_summaries(db, map_id)
+        for section in MAP_SUMMARY_SECTIONS
+        for item in (row.summary or {}).get(section, ())
+        if item.get("wants") is not None
+    )
 
 
 def fail_stale_runs(
@@ -191,7 +228,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
     text = (body.request_text or "").strip()
     row = AgentCourseRun(
         id=uuid.uuid4(), map_id=map_id, requested_by=requested_by, status="queued", created_at=now, snapshot_at=now,
-        snapshot_pin_ids=list(snapshot.confirmed_pin_ids),
+        snapshot_version=snapshot.version, mode=build.mode,
         input={"request_text": text, "member_constraints": [c.model_dump() for c in body.member_constraints]},
     )
     try:
@@ -200,7 +237,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
     except IntegrityError:      # 동시 요청이 확인을 함께 통과했다 — 부분 유니크 인덱스가 하나만 남긴다
         raise AppError("COURSE_IN_PROGRESS") from None
     credits_api.charge(db, user_id=requested_by, feature=CREDIT_FEATURE, run_id=str(row.id))
-    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by)
+    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by, map_items=read_map_items(db, map_id))
 
 
 # ---------------------------------------------------------------- 실행 (백그라운드)
@@ -226,7 +263,7 @@ def execute_run(
         try:
             with llm_api.usage_context("course", map_id=job.map_id, user_id=job.requested_by, run_id=job.run_id):
                 computed = runner.run_course(
-                    job.build, job.request_text,
+                    job.build, job.request_text, map_items=job.map_items,
                     goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
                     on_step=progress_writer(session_factory, run_id),
                 )
@@ -267,7 +304,7 @@ def progress_writer(session_factory: Callable[[], Session], run_id: uuid.UUID) -
 def _done_values(c: runner.Computation) -> dict:
     v = c.view
     return {
-        "status": "done", "outcome": v.outcome, "goals": v.goals, "unmatched": v.unmatched, "steps": v.steps,
+        "status": "done", "outcome": v.outcome, "headline": v.headline, "fixes": v.fixes, "checked": v.checked, "goals": v.goals, "unmatched": v.unmatched, "steps": v.steps,
         "days": v.days, "violations": v.violations, "checks": v.checks, "excluded": v.excluded,
         "model": c.model, "prompt_version": c.prompt_version, "model_turns": c.model_turns,
         "tokens_in": c.tokens_in, "tokens_out": c.tokens_out,
@@ -307,11 +344,11 @@ def _with_leg_modes(days: list) -> list:
 
 
 def to_response(db: Session, row: AgentCourseRun) -> CourseRun:
-    stale = set(row.snapshot_pin_ids) != current_confirmed_pin_ids(db, row.map_id)
+    stale = row.snapshot_version != current_schedule_version(db, row.map_id)
     return CourseRun.model_validate({
-        "id": str(row.id), "map_id": row.map_id, "status": row.status, "outcome": row.outcome,
-        "failure_code": row.failure_code, "goals": row.goals, "unmatched": row.unmatched, "steps": row.steps,
-        "days": _with_leg_modes(row.days), "violations": row.violations, "checks": row.checks, "excluded": row.excluded,
+        "id": str(row.id), "map_id": row.map_id, "status": row.status, "mode": row.mode, "outcome": row.outcome,
+        "failure_code": row.failure_code, "headline": row.headline, "goals": row.goals, "unmatched": row.unmatched, "steps": row.steps,
+        "days": _with_leg_modes(row.days), "fixes": row.fixes, "checked": row.checked, "violations": row.violations, "checks": row.checks, "excluded": row.excluded,
         "snapshot_at": row.snapshot_at, "stale": stale, "created_at": row.created_at, "finished_at": row.finished_at,
     })
 

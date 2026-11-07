@@ -4,6 +4,9 @@
   "private": true,
   "description": "pingo FE용 타입 생성 + 먹 서버(msw) 패키지. docs/api-spec.yaml에서 파생된다.",
   "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "gen:types": "openapi-typescript ../docs/api-spec.yaml -o src/types/api.d.ts",
     "lint:spec": "redocly lint ../docs/api-spec.yaml",
@@ -12,6 +15,8 @@
   },
   "devDependencies": {
     "@redocly/cli": "^1.25.0",
+    "@types/js-yaml": "^4.0.9",
+    "js-yaml": "^4.3.1",
     "msw": "^2.4.9",
     "openapi-typescript": "^7.4.0",
     "typescript": "^5.6.2",

@@ -3,29 +3,38 @@ import { useNavigate } from 'react-router'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
+import { droppedCount, tripDays } from '@/features/shortlist/schedule'
+import { useSchedule, useScheduleQuery } from '@/features/shortlist/scheduleQueries'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
+import Notice from '@/ui/Notice'
 
-import { deleteMapBody, mapChanges, tripReady, type MapHeaderView, type MemberView, type TripDraft } from './model'
-import { useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
+import { copyMapErrorMessage, deleteMapBody, mapChanges, tripReady, tripTooLongError, type MapHeaderView, type MemberView, type TripDraft } from './model'
+import { useCopyMapMutation, useDeleteMapMutation, useLeaveMapMutation, useMapsQuery, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
 import TripFields from './TripFields'
 
 /**
  * 지도 제목·날짜·지역 수정 창(방장만, #465·#480). 바뀐 칸만 보낸다. 지역은 바꾸기만 되고 지울 수 없다.
  * 이미 받은 AI 추천 결과는 그대로라는 것을 미리 알린다(api-spec PATCH /maps/{mapId}).
+ * 확정 탭 일정에서 빠지는 날에 넣어 둔 장소가 있으면 몇 곳이 확정 리스트로 돌아가는지도 알린다(서버 일정 기준).
  */
 export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel: () => void }) {
   const update = useUpdateMapMutation(map.id)
   const [draft, setDraft] = useState<TripDraft>({ title: map.title, region: map.region ?? null, startDate: map.startDate, endDate: map.endDate })
   const body = mapChanges(map, draft)
+  const scheduleQuery = useScheduleQuery(map.id)
+  const schedule = useSchedule(map.id)
+  // 여행 기간 상한은 서버 값이다(#1371, 목록 응답).
+  const maxDays = useMapsQuery().data?.tripMaxDays
+  const dropped = tripReady(draft) ? droppedCount(schedule, tripDays(map.startDate, map.endDate), tripDays(draft.startDate, draft.endDate)) : 0
 
   return (
     <ConfirmDialog
       title="지도 정보 수정"
-      body="바꾼 내용은 모든 구성원에게 바로 보여요. 이미 받은 AI 추천은 그대로 남아요."
+      body="바꾼 내용은 모든 구성원에게 바로 보여요."
       ok="저장"
-      pending={update.isPending || !body || !tripReady(draft)}
+      pending={update.isPending || !body || !tripReady(draft, maxDays) || !scheduleQuery.data || scheduleQuery.isError}
       onCancel={onCancel}
       onOk={() =>
         body &&
@@ -38,9 +47,18 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       }
     >
       <div className="pt-2">
-        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} />
+        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} maxDays={maxDays} />
       </div>
-      {update.error && <ErrorText message="지도 정보를 고치지 못했어요" error={update.error} />}
+      {scheduleQuery.isError && (
+        <div className="space-y-2">
+          <Notice>일정을 불러오지 못해서 지금은 저장할 수 없어요</Notice>
+          <button type="button" onClick={() => void scheduleQuery.refetch()} className="btn-outline btn-sm">
+            다시 불러오기
+          </button>
+        </div>
+      )}
+      {dropped > 0 && <Notice>기간이 줄어 빠지는 날에 넣은 {dropped}곳은 확정된 장소로 돌아가요</Notice>}
+      {update.error && <ErrorText message={tripTooLongError(update.error) ?? '지도 정보를 고치지 못했어요'} error={update.error} />}
     </ConfirmDialog>
   )
 }
@@ -74,7 +92,7 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
       }
     >
       {cannotLeave ? (
-        <p className="text-sm font-semibold text-warn-text">혼자 남은 방장은 나갈 수 없어요. 나가는 대신 지도를 삭제해 주세요.</p>
+        <p className="text-sm font-semibold text-warn-text">혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요</p>
       ) : (
         leave.error && <ErrorText message="지도에서 나가지 못했어요" error={leave.error} />
       )}
@@ -111,13 +129,40 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
 }
 
 /**
+ * 지도 복사 확인 창(방장만, #1446). 무엇을 가져가고 무엇을 두고 오는지 먼저 알린다.
+ * 새 지도의 제목(「제주도 여행 (1)」)은 서버가 정해서 토스트에 그대로 적는다.
+ */
+export function CopyMapConfirm({ mapId, onCancel }: { mapId: string; onCancel: () => void }) {
+  const copy = useCopyMapMutation(mapId)
+  return (
+    <ConfirmDialog
+      title="이 지도를 복사할까요?"
+      body="날짜·지역·대표 이미지·색과 핀을 새 지도로 가져가요. 구성원의 의견, 구성원, 확정 리스트는 가져가지 않아요."
+      ok="복사"
+      pending={copy.isPending}
+      onCancel={onCancel}
+      onOk={() =>
+        copy.mutate(undefined, {
+          onSuccess: (map) => {
+            showToast(`${map.title}${josa(map.title, '을', '를')} 만들었어요`)
+            onCancel()
+          },
+        })
+      }
+    >
+      {copy.error && <ErrorText message={copyMapErrorMessage(copy.error)} error={copy.error} />}
+    </ConfirmDialog>
+  )
+}
+
+/**
  * 방장 넘기기 확인 창(방장만, #468). 넘긴 뒤 나는 구성원으로 남는다 — 나가기가 아니다.
- * 넘길 수 있는 사람인지는 서버가 정한다. 그사이 나간 사람을 골랐으면 서버가 거절하고 구성원 목록이 새로 온다.
+ * 게스트는 방장이 될 수 없어 목록에서 뺀다(#955). 그 밖에 넘길 수 있는 사람인지는 서버가 정한다. 그사이 나간 사람을 골랐으면 서버가 거절하고 구성원 목록이 새로 온다.
  */
 export function TransferOwnerConfirm({ mapId, members, onCancel }: { mapId: string; members: MemberView[]; onCancel: () => void }) {
   const transfer = useTransferOwnerMutation(mapId)
   const [to, setTo] = useState<MemberView | null>(null)
-  const others = members.filter((m) => !m.isMe)
+  const others = members.filter((m) => !m.isMe && !m.isGuest)
 
   return (
     <ConfirmDialog

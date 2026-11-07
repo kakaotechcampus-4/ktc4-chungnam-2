@@ -58,9 +58,9 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     return {"event_log": db.execute(delete(EventLog).where(EventLog.map_id.in_(map_ids))).rowcount}
 
 
-def purge_old_events(db: Session, *, now: datetime, older_than_hours: int = PURGE_AFTER_HOURS) -> int:
-    """created_at이 now - older_than_hours보다 오래된 이벤트를 오래된 것부터 PURGE_BATCH행까지 지운다.
-    지운 행 수를 돌려준다. 지울 게 없으면 0(멱등)."""
-    cutoff = now - timedelta(hours=older_than_hours)
+def purge_old_events(db: Session, *, now: datetime) -> int:
+    """created_at이 now - PURGE_AFTER_HOURS보다 오래된 이벤트를 오래된 것부터 PURGE_BATCH행까지 지운다.
+    지운 행 수를 돌려준다. 지울 게 없으면 0(멱등). 기간은 받지 않는다(#1474)."""
+    cutoff = now - timedelta(hours=PURGE_AFTER_HOURS)
     oldest = select(EventLog.seq).where(EventLog.created_at < cutoff).order_by(EventLog.seq).limit(PURGE_BATCH)
     return db.execute(delete(EventLog).where(EventLog.seq.in_(oldest))).rowcount

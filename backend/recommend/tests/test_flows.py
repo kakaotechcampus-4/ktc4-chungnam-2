@@ -4,6 +4,7 @@
 
 import threading
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -167,6 +168,59 @@ def test_is_open_removes_only_places_closed_every_trip_day_and_counts_them_in_th
     assert open_check("closed_one")["confidence"] == "known" and open_check("closed_one")["needs_check"] is False
     assert open_check("no_row")["needs_check"] is True      # 행이 없으면 통과 + 「영업 여부 확인 필요」
     assert open_check("no_info")["needs_check"] is False    # closed_days에 없는 요일은 영업한다(places 규칙)
+
+
+class _FakePlaceSearchWithAddress(_FakePlaceSearch):
+    """get_places가 주소를 싣는 가짜 — 시·도 제한(#1055)은 이 주소를 places.api.sido로 판정한다."""
+
+    def __init__(self, places, addresses):
+        super().__init__(places)
+        self._addresses = addresses
+
+    def get_places(self, place_ids):
+        return {pid: replace(info, address=self._addresses.get(pid)) for pid, info in super().get_places(place_ids).items()}
+
+
+def _run_with_sido(db_session, monkeypatch, *, place_rows, map_region_center=None):
+    """기본 지역 중심은 (35.0, 129.0). 반경 안 후보 3곳: busan(부산 주소)·gimhae(경남 주소)·no_addr(주소 없음).
+    여행 지역의 시·도는 FakePlaces.sido_at이 place_rows 주소로 정한다."""
+    from places.testing import FakePlaces
+
+    FakePlaces(rows=place_rows).install(monkeypatch)
+    monkeypatch.setattr(flows.maps_api, "get_map_region_center", lambda db, map_id: map_region_center)
+    run = _make_run(db_session, status="collecting_evidence")
+    _make_region(db_session, run, radius_m=1000)
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005) for pid in ("busan", "gimhae", "no_addr")]
+    search = _FakePlaceSearchWithAddress(places, {"busan": "부산광역시 강서구 대저동 1", "gimhae": "경상남도 김해시 대동면 1"})
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=_FakePlaceFacts())
+    db_session.refresh(run)
+    removed = {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"]
+    return {c.place_id for c in service.list_candidates(db_session, str(run.id))}, removed
+
+
+def _sido_row(key, lat, lng, address):
+    from places.testing import _Row
+
+    return _Row(key, key, lat, lng, "음식점", address=address)
+
+
+def test_sido_filter_uses_pin_center_without_map_region_and_counts_other_sido_as_out_of_radius(db_session, monkeypatch):
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=[_sido_row("hub", 35.0, 129.0, "부산 강서구 대저동")])
+    assert kept == {"busan", "no_addr"}   # 다른 시·도(경남)는 빠지고, 주소가 없으면 거르지 않는다
+    assert removed == 1
+
+
+def test_sido_filter_prefers_map_region_center(db_session, monkeypatch):
+    rows = [_sido_row("hub", 35.0, 129.0, "부산 강서구 대저동"), _sido_row("far", 35.5, 128.5, "경상남도 밀양시 내일동")]
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=rows, map_region_center=(35.5, 128.5))
+    assert kept == {"gimhae", "no_addr"}
+    assert removed == 1
+
+
+def test_sido_filter_removes_nobody_when_trip_sido_unknown(db_session, monkeypatch):
+    kept, removed = _run_with_sido(db_session, monkeypatch, place_rows=[])   # 근처에 주소 있는 장소가 없어 sido_at이 None
+    assert kept == {"busan", "gimhae", "no_addr"}
+    assert removed == 0
 
 
 def test_is_open_without_hours_lookup_removes_nobody(db_session):
@@ -493,8 +547,8 @@ def test_get_readiness_counts_opinion_pins_per_category(db_session):
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
 
-    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 1}
-    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 1}
+    assert readiness["음식점"] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000, "curated_nearby": 1}
+    assert readiness["카페"] == {"ready": False, "answered_count": 0, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000}
 
 
 def test_get_readiness_opens_for_a_solo_map_with_one_opinion_pin(db_session):
@@ -503,7 +557,7 @@ def test_get_readiness_opens_for_a_solo_map_with_one_opinion_pin(db_session):
     _react(db_session, pin, user_id="user_1", type="like")
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)
-    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 1}
+    assert readiness["카페"] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000, "curated_nearby": 1}
 
 
 def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_session):
@@ -521,7 +575,8 @@ def test_get_readiness_ignores_opinions_of_non_members_and_deleted_pins(db_sessi
 def test_create_run_raises_not_ready_when_readiness_fails(db_session):
     _make_members(db_session, user_ids=["user_1", "user_2"])  # required = 1, 아무도 반응 안 함
     with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
+        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER,
+                         center=(35.1, 129.0))
     assert exc_info.value.code == "NOT_READY"
 
 
@@ -547,7 +602,8 @@ def test_create_run_succeeds_assembles_evidence_and_default_region(db_session):
     assert regions[0].confirmed is True
     assert regions[0].center_lat == pytest.approx(35.2)
     assert regions[0].center_lng == pytest.approx(129.3)
-    assert regions[0].radius_m == flows.DEFAULT_REGION_RADIUS_M
+    assert regions[0].radius_m == core.DEFAULT_RADIUS_M == 3000   # 모든 카테고리 3km(#1385)
+    assert (run.default_radius_m, run.default_radius_walk_min) == (3000, core.radius_walk_min_compat(3000))
 
 
 def _no_plan_call(raw):
@@ -619,7 +675,7 @@ def test_create_run_demotes_wanted_cuisine_from_a_against_reason_to_preferred(db
         ("cuisine_korean", False, "required"),
         ("cuisine_bbq", True, "preferred"),
     ]
-    assert flows._active_soft_requirements(db_session, run) == [("cuisine_korean", False)]
+    assert flows._active_soft_requirements(db_session, run) == []
 
 
 def test_create_run_keeps_a_legacy_chip_value_as_text_without_key(db_session, monkeypatch):
@@ -651,9 +707,8 @@ def test_reaction_left_with_the_retired_shellfish_chip_filters_nothing(db_sessio
     assert flows._active_soft_requirements(db_session, run) == []
 
 
-def test_soft_chip_becomes_a_directed_requirement_only_when_it_avoids(db_session, monkeypatch):
-    """#412, #617 — 「매워요」(spicy_focused 피함)는 required라 #231 방향 실격으로 켜진다. 「좁아요」(spacious 원함)는
-    preferred로 내려가 실격 조건이 아니다."""
+def test_soft_chip_avoidance_no_longer_enables_a_filter(db_session, monkeypatch):
+    """#1253 — 매운맛 피함도 필터가 아니고 좁아요는 선호다."""
     _make_members(db_session, user_ids=["user_1"])
     pin = _make_pin(db_session, category="음식점")
     _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_cramped", "food_spicy"])
@@ -661,7 +716,7 @@ def test_soft_chip_becomes_a_directed_requirement_only_when_it_avoids(db_session
 
     run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
 
-    assert flows._active_soft_requirements(db_session, run) == [("spicy_focused", False)]
+    assert flows._active_soft_requirements(db_session, run) == []
 
 
 def _run_from_reactions(db_session, monkeypatch, *, category, reactions, facts_by_place, planned=None):
@@ -695,28 +750,66 @@ def test_cramped_chip_does_not_disqualify_small_restaurants_and_ranks_spacious_f
     assert funnel["실격 조건 제거"] == 0
 
 
-def test_inaccessible_chip_still_disqualifies(db_session, monkeypatch):
-    """#617 예외 — 「휠체어·유모차로 가기 힘들어요」(accessible 원함)는 필요 조건이라 required 그대로, 접근 불가는 실격이다."""
+def test_inaccessible_soft_chip_filters_known_false(db_session, monkeypatch):
+    """접근성 칩은 known 거짓만 거르고 모름을 확인 필요로 남긴다."""
     ranked, funnel = _run_from_reactions(
         db_session, monkeypatch, category="관광지", reactions=[("user_1", None, ["sight_inaccessible"])],
-        facts_by_place={"stairs": {"accessible": False}, "ramp": {"accessible": True}},
+        facts_by_place={"stairs": {"accessible": False}, "ramp": {"accessible": True}, "unknown": {}},
     )
-    assert ranked == ["ramp"]
+    assert set(ranked) == {"ramp", "unknown"}
     assert funnel["실격 조건 제거"] == 1
+    unknown = db_session.execute(select(Candidate).where(Candidate.place_id == "unknown")).scalar_one()
+    check = next(c for c in unknown.checks if c["fact_key"] == "accessible")
+    assert check["confidence"] == "unknown" and check["needs_check"] is True
 
 
-def test_spicy_chip_still_disqualifies(db_session, monkeypatch):
-    """#617 — 피함 칩 「매워요」는 그대로 required라 매운맛 전문은 실격이다."""
+def test_inaccessible_written_reason_filters_known_false_and_preserves_unknown(db_session):
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "accessible", True, "휠체어로 갈 수 있어야 해요")],
+        {"stairs": {"accessible": False}, "ramp": {"accessible": True}, "unknown": {}}, category="관광지",
+    )
+    assert set(candidates) == {"ramp", "unknown"}
+    assert funnel["실격 조건 제거"] == 1
+    check = next(c for c in candidates["unknown"].checks if c["fact_key"] == "accessible")
+    assert check["confidence"] == "unknown" and check["needs_check"] is True
+
+
+def test_accessible_avoid_is_scored_not_filtered(db_session):
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line("user_1", "required", "accessible", False)],
+        {"accessible": {"accessible": True}, "stairs": {"accessible": False}}, category="관광지",
+    )
+    assert set(candidates) == {"accessible", "stairs"}
+    assert funnel["실격 조건 제거"] == 0
+    assert candidates["stairs"].rank < candidates["accessible"].rank
+
+
+def test_spicy_chip_penalizes(db_session, monkeypatch):
+    """피함 칩은 매운맛 전문을 제거하지 않고 감점한다."""
     ranked, funnel = _run_from_reactions(
         db_session, monkeypatch, category="음식점", reactions=[("user_1", None, ["food_spicy"])],
         facts_by_place={"spicy": {"spicy_focused": True}, "mild": {"spicy_focused": False}},
     )
-    assert ranked == ["mild"]
-    assert funnel["실격 조건 제거"] == 1
+    assert ranked == ["mild", "spicy"]
+    assert funnel["실격 조건 제거"] == 0
 
 
-def test_written_wanted_parking_stays_required(db_session, monkeypatch):
-    """#422 그대로 — 글 "주차 돼야 해요"(원함)는 칩이 아니고 음식 종류도 아니라 required, 주차 안 되는 곳은 실격이다."""
+def test_spicy_chip_tie_ranks_confirmed_false_before_unknown_even_when_unknown_is_closer(db_session, monkeypatch):
+    """#1288 재현 — 🚫 「매워요」만 있을 때 매운맛 모름과 확인된 거짓은 둘 다 0점이다. 모름을 🚫 핀에 더 가깝게 놓아도
+    조건 1/1 충족인 확인된 거짓이 먼저 뽑히고, 카드의 충족 집계는 순서를 정한 그 값이다."""
+    ranked, funnel = _run_from_reactions(
+        db_session, monkeypatch, category="음식점", reactions=[("user_1", None, ["food_spicy"])],
+        facts_by_place={"unknown": {}, "mild": {"spicy_focused": False}},
+    )
+    assert ranked == ["mild", "unknown"]
+    assert funnel["실격 조건 제거"] == 0
+    cards = {c.place_id: c for c in db_session.execute(select(Candidate)).scalars()}
+    assert [c["status"] for c in cards["mild"].member_fulfillment["by_member"][0]["conditions"]] == ["met"]
+    assert [c["status"] for c in cards["unknown"].member_fulfillment["by_member"][0]["conditions"]] == ["needs_check"]
+
+
+def test_written_wanted_parking_affects_score(db_session, monkeypatch):
+    """주차 soft 사유는 주차 안 되는 곳을 제거하지 않고 감점한다."""
     from llm.schemas import EvidenceLine
     text = "주차 돼야 해요"
     ranked, funnel = _run_from_reactions(
@@ -725,8 +818,8 @@ def test_written_wanted_parking_stays_required(db_session, monkeypatch):
         planned=[[EvidenceLine(author_id="user_1", source="reaction", text=text, badge="required",
                                fact_key="parking_available", wants=True)]],
     )
-    assert ranked == ["parking"]
-    assert funnel["실격 조건 제거"] == 1
+    assert ranked == ["parking", "no_parking"]
+    assert funnel["실격 조건 제거"] == 0
 
 
 _KEYED_CHIP_IDS = {
@@ -795,19 +888,36 @@ def test_readiness_counts_a_live_pin_with_an_opinion(db_session):
 
     # 좌표가 없어 기본 지역이 없다 — 정예 장소 수(#798)를 내지 않는다
     assert flows.get_readiness(db_session, map_id="map_1", place_search=CURATED_ONE)["카페"] == {
-        "ready": True, "answered_count": 1, "required_count": 1,
+        "ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000,
     }
 
 
-def test_create_run_with_only_live_pins_has_no_anchor_so_not_ready(db_session):
-    """live 핀만 있으면 기준 원을 만들 좌표가 없다 — 준비 판정은 통과해도 run 생성은 409 NOT_READY(스펙 갭, 루트 보고)."""
+@pytest.mark.no_center_shim
+def test_create_run_without_center_is_a_validation_error_1331(db_session):
+    """지도 중심이 앵커다(#1331) — center 없는 run 생성은 422다. 준비 판정을 통과한 지도여도, 핀에서 지역을 만들어 주지 않는다."""
     _make_members(db_session, user_ids=["user_1"])
-    live_pin = _make_live_pin(db_session)
-    _react(db_session, live_pin, user_id="user_1", type="like")
+    pin = _make_pin(db_session, category="음식점")
+    _react(db_session, pin, user_id="user_1", type="like")
+    db_session.commit()
 
     with pytest.raises(AppError) as exc_info:
         flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
-    assert exc_info.value.code == "NOT_READY"
+    assert exc_info.value.code == "VALIDATION_ERROR"
+    assert db_session.query(RecommendRun).count() == 0
+
+
+def test_create_run_with_only_live_pins_works_with_a_center_1331(db_session, monkeypatch):
+    """live 핀(좌표 없음)만 있어도 지도 중심이 앵커라 run을 만들 수 있다 — 핀 좌표는 시작 조건(의견 핀 1곳)에만 쓰인다."""
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    _make_members(db_session, user_ids=["user_1"])
+    live_pin = _make_live_pin(db_session)
+    _react(db_session, live_pin, user_id="user_1", type="like")
+    db_session.commit()
+
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER,
+                           center=(35.1, 129.0))
+    assert (run.origin_lat, run.origin_lng) == (35.1, 129.0)
+    assert [(r.center_lat, r.center_lng) for r in service.list_regions(db_session, str(run.id))] == [(35.1, 129.0)]
 
 
 def test_create_run_passes_after_the_old_attempt_limit(db_session):
@@ -947,10 +1057,10 @@ def test_execute_run_full_funnel_removes_out_of_radius_disqualified_and_excluded
     places = [
         PlaceStub(place_id="ok_place", lat=35.0005, lng=129.0005),       # 반경 안, 실격 아님(known) → 통과
         PlaceStub(place_id="crowded_place", lat=35.0005, lng=129.0006),  # 반경 안, 붐비는 대형(known) → 실격
-        PlaceStub(place_id="far_place", lat=40.0, lng=135.0),            # 반경 밖 → 제거
+        PlaceStub(place_id="far_place", lat=35.0135, lng=129.0),       # 현재 반경 밖, 넓히기 상한 안
         PlaceStub(place_id="excluded_place", lat=35.0004, lng=129.0004),  # 반경 안, 실격 아님(known), 제외목록 → 제거
     ]
-    place_search = _FakePlaceSearch(places)
+    place_search = _CirclePlaceSearch(places)
     # known 값을 명시해 실격이 "붐빔" 하나로만 갈리게 한다. facts에 없는 far_place는 반경 필터에서 이미 빠져
     # 라벨링 자체를 안 받는다.
     place_facts = _FakePlaceFacts({
@@ -1274,9 +1384,9 @@ def test_get_result_marks_can_publish_false_once_already_published(db_session):
 
 # ---------- widen ----------
 
-def test_widen_run_adds_five_walk_minutes_and_regenerates_candidates(db_session):
-    run = _make_run(db_session, status="collecting_evidence")
-    region = _make_region(db_session, run, radius_m=15 * 80)
+def test_widen_run_adds_1000_meters_and_regenerates_candidates(db_session):
+    run = _make_run(db_session, status="collecting_evidence", default_radius_m=3000, default_radius_walk_min=38)
+    region = _make_region(db_session, run, radius_m=3000)
     places = [PlaceStub(place_id="p1", lat=35.0005, lng=129.0005)]
     place_search = _FakePlaceSearch(places)
     place_facts = _FakePlaceFacts()
@@ -1284,29 +1394,29 @@ def test_widen_run_adds_five_walk_minutes_and_regenerates_candidates(db_session)
     returned = flows.widen_run(db_session, run_id=str(run.id), place_search=place_search, place_facts=place_facts)
 
     db_session.refresh(region)
-    assert region.radius_m == 20 * 80  # 15분 → 20분(+5분)
+    assert region.radius_m == 4000  # 3,000m → 4,000m(+1,000m)
     db_session.refresh(run)
     assert returned is run
-    assert run.default_radius_walk_min == 20
+    assert (run.default_radius_m, run.default_radius_walk_min) == (4000, 50)   # 호환용 도보 분은 round(m/80)
     assert run.status == "done"
     assert service.list_candidates(db_session, str(run.id))[0].place_id == "p1"
 
 
 def test_widen_run_steps_to_limit_then_raises_widen_limit_without_changing_anything(db_session):
-    run = _make_run(db_session, status="done")
-    region = _make_region(db_session, run, radius_m=15 * 80)
+    run = _make_run(db_session, status="done", default_radius_m=3000, default_radius_walk_min=38)
+    region = _make_region(db_session, run, radius_m=3000)
     kwargs = {"place_search": _FakePlaceSearch([]), "place_facts": _FakePlaceFacts()}
 
-    for expected in (20, 25, 30):
+    for expected in (4000, 5000):
         flows.widen_run(db_session, run_id=str(run.id), **kwargs)
-        assert run.default_radius_walk_min == expected
+        assert run.default_radius_m == expected
 
     with pytest.raises(AppError) as exc_info:
         flows.widen_run(db_session, run_id=str(run.id), **kwargs)
     assert exc_info.value.code == "WIDEN_LIMIT"
     db_session.refresh(region)
-    assert region.radius_m == 30 * 80  # 상한을 넘겨 완화하지 않는다(가드레일 4)
-    assert run.default_radius_walk_min == 30
+    assert region.radius_m == 5000  # 상한을 넘겨 완화하지 않는다(가드레일 4)
+    assert run.default_radius_m == 5000
 
 
 def test_widen_run_without_regions_raises_not_ready(db_session):
@@ -1335,6 +1445,47 @@ class _CirclePlaceSearch(_FakePlaceSearch):
         ]
 
 
+def test_clusters_and_pin_circle_union_keep_both_ends_and_deduplicate(db_session):
+    anchors = [(35.0, 129.0), (35.018, 129.0), (35.036, 129.0), (35.10, 129.0)]
+    groups = flows._clustered_regions(Circle(35.0, 129.0, 1200), anchors)
+    assert [len(group) for _, group in groups] == [3, 1]  # 단일 연결과 별도 무리
+    regions = [flows._PipelineRegion(id=uuid.uuid4(), label=f"r{i}", center_lat=c.anchor_lat,
+               center_lng=c.anchor_lng, radius_m=c.radius_m, pool_radius_m=c.radius_m,
+               anchor_points=tuple(points)) for i, (c, points) in enumerate(groups)]
+    places = [PlaceStub("first", 35.0005, 129.0), PlaceStub("middle", 35.009, 129.0),
+              PlaceStub("last", 35.0355, 129.0), PlaceStub("other", 35.1005, 129.0),
+              PlaceStub("outside", 35.06, 129.0)]
+    result = flows._filter_places(db_session, map_id="map_1", category="음식점", regions=regions,
+                                  active_lines=[], place_search=_CirclePlaceSearch(places),
+                                  place_facts=_FakePlaceFacts(), off_season=frozenset())
+    assert {p.place_id for p in result.passed} == {"first", "middle", "last", "other"}
+    assert len(result.passed) == 4
+    assert result.regions_by_place["first"].label == result.regions_by_place["last"].label == "r0"
+    assert result.regions_by_place["other"].label == "r1"
+
+
+def test_default_anchor_order_is_stable_when_pin_query_order_changes(monkeypatch):
+    coordinates = [("b", 35.1, 129.0), ("a", 35.0, 129.0)]
+    monkeypatch.setattr(flows.pins_api, "get_category_pin_coordinates", lambda *args, **kwargs: list(coordinates))
+    first = flows._default_circle_and_anchors(None, map_id="map_1", category="음식점")
+    coordinates.reverse()
+    second = flows._default_circle_and_anchors(None, map_id="map_1", category="음식점")
+    assert first == second
+
+
+def test_pipeline_balances_two_regions_and_stores_each_candidate_region(db_session):
+    run = _make_run(db_session, status="collecting_evidence")
+    region_a = _make_region(db_session, run, center_lat=35.0, radius_m=500, label="A")
+    region_b = _make_region(db_session, run, center_lat=35.1, radius_m=500, label="B")
+    places = [PlaceStub("a1", 35.0, 129.0), PlaceStub("a2", 35.0002, 129.0),
+              PlaceStub("a3", 35.0003, 129.0), PlaceStub("b1", 35.1001, 129.0)]
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_CirclePlaceSearch(places),
+                      place_facts=_FakePlaceFacts())
+    candidates = sorted(service.list_candidates(db_session, str(run.id)), key=lambda c: c.rank)
+    assert [c.place_id for c in candidates] == ["a1", "b1", "a2"]
+    assert [c.region_id for c in candidates] == [region_a.id, region_b.id, region_a.id]
+
+
 class _RecordingPlaceFacts(_FakePlaceFacts):
     """라벨과 영업시간을 읽은 장소를 남긴다 — 반경 밖 장소는 읽지 않아야 한다."""
 
@@ -1351,30 +1502,29 @@ class _RecordingPlaceFacts(_FakePlaceFacts):
         return {}
 
 
-# 중심 (35.0, 129.0), 기본 반경 도보 15분(1,200m). ring은 약 1,500m라 지금 반경 밖·넓히기 한 번(1,600m) 안이고,
-# beyond는 약 2,800m라 상한(30분, 2,400m) 밖이다.
+# 중심 (35.0, 129.0), 기본 반경 3,000m(#1385). ring은 약 3,500m라 지금 반경 밖·넓히기 한 번(4,000m) 안이고,
+# beyond는 약 6,500m라 상한(5,000m) 밖이다.
 POOL_PLACES = [
-    PlaceStub(place_id="inside", lat=35.0045, lng=129.0),
-    PlaceStub(place_id="ring", lat=35.0135, lng=129.0),
-    PlaceStub(place_id="beyond", lat=35.025, lng=129.0),
+    PlaceStub(place_id="inside", lat=35.0225, lng=129.0),
+    PlaceStub(place_id="ring", lat=35.0315, lng=129.0),
+    PlaceStub(place_id="beyond", lat=35.0585, lng=129.0),
 ]
 
 
 def _pool_run(db_session, **run_overrides):
     _make_members(db_session, user_ids=["user_1"])   # 여행 날짜가 있어 영업 여부를 읽는다
     run = _make_run(db_session, status="collecting_evidence", **run_overrides)
-    walk_min = run_overrides.get("default_radius_walk_min", core.DEFAULT_RADIUS_WALK_MIN)
-    _make_region(db_session, run, radius_m=core.radius_m_for_walk_min(walk_min))
+    _make_region(db_session, run, radius_m=run_overrides.get("default_radius_m", core.DEFAULT_RADIUS_M))
     return run, _CirclePlaceSearch(POOL_PLACES), _RecordingPlaceFacts()
 
 
-def test_pool_reaches_the_widen_limit_and_counts_places_outside_the_current_radius(db_session):
+def test_pool_and_current_radius_are_both_checked_by_gateway(db_session):
     run, search, facts = _pool_run(db_session)
 
     flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
 
-    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]]
-    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 1   # ring. beyond는 풀에도 없다
+    assert search.radii == [[core.WIDEN_LIMIT_M], [core.DEFAULT_RADIUS_M]]
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 1
     assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["inside"]   # 결과는 지금 반경 안만
     assert facts.read == {"inside"}   # 반경 밖 장소의 라벨·영업시간은 읽지 않는다
 
@@ -1387,34 +1537,34 @@ def test_widening_once_brings_the_counted_place_into_the_result(db_session):
 
     assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
     assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 0
-    assert search.radii[-1] == [core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]   # 넓힌 뒤에도 풀은 상한까지
+    assert search.radii[-1] == [core.DEFAULT_RADIUS_M + core.WIDEN_STEP_M]
     assert "beyond" not in facts.read
 
 
 def test_pool_of_a_run_already_at_the_limit_is_its_radius(db_session):
-    run, search, facts = _pool_run(db_session, default_radius_walk_min=core.WIDEN_LIMIT_MIN)
+    run, search, facts = _pool_run(db_session, default_radius_m=core.WIDEN_LIMIT_M)
 
     flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
 
-    assert search.radii == [[core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)]]
+    assert search.radii == [[core.WIDEN_LIMIT_M]] * 2
     assert {e["label"]: e["removed_count"] for e in run.last_funnel}["반경 밖 제거"] == 0
     assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}
 
 
 def test_simulation_uses_the_same_pool_and_one_press_matches_the_widen_button(db_session):
     run, search, facts = _pool_run(db_session)
-    one_press = (core.DEFAULT_RADIUS_WALK_MIN + core.WIDEN_STEP_MIN) / core.DEFAULT_RADIUS_WALK_MIN
+    one_press = (core.DEFAULT_RADIUS_M + core.WIDEN_STEP_M) / core.DEFAULT_RADIUS_M
 
     result = flows.simulate_filter(
         db_session, run_id=str(run.id), radius_factor=one_press, disable_line_ids=[], place_search=search, place_facts=facts,
     )
 
-    limit = core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)
-    assert search.radii == [[limit], [limit]]   # before와 after가 같은 풀
+    limit = core.WIDEN_LIMIT_M
+    assert search.radii == [[limit], [core.DEFAULT_RADIUS_M], [limit], [core.DEFAULT_RADIUS_M + core.WIDEN_STEP_M]]
     assert (result["before"]["passed_count"], result["after"]["passed_count"]) == (1, 2)
     with pytest.raises(ValueError):   # 상한을 넘는 배율은 셀 수 없다(풀 밖)
         flows.simulate_filter(
-            db_session, run_id=str(run.id), radius_factor=core.WIDEN_LIMIT_MIN / core.DEFAULT_RADIUS_WALK_MIN + 0.01,
+            db_session, run_id=str(run.id), radius_factor=core.WIDEN_LIMIT_M / core.DEFAULT_RADIUS_M + 0.01,
             disable_line_ids=[], place_search=search, place_facts=facts,
         )
 
@@ -1442,18 +1592,77 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
 
     by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     sourced, bare = by_place["sourced"], by_place["bare"]
-    assert sourced.reason == "실격 조건 통과: 붐비는 대형 장소 아님 · 선호 충족: 조용함"
+    assert sourced.reason == "통과한 실격 조건: 붐비는 대형 장소 아님. 맞는 선호: 조용함"
     # user_1은 실격 사유(너무 붐벼요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장은 인원을 말하지 않는다(#631).
     assert _satisfied_view(sourced.member_fulfillment) == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": True},
     ]}
     assert sourced.place_source == source
     # 조용함을 모르는 후보 — 구성원은 집계 대상이지만 충족으로 세지 않고, 안 본 것을 이유로 들지 않는다.
-    assert bare.reason == "실격 조건 통과: 붐비는 대형 장소 아님"
+    assert bare.reason == "통과한 실격 조건: 붐비는 대형 장소 아님"
     assert _satisfied_view(bare.member_fulfillment) == {"satisfied": 1, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
     ]}
     assert bare.place_source is None  # 출처를 못 얻으면 지어내지 않는다
+
+
+@pytest.mark.parametrize("category,heart_key,written_key,required_key,wants", [
+    ("음식점", "cuisine_foreign", "cuisine_western", "spicy_focused", False),
+    ("관광지", "performance", "exhibition", "is_crowded_large", None),
+])
+def test_visible_member_fulfillment_preserves_ranking_and_filtering_1100(
+    db_session, category, heart_key, written_key, required_key, wants,
+):
+    """숨은 ♥ 선호와 직접 쓴 조건이 달라도 표시와 집계는 일치한다. 순위·실격은 기존 정책이다."""
+    run = _make_run(db_session, status="collecting_evidence", category=category)
+    _make_region(db_session, run, radius_m=1000)
+    liked = _make_pin(db_session, category=category, lat=35.0008, lng=129.0008)
+    for user_id in ("user_1", "user_2"):
+        _react(db_session, liked, user_id=user_id)
+    service.add_reaction_evidence(db_session, run_id=run.id, lines=[
+        _line("user_1", "preferred", written_key, True),
+        _line("user_3", "required", required_key, wants),
+        _line("neutral", "preferred", written_key, None),
+        {"author_id": "keyless", "source": "reaction", "text": "취향이 아니에요", "badge": "required"},
+    ])
+    facts = _FakePlaceFacts({
+        liked.place_id: {heart_key: True},
+        "written": {written_key: True, heart_key: False, required_key: False},
+        "heart": {written_key: False, heart_key: True, required_key: False},
+        "unknown": {required_key: False},
+        "excluded": {written_key: True, heart_key: True, required_key: True},
+    })
+    places = [PlaceStub(place_id=pid, lat=35.0005, lng=129.0005)
+              for pid in ("written", "heart", "unknown", "excluded")]
+
+    flows.execute_run(db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=facts)
+
+    candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
+    # 직접 쓴 선호 +3, ♥ 두 사람 +2·직접 쓴 선호 거짓 −3, 모름 0. 실격 조건 위반은 제외된다.
+    if category == "음식점":
+        assert {pid: c.rank for pid, c in candidates.items()} == {"written": 1, "excluded": 2, "unknown": 3}
+        assert {pid: c.member_fulfillment["satisfied"] for pid, c in candidates.items()} == {
+            "written": 2, "excluded": 2, "unknown": 1,
+        }
+    else:
+        assert {pid: c.rank for pid, c in candidates.items()} == {"written": 1, "unknown": 2, "heart": 3}
+        assert {pid: c.member_fulfillment["satisfied"] for pid, c in candidates.items()} == {
+            "written": 2, "heart": 2, "unknown": 1,
+        }
+    for candidate in candidates.values():
+        fulfillment = candidate.member_fulfillment
+        members = {m["user_id"]: m for m in fulfillment["by_member"]}
+        assert set(members) == {"user_1", "user_2", "user_3"}  # 중립·키 없는 사유는 조건이 아니다.
+        assert fulfillment["total"] == 3
+        assert fulfillment["satisfied"] == sum(m["satisfied"] for m in members.values())
+        for member in members.values():
+            statuses = [condition["status"] for condition in member["conditions"]]
+            assert member["satisfied"] == (bool(statuses) and all(s == "met" for s in statuses))
+    written_members = candidates["written"].member_fulfillment["by_member"]
+    assert [c["fact_key"] for c in written_members[0]["conditions"]] == [written_key]
+    assert written_members[1]["conditions"] == []
+    unknown_members = candidates["unknown"].member_fulfillment["by_member"]
+    assert [c["status"] for c in unknown_members[0]["conditions"]] == ["needs_check"]
 
 
 def _satisfied_view(fulfillment: dict) -> dict:
@@ -1654,11 +1863,11 @@ def test_the_funnel_has_no_not_recommendable_stage_and_radius_counts_only_the_po
     _make_region(db_session, run, center_lat=35.0, center_lng=129.0, radius_m=1000)
     places = [
         PlaceStub(place_id="ok_place", lat=35.0005, lng=129.0005),
-        PlaceStub(place_id="far_place", lat=40.0, lng=135.0),   # 풀(정예)에 있지만 반경 밖
+        PlaceStub(place_id="far_place", lat=35.0135, lng=129.0),   # 상한 안이지만 현재 반경 밖
     ]
 
     updated = flows.execute_run(
-        db_session, run_id=str(run.id), place_search=_FakePlaceSearch(places), place_facts=_FakePlaceFacts(),
+        db_session, run_id=str(run.id), place_search=_CirclePlaceSearch(places), place_facts=_FakePlaceFacts(),
     )
 
     assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["ok_place"]
@@ -1780,14 +1989,61 @@ def _execute_with_lines(db_session, lines, facts_by_place, *, category="음식�
     return candidates, funnel
 
 
-def test_required_wants_false_removes_places_whose_label_is_true(db_session):
-    """"한식 말고"(required, wants=false) — 한식 참인 후보는 제거되고 거짓이면 남는다. 깔때기에 세어진다."""
+def test_required_wants_false_penalizes_places_whose_label_is_true(db_session):
+    """한식 피함은 한식 후보를 감점한다."""
     candidates, funnel = _execute_with_lines(
         db_session, [_line("user_1", "required", "cuisine_korean", False)],
         {"korean": {"cuisine_korean": True}, "other": {"cuisine_korean": False}},
     )
-    assert set(candidates) == {"other"}
-    assert funnel["실격 조건 제거"] == 1
+    assert set(candidates) == {"other", "korean"}
+    assert candidates["other"].rank < candidates["korean"].rank
+    assert funnel["실격 조건 제거"] == 0
+
+
+@pytest.mark.parametrize("authors, penalty", [(["user_1"], -3), (["user_1", "user_2"], -6),
+                                              (["user_1", "user_1"], -3)])
+def test_required_soft_penalty_counts_distinct_authors(db_session, monkeypatch, authors, penalty):
+    scores_seen = []
+    score = core.score_candidates
+
+    def capture(*args, **kwargs):
+        result = score(*args, **kwargs)
+        scores_seen.append(result)
+        return result
+
+    monkeypatch.setattr(core, "score_candidates", capture)
+    candidates, funnel = _execute_with_lines(
+        db_session, [_line(author, "required", "spicy_focused", False) for author in authors],
+        {"hot": {"spicy_focused": True}, "unknown": {}},
+    )
+    assert set(candidates) == {"hot", "unknown"}
+    assert funnel["실격 조건 제거"] == 0
+    assert scores_seen[-1] == {"hot": penalty, "unknown": 0}
+    member = next(m for m in candidates["hot"].member_fulfillment["by_member"] if m["user_id"] == "user_1")
+    assert any(c["fact_key"] == "spicy_focused" and c["status"] == "unmet" for c in member["conditions"])
+
+
+def test_same_person_spicy_chip_on_two_pins_counts_once(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    for lat in (35.1, 35.1002):
+        pin = _make_pin(db_session, category="음식점", lat=lat)
+        _react(db_session, pin, user_id="user_1", type="against", reason_chip_ids=["food_spicy"])
+    monkeypatch.setattr(PLANNER, "plan_evidence", _no_plan_call)
+    captured = []
+    original = core.score_candidates
+
+    def capture(*args, **kwargs):
+        result = original(*args, **kwargs)
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(core, "score_candidates", capture)
+    db_session.commit()
+    run = flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
+    flows.execute_run(db_session, run_id=str(run.id),
+                      place_search=_FakePlaceSearch([PlaceStub(place_id="hot", lat=35.1001, lng=129.0)]),
+                      place_facts=_FakePlaceFacts({"hot": {"spicy_focused": True}}))
+    assert captured[-1]["hot"] == -3
 
 
 def test_required_wants_false_unknown_label_passes_with_needs_check(db_session):
@@ -1799,14 +2055,14 @@ def test_required_wants_false_unknown_label_passes_with_needs_check(db_session):
     assert funnel["실격 조건 제거"] == 0
 
 
-def test_required_wants_true_is_the_inverse(db_session):
-    """"조용한 곳이어야 해"(required, wants=true) — 라벨 거짓이면 실격, 참이면 통과, 모름은 통과 + needs_check."""
+def test_required_wants_true_scores_without_filtering(db_session):
+    """조용함을 원하면 라벨 거짓도 후보에 남는다."""
     candidates, funnel = _execute_with_lines(
         db_session, [_line("user_1", "required", "quiet", True)],
         {"quiet": {"quiet": True}, "noisy": {"quiet": False}, "unknown_place": {}},
     )
-    assert set(candidates) == {"quiet", "unknown_place"}
-    assert funnel["실격 조건 제거"] == 1
+    assert set(candidates) == {"quiet", "noisy", "unknown_place"}
+    assert funnel["실격 조건 제거"] == 0
     check = next(c for c in candidates["unknown_place"].checks if c["fact_key"] == "quiet")
     assert check["needs_check"] is True
 
@@ -1832,14 +2088,15 @@ def test_hard_key_required_disqualifies_only_known_true_whatever_wants_says(db_s
         assert check["passed"] is True and check["needs_check"] is True, wants
 
 
-def test_spicy_and_oily_required_wants_false_disqualify_only_known_true_and_unknown_passes(db_session):
-    """#378 — 매운맛·기름진 메뉴는 취향 키: 🚫(required, wants=false)는 라벨이 참인 곳만 실격, 모름은 통과 + needs_check."""
+def test_spicy_and_oily_required_wants_false_penalizes_known_true(db_session):
+    """매운맛·기름진 메뉴는 감점하며 모름은 중립이다."""
     for key in ("spicy_focused", "oily_focused"):
         candidates, funnel = _execute_with_lines(
             db_session, [_line("user_1", "required", key, False)],
             {"hot": {key: True}, "mild": {key: False}, "unknown_place": {}},
         )
-        assert set(candidates) == {"mild", "unknown_place"} and funnel["실격 조건 제거"] == 1, key
+        assert set(candidates) == {"hot", "mild", "unknown_place"} and funnel["실격 조건 제거"] == 0, key
+        assert candidates["hot"].rank > candidates["mild"].rank
         check = next(c for c in candidates["unknown_place"].checks if c["fact_key"] == key)
         assert check["confidence"] == "unknown" and check["passed"] is True and check["needs_check"] is True
 
@@ -2257,9 +2514,8 @@ def test_create_run_splits_a_reason_into_one_line_per_condition_then_the_chips(d
         "user_2": [("고기 좋아요, 고기가 최고", None, "cuisine_bbq", True, "preferred", None)],
         "user_3": [("그냥 별로예요", None, None, None, "required", None)],
     }
-    # 거르기는 줄 단위 그대로다 — 나뉜 두 조건이 각각 켜진다(전에는 하나가 조용히 사라졌다).
-    # 고기구이 원함은 #422로 선호가 되어 실격 조건이 아니다.
-    assert flows._active_soft_requirements(db_session, run) == [("cuisine_korean", False), ("oily_focused", False)]
+    # 나뉜 일반 soft 조건은 각각 점수에 반영되고 실격을 켜지 않는다.
+    assert flows._active_soft_requirements(db_session, run) == []
 
 
 def test_split_lines_are_turned_off_one_condition_at_a_time(db_session, monkeypatch):
@@ -2328,14 +2584,14 @@ def test_satisfied_directed_checks_are_shown_as_satisfied(db_session):
     assert by_key["quiet"]["passed"] is True and by_key["quiet"]["label"] == "조용함"
 
 
-def test_same_key_disqualification_beats_a_supporter(db_session):
-    """가드레일 9 — 한 명은 "한식 먹자"(preferred true), 한 명은 "한식 말고"(required false)여도 한식집은 빠진다."""
+def test_same_key_opposing_preferences_do_not_disqualify(db_session):
+    """같은 soft 키에 원함과 피함이 있어도 실격하지 않는다."""
     candidates, funnel = _execute_with_lines(
         db_session,
         [_line("user_1", "preferred", "cuisine_korean", True), _line("user_2", "required", "cuisine_korean", False)],
         {"korean": {"cuisine_korean": True}, "other": {"cuisine_korean": False}},
     )
-    assert set(candidates) == {"other"} and funnel["실격 조건 제거"] == 1
+    assert set(candidates) == {"other", "korean"} and funnel["실격 조건 제거"] == 0
 
 
 def test_wants_is_stored_and_returned_by_the_evidence_api(db_session):
@@ -2407,8 +2663,8 @@ def test_restaurant_heart_convenience_labels_do_not_outrank_a_written_preference
 
     candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     assert candidates["sushi"].rank == 1 and candidates["buffet"].rank == 2
-    assert candidates["sushi"].reason == "선호 충족: 일식"
-    assert "선호 충족" not in candidates["buffet"].reason
+    assert candidates["sushi"].reason == "맞는 선호: 일식"
+    assert "맞는 선호" not in candidates["buffet"].reason
     assert "franchise" not in {c["fact_key"] for c in candidates["buffet"].checks}  # ♥에서 빠진 키는 응답 체크에도 없다
 
 
@@ -2609,3 +2865,50 @@ def test_concurrent_executes_on_one_run_leave_a_single_candidate_set(test_engine
         verify.execute(delete(RecommendRun).where(RecommendRun.id == run_id))
         verify.commit()
         verify.close()
+
+
+def test_map_center_run_keeps_center_when_widened_and_retried(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810", lat=35.2, lng=129.3)
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "\ubd80\uc0b0")
+    monkeypatch.setattr(flows, "_clustered_regions", lambda *a: pytest.fail("center was clustered"))
+    run = flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.1, 129.0))
+    region, = service.list_regions(db_session, str(run.id))
+    db_session.flush()
+    db_session.expire(run, ["origin_lat", "origin_lng"])
+    assert (run.origin_lat, run.origin_lng) == (35.1, 129.0)
+    assert region.anchor_points == [[35.1, 129.0]]
+    assert region.label == "\ubcf4\ub358 \uacf3 \uc8fc\ubcc0"
+    original_radius = region.radius_m
+    monkeypatch.setattr(flows, "_search_and_store", lambda db, run, **kw: run)
+    flows.widen_run(db_session, run_id=str(run.id), place_search=None, place_facts=None)
+    assert region.radius_m > original_radius
+    flows.retry_run(db_session, run_id=str(run.id), place_search=None, place_facts=None)
+    assert region.anchor_points == [[35.1, 129.0]]
+    assert (region.center_lat, region.center_lng) == (35.1, 129.0)
+
+
+def test_center_without_sido_is_rejected(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810")
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: None)
+    with pytest.raises(AppError) as exc:
+        flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.1, 129.0))
+    assert exc.value.code == "VALIDATION_ERROR"
+
+
+def test_center_run_funnel_and_widen_advice_use_center(db_session, monkeypatch):
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category="\uc74c\uc2dd\uc810", lat=35.2, lng=129.3)
+    _react(db_session, pin, user_id="user_1")
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
+    run = flows.create_run(db_session, map_id="map_1", category="\uc74c\uc2dd\uc810", requested_by="user_1", evidence_planner=PLANNER, center=(35.0, 129.0))
+    search, facts = _CirclePlaceSearch(POOL_PLACES), _RecordingPlaceFacts()
+    advice = flows.simulate_filter(db_session, run_id=str(run.id), radius_factor=20 / 15, disable_line_ids=[], place_search=search, place_facts=facts)
+    assert (advice["before"]["passed_count"], advice["after"]["passed_count"]) == (1, 2)
+    flows.execute_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+    assert {e["label"]: e["removed_count"] for e in run.last_funnel}["\ubc18\uacbd \ubc16 \uc81c\uac70"] == 1
+    flows.widen_run(db_session, run_id=str(run.id), place_search=search, place_facts=facts)
+    assert {c.place_id for c in service.list_candidates(db_session, str(run.id))} == {"inside", "ring"}

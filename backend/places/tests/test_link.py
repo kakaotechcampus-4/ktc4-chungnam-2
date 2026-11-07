@@ -71,7 +71,7 @@ def test_kakao_map_address_without_id_is_unresolved():
 
 
 @pytest.mark.parametrize("url", [
-    "https://naver.me/abc", "https://map.naver.com/p/entry/place/1", "https://www.instagram.com/p/abc/",
+    "https://www.instagram.com/p/abc/", "https://naver.com/x", "https://evilnaver.me/abc", "https://naver.me.evil.com/abc",
     "https://blog.naver.com/x/1", "ftp://www.google.com/maps/place/a", "javascript:alert(1)", "www.google.com/maps",
     "https://google.com.evil.com/maps/place/a", "https://evilgoogle.com/maps/place/a",
     "https://www.google.com@evil.com/maps/place/a", "https://user:pw@www.google.com/maps/place/a",
@@ -217,7 +217,7 @@ def test_dns_answers_must_all_be_public(monkeypatch):
 # ---------------------------------------------------------------- 자체 DB 짝 찾기
 
 def cand(pid, name, dist=10.0, category="음식점", kakao=None):
-    return Candidate(pid, name, 37.5445, 127.0561, category, kakao, dist, "서울 성동구 성수동 1")
+    return Candidate(pid, name, 37.5445, 127.0561, category, kakao, dist, "서울 성동구 성수동 1", source="permit")   # DB 후보는 늘 source가 있다(#1486)
 
 
 @pytest.fixture()
@@ -231,6 +231,8 @@ def own(monkeypatch):
 
     monkeypatch.setattr(places_api, "own_places_near", near)
     monkeypatch.setattr(places_api, "own_places_by_kakao_id", lambda kid, *, db=None: state["by_kakao"])
+    monkeypatch.setattr(places_api, "own_places_by_external_id", lambda eid, *, db=None: state.get("by_external", []))   # 번호표(#1048)
+    monkeypatch.setattr(places_api, "_pinnable_candidates", lambda s, cands: list(cands))   # 핀 가능 검사는 DB가 필요하다 — 여기선 해석 로직만 본다(검사는 test_link_pinnable_815)
     return state
 
 
@@ -247,7 +249,8 @@ def test_google_match_uses_own_db_values_and_a_recorded_kakao_id_as_place_id(own
     own["near"] = [cand("p1", "성수 칼국수", kakao="kakao:111")]
     [m] = places_api.parse_link(GOOGLE_PLACE).matches
     assert (m.place_id, m.place_name, m.category, m.address) == ("kakao:111", "성수 칼국수", "음식점", "서울 성동구 성수동 1")
-    assert m.place_source is None   # 카카오 응답이 아니다
+    assert m.place_source.provider == "permit"   # 자체 DB 장소의 출처(카카오 응답이 아니다, #1486)
+    assert m.place_source.url == "https://map.kakao.com/link/search/" + quote("성수 칼국수 성동구", safe="")   # 기록된 카카오 URL이 없어 「이름 동네」 검색 링크
 
 
 def test_google_link_without_a_matching_name_gives_no_matches_but_keeps_the_hint(own):
@@ -271,7 +274,7 @@ def test_kakao_link_with_an_own_db_match(own):
 def test_kakao_link_without_a_match_asks_for_a_search_query(own):
     result = places_api.parse_link("https://place.map.kakao.com/1234567")
     assert result.matches == [] and result.needs_search_query is True and result.kakao_place_id == "kakao:1234567"
-    assert result.model_dump(exclude_none=True).keys() == {"provider", "kakao_place_id", "matches", "needs_search_query"}
+    assert result.model_dump(exclude_none=True).keys() == {"provider", "kakao_place_id", "external_id", "matches", "needs_search_query"}
 
 
 def test_short_link_is_resolved_then_read(own, monkeypatch):
@@ -333,13 +336,14 @@ def test_route_returns_the_spec_shape(client, own):
     assert r.json() == {
         "provider": "google", "name_hint": "성수 칼국수", "needs_search_query": False,
         "matches": [{"place_id": "own:p1", "place_name": "성수 칼국수", "lat": 37.5445, "lng": 127.0561,
-                     "category": "음식점", "address": "서울 성동구 성수동 1", "pinnable": True}],
+                     "category": "음식점", "address": "서울 성동구 성수동 1", "pinnable": True,
+                     "place_source": {"provider": "permit", "url": "https://map.kakao.com/link/search/" + quote("성수 칼국수 성동구", safe="")}}],
     }
     assert "37.5440" not in r.text   # 링크 안의 좌표를 싣지 않는다(자체 DB 장소의 좌표뿐)
 
 
 def test_route_error_codes(client):
-    assert client.post("/places/from-link", json={"url": "https://naver.me/abc"}).json()["code"] == "LINK_NOT_SUPPORTED"
+    assert client.post("/places/from-link", json={"url": "https://blog.naver.com/x/1"}).json()["code"] == "LINK_NOT_SUPPORTED"
     assert client.post("/places/from-link", json={"url": ""}).status_code == 422
     assert client.post("/places/from-link", json={"url": "x" * 2001}).status_code == 422
     assert client.post("/places/from-link", json={"url": "https://place.map.kakao.com/1", "extra": 1}).status_code == 422

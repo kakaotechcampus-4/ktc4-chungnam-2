@@ -2,7 +2,7 @@ import { ChevronDown } from 'lucide-react'
 
 import type { MemberView } from '@/features/maps/model'
 
-import { FILTER_CATEGORIES, KINDS, OPINIONS, SORTS, type Pin, type PinFilters, type PinOpinion, type PinSort } from './model'
+import { FILTER_CATEGORIES, KINDS, kindLabel, OPINIONS, SORTS, type Pin, type PinFilters, type PinOpinion, type PinSort } from './model'
 
 /**
  * 카테고리 칩 줄(Figma 마킹 탭). 2단계까지는 지도 위 검색창 아래, 3단계에서는 시트 제목 아래에 놓인다.
@@ -72,7 +72,7 @@ export function PinFilterBar({
         label="종류"
         value={filters.kind ?? ''}
         onChange={(v) => onChange('kind', v || null)}
-        options={[{ value: '', label: '전체' }, ...KINDS.map((k) => ({ value: k, label: k === 'AI추천' ? 'AI 추천' : k }))]}
+        options={[{ value: '', label: '전체' }, ...KINDS.map((k) => ({ value: k, label: kindLabel(k) }))]}
       />
       <FilterSelect
         label="의견"
@@ -95,7 +95,7 @@ export function PinFilterBar({
  * 칸 어디를 눌러도 select 가 눌린다 — 넓힌 영역(::before)이 select 를 덮으면 label 만 눌려 목록이 안 열리고,
  * 모바일에서는 시트 제목 줄이 그 누름을 끌기·접기로 받아 시트가 접혔다(#600).
  */
-function FilterSelect({
+export function FilterSelect({
   label,
   ariaLabel = label,
   value,
@@ -111,18 +111,19 @@ function FilterSelect({
 }) {
   const current = options.find((o) => o.value === value) ?? options[0]
   return (
-    <div className="relative flex h-8 items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white pl-2.5 pr-6 text-xs has-[select:focus-visible]:outline-2 has-[select:focus-visible]:outline-offset-2 has-[select:focus-visible]:outline-[var(--line-focus)]">
+    <div className="relative flex h-8 min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white pl-2.5 pr-6 text-xs has-[select:focus-visible]:outline-2 has-[select:focus-visible]:outline-offset-2 has-[select:focus-visible]:outline-[var(--line-focus)]">
       {/* 읽어 주는 건 select(이름 + 고른 값)가 맡는다 — 보이는 글자는 스크린리더에서 뺀다. */}
       {label && (
-        <span aria-hidden="true" className="text-ink-500">
+        <span aria-hidden="true" className="shrink-0 text-ink-500">
           {label}
         </span>
       )}
       {/* 선택지 글자를 모두 한 자리에 겹쳐 두고 고른 것만 보인다 — 칸 폭이 가장 긴 선택지로 고정돼서,
-          값을 바꿔도 칸 폭이 그대로고 옆 칸이 다음 줄로 밀리지 않는다(기본 select 와 같은 폭 규칙). */}
-      <span aria-hidden="true" className="grid font-semibold text-ink-900">
+          값을 바꿔도 칸 폭이 그대로고 옆 칸이 다음 줄로 밀리지 않는다(기본 select 와 같은 폭 규칙).
+          다만 줄 폭은 넘지 않는다 — 구성원 이름은 50자까지라, 넘치면 「…」로 줄인다(고르는 창에는 전체가 보인다). */}
+      <span aria-hidden="true" className="grid min-w-0 grid-cols-[minmax(0,1fr)] font-semibold text-ink-900">
         {options.map((o) => (
-          <span key={o.value} className={`col-start-1 row-start-1 ${o.value === current?.value ? '' : 'invisible'}`}>
+          <span key={o.value} className={`col-start-1 row-start-1 truncate ${o.value === current?.value ? '' : 'invisible'}`}>
             {o.label}
           </span>
         ))}

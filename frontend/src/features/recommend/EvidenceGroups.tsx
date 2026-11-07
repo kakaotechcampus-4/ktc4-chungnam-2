@@ -2,11 +2,12 @@ import { useState, type ReactNode } from 'react'
 import { Ban, Check, Clock, Plus, Undo2, X } from 'lucide-react'
 
 import { showToast } from '@/features/shell/toast'
+import { josa } from '@/ui/josa'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import TextField from '@/ui/TextField'
 
-import { evidenceLabel, evidenceLimitMessage, groupEvidence, notEnforcedNote, type EvidenceLineDto } from './model'
+import { evidenceLabel, evidenceLimitMessage, groupEvidence, mergeTags, notEnforcedNote, type EvidenceLineDto } from './model'
 import { usePatchEvidenceMutation } from './queries'
 
 /** 「+」 글 한 줄 길이(docs/api-spec.yaml EvidencePatchRequest.add[].text, 앞뒤 공백을 뗀 뒤 1~140자). */
@@ -48,7 +49,7 @@ export default function EvidenceGroups({
       {
         onSuccess: () =>
           !active &&
-          showToast(`‘${evidenceLabel(target[0])}’을(를) 뺐어요`, { label: '되돌리기', onClick: () => toggle(target, true) }),
+          showToast(`‘${evidenceLabel(target[0])}’${josa(evidenceLabel(target[0]), '을', '를')} 뺐어요`, { label: '되돌리기', onClick: () => toggle(target, true) }),
         onError: () => showToast('조건을 바꾸지 못했어요'),
       },
     )
@@ -83,7 +84,7 @@ export default function EvidenceGroups({
     </section>
   )
   // 쓰이지 않는 줄의 이유는 칩마다 적지 않고 묶음 아래 한 번만(이유가 같으면 한 줄).
-  const unusedNotes = [...new Set(groups.unused.map(notEnforcedNote))].join(' · ')
+  const unusedNotes = [...new Set(groups.unused.map(notEnforcedNote))].join('. ')
 
   return (
     <div className="space-y-4">
@@ -102,6 +103,20 @@ export default function EvidenceGroups({
               editable(line) ? () => setAskRemove(line) : undefined,
             ),
           ),
+        )}
+
+      {groups.lowered.length > 0 &&
+        group(
+          '피하고 싶어요 — 순위를 낮춰요',
+          // 후보를 빼지 않는 줄이라 빼기 전에 묻지 않는다 — 되돌리기 토스트만(#1260).
+          groups.lowered.map((line) =>
+            chip(
+              line,
+              <Ban size={12} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />,
+              editable(line) ? () => toggle([line], false) : undefined,
+            ),
+          ),
+          '이 특징이 있는 곳도 후보에 남고, 순위만 낮아져요',
         )}
 
       {groups.preferred.length > 0 &&
@@ -127,7 +142,7 @@ export default function EvidenceGroups({
 
       {removed.length > 0 &&
         group(
-          '뺀 조건 · 다시 추천 때 반영',
+          '뺀 조건',
           removed.map((line) => (
             <li key={line.id} className="flex items-center gap-1 rounded-full border border-dashed border-ink-300 py-1 pl-2.5 pr-1 text-body text-ink-500">
               <span className="line-through">{evidenceLabel(line)}</span>
@@ -138,6 +153,7 @@ export default function EvidenceGroups({
               )}
             </li>
           )),
+          '다시 추천할 때 반영돼요',
         )}
 
       {groups.reference.length > 0 && (
@@ -202,8 +218,8 @@ export default function EvidenceGroups({
       {askRemove && (
         <ConfirmDialog
           title="꼭 지켜야 하는 조건을 뺄까요?"
-          body={`‘${evidenceLabel(askRemove)}’을(를) 빼면 다음 추천부터 이 조건으로 거르지 않아요.`}
-          note="내가 쓴 조건만 뺄 수 있어요. 다른 구성원의 조건은 그대로 남아요."
+          body={`빼면 다음 추천부터 ‘${evidenceLabel(askRemove)}’ 조건으로 거르지 않아요.`}
+          note="다른 구성원이 쓴 조건은 그대로 남아요."
           cancel="그대로 두기"
           ok="빼기"
           danger
@@ -216,17 +232,4 @@ export default function EvidenceGroups({
       )}
     </div>
   )
-}
-
-/** 같은 태그는 하나로 합친다. all = 그 태그의 줄 전부, mine = 그중 내 줄(뺄 수 있는 줄). */
-function mergeTags(lines: EvidenceLineDto[]) {
-  const tags = new Map<string, { all: EvidenceLineDto[]; mine: EvidenceLineDto[] }>()
-  for (const line of lines) {
-    const tag = evidenceLabel(line)
-    const entry = tags.get(tag) ?? { all: [], mine: [] }
-    entry.all.push(line)
-    if (line.permissions.can_disable) entry.mine.push(line)
-    tags.set(tag, entry)
-  }
-  return [...tags].map(([tag, v]) => ({ tag, ...v }))
 }

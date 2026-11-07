@@ -8,6 +8,7 @@ import SheetTitle from '@/ui/SheetTitle'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
 import { filterPins } from '@/features/map/model'
+import ReactionHelp from '@/features/map/ReactionHelp'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
 import PinList from '@/features/map/PinList'
 import { usePinFilters } from '@/features/map/usePinFilters'
@@ -122,12 +123,16 @@ export default function MapTab() {
           {/* 넓은 화면은 단계가 없고 칩이 지도 영역 왼쪽 위에 있다(#338). */}
           {stage === 3 && !desktop && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
           {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
-          <p className="mt-2 text-xs text-ink-500">
-            {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
-            {counts && counts.members_total > 0 && (
-              <span className="font-bold text-ink-600"> · {counts.members_with_opinion}/{counts.members_total}명이 의견을 남겼어요</span>
-            )}
-          </p>
+          <div className="mt-2 flex items-center gap-1">
+            <p className="text-xs text-ink-500">
+              {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
+              {counts && counts.members_total > 0 && (
+                <span className="font-bold text-ink-600"> · {counts.members_with_opinion}/{counts.members_total}명이 의견을 남겼어요</span>
+              )}
+            </p>
+            {/* 목록 줄의 ♥·반대·? 표시가 무엇인지(#1030). */}
+            {pins && pins.length > 0 && <ReactionHelp />}
+          </div>
         </>
       }
     >
@@ -148,7 +153,7 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
   const what = [who && `${who}님이 올린`, category].filter(Boolean).join(' ')
   return (
     <EmptyState
-      title="필터에 걸리는 핀이 없어요"
+      title="필터에 맞는 핀이 없어요"
       action={
         <button type="button" onClick={onClear} className="btn-outline btn-md">
           필터 해제

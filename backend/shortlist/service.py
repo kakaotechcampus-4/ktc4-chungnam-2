@@ -3,6 +3,8 @@
 shortlist/core.py로, pins 테이블을 건드리는 부분은 shortlist/flows.py(pins.api 경유)로 위임한다.
 """
 
+import hashlib
+import json
 import re
 import sys
 import uuid
@@ -80,6 +82,7 @@ def list_items(db: Session, *, map_id: str) -> list[ShortlistItemRow]:
             select(ShortlistItemRow)
             .where(ShortlistItemRow.map_id == map_id)
             .order_by(
+                ShortlistItemRow.scheduled_date.asc().nulls_last(),
                 ShortlistItemRow.visit_order.asc().nulls_last(),
                 ShortlistItemRow.added_at,
                 ShortlistItemRow.id,
@@ -106,6 +109,8 @@ def reorder_items(db: Session, *, map_id: str, item_ids: list[str]) -> list[Shor
     어긋나지 않는다."""
     lock_shortlist(db, map_id)
     rows = list_items(db, map_id=map_id)
+    if any(row.scheduled_date is not None for row in rows):
+        raise AppError("SHORTLIST_SCHEDULED")
     mismatch = core.reorder_mismatch([str(row.id) for row in rows], item_ids)
     if mismatch is not None:
         raise AppError("VALIDATION_ERROR", detail=mismatch)
@@ -167,6 +172,26 @@ def list_items_for_agent(db: Session, *, map_id: str) -> list[dict]:
     return [{"pin_id": str(pin_id), "added_by": added_by, "added_at": added_at} for pin_id, added_by, added_at in rows]
 
 
+def schedule_for_agent(db: Session, *, map_id: str, start_date, end_date) -> dict:
+    """AI 코스용(#1238) — GET .../shortlist/schedule과 같은 순서(list_items)와 같은 version(schedule_version)."""
+    rows = list_items(db, map_id=map_id)
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "version": schedule_version(start_date, end_date, rows),
+        "items": [
+            {
+                "pin_id": str(row.pin_id),
+                "added_by": row.added_by,
+                "added_at": row.added_at,
+                "scheduled_date": row.scheduled_date,
+                "visit_order": row.visit_order,
+            }
+            for row in rows
+        ],
+    }
+
+
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     """지도 정리(#431) — 이 지도들의 확정 항목과 동선을 지운다. 테이블 이름 → 지운 행 수."""
     if not map_ids:
@@ -186,3 +211,64 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
         update(ShortlistItemRow).where(ShortlistItemRow.added_by == from_user_id).values(added_by=to_user_id)
     ).rowcount
     return {"shortlist_items": moved}
+
+
+def restore_item(db: Session, *, map_id: str, pin_id: str, added_by: str) -> bool:
+    """핀 휴지통 복구(#1013) — 확정 항목을 맨 뒤에 다시 만든다. 이미 있으면 False(멱등). add_item과 달리 먼저
+    확인하고 넣는다: 호출자(pins의 복구)가 같은 트랜잭션에 쓰던 것이 있어 IntegrityError 때의 db.rollback()을 쓸 수 없다.
+    visit_order는 NULL로 둔다 — list_items가 NULL을 수동 정렬된 항목 뒤에, 같은 NULL끼리는 added_at 순으로 놓으므로 맨 뒤다."""
+    lock_shortlist(db, map_id)
+    exists = db.execute(
+        select(ShortlistItemRow.id).where(ShortlistItemRow.map_id == map_id, ShortlistItemRow.pin_id == uuid.UUID(pin_id))
+    ).first()
+    if exists is not None:
+        return False
+    # added_at 기본값 now()는 트랜잭션 시작 시각이다 — 잠금을 기다리는 사이 다른 트랜잭션이 항목을 추가·커밋하면
+    # 복구 항목이 더 과거가 되어 「맨 뒤」가 깨진다. 잠금을 얻은 뒤의 실제 시각을 쓴다.
+    db.add(ShortlistItemRow(map_id=map_id, pin_id=uuid.UUID(pin_id), added_by=added_by, added_at=func.clock_timestamp()))
+    db.flush()
+    return True
+
+
+def schedule_version(start_date, end_date, rows):
+    data = [start_date.isoformat(), end_date.isoformat(), [
+        [str(row.id), row.scheduled_date.isoformat() if row.scheduled_date else None, row.visit_order]
+        for row in rows
+    ]]
+    return hashlib.sha256(json.dumps(data, separators=(',', ':')).encode()).hexdigest()
+
+
+def replace_schedule(db, *, map_id, start_date, end_date, version, groups):
+    lock_shortlist(db, map_id)
+    rows = list_items(db, map_id=map_id)
+    if schedule_version(start_date, end_date, rows) != version:
+        raise AppError("SHORTLIST_STALE")
+    dates = [group.date for group in groups]
+    if len(dates) != len(set(dates)) or any(d is not None and not start_date <= d <= end_date for d in dates):
+        raise AppError("VALIDATION_ERROR", "날짜가 중복되었거나 여행 기간 밖입니다")
+    requested = [item_id for group in groups for item_id in group.item_ids]
+    mismatch = core.reorder_mismatch([str(row.id) for row in rows], requested)
+    if mismatch is not None:
+        raise AppError("VALIDATION_ERROR", detail=mismatch)
+    by_id = {str(row.id): row for row in rows}
+    for group in groups:
+        for index, item_id in enumerate(group.item_ids):
+            row = by_id[item_id]
+            row.scheduled_date = group.date
+            row.visit_order = index
+    db.flush()
+    return list_items(db, map_id=map_id)
+
+
+def unassign_outside_dates(db, *, map_id, start_date, end_date):
+    lock_shortlist(db, map_id)
+    rows = list_items(db, map_id=map_id)
+    unassigned = [row for row in rows if row.scheduled_date is None]
+    outside = [row for row in rows if row.scheduled_date is not None and not start_date <= row.scheduled_date <= end_date]
+    if not outside:
+        return 0
+    for index, row in enumerate(unassigned + outside):
+        row.scheduled_date = None
+        row.visit_order = index
+    db.flush()
+    return len(outside)

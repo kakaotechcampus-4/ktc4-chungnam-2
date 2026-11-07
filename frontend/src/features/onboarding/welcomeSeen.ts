@@ -4,7 +4,11 @@
  */
 const WELCOME_SEEN = 'welcomeSeen'
 
+/** 저장이 실패해도(용량 가득) 이 탭에서는 본 것으로 친다 — 아니면 목록 → 온보딩 → 목록이 끝없이 돈다. */
+let seenHere = false
+
 export function hasSeenWelcome(): boolean {
+  if (seenHere) return true
   try {
     return localStorage.getItem(WELCOME_SEEN) === '1'
   } catch {
@@ -13,6 +17,7 @@ export function hasSeenWelcome(): boolean {
 }
 
 export function markWelcomeSeen() {
+  seenHere = true
   try {
     localStorage.setItem(WELCOME_SEEN, '1')
   } catch {

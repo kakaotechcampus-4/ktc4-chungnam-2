@@ -1,12 +1,14 @@
 """모델 호출 사용량 기록(#870) — 호출 1건마다 llm_calls 한 행.
 
-client의 출구 두 곳(call_planner, _agent_parse)이 응답(또는 실패)마다 `record_call`을 부른다. 무엇을 위해 불렀는지와 지도·사람·실행은
+client의 출구(call_planner, _agent_parse, call_web_check)가 응답(또는 실패)마다 `record_call`을 부른다. 무엇을 위해 불렀는지와 지도·사람·실행은
 부르는 쪽이 `usage_context`로 붙인다(ContextVar — planner 시그니처를 바꾸지 않는다. client.metering과 같은 방식).
 
 - 라벨(usage_context) 밖의 호출은 기록하지 않고 DEBUG 로그 한 줄만 남긴다 — 평가 스크립트와 live 테스트가 그렇다. 서비스 경로의 호출 지점은
   모두 라벨을 붙인다(llm/tests/test_usage.py, integration/test_llm_usage.py).
 - 기록 실패는 본 기능을 막지 않는다. 별도의 짧은 세션으로 쓰고, 예외는 클래스 이름만 로그로 남긴다.
 - 비용은 기록 시점의 단가(common.settings)로 계산해 cost_krw에 넣는다. 토큰도 함께 남기므로 단가가 바뀌면 다시 계산할 수 있다.
+  웹 확인(#1216)은 웹 검색 요금(web_searches × LLM_PRICE_WEB_SEARCH_KRW)을 더한다.
+- 서비스 일일 예산(#1152, agent-v2 19절): `spent_today`가 그날(KST 0시부터) cost_krw 합계를 읽는다. 보는 곳은 llm.service.web_check 하나다.
 """
 
 import logging
@@ -18,12 +20,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from common.database import SessionLocal
+from common.kst import kst_day_start
 from common.settings import settings
-from llm.models import LlmCall
+from llm.models import OK_OUTCOMES, LlmCall
 
 log = logging.getLogger("pingo.llm")
 
@@ -68,33 +71,43 @@ class TokenCounts:
     output_tokens: int = 0
 
 
+def _first(obj: Any, *names: str) -> Any:
+    for name in names:
+        value = getattr(obj, name, None)
+        if value is not None:
+            return value
+    return None
+
+
 def token_counts(completion: Any) -> TokenCounts:
     """응답의 usage에서 토큰 수를 읽는다. 엘리스 게이트웨이는 prompt_tokens_details.cached_tokens와 cache_write_tokens를
-    준다(2026-10-30 확인). 없거나 응답이 없으면 0이다.
+    준다(2026-10-30 확인). 없거나 응답이 없으면 0이다. Responses API(웹 확인, #1216)는 이름이 달라 input_tokens,
+    input_tokens_details.cached_tokens, output_tokens(추론 토큰 포함)를 읽는다.
 
     캐시 미스면 게이트웨이가 cache_write_tokens의 25%를 prompt_tokens에 더해 보고한다(2026-10-30, 같은 요청 두 번:
     1598 = 1279 + 1276 × 0.25). 그래서 input_tokens에는 캐시 쓰기 할증이 이미 들어 있다."""
     usage = getattr(completion, "usage", None)
     if usage is None:
         return TokenCounts()
-    details = getattr(usage, "prompt_tokens_details", None)
+    details = _first(usage, "prompt_tokens_details", "input_tokens_details")
     return TokenCounts(
-        input_tokens=getattr(usage, "prompt_tokens", None) or 0,
+        input_tokens=_first(usage, "prompt_tokens", "input_tokens") or 0,
         cached_input_tokens=getattr(details, "cached_tokens", None) or 0,
         cache_write_tokens=getattr(details, "cache_write_tokens", None) or 0,
-        output_tokens=getattr(usage, "completion_tokens", None) or 0,
+        output_tokens=_first(usage, "completion_tokens", "output_tokens") or 0,
     )
 
 
-def cost_krw(counts: TokenCounts) -> float:
+def cost_krw(counts: TokenCounts, *, web_searches: int = 0) -> float:
     """원 단위 비용. 입력 중 캐시 몫은 캐시 단가, 나머지는 입력 단가다. cache_write_tokens는 따로 더하지 않는다 — 할증이
-    input_tokens에 이미 들어 있다(token_counts). 이 계산이 실제 청구와 같은지는 엘리스 청구서와 대조해야 한다."""
+    input_tokens에 이미 들어 있다(token_counts). 웹 검색은 1번에 LLM_PRICE_WEB_SEARCH_KRW다(#1216). 이 계산이 실제 청구와
+    같은지는 청구서와 대조해야 한다."""
     cached = min(counts.cached_input_tokens, counts.input_tokens)
     return round((
         (counts.input_tokens - cached) * settings.llm_price_input_krw_per_m
         + cached * settings.llm_price_cached_input_krw_per_m
         + counts.output_tokens * settings.llm_price_output_krw_per_m
-    ) / 1_000_000, 4)
+    ) / 1_000_000 + web_searches * settings.llm_price_web_search_krw, 4)
 
 
 def _write_row(row: dict[str, Any]) -> None:
@@ -109,9 +122,10 @@ sink: Callable[[dict[str, Any]], None] = _write_row
 
 def record_call(
     *, call: str, prompt_version: Optional[str], completion: Any, outcome: str, elapsed_ms: int,
-    batch_size: Optional[int] = None,
+    batch_size: Optional[int] = None, web_searches: int = 0,
 ) -> None:
-    """출구가 응답마다 부른다. completion은 응답(실패면 예외에 붙은 응답이나 None). 예외를 밖으로 던지지 않는다."""
+    """출구가 응답마다 부른다. completion은 응답(실패면 예외에 붙은 응답이나 None). web_searches는 그 응답 안의 웹 검색
+    횟수(웹 확인만, #1216). 예외를 밖으로 던지지 않는다."""
     label = _label.get()
     counts = token_counts(completion)
     if label is None:
@@ -123,8 +137,8 @@ def record_call(
         "model": settings.llm_model, "prompt_version": prompt_version,
         "input_tokens": counts.input_tokens, "cached_input_tokens": counts.cached_input_tokens,
         "cache_write_tokens": counts.cache_write_tokens, "output_tokens": counts.output_tokens,
-        "cost_krw": cost_krw(counts), "outcome": outcome, "ok": outcome == "ok", "elapsed_ms": elapsed_ms,
-        "batch_size": batch_size,
+        "cost_krw": cost_krw(counts, web_searches=web_searches), "outcome": outcome, "ok": outcome in OK_OUTCOMES,
+        "elapsed_ms": elapsed_ms, "batch_size": batch_size, "web_searches": web_searches,
     }
     try:
         sink(row)
@@ -154,6 +168,28 @@ def mark_discarded(trace_ids: "list[uuid.UUID] | uuid.UUID | None") -> None:
         log.warning("llm_calls 폐기 표시 실패: %s", type(exc).__name__)
 
 
+# ---- 서비스 일일 예산 (#1152, agent-v2 19절) ----
+
+def _sum_since(since: datetime) -> float:
+    """since 이후 llm_calls.cost_krw 합계(라벨 붙은 호출 전부 — 웹 확인만이 아니다). 짧은 읽기 세션이고 쓰지 않는다."""
+    with SessionLocal() as db:
+        try:
+            return float(db.execute(select(func.coalesce(func.sum(LlmCall.cost_krw), 0)).where(LlmCall.created_at >= since))
+                         .scalar_one())
+        finally:
+            db.rollback()
+
+
+# 합계를 읽는 곳. 기본은 DB다. 테스트는 sink처럼 바꿔 끼운다(루트 conftest가 기본으로 0을 돌려주게 막는다 — 개발 DB를 읽지 않게).
+spent_reader: Callable[[datetime], float] = _sum_since
+
+
+def spent_today(now: datetime) -> float:
+    """now가 속한 KST 하루(0시부터)의 모델 비용 합계(원). 날짜 경계는 common.kst 한 곳이다. 읽기 실패는 예외 그대로 올린다 —
+    부르는 쪽(web_check)이 「예산을 모르면 부르지 않는다」로 처리한다."""
+    return spent_reader(kst_day_start(now))
+
+
 # ---- 계정 수명과 보존 (api.py가 연다) ----
 
 def anonymize_by_user(db: Session, *, user_id: str) -> int:
@@ -165,6 +201,6 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     return {"llm_calls": moved}
 
 
-def purge_old(db: Session, *, now: datetime, older_than_days: int = RETENTION_DAYS) -> dict[str, int]:
-    cutoff = now - timedelta(days=older_than_days)
+def purge_old(db: Session, *, now: datetime) -> dict[str, int]:
+    cutoff = now - timedelta(days=RETENTION_DAYS)
     return {"llm_calls": db.execute(delete(LlmCall).where(LlmCall.created_at < cutoff)).rowcount}

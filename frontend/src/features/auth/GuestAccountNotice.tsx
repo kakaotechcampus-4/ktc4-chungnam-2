@@ -11,7 +11,7 @@ export default function GuestAccountNotice({ children }: { children?: ReactNode 
   return (
     <div className="space-y-2 rounded-xl bg-ink-50 p-3">
       <p className="break-keep text-sm text-ink-700">
-        {children ?? '카카오로 계정을 만들면 지금까지 남긴 핀과 의견이 그대로 이어지고, 새 지도도 만들 수 있어요.'}
+        {children ?? '카카오로 가입하면 지금까지 남긴 핀과 의견이 그대로 이어지고, 새 지도도 만들 수 있어요.'}
       </p>
       <KakaoButton label="카카오로 계정 만들기" />
     </div>

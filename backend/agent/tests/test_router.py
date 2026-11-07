@@ -6,6 +6,7 @@
 
 import threading
 import uuid
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -70,7 +71,49 @@ def test_state_without_suggestion_defaults_to_on(world, client):
     body = client("u1").get(f"/maps/{map_id}/agent").json()
 
     assert body == {"settings": {"enabled": True, "updated_by": None, "updated_at": None},
-                    "active_suggestion": None, "has_unseen": False, "summaries": []}
+                    "active_suggestion": None, "has_unseen": False, "summaries": [], "status": None,
+                    "observation": {"checked_at": None, "notice": None}, "tracking": []}
+
+
+def test_observation_shows_last_check_and_why_nothing_is_suggested(world, client):
+    """살펴본 상태(21.3, #1297) — 시각은 커서, 문구는 trigger가 activity·time인 가장 최근 관찰 행. 뒤에 쌓인 요약·현황 행은
+    보지 않는다. 제안이 생기면 문구는 사라진다."""
+    map_id = world.map()
+    checked = world.now - timedelta(minutes=12)
+    with world.factory() as db:
+        db.add(AgentCursor(map_id=map_id, last_seen_seq=0, last_observed_at=checked))
+        service.insert_run(db, map_id=map_id, started_at=checked - timedelta(hours=1), trigger="time", outcome="no_signal")
+        service.insert_run(db, map_id=map_id, started_at=checked, trigger="activity", outcome="model_failed")
+        service.insert_run(db, map_id=map_id, started_at=checked + timedelta(seconds=5), trigger="summary",
+                           outcome="summarized")
+        db.commit()
+
+    body = client("u1").get(f"/maps/{map_id}/agent").json()
+
+    assert body["observation"] == {"checked_at": checked.isoformat().replace("+00:00", "Z"),
+                                   "notice": core.OBSERVATION_NOTICES["failed"]}
+    suggest(world, map_id)
+    assert client("u1").get(f"/maps/{map_id}/agent").json()["observation"]["notice"] is None
+
+
+def test_suggestion_steps_come_from_its_run(world, client):
+    """작업 기록(11.3, #1297) — 제안의 run_id로 읽은 관찰 행에서 렌더한다. 저장하지 않는다."""
+    map_id = world.map()
+    sig = replace(core.make_signal("category_gap", category="카페", evidence=[("p1", "confirmed", world.now)], features={}),
+                  id="s1")
+    with world.factory() as db:
+        run_id = service.insert_run(db, map_id=map_id, started_at=world.now, trigger="activity", outcome="suggested",
+                                    signals=[core.signal_record(sig)], priority={"source": "single", "final_order": ["s1"]})
+        service.insert_suggestion(db, map_id=map_id, run_id=run_id, signal=sig, draft=core.render_template(sig),
+                                  now=world.now, shadow=False)
+        db.commit()
+
+    sug = client("u1").get(f"/maps/{map_id}/agent").json()["active_suggestion"]
+
+    assert sug["steps"] == [
+        {"stage": "감지", "role": "계산", "by": "code", "by_detail": None, "text": "확정한 1곳 중 카페가 없어요"},
+        {"stage": "재확인", "role": "검증", "by": "code", "by_detail": None, "text": core.STEP_RECHECK},
+    ]
 
 
 def test_has_unseen_is_per_member_and_view_is_idempotent(world, client):
@@ -133,16 +176,16 @@ def test_accept_returns_action_and_announces_resolved(world, client):
     map_id = world.map()
     sid = suggest(world, map_id)
 
-    r = client("u2").post(f"/agent/suggestions/{sid}/accept", json={"action_index": 1})
+    r = client("u2").post(f"/agent/suggestions/{sid}/accept", json={"action_index": 0})
 
     assert r.status_code == 200
-    assert r.json() == {"action": {"index": 1, "type": "show_pins", "label": "카페 핀 보기",
+    assert r.json() == {"action": {"index": 0, "type": "open_recommend", "label": "카페 추천 받기",
                                    "params": {"category": "카페"}}}
     row = world.one(AgentSuggestion, map_id=map_id)
     assert (row.status, row.resolved_by, row.resolved_action) == ("accepted", world.uid("u2"),
-                                                                    {"index": 1, "type": "show_pins"})
+                                                                    {"index": 0, "type": "open_recommend"})
     assert world.agent_events(map_id) == [("agent.resolved", {
-        "suggestion_id": sid, "status": "accepted", "resolved_action_type": "show_pins"})]   # resolved_by 없음
+        "suggestion_id": sid, "status": "accepted", "resolved_action_type": "open_recommend"})]   # resolved_by 없음
 
 
 def test_action_index_out_of_range_is_422_and_changes_nothing(world, client):

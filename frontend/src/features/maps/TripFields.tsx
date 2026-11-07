@@ -3,7 +3,9 @@ import { ChevronDown } from 'lucide-react'
 
 import TextField, { ClearButton } from '@/ui/TextField'
 
-import { tripDateError, type TripDraft } from './model'
+import FieldError from '@/ui/FieldError'
+
+import { tripDateError, tripEndMax, type TripDraft } from './model'
 import RegionPicker from './RegionPicker'
 
 const TITLE_MAX = 100
@@ -16,14 +18,17 @@ export default function TripFields({
   value,
   onChange,
   regionClearable = true,
+  maxDays,
 }: {
   value: TripDraft
   onChange: (next: TripDraft) => void
   regionClearable?: boolean
+  /** 여행 기간 상한(일, `GET /maps`의 `trip_max_days`, #1371). 없으면(구버전 서버) 막지 않고 서버 검사에 맡긴다. */
+  maxDays?: number
 }) {
   const [pickingRegion, setPickingRegion] = useState(false)
   const set = (patch: Partial<TripDraft>) => onChange({ ...value, ...patch })
-  const dateError = tripDateError(value)
+  const dateError = tripDateError(value, maxDays)
 
   return (
     <>
@@ -54,8 +59,10 @@ export default function TripFields({
             type="date"
             value={value.endDate}
             min={value.startDate || undefined}
+            // 상한은 서버 값이다 — 달력에서 그 뒤 날짜를 고를 수 없게 막는다(#1371).
+            max={value.startDate && maxDays ? tripEndMax(value.startDate, maxDays) : undefined}
             onChange={(e) => set({ endDate: e.target.value })}
-            aria-invalid={dateError}
+            aria-invalid={Boolean(dateError)}
             aria-describedby={dateError ? 'date-error' : undefined}
             // 입력 오류는 빨강이 아니라 주의색이다 — 빨강은 파괴적 동작 전용(colors.md 6절).
             className="field w-full"
@@ -63,9 +70,9 @@ export default function TripFields({
         </Field>
       </div>
       {dateError && (
-        <p id="date-error" className="-mt-2 text-sm text-[var(--warn-text)]">
-          종료일은 시작일과 같거나 뒤여야 해요
-        </p>
+        <FieldError id="date-error" className="-mt-2">
+          {dateError}
+        </FieldError>
       )}
 
       {pickingRegion && (

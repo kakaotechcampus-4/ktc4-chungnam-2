@@ -2,13 +2,15 @@
 
 import logging
 import uuid
+from urllib.parse import quote
 
 import pytest
 from sqlalchemy import text
 
 from auth.testing import session_cookie
+from common import logguard
 from main import app  # noqa: F401
-from places import api as places_api, logguard, repository
+from places import api as places_api, repository
 from places.models import Place
 from places.ratelimit import SlidingWindowLimiter
 
@@ -50,7 +52,8 @@ def test_returns_own_db_places_within_100m_closest_first(client, db_session):
     assert [h["place_id"] for h in r.json()] == [f"own:{near}", f"own:{far}"]
     first = r.json()[0]
     assert first["pinnable"] is True and first["category"] == "음식점" and first["address"] == "서울 성동구 성수동2가 1"
-    assert first["place_source"] == {"provider": "permit"}   # 카카오 값이 없다 — 자체 DB 출처
+    # 자체 DB 출처 + 기록된 카카오 URL이 없어 「이름 동네」 카카오맵 검색 링크(#1486). 카카오를 부르지 않는다
+    assert first["place_source"] == {"provider": "permit", "url": "https://map.kakao.com/link/search/" + quote("가까운 가게 성동구", safe="")}
     assert set(first) <= {"place_id", "place_name", "lat", "lng", "category", "address", "place_source", "pinnable"}
 
 
@@ -130,8 +133,8 @@ def test_coordinates_are_not_logged_or_stored(client, db_session, caplog):
     assert db_session.execute(text("SELECT count(*) FROM places")).scalar_one() == before   # 쓰기 없음
 
 
-def test_uvicorn_access_log_drops_the_query_string_of_nearest_only():
-    f = logguard.StripQueryFilter()
+def test_uvicorn_access_log_drops_the_query_string():
+    f = logguard.MaskRequestFilter()
 
     def line(path):
         rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
@@ -142,7 +145,7 @@ def test_uvicorn_access_log_drops_the_query_string_of_nearest_only():
     redacted = line("/places/nearest?lat=37.5445&lng=127.0561")
     assert "37.5445" not in redacted and "127.0561" not in redacted and "[redacted]" in redacted
     assert "37.5445" not in line("/api/places/nearest?lat=37.5445&lng=127.0561")   # 배포의 --root-path /api
-    assert "q=%EC%84%B1" in line("/places/search?q=%EC%84%B1")   # 다른 경로는 그대로
+    assert "%EC%84%B1" not in line("/places/search?q=%EC%84%B1")   # 모든 경로의 쿼리를 지운다(#1201)
     assert line("/places/nearest") == '127.0.0.1:1 - "GET /places/nearest HTTP/1.1" 200'
 
 

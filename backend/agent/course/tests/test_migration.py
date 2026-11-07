@@ -19,6 +19,10 @@ REVISION, PREVIOUS = "0037_agent_course_runs", "0036_ads"
 DROP_INDEX_REVISION, DROP_INDEX_PREVIOUS = "0050_drop_course_user_index", "0049_reviews"
 DROPPED_INDEX = "ix_agent_course_runs_user_created"   # 하루 상한을 세던 자리(0037). 상한이 크레딧으로 바뀌어(#950) 0050에서 지운다
 MODEL_INDEXES = {i.name for i in AgentCourseRun.__table__.indexes}
+MODE_REVISION, MODE_PREVIOUS = "0062_course_run_modes", "0061_recommend_run_origin"
+MODE_COLUMNS = {"mode", "headline", "fixes", "checked", "snapshot_version"}    # 0062가 더한 칸
+KEEP_REVISION = "0067_course_run_pin_ids_keep"   # snapshot_pin_ids를 줄이기(#1465) 전까지 남긴다(#1464)
+KEPT_COLUMN = "snapshot_pin_ids"   # 모델에서는 뺐고 DB에 남는다(deploy_rules.md 「지울 칸」)
 MIG_DB = f"{TEST_DB_NAME}_course_mig"[:63]
 
 
@@ -60,7 +64,7 @@ def test_upgrade_matches_model_enforces_single_active_run_and_downgrades(mig_url
     engine = sa.create_engine(mig_url)
     try:
         inspector = sa.inspect(engine)
-        assert {c["name"] for c in inspector.get_columns("agent_course_runs")} == set(AgentCourseRun.__table__.columns.keys())
+        assert {c["name"] for c in inspector.get_columns("agent_course_runs")} == (set(AgentCourseRun.__table__.columns.keys()) - MODE_COLUMNS) | {"snapshot_pin_ids"}   # 0037 시점 — 0062 전
         indexes = {i["name"]: i for i in inspector.get_indexes("agent_course_runs")}
         assert set(indexes) == MODEL_INDEXES | {DROPPED_INDEX}   # 0037 시점에는 0050에서 지울 인덱스가 아직 있다
         assert indexes["uq_agent_course_runs_active"]["unique"]
@@ -105,5 +109,56 @@ def test_0050_drops_user_created_index_matches_model_and_downgrade_restores_it(m
         assert _index_columns(engine) == before   # 0037과 같은 모양으로 돌아온다
         command.upgrade(cfg, DROP_INDEX_REVISION)
         assert set(_index_columns(engine)) == MODEL_INDEXES
+    finally:
+        engine.dispose()
+
+
+def test_0062_adds_mode_columns_backfills_old_rows_and_keeps_pin_ids(mig_url):
+    cfg = _config()
+    command.upgrade(cfg, MODE_PREVIOUS)
+    engine = sa.create_engine(mig_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text(
+                "INSERT INTO agent_course_runs (id, map_id, requested_by, status, input, snapshot_at, snapshot_pin_ids)"
+                " VALUES (gen_random_uuid(), 'm1', 'u1', 'done', '{}', now(), '[\"a\"]')"))
+        command.upgrade(cfg, MODE_REVISION)
+        assert {c["name"] for c in sa.inspect(engine).get_columns("agent_course_runs")} == set(AgentCourseRun.__table__.columns.keys()) | {KEPT_COLUMN}
+        with engine.begin() as conn:
+            row = conn.execute(sa.text("SELECT mode, headline, fixes, checked, snapshot_version, snapshot_pin_ids FROM agent_course_runs")).one()
+        assert tuple(row) == ("plan", None, [], [], "legacy", ["a"])   # 옛 run은 plan이고 version을 몰라 legacy(→ stale). 핀 id는 남는다(롤백용)
+        command.downgrade(cfg, MODE_PREVIOUS)
+        cols = {c["name"] for c in sa.inspect(engine).get_columns("agent_course_runs")}
+        assert KEPT_COLUMN in cols and not (MODE_COLUMNS & cols)
+        command.upgrade(cfg, MODE_REVISION)
+    finally:
+        engine.dispose()
+
+
+def test_0067_restores_pin_ids_on_db_that_ran_old_0062_and_both_codes_insert(mig_url):
+    """옛 0062(칸 삭제, 기본값 제거)를 돈 스테이징을 흉내 내고 0067이 맞추는지, 맞춘 뒤 이전 코드와 새 코드의 INSERT가 둘 다 되는지."""
+    cfg = _config()
+    command.upgrade(cfg, KEEP_REVISION)
+    command.downgrade(cfg, MODE_REVISION)
+    engine = sa.create_engine(mig_url)
+    try:
+        with engine.begin() as conn:   # 옛 0062가 한 일
+            conn.execute(sa.text("ALTER TABLE agent_course_runs DROP COLUMN snapshot_pin_ids"))
+            conn.execute(sa.text("ALTER TABLE agent_course_runs ALTER COLUMN snapshot_version DROP DEFAULT"))
+            conn.execute(sa.text(
+                "INSERT INTO agent_course_runs (id, map_id, requested_by, status, input, snapshot_at, snapshot_version)"
+                " VALUES (gen_random_uuid(), 'm0', 'u1', 'done', '{}', now(), 'v0')"))
+        command.upgrade(cfg, KEEP_REVISION)
+        with engine.begin() as conn:
+            assert conn.execute(sa.text("SELECT snapshot_pin_ids FROM agent_course_runs WHERE map_id = 'm0'")).scalar_one() == []
+            conn.execute(sa.text(   # 이전 코드: snapshot_pin_ids는 넣고 snapshot_version은 모른다
+                "INSERT INTO agent_course_runs (id, map_id, requested_by, status, input, snapshot_at, snapshot_pin_ids)"
+                " VALUES (gen_random_uuid(), 'm1', 'u1', 'done', '{}', now(), '[\"a\"]')"))
+            conn.execute(sa.text(   # 새 코드: snapshot_version은 넣고 snapshot_pin_ids는 모른다
+                "INSERT INTO agent_course_runs (id, map_id, requested_by, status, input, snapshot_at, snapshot_version)"
+                " VALUES (gen_random_uuid(), 'm2', 'u1', 'done', '{}', now(), 'v1')"))
+            rows = conn.execute(sa.text(
+                "SELECT map_id, snapshot_version, snapshot_pin_ids FROM agent_course_runs WHERE map_id IN ('m1', 'm2') ORDER BY map_id")).all()
+        assert [tuple(r) for r in rows] == [("m1", "legacy", ["a"]), ("m2", "v1", [])]
     finally:
         engine.dispose()

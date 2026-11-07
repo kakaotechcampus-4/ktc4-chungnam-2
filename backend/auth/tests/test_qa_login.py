@@ -30,7 +30,8 @@ def _strict_settings(environment: str, *, qa_login_secret: str):
         common.settings.settings,
         environment=environment,
         qa_login_secret=qa_login_secret,
-        session_secret="staging-session-secret",
+        cookie_secure=True,   # 테스트 설정은 끄고 있다. strict 가드(#1210)는 켠 값만 받는다
+        session_secret="staging-session-secret-0123456789abcdef",  # 32자 이상(#1210)
         places_mode="real",
         llm_mode="real",
         cors_allow_origins=("https://staging.pingo.example",),
@@ -60,7 +61,7 @@ def build_app(monkeypatch, db_session):
                 yield s
 
         module.app.dependency_overrides[get_db_session] = _override_get_db_session
-        return TestClient(module.app)
+        return TestClient(module.app, base_url="https://testserver")   # Secure 쿠키는 https에서만 돌아온다(#1210)
 
     return _build
 

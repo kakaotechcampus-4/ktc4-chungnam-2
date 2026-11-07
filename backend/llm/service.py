@@ -1,13 +1,13 @@
-"""backend/llm 비즈니스 로직 — 모델 호출 3곳(plan_evidence/label_place/rank_candidates)과 v2 에이전트 호출
+"""backend/llm 비즈니스 로직 — 모델 호출 2곳(plan_evidence/label_place)과 v2 에이전트 호출
 (agent_diagnose #532 — 맨 아래 절. 신호 순위는 #582에서 agent의 코드 규칙으로 옮겼다),
 v2 동선 에이전트 턴(agent_course_turn, #334 — 맨 아래 절).
 
 ② plan_evidence는 넘겨받은 planner로 부른다 — real_evidence_planner는 Luna를 실제로 부르고(#116), 기존
-passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(LLM_MODE로 고르는 곳은 recommend/deps.py, #219). ③-a-1 label_place, ③-b rank_candidates는 아직 고정 응답
+passthrough_planner는 입력을 스키마로 검증·통과하는 스텁이다(LLM_MODE로 고르는 곳은 recommend/deps.py, #219). ③-a-1 label_place는 아직 고정 응답
 스텁이다(backend/llm/CLAUDE.md "우선순위" 절) — 시그니처는 최종 형태(입력=구조화 가능한 값,
 출력=schemas.py 스키마)로 미리 맞춰둔다.
 
-세 함수 모두 값을 지어내지 않는다: 판단 근거가 없으면 항상 unknown/None을 반환한다
+두 함수 모두 값을 지어내지 않는다: 판단 근거가 없으면 항상 unknown/None을 반환한다
 (backend/llm/CLAUDE.md "넘지 말 것"). 실격 여부 판단·unknown_policy 적용은 이 모듈의
 책임이 아니다 — recommend가 한다(가드레일 7).
 """
@@ -20,21 +20,27 @@ import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from common.errors import AppError
+from common.settings import settings
 from llm import usage as usage_log
 from llm.client import (
-    PER_CALL_TIMEOUT_SECONDS, LlmCallError, call_agent_diagnosis_turn, call_course_direct, call_course_goals, call_course_turn,
-    call_planner, get_client, metering,
+    PER_CALL_TIMEOUT_SECONDS, LlmCallError, call_agent_diagnosis_turn, call_agent_status, call_course_direct, call_course_goals, call_course_turn,
+    call_planner, call_web_check, get_client, metering,
 )
 from llm.prompts import (
     AGENT_DIAGNOSE_PROMPT, DIAGNOSIS_MAX_TOOL_CALLS, DIAGNOSIS_TIME_BUDGET_SEC, DIAGNOSIS_TOOLS, STRUCTURE_REASONS_MAX_CALLS,
-    diagnosis_tools,
+    WEB_CHECK_MAX_STATEMENTS, WEB_STATEMENT_MAX_CHARS, diagnosis_tools,
 )
 from llm.schemas import (
-    AgentCallFailed, AgentReply, AgentUsage, CourseDirectTurn, CourseGoalSet, CourseTurn, DiagnosisOutput, EvidenceLine,
-    FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, RankedCandidate,
+    AgentCallFailed, AgentReply, AgentUsage, COURSE_REVIEW_FIX_REASONS, COURSE_REVIEW_KEEP_REASONS, COURSE_REVIEW_PICK_REASONS,
+    CourseDirectTurn, CourseGoalSet, CourseReviewCall, CourseTurn, DiagnosisOutput, EvidenceLine,
+    FactKey, PlaceFactLabel, PlannedCondition, PlannedReason, PlanningOutput, StatusCategory, StatusOutput,
+    VerifiedStatement, WebAnswer, WebCheckOutput, WebCheckResult,
 )
 
 log = logging.getLogger("pingo.llm")
@@ -300,20 +306,6 @@ def label_place(
     return labels
 
 
-def rank_candidates(candidate_place_ids: Sequence[str]) -> list[RankedCandidate]:
-    """③-b 선호 순위 채점.
-
-    candidate_place_ids: 실격 통과분(recommend가 필터링을 마친 후보)만 들어온다는 전제.
-    이 함수는 순위만 매기며 실격 여부는 다시 판단하지 않는다(가드레일 7).
-    v1 스텁은 실제 모델 호출 없이 입력 순서를 그대로 순위로 반환하고, 근거가 없으므로
-    member_comment는 지어내지 않고 None으로 둔다(5-7-1).
-    """
-    return [
-        RankedCandidate(place_id=place_id, rank=index + 1, member_comment=None)
-        for index, place_id in enumerate(candidate_place_ids)
-    ]
-
-
 # ---------- v2 계획 보조 에이전트 (docs/agent-v2.md 7, 10, 11절, #532) ----------
 # agent가 백그라운드 관찰에서 부른다. planner는 ②처럼 부르는 쪽이 넘긴다 — 고정 응답 스텁과 실제 모델 중 무엇을 쓸지는
 # agent/deps.py의 Gateway가 고른다(명세 2절 7번). 모델 출력 검증(claim 대조, 문장, 행동)은 agent의 core가 하고, 여기서는
@@ -350,7 +342,10 @@ class ToolRunnerError(RuntimeError):
 class _ToolBudget:
     """호출 1회의 도구 상한(명세 10절, DIAGNOSIS_MAX_TOOL_CALLS). 넘는 호출과 허용되지 않은 도구는 tool_runner를 부르지 않고
     오류를 결과로 돌려준다 — 모델은 그 결과를 보고 답을 내면 된다. 실행한 호출만 상한에 센다(오류로 돌려준 호출은 실행하지
-    않았다)."""
+    않았다).
+
+    같은 호출(도구 이름 + 정렬한 JSON 인자)이 이미 실행됐으면 다시 실행하지 않고 DUPLICATE와 처음 call_id를 돌려준다(#1310).
+    상한에 세지 않는다. agent의 도구 기록에는 실행한 호출만 남는다."""
 
     def __init__(self, allowed: tuple[str, ...], tool_runner: ToolRunner, *, max_calls: int):
         self._allowed = allowed
@@ -358,6 +353,7 @@ class _ToolBudget:
         self.max_calls = max_calls
         self.used = 0
         self._structure_used = 0
+        self._seen: dict[tuple[str, str], str] = {}   # (도구 이름, 정렬한 JSON 인자) → 처음 call_id
 
     @property
     def exhausted(self) -> bool:
@@ -366,12 +362,16 @@ class _ToolBudget:
     def __call__(self, name: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if name not in self._allowed:
             return {"error": "NOT_FOUND"}
+        key = (name, json.dumps(dict(args), sort_keys=True, ensure_ascii=False, default=str))
+        if key in self._seen:
+            return {"error": "DUPLICATE", "call_id": self._seen[key]}
         is_structure = name == "structure_reasons"
         if self.exhausted or (is_structure and self._structure_used >= STRUCTURE_REASONS_MAX_CALLS):
             return {"error": "LIMIT_EXCEEDED"}
         self.used += 1
         self._structure_used += is_structure
         call_id = f"t{self.used}"
+        self._seen[key] = call_id
         try:
             result = self._tool_runner(call_id, name, dict(args))
         except Exception as exc:
@@ -471,10 +471,10 @@ def real_diagnosis_planner(diagnosis_input: Mapping[str, Any], call_tool: ToolCa
 def agent_diagnose(
     diagnosis_input: Mapping[str, Any], *, tool_runner: ToolRunner, planner: DiagnosisPlanner
 ) -> AgentReply[DiagnosisOutput]:
-    """모델 유형(stall, split) 진단(명세 6.2, 6.3, 11절).
+    """모델 유형(stall, split, 후보 핀이 있는 category_gap) 진단(명세 6.2, 6.3, 6.10, 11절).
 
-    diagnosis_input: agent의 core.diagnosis_input(#533)이 만든 공개 데이터만의 dict. 적어도 signal_id, diagnosis(stall|split)가
-    있고, stall은 category, split은 pin_id가 있다. 모델에는 JSON 문자열로만 넘긴다.
+    diagnosis_input: agent의 core.diagnosis_input(#533)이 만든 공개 데이터만의 dict. 적어도 signal_id, diagnosis(DIAGNOSIS_TOOLS의
+    키)가 있고, stall과 category_gap은 category, split은 pin_id가 있다. 모델에는 JSON 문자열로만 넘긴다.
     tool_runner: 도구 실행 콜백. 이 함수가 call_id(t1, t2 …)를 매겨 부른다. 진단 1회당 DIAGNOSIS_MAX_TOOL_CALLS(5)회,
     그중 structure_reasons는 STRUCTURE_REASONS_MAX_CALLS(1)회까지 실행하고, 넘는 호출은 실행하지 않고 LIMIT_EXCEEDED를,
     유형에 허용되지 않은 도구는 NOT_FOUND를 도구 결과로 돌려준다. tool_runner의 예외는 ToolRunnerError로 그대로 올라간다.
@@ -497,6 +497,189 @@ def agent_diagnose(
             raise
     log.info("agent_diagnose 완료: diagnosis=%s decision=%s tools_used=%d", diagnosis, output.decision, budget.used)
     return AgentReply(output, usage)
+
+
+# ---- 지도 현황 문단 (#1168, docs/agent-v2.md 8.2) ----
+# 입력은 agent의 core.status_cells가 센 칸(사실)뿐이다 — 사유 글, 이름, 장소 이름이 없다. 도구 없이 한 번 부른다. 상태가 사실과
+# 맞는지, 숫자가 칸에 있는지, 먼저 볼 카테고리를 지켰는지는 agent의 core.verify_status가 본다. 실패는 재요청하지 않는다.
+
+StatusPlanner = Callable[[Mapping[str, Any]], StatusOutput]
+
+
+def _fixed_state(cell: Mapping[str, Any]) -> str:
+    """고정 응답 스텁의 상태 — 사실과 어긋나지 않는 쪽으로만 고른다(verify_status를 늘 통과한다)."""
+    if cell.get("stalled"):
+        return "stalled"
+    if cell.get("split_pins"):
+        return "split_left"
+    if cell.get("confirmed"):
+        return "almost"
+    return "gathering" if cell.get("pins") else "empty"
+
+
+def fixed_status_planner(status_input: Mapping[str, Any]) -> StatusOutput:
+    """고정 응답 스텁(dev, 테스트) — 모델을 부르지 않는다. 상태는 칸에서 어긋나지 않는 쪽으로 고르고, 문단은 숫자 없는 고정 문구다.
+    먼저 볼 카테고리가 있으면 그것만 권한다. 지어낸 숫자나 판단이 화면으로 나갈 길이 없다."""
+    categories = [StatusCategory(category=c["category"], state=_fixed_state(c)) for c in status_input.get("categories", ())]
+    first = status_input.get("first_category")
+    paragraph = f"지도 현황을 정리했어요. {first}부터 보면 좋겠어요." if first else "지도 현황을 정리했어요."
+    return StatusOutput(categories=categories, paragraph=paragraph)
+
+
+def real_status_planner(status_input: Mapping[str, Any]) -> StatusOutput:
+    """실제 모델. 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
+    return call_agent_status(get_client(), status_input)
+
+
+def agent_status(status_input: Mapping[str, Any], *, planner: StatusPlanner) -> AgentReply[StatusOutput]:
+    """지도 현황 문단(명세 8.2). status_input은 agent의 core.status_cells 결과 그대로다(dday, first_category, first_reason,
+    categories[{category, confirmed, pins, split_pins, stalled, unreacted_pins}]). 결과(StatusOutput 또는 AgentCallFailed)와
+    사용량을 함께 돌려준다. 실패(호출 실패, 타임아웃, 스키마 검증 실패)는 재요청하지 않고 AgentCallFailed다 — agent가 지난 문단을
+    그대로 둔다."""
+    with metering() as usage:
+        try:
+            output = planner(status_input)
+        except (LlmCallError, ValueError) as exc:
+            return AgentReply(_failed("agent_status", exc, "status"), usage)
+    log.info("agent_status 완료: categories=%d", len(output.categories))
+    return AgentReply(output, usage)
+
+
+# ---- 웹 확인 (#1216, docs/agent-v2.md 6.8, 결정 #1152 ④) ----
+# 진단과 따로 부르는 모델 호출 하나다. 입력은 장소 이름, 동네, 특징 이름뿐이다(부르는 쪽이 만든다 — 구성원 글, 이름, 지도 id가 들어갈
+# 칸이 없다). 문장 내용은 대조하지 못해(2절 3번의 예외) 아래만 코드가 본다. 걸린 문장은 빼고, 남은 것이 없으면 failed다.
+# 금지 표현 목록은 llm에 두지 않는다 — 정하는 곳은 agent.core(FORBIDDEN_PHRASES와 결론·권유 표현)이고 부르는 쪽이 넘긴다.
+
+WebCheckPlanner = Callable[[Mapping[str, Any]], WebAnswer]
+
+_URL_IN_TEXT = re.compile(r"https?://|www\.|[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_WEB_SPACES = re.compile(r"\s+")
+
+
+def _url_key(url: str) -> tuple[str, str, str, str] | None:
+    """출처 비교용 — 스킴·호스트는 소문자, 끝 /와 #… 는 무시한다. 경로와 쿼리는 그대로 비교한다. 읽지 못하면 None."""
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return None
+    if not parts.scheme or not parts.netloc:
+        return None
+    return parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query
+
+
+def source_name(url: str) -> str:
+    """출처 이름 — URL 호스트에서 www.를 뺀 것(예 "blog.naver.com"). 모델이 쓴 이름은 쓰지 않는다."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _statement_problem(text: str, url: str, listed: set, forbidden: Sequence[str]) -> str | None:
+    """문장 하나를 뺄 이유(6.8 검증 1~4). 없으면 None. 순서: 스킴 → 출처 → 금지 표현 → 길이 → 줄바꿈·URL."""
+    key = _url_key(url)
+    scheme = url.strip().split(":", 1)[0].lower() if ":" in url else ""
+    if scheme not in ("http", "https"):
+        return "bad_scheme"
+    if key is None or key not in listed:
+        return "source_not_listed"
+    squashed = _WEB_SPACES.sub("", text)
+    if any(_WEB_SPACES.sub("", p) in squashed for p in forbidden if p.strip()):
+        return "forbidden"
+    if not 1 <= len(text.strip()) <= WEB_STATEMENT_MAX_CHARS:
+        return "length"
+    if "\n" in text or "\r" in text or _URL_IN_TEXT.search(text):
+        return "newline_or_url"
+    return None
+
+
+def verify_web_answer(answer: WebAnswer, *, forbidden: Sequence[str]) -> WebCheckResult:
+    """모델 답 → 검증한 결과(6.8). 순수 함수다.
+
+    1 http·https만 2 source_url이 그 호출의 검색 출처 목록에 있다(스킴·호스트 소문자, 끝 /와 # 무시) 3 금지 표현(공백을 빼고 비교)
+    4 1~120자, 줄바꿈과 URL이 문장 안에 없다. 통과한 문장은 앞에서부터 많아야 2개(넘는 것은 over_limit). 모델이 not_found면 문장을
+    버리고 not_found, found인데 남은 문장이 없으면 failed다."""
+    output = answer.output
+    if output.status == "not_found":
+        return WebCheckResult(status="not_found", web_searches=answer.web_searches)
+    listed = {k for k in (_url_key(u) for u in answer.sources) if k is not None}
+    kept: list[VerifiedStatement] = []
+    dropped: list[str] = []
+    for st in output.statements:
+        problem = _statement_problem(st.text, st.source_url, listed, forbidden)
+        if problem is None and len(kept) >= WEB_CHECK_MAX_STATEMENTS:
+            problem = "over_limit"
+        if problem is not None:
+            dropped.append(problem)
+            continue
+        url = st.source_url.strip()
+        kept.append(VerifiedStatement(text=st.text.strip(), source_url=url, source_name=source_name(url)))
+    if not kept:
+        return WebCheckResult(status="failed", dropped=tuple(dropped), web_searches=answer.web_searches,
+                              detail="no_statement_left")
+    return WebCheckResult(status="found", statements=tuple(kept), dropped=tuple(dropped), web_searches=answer.web_searches)
+
+
+class WebNotChecked(LlmCallError):
+    """고정 응답 스텁이 웹을 찾지 않았다 — web_check가 failed로 바꾼다(칸 없음, 저장 안 함)."""
+
+
+def fixed_web_check_planner(check_input: Mapping[str, Any]) -> WebAnswer:
+    """고정 응답 스텁(dev, 테스트) — 모델을 부르지 않는다. 찾아보지 않았으니 「찾지 못했다」고 말하지 않고 failed가 되게 한다(#1221 루트
+    답 2). 지어낸 문장이나 링크, 거짓 안내가 dev 화면에 나갈 길이 없다. 예산을 넘었으면 이 함수까지 오지 않고 paused다."""
+    raise WebNotChecked("고정 응답 스텁은 웹을 찾지 않는다")
+
+
+def real_web_check_planner(check_input: Mapping[str, Any]) -> WebAnswer:
+    """실제 모델(Responses API + web_search). 클라이언트는 호출 때 만든다 — 설정이 비면 LlmCallError(call_failed)."""
+    return call_web_check(get_client(), check_input)
+
+
+def _budget_paused(now: datetime) -> bool | None:
+    """서비스 일일 예산(19절)을 넘었는지 — 그날(KST) llm_calls 비용 합계가 LLM_DAILY_BUDGET_KRW 이상이면 True. 합계를 읽지 못하면
+    None(모르면 부르지 않는다). 넘었으면 warning 한 줄을 남긴다(deploy_rules.md 「배포 뒤 볼 지표」가 이 줄을 센다)."""
+    budget = settings.llm_daily_budget_krw
+    try:
+        spent = usage_log.spent_today(now)
+    except Exception as exc:  # noqa: BLE001 — DB 오류의 메시지에는 쿼리가 실린다. 클래스 이름만
+        log.warning("llm daily budget unknown: %s", type(exc).__name__)
+        return None
+    if spent >= budget:
+        log.warning("llm daily budget paused spent=%.1f budget=%.1f", spent, budget)
+        return True
+    return False
+
+
+def web_check(
+    *, place_name: str, area: str | None, feature: str, forbidden: Sequence[str], planner: WebCheckPlanner,
+    now: datetime | None = None,
+) -> WebCheckResult:
+    """웹 확인(명세 6.8). 우리 데이터가 「모름」인 특징 하나를 웹에서 찾아 문장 1~2개와 출처로 돌려준다.
+
+    place_name, area(places.api.neighborhood, 없으면 None), feature(recommend.api.fact_labels의 표시 이름): 모델에 가는 것은 이 셋뿐이다.
+    forbidden: 금지 표현(agent.core가 정한다 — FORBIDDEN_PHRASES와 결론·권유 표현). planner: 받는 쪽 Gateway가 고른다(fixed/real).
+
+    1. 예산 — 모델을 부르기 전에 그날(KST) llm_calls 비용 합계가 LLM_DAILY_BUDGET_KRW 이상이면 부르지 않고 paused(0이면 늘 paused).
+       합계를 읽지 못하면 부르지 않고 failed. 예산을 보는 곳은 여기 하나다 — 부르는 쪽은 따로 보지 않는다.
+    2. 호출 — 실패(호출 실패, 시간 초과, 거절, 스키마 실패)는 재요청하지 않고 failed(2절 10번). 예외로 올리지 않는다.
+    3. 검증 — verify_web_answer. 사용량은 출구가 llm_calls에 남긴다(부르는 쪽이 usage_context("agent_web_check")로 감싼다).
+    DB 세션을 받지 않는다 — 부르는 쪽은 세션을 닫고 부른다(2절 6번). 합계는 usage가 짧은 세션으로 읽는다."""
+    paused = _budget_paused(now or datetime.now(timezone.utc))
+    if paused is None:
+        return WebCheckResult(status="failed", detail="budget_unknown")
+    if paused:
+        return WebCheckResult(status="paused")
+    check_input = {"place_name": place_name, "area": area, "feature": feature}
+    try:
+        answer = planner(check_input)
+    except WebNotChecked:
+        return WebCheckResult(status="failed", detail="not_checked")
+    except (LlmCallError, ValueError) as exc:
+        failed = _failed("web_check", exc, "web_check")
+        return WebCheckResult(status="failed", web_searches=getattr(exc, "web_searches", 0),
+                              detail=f"{failed.reason}:{failed.detail}")
+    result = verify_web_answer(answer, forbidden=forbidden)
+    log.info("web_check 완료: status=%s statements=%d dropped=%d web_searches=%d",
+             result.status, len(result.statements), len(result.dropped), result.web_searches)
+    return result
 
 
 # ---- v2 동선 에이전트 턴 (#334) ----
@@ -563,3 +746,76 @@ def course_direct_turn(turn_input: Mapping[str, Any], *, planner: CourseDirectPl
             return AgentReply(planner(turn_input), usage)
         except (LlmCallError, ValueError) as exc:
             return AgentReply(_failed("course_direct_turn", exc, f"turn={turn_input.get('turn', 0)}"), usage)
+
+
+# ---- 점검(review) 판단 검증 (#1326, 결정 #1237 4절) ----
+
+@dataclass(frozen=True)
+class CourseReviewDecision:
+    """모델의 점검 판단 중 입력과 맞는 것만. 비면 코드 기본(입력 순서, 모두 고침)이다.
+    order: 선호 문제 별칭(먼저 볼 순서). worth: 별칭 → (fix|keep, 이유 코드). picks: 별칭 → (안 번호, 이유 코드)."""
+    order: tuple[str, ...] = ()
+    worth: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+    picks: Mapping[str, tuple[int, str]] = field(default_factory=dict)
+
+
+def _reason_fits(reason: str, kind: str, options: Sequence[Mapping[str, Any]]) -> bool:
+    """이유 코드가 입력의 사실과 모순되지 않는가. 모델이 낸 코드가 입력으로 설명되지 않으면 그 판단은 버린다."""
+    moved = [o.get("moved", 0) for o in options]
+    leftovers = [o.get("remaining") or [] for o in options]
+    if reason == "FIXES_REQUEST":
+        return kind == "goal"
+    if reason == "FIXES_MEMBER_NEED":
+        return kind == "condition"
+    if reason == "SMALL_CHANGE":
+        return any(m <= 1 and not left for m, left in zip(moved, leftovers))
+    if reason == "TOO_MANY_MOVES":
+        return min(moved) >= 2
+    if reason == "LEAVES_PROBLEMS":
+        return all(leftovers)
+    return True
+
+
+def _pick_fits(reason: str, chosen: Mapping[str, Any], options: Sequence[Mapping[str, Any]]) -> bool:
+    """고른 안이 그 기준에서 다른 안보다 나쁘지 않고 적어도 하나보다 낫다."""
+    metric = {
+        "FEWER_MOVES": lambda o: -o.get("moved", 0),
+        "FEWER_REMAINING": lambda o: -len(o.get("remaining") or []),
+        "SOLVES_MORE": lambda o: len(o.get("solves") or []),
+    }.get(reason)
+    if metric is None:
+        return False
+    values = [metric(o) for o in options]
+    return metric(chosen) == max(values) and metric(chosen) > min(values)
+
+
+def verify_course_review(review_input: Mapping[str, Any], call: CourseReviewCall) -> CourseReviewDecision:
+    """모델의 review 출력을 입력과 대조한다. 순수 함수이고 모델을 부르지 않는다(재요청 없음).
+    review_input은 지휘 턴 입력의 `review`: {"problems": [{alias, kind, strength, options: [{no, moved, solves, remaining}]}]}.
+    - 하드 문제(strength=hard)와 입력에 없는 별칭은 무시한다 — 순서도 판단도 안 지우기도 모델 몫이 아니다.
+    - 안이 없는 문제(「크게 바꿔야 해요」)는 판단할 것이 없어 무시한다.
+    - 같은 문제의 둘째 판단은 무시한다. 이유 코드는 판단 종류의 목록에 있고 입력의 사실과 맞아야 한다.
+    - 그대로(keep)로 정한 문제의 안 고르기는 무시한다.
+    걸러진 자리는 코드 기본이 이어받는다."""
+    soft = {p["alias"]: p for p in review_input.get("problems", []) if p.get("strength") == "soft" and p.get("options")}
+    order: list[str] = []
+    for alias in call.order:
+        if alias in soft and alias not in order:
+            order.append(alias)
+    worth: dict[str, tuple[str, str]] = {}
+    for v in call.verdicts:
+        p = soft.get(v.problem)
+        allowed = COURSE_REVIEW_FIX_REASONS if v.worth == "fix" else COURSE_REVIEW_KEEP_REASONS
+        if p is None or v.problem in worth or v.reason not in allowed or not _reason_fits(v.reason, p["kind"], p["options"]):
+            continue
+        worth[v.problem] = (v.worth, v.reason)
+    picks: dict[str, tuple[int, str]] = {}
+    for c in call.picks:
+        p = soft.get(c.problem)
+        if p is None or len(p["options"]) < 2 or c.problem in picks or worth.get(c.problem, ("fix",))[0] == "keep":
+            continue
+        chosen = next((o for o in p["options"] if o.get("no") == c.option), None)
+        if chosen is None or c.reason not in COURSE_REVIEW_PICK_REASONS or not _pick_fits(c.reason, chosen, p["options"]):
+            continue
+        picks[c.problem] = (c.option, c.reason)
+    return CourseReviewDecision(tuple(order), worth, picks)

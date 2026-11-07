@@ -1,22 +1,24 @@
 import { useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 
-import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { useLivePlaceStore } from '@/features/map/livePlaces'
-import { FILTER_CATEGORIES, type Pin, type PinCategory } from '@/features/map/model'
+import { FILTER_CATEGORIES, inputExample, type Pin, type PinCategory } from '@/features/map/model'
 import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import EmptyState from '@/ui/EmptyState'
+import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
+import TextArea from '@/ui/TextArea'
 
-import { toSearchResult, type SearchResultView } from './model'
-import { searchErrorMessage, useSourcePlacesQuery } from './queries'
+import { livePinRequest, pinErrorMessage, searchPinRequest, toSearchResult, type SearchResultView } from './model'
+import { searchErrorMessage, useExternalSearchQuery, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
+import { suggestQuery } from './typo'
 
 /**
  * 시트 제목 줄 — "'칼국수' 검색 결과 4곳" 또는 "링크에서 찾은 장소 1곳" + 닫기(잠깐 하는 작업이라 「닫기」, Figma 뒤로가기 규칙).
@@ -48,7 +50,7 @@ export function SearchResultsHeader({ count }: { count: number | null }) {
 
 /** 검색 결과 목록·장소 상세(Figma 4절). 결과 0개는 0개로 보여준다(가드레일 2). */
 export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] }) {
-  const { source, near, selectedId, select, submit, close } = useSearchStore()
+  const { source, near, selectedId, group, select, showGroup, submit, close } = useSearchStore()
   const search = useSourcePlacesQuery(source, near)
   const create = useCreatePinMutation(mapId)
   const { selectPin } = usePinSelection()
@@ -56,16 +58,17 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   const link = search.data?.link
   const query = source?.kind === 'name' ? source.query : null
   const selected = results.find((r) => r.id === selectedId)
+  // 지도에서 겹쳐 묶인 「N곳」 핀을 눌렀으면 그곳들만 보인다(#1174). 번호는 전체 결과의 번호 그대로다.
+  const listed = results.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => !group || group.includes(r.id))
 
   function pinIt(r: SearchResultView) {
-    const { place_id, place_name, lat, lng, category } = r.dto
-    if (!category) return
-    // 검색 결과는 매칭 힌트로 그대로 되돌려 보낸다 — 서버가 같은 자체 DB 장소를 찾는다(#191).
+    const req = searchPinRequest(r.dto)
+    if (!req) return
     create.mutate(
-      { source: 'search', place_id, place_name, lat, lng, category },
+      req,
       {
         onSuccess: (pin) => {
-          const name = pin.place_name ?? place_name
+          const name = pin.place_name ?? r.dto.place_name
           showToast(`${name}${josa(name, '을', '를')} 지도에 찍었어요`)
           close()
           // 새 핀은 0표라 목록 끝으로 간다. 다음 할 일은 그 핀에 의견 남기기라 바로 상세를 연다(#308).
@@ -81,10 +84,11 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
    * 이름·좌표는 보내지 않는다(저장 불가). 방금 찍은 핀의 위치는 이미 손에 있으니 바로 얹는다 — 메모리에만 둔다.
    */
   function pinLive(r: SearchResultView, { memo }: LiveInput) {
-    const { place_id, lat, lng, category } = r.dto
-    if (!category || !query) return
+    const { lat, lng } = r.dto
+    const req = query ? livePinRequest(r.dto, query, memo) : null
+    if (!req) return
     create.mutate(
-      { source: 'live', category, kakao_place_id: place_id, search_query: query, ...(memo ? { memo } : {}) },
+      req,
       {
         onSuccess: (pin) => {
           useLivePlaceStore.getState().set(pin.id, { name: r.name, lat, lng })
@@ -133,8 +137,8 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     const hint = link.name_hint
     return (
       <EmptyState
-        mood="sorry"
-        title="우리 장소 데이터에서 찾지 못했어요"
+        mood="sad"
+        title="링크의 장소를 찾지 못했어요"
         action={
           hint ? (
             <button type="button" onClick={() => submit(hint, near)} className="btn-outline btn-md">
@@ -153,33 +157,25 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (source?.kind === 'tap' && results.length === 0) {
     // 지어내지 않는다(가드레일 2). 없으면 이름 검색으로 남기게 한다(api-spec GET /places/nearest).
     return (
-      <EmptyState mood="sorry" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
-        가게 바로 위를 눌러 보거나, 이름으로 찾아보세요
+      <EmptyState mood="sad" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
+        지도에서 장소 바로 위를 다시 누르거나, 장소 이름으로 검색해 보세요.
       </EmptyState>
     )
   }
   if (results.length === 0) {
-    return (
-      // 다음 행동을 하나 둔다 — 검색어를 지우고 바로 다시 입력하게(#351).
-      <EmptyState mood="sorry"
-        title="찾는 장소가 없어요"
-        action={
-          <SearchAgainButton onClose={close} label="검색어 지우고 다시 찾기" />
-        }
-      >
-        이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요
-      </EmptyState>
-    )
+    // 흔한 말의 오타(「중곡집」)면 고친 말로 다시 찾게 한다. 아니면 검색어를 지우고 바로 다시 입력하게(#351).
+    const fixed = query ? suggestQuery(query) : null
+    return <NoResults query={query} fixed={fixed} onRetry={() => fixed && submit(fixed, near)} onClose={close} />
   }
 
   if (selected) {
     return (
       <div className="space-y-3">
-        <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => select(null)} />
+        <PanelBackLink label={group ? `이 자리의 장소 ${listed.length}곳` : `검색 결과 ${results.length}곳`} onBack={() => select(null)} />
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
-          {selected.far && <p className="text-body font-semibold text-warn-text">지금 보는 곳에서 멀어요 — 같은 이름의 다른 지역 가게일 수 있어요</p>}
+          {selected.far && <p className="text-body font-semibold text-warn-text">현재 보고 있는 지도 중심에서 멀리 있는 장소예요. 다른 지역의 같은 이름 장소일 수 있어요</p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
@@ -193,7 +189,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           </div>
         )}
         {selected.canLeaveLive && !selected.alreadyPinned ? (
-          <LiveLeaveForm pending={create.isPending} onSubmit={(input) => pinLive(selected, input)} />
+          <LiveLeaveForm category={selected.dto.category} pending={create.isPending} onSubmit={(input) => pinLive(selected, input)} />
         ) : (
           <PinItButton result={selected} filled pending={create.isPending} onPin={() => pinIt(selected)} />
         )}
@@ -202,34 +198,69 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   }
 
   return (
-    <ol className="space-y-2">
-      {results.map((r, i) => (
-        <li
-          key={r.id}
-          className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
-        >
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
-            {i + 1}
-          </span>
-          <button type="button" onClick={() => select(r.id)} className="min-w-0 flex-1 text-left">
-            <p className="truncate font-bold text-ink-900">{r.name}</p>
-            <p className="truncate text-xs text-ink-500">{r.meta}</p>
-            {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
-          </button>
-          {r.canLeaveLive && !r.alreadyPinned ? (
-            <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
-              핀 남기기
+    <div className="space-y-3">
+      {group && <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => showGroup(null)} />}
+      <ol className="space-y-2">
+        {listed.map(({ r, n }) => (
+          <li
+            key={r.id}
+            className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
+          >
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
+              {n}
+            </span>
+            <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
+              <p className="truncate font-bold text-ink-900">{r.name}</p>
+              <p className="truncate text-xs text-ink-500">{r.meta}</p>
+              {r.far && <p className="text-xs font-semibold text-warn-text">지금 보는 곳에서 멀어요</p>}
             </button>
-          ) : (
-            <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
-          )}
-        </li>
-      ))}
-    </ol>
+            {r.canLeaveLive && !r.alreadyPinned ? (
+              <button type="button" onClick={() => select(r.id)} className="btn-outline btn-sm">
+                핀 남기기
+              </button>
+            ) : (
+              <PinItButton result={r} pending={create.isPending && !!create.variables && 'place_id' in create.variables && create.variables.place_id === r.id} onPin={() => pinIt(r)} />
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
   )
 }
 
 /** 검색창을 비우고 다시 입력하게 한다(#351). */
+/**
+ * 이름 검색 0곳. 다음 행동은 검색어를 지우고 바로 다시 입력하기(#351)이고,
+ * 그 아래 친 검색어 그대로 카카오맵에서 찾는 출구를 둔다(#905, 새 창). 링크를 못 받으면 출구만 숨긴다.
+ */
+function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; fixed: string | null; onRetry: () => void; onClose: () => void }) {
+  return (
+    <EmptyState
+      mood="sad"
+      title="찾는 장소가 없어요"
+      action={
+        <div className="flex flex-col items-center gap-2">
+          {fixed ? (
+            <button type="button" onClick={onRetry} className="btn-primary btn-md">
+              ‘{fixed}’ 찾아보기
+            </button>
+          ) : (
+            <SearchAgainButton onClose={onClose} label="검색어 지우고 다시 찾기" />
+          )}
+          {query && <KakaoMapExit query={query} />}
+        </div>
+      }
+    >
+      {fixed ? `혹시 ‘${fixed}’${josa(fixed, '을', '를')} 찾으셨나요?` : '이름을 짧게 줄여 보거나, 다른 이름으로 찾아보세요'}
+    </EmptyState>
+  )
+}
+
+function KakaoMapExit({ query }: { query: string }) {
+  const { data } = useExternalSearchQuery(query)
+  return data ? <ExternalSearchLink search={data} className="btn-link text-sm" /> : null
+}
+
 function SearchAgainButton({ onClose, label }: { onClose: () => void; label: string }) {
   return (
     <button
@@ -253,8 +284,19 @@ type LiveInput = { memo: string; name?: string; category?: PinCategory }
 /**
  * 자체 DB에 없는 장소 — 장소 정보·AI 추천·동선에는 못 쓰지만 핀으로 남겨 의견을 나눌 수 있다(#382). 메모는 선택이다.
  * `askName`이면(카카오 링크, #487) 이름과 분류도 받는다 — 지도를 열 때 그 이름으로 카카오에서 위치를 다시 찾는다.
+ * 한마디 칸 예시는 분류를 따른다 — 검색 결과의 분류(`category`), 링크로 열었으면 고른 분류(#1461).
  */
-function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boolean; pending: boolean; onSubmit: (input: LiveInput) => void }) {
+function LiveLeaveForm({
+  askName = false,
+  category: known,
+  pending,
+  onSubmit,
+}: {
+  askName?: boolean
+  category?: PinCategory | null
+  pending: boolean
+  onSubmit: (input: LiveInput) => void
+}) {
   const [memo, setMemo] = useState('')
   const [name, setName] = useState('')
   const [category, setCategory] = useState<PinCategory | null>(null)
@@ -262,8 +304,8 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
   return (
     <div className="space-y-2.5">
       <div className="rounded-xl bg-ink-50 p-3.5 text-body text-ink-700">
-        <p className="font-semibold text-ink-900">우리 장소 데이터에 없는 곳이에요</p>
-        <p className="mt-0.5">장소 정보와 조건 확인, AI 추천, 동선에는 쓰이지 않아요. 그래도 핀으로 남겨서 서로 의견을 나눌 수 있어요.</p>
+        <p className="font-semibold text-ink-900">장소 정보가 없는 곳이에요</p>
+        <p className="mt-0.5">상세 데이터가 없어 AI 추천과 동선에는 반영되지 않지만, 지도에 핀을 남겨 함께 이야기를 나눌 수 있어요.</p>
       </div>
       {askName && (
         <>
@@ -284,18 +326,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
       <label className="block text-body font-bold text-ink-900" htmlFor="live-pin-memo">
         한마디 남기기 (선택)
       </label>
-      <textarea
-        id="live-pin-memo"
-        value={memo}
-        maxLength={MEMO_MAX}
-        onChange={(e) => setMemo(e.target.value)}
-        placeholder="예: 여기 곱창 맛있대"
-        rows={2}
-        className="field w-full resize-none py-3"
-      />
-      <p className="text-right text-label text-ink-500">
-        {memo.length}/{MEMO_MAX}
-      </p>
+      <TextArea id="live-pin-memo" value={memo} onChange={setMemo} maxLength={MEMO_MAX} placeholder={inputExample(category ?? known, 'memo')} rows={2} clearLabel="한마디 지우기" />
       <button
         type="button"
         onClick={() => onSubmit({ memo: memo.trim(), name: name.trim() || undefined, category: category ?? undefined })}
@@ -312,7 +343,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
 function PinItButton({ result, filled = false, pending, onPin }: { result: SearchResultView; filled?: boolean; pending: boolean; onPin: () => void }) {
   if (result.alreadyPinned) return <span className="shrink-0 text-xs text-ink-500">이미 지도에 있어요</span>
   if (result.unsupported) {
-    return <span className="shrink-0 text-xs text-ink-500">{result.dto.category ? '핀으로 남길 수 없는 분류예요' : '분류를 알 수 없는 장소예요'}</span>
+    return <span className="shrink-0 text-xs text-ink-500">{result.dto.category ? '핀으로 찍을 수 없는 카테고리예요' : '카테고리를 알 수 없는 장소예요'}</span>
   }
   return (
     <button
@@ -326,11 +357,4 @@ function PinItButton({ result, filled = false, pending, onPin }: { result: Searc
       {pending ? '찍는 중…' : '핀 찍기'}
     </button>
   )
-}
-
-/** docs/errors.md — 핀 만들기 실패. */
-function pinErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'PIN_DUPLICATE') return '이미 지도에 있는 장소예요'
-  if (err instanceof ApiError && err.code === 'PLACE_NOT_SUPPORTED') return '아직 지원하지 않는 장소예요'
-  return '핀을 찍지 못했어요'
 }

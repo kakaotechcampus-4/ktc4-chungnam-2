@@ -180,7 +180,7 @@ def test_purge_skips_a_map_restored_while_it_waited_for_the_row_lock(test_engine
         def run_purge():
             session = factory()
             try:
-                outcome["result"] = purge.purge(session, now=now, older_than_days=core.TRASH_RETENTION.days)
+                outcome["result"] = purge.purge(session, now=now)
                 session.commit()
             except Exception as exc:  # noqa: BLE001
                 session.rollback()

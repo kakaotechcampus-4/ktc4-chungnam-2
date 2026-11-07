@@ -41,6 +41,15 @@ export default function StarRating({
     )
   }
 
+  // 라디오 묶음 키보드 규칙: Tab은 고른 별(없으면 첫 별)에만 멈추고, ←→↑↓로 값을 바꾼다.
+  const move = (e: React.KeyboardEvent<HTMLButtonElement>, n: number) => {
+    const delta = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : 0
+    if (!delta) return
+    e.preventDefault()
+    const next = Math.min(STAR_COUNT, Math.max(1, n + delta))
+    onChange(next)
+    ;(e.currentTarget.parentElement?.children[next - 1] as HTMLElement | undefined)?.focus()
+  }
   return (
     <div role="radiogroup" aria-label={label} className="flex items-center">
       {STARS.map((n) => (
@@ -50,7 +59,9 @@ export default function StarRating({
           role="radio"
           aria-checked={n === value}
           aria-label={`${n}점`}
+          tabIndex={n === (value ?? 1) ? 0 : -1}
           onClick={() => onChange(n)}
+          onKeyDown={(e) => move(e, n)}
           className="flex h-11 w-11 items-center justify-center"
         >
           {star(n)}

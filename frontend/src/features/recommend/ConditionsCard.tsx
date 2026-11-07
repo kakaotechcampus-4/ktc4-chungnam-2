@@ -4,13 +4,11 @@ import ErrorText from '@/ErrorText'
 import PingoLoading from '@/ui/PingoLoading'
 
 import EvidenceGroups from './EvidenceGroups'
-import type { EvidenceLineDto, RecommendRunDto } from './model'
+import { visibleConditionCount, type EvidenceLineDto, type RecommendRunDto } from './model'
 import { useEvidenceQuery } from './queries'
 
 /** 조건 줄(꼭·선호). 참고(원문 인용)는 조건이 아니다. */
 const isCondition = (l: EvidenceLineDto) => l.is_active && l.badge !== 'reference'
-/** 그중 이번 추천이 실제로 거르거나 순위에 쓴 줄 — 접힌 줄의 「조건 N개」는 이것만 센다(쓰이지 않는 줄은 펼치면 따로 보인다, #742). */
-const isUsed = (l: EvidenceLineDto) => isCondition(l) && l.enforced !== false
 
 /**
  * 「이 조건으로 찾았어요」(#849) — 결과 위 접힌 카드. 이번 결과에 실제 쓴 조건(applied_evidence 스냅숏)을 보여 주고,
@@ -39,7 +37,7 @@ export default function ConditionsCard({
   const pending = (l: EvidenceLineDto) => applied !== undefined && isCondition(l) && !appliedIds.has(l.id)
   const removed = applied === undefined ? [] : lines.filter((l) => !l.is_active && appliedIds.has(l.id))
   const changed = lines.filter(pending).length + removed.length
-  const count = (applied ?? lines).filter(isUsed).length
+  const count = visibleConditionCount(applied ?? lines) // 쓰인 줄만, 칩과 같은 묶음으로(#742·#1143)
 
   return (
     <section className="rounded-xl border border-ink-200 bg-white">
@@ -47,15 +45,15 @@ export default function ConditionsCard({
         type="button"
         aria-expanded={open}
         onClick={() => onOpenChange(!open)}
-        className="flex w-full items-start gap-2 p-3 text-left"
+        className="press flex w-full items-start gap-2 rounded-xl p-3 text-left"
       >
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-bold text-ink-900">
-            이 조건으로 찾았어요 · {noApplied ? '적용된 사유 조건이 없어요' : `조건 ${count}개`}
+            {noApplied ? '조건 없이 찾았어요' : `조건 ${count}개로 찾았어요`}
           </span>
           {/* 글은 꼭 필요한 한 줄만 — 고친 게 있을 때(2026-10-31). */}
           {changed > 0 && (
-            <span className="mt-1 block text-xs font-bold text-[var(--warn-text)]">고친 조건 {changed}개 · 다시 추천 때 반영</span>
+            <span className="mt-1 block text-xs font-bold text-[var(--warn-text)]">고친 조건 {changed}개는 다시 추천할 때 반영돼요</span>
           )}
         </span>
         <ChevronDown

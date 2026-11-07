@@ -13,6 +13,12 @@ export function isPlaced(pin: Pin): pin is PlacedPin {
 }
 
 export type PinCategory = Pin['category']
+
+/**
+ * AI 추천에서 지도에 올린 핀인지. 서버는 올릴 때 근거(이유·조건 체크·구성원 충족·출처)를 핀에 그대로 옮기고(가드레일 5),
+ * 확정되면 kind 는 「확정」이 되지만 근거는 남는다 — 그래서 kind 가 아니라 근거가 있는지로 본다(#1032).
+ */
+export const hasAiEvidence = (pin: Pin) => Boolean(pin.reason || pin.checks?.length)
 /** ♥ 좋음 / 🚫 반대. △ 조율 필요는 2026-10-07에 없앴다(#360). 서버가 아직 neutral 을 줄 수 있는 동안엔 화면에서 걸러 쓴다. */
 export type ReactionType = 'like' | 'against'
 const isReactionType = (t: string): t is ReactionType => t === 'like' || t === 'against'
@@ -21,6 +27,26 @@ export const asReactionType = (t: string | undefined): ReactionType | null => (t
 
 /** v1에 핀으로 만들 수 있는 카테고리만 칩으로 둔다 — 숙소·기타는 핀을 만들 수 없다(#191). */
 export const FILTER_CATEGORIES: PinCategory[] = ['음식점', '카페', '관광지']
+
+type ExampleKind = ReactionType | 'memo'
+
+/**
+ * 의견·메모 입력칸의 예시 문장(#1461). 카테고리마다 다르다 — 「국물」「곱창」 예시가 카페·관광지 핀에서 어색했다.
+ * 반대 예시는 그 카테고리의 사유 칩(docs/constraints.md 칩 표)에 없는 이유로 골라, 칩에 없는 이유를 글로 쓰게 한다.
+ * 알러지 같은 안전 조건은 예시로 쓰지 않는다(가드레일 8).
+ */
+const INPUT_EXAMPLES: Record<'음식점' | '카페' | '관광지' | 'other', Record<ExampleKind, string>> = {
+  음식점: { like: '예: 국물이 진하고 양이 많아요', against: '예: 메뉴가 적어서 고를 게 없어요', memo: '예: 여기 곱창 맛있대' },
+  카페: { like: '예: 창가 자리가 넓고 조용해요', against: '예: 콘센트가 없어서 오래 있기 힘들어요', memo: '예: 여기 디저트가 유명하대' },
+  관광지: { like: '예: 야경이 예뻐서 사진 찍기 좋아요', against: '예: 볼거리가 적어서 금방 지루해요', memo: '예: 해 질 녘에 가면 예쁘대' },
+  other: { like: '예: 위치가 좋아서 들르기 편해요', against: '예: 지난번 여행 때 가봤어요', memo: '예: 친구가 꼭 가 보래' },
+}
+
+/** 입력칸 예시 문장. 숙소·기타나 분류를 모르면 공통 문장이다. */
+export function inputExample(category: PinCategory | null | undefined, kind: ExampleKind): string {
+  const key = category === '음식점' || category === '카페' || category === '관광지' ? category : 'other'
+  return INPUT_EXAMPLES[key][kind]
+}
 
 export const SORTS = {
   most: '의견 많은 순',
@@ -35,6 +61,8 @@ export const OPINIONS = { like: '좋음', against: '반대', unknown: '미확인
 export type PinOpinion = keyof typeof OPINIONS
 /** 종류 필터(기획안 5-2: 확정/일반/AI 추천 셋뿐). */
 export const KINDS: Pin['kind'][] = ['확정', '일반', 'AI추천']
+/** 핀 종류를 화면·읽는 이름에 적을 때. 값 「AI추천」은 띄어 쓴다(용어 「AI 추천」, 기획안 9절). */
+export const kindLabel = (kind: Pin['kind']) => (kind === 'AI추천' ? 'AI 추천' : kind)
 
 export type PinFilters = {
   category: PinCategory | null
@@ -141,6 +169,16 @@ export type PinUpdateRequest = components['schemas']['PinUpdateRequest']
 export function pinEditErrorMessage(err: unknown): string {
   return err instanceof ApiError && err.code === 'VALIDATION_ERROR' ? err.message : '핀을 고치지 못했어요'
 }
+
+/** 핀 휴지통(#864). 보관 일수는 응답의 retention_days 로 적는다 — 화면에 숫자를 따로 두지 않는다. */
+export type PinTrash = components['schemas']['PinTrash']
+export type TrashedPin = components['schemas']['TrashedPin']
+
+/** 되살리기 실패 문구. 휴지통에 있는 동안 같은 장소로 새 핀이 생겼으면 409 PIN_DUPLICATE 다(api-spec /pins/{pinId}/restore). */
+export function restorePinErrorMessage(err: unknown): string {
+  return err instanceof ApiError && err.code === 'PIN_DUPLICATE' ? '이미 지도에 같은 장소가 있어요' : '핀을 되돌리지 못했어요'
+}
+
 export type ReactionDto = components['schemas']['Reaction']
 export type ReactionRequest = components['schemas']['ReactionRequest']
 /** 반대 사유 칩(최종기획안 5-1-1). 목록은 서버가 카테고리별로 준다 — 화면엔 label, 요청엔 id. */

@@ -8,6 +8,8 @@ membership/403-404 분기를 직접 기억하지 않는다. 에러 응답도 여
 common/errors.py의 앱 레벨 핸들러가 AppError를 봉투로 변환한다.
 """
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
@@ -18,10 +20,10 @@ from authz.guard import require, require_map_member, require_on_map, require_wit
 from maps import api as maps_api
 from pins import chips, link_import, service
 from pins.deps import DbSession
-from pins.loaders import load_pin
+from pins.loaders import load_pin, load_trashed_pin
 from pins.models import Pin as PinRow
 from pins.schemas import (
-    Category, FilterCounts, Pin, PinCreateRequest, BulkPinRequest, BulkPinResult, LinkPreviewRequest, LinkPreviewResult, PinKind, PinResolveRequest, PinUpdateRequest, Reaction, ReactionRequest, ReasonChip,
+    Category, FilterCounts, Pin, PinCreateRequest, BulkPinRequest, BulkPinResult, LinkPreviewRequest, LinkPreviewResult, PinKind, PinResolveRequest, PinTrash, PinUpdateRequest, Reaction, ReactionRequest, ReasonChip,
 )
 from shortlist import api as shortlist_api
 
@@ -32,6 +34,7 @@ PinToCreate = Depends(require_on_map("pin.create"))  # POST — 생성은 실제
 PinToEdit = Depends(require_with_principal("pin.edit", load_pin))   # PATCH — 찍은 사람만(AI 추천·확정 제외는 service)
 PinToResolve = Depends(require_with_principal("pin.resolve", load_pin))   # POST resolve — 구성원 누구나(#501)
 PinToDelete = Depends(require_with_principal("pin.delete", load_pin))
+PinToRestore = Depends(require_with_principal("pin.restore", load_trashed_pin))   # 지운 핀도 읽는다(#1013)
 PinForReaction = Depends(require("pin.react", load_pin))
 PinForRevert = Depends(require("pin.revert", load_pin))
 # 조회는 액션이 아니라 멤버십만 본다(require_map_member와 같은 사정 — 조회 전용 액션이 없다).
@@ -58,6 +61,20 @@ def get_pins(
         db, map_id=mapId, principal=principal,
         current_member_ids=maps_api.DbMembershipGateway(db).current_member_ids(mapId),
         category=category, kind=kind, created_by=created_by,
+    )
+
+
+@router.get("/maps/{mapId}/trash", response_model=PinTrash, response_model_exclude_none=True)
+def get_trash(
+    mapId: str = Path(...),
+    principal: Principal = PinsForMap,
+    db: Session = DbSession,
+):
+    """핀 휴지통(#1013) — 지도 구성원 누구나(빈 목록일 수 있다). 내가 되살릴 수 있는 것만 보인다."""
+    return service.list_trash(
+        db, map_id=mapId, principal=principal,
+        current_member_ids=maps_api.DbMembershipGateway(db).current_member_ids(mapId),
+        now=datetime.now(timezone.utc),
     )
 
 
@@ -139,8 +156,23 @@ def delete_pin(
 ):
     pin, principal = deletable
     # 확정 핀이면 확정 항목을 먼저 정리한다(#235) — 핀이 읽히는 동안이어야 이벤트를 만들 수 있다.
-    shortlist_api.remove_for_deleted_pin(db, map_id=pin.map_id, pin_id=str(pin.id), principal=principal)
-    service.delete_pin(db, pin=pin)
+    was_confirmed = shortlist_api.remove_for_deleted_pin(db, map_id=pin.map_id, pin_id=str(pin.id), principal=principal)
+    service.delete_pin(db, pin=pin, deleted_by=principal.user_id, was_confirmed=was_confirmed)   # 복구 때 확정이었으면 다시 올린다(#1013)
+
+
+@router.post("/pins/{pinId}/restore", response_model=Pin, response_model_exclude_none=True)
+def restore_pin(
+    restorable=PinToRestore,
+    db: Session = DbSession,
+):
+    pin, principal = restorable
+    return service.restore_pin(
+        db, pin=pin, principal=principal,
+        current_member_ids=maps_api.DbMembershipGateway(db).current_member_ids(pin.map_id),
+        now=datetime.now(timezone.utc),
+        # 삭제 때 확정이었다면 확정 리스트 맨 뒤로 다시 올린다 — 핀이 복구된 뒤에 부른다(shortlist_api 계약)
+        on_confirmed_restore=lambda: shortlist_api.restore_confirmed(db, pin_id=str(pin.id)),
+    )
 
 
 @router.get("/pins/{pinId}/reactions", response_model=list[Reaction], response_model_exclude_none=True)

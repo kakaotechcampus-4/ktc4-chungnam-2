@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from agent import core
+from common.kst import kst_day_start
 from agent.tests.snaps import NOW, hours, member, pin, react, snap
 
 SEC = timedelta(seconds=1)
@@ -122,7 +123,7 @@ def test_passed_signal_carries_recent_dismissals():
 
 def test_no_reaction_once_per_kst_day():
     sig = _sig("no_reaction", None, evidence=("p9",))
-    day_start = core.kst_day_start(NOW)
+    day_start = kst_day_start(NOW)
 
     today = _past("superseded", diagnosis="no_reaction", category=None, created_at=day_start)
     assert _check([sig], today) == ([], {"s1": "daily_limit"})
@@ -144,10 +145,10 @@ def test_kst_midnight_boundary():
     before = datetime(2026, 10, 15, 14, 59, 59, tzinfo=timezone.utc)   # KST 10/15 23:59:59
     after = datetime(2026, 10, 15, 15, 0, 0, tzinfo=timezone.utc)      # KST 10/16 00:00:00
 
-    assert core.kst_day_start(before) == datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
-    assert core.kst_day_start(after) == after
+    assert kst_day_start(before) == datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
+    assert kst_day_start(after) == after
     with pytest.raises(ValueError):
-        core.kst_day_start(datetime(2026, 10, 15, 12, 0))
+        kst_day_start(datetime(2026, 10, 15, 12, 0))
 
 
 def test_cap_blocks_model_types_and_code_types_pass():
@@ -200,7 +201,7 @@ def test_policy_file_matches_spec_draft():
     policy = core.load_policy()
 
     assert policy.version == 2
-    assert dict(policy.weights) == {"stall": 3, "split": 3, "category_gap": 2, "no_reaction": 1}
+    assert dict(policy.weights) == {"stall": 3, "split": 3, "category_gap": 2, "schedule": 2, "no_reaction": 1}
     assert (policy.urgent_dday, policy.never_first, policy.always_first) == (3, (), ())
     assert not hasattr(policy, "principles")   # version 2에서 지웠다(#582)
 
@@ -214,7 +215,7 @@ def test_policy_file_matches_spec_draft():
 ])
 def test_policy_rejects_missing_weight_unknown_rule_or_bad_urgent_dday(change):
     base = {"version": 2, "rules": {"urgent_dday": 3},
-            "weights": {"stall": 3, "split": 3, "category_gap": 2, "no_reaction": 1}}
+            "weights": {"stall": 3, "split": 3, "category_gap": 2, "schedule": 2, "no_reaction": 1}}
     with pytest.raises(ValueError):
         core.parse_policy({**base, **change})
 

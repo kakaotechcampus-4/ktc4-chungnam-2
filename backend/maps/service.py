@@ -8,7 +8,7 @@ import secrets
 from datetime import datetime, timezone
 
 from geoalchemy2 import Geometry
-from sqlalchemy import cast, delete, func, select, text, update
+from sqlalchemy import cast, delete, func, insert, literal, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -20,9 +20,10 @@ from common.events import record_event
 from maps import core
 from maps.models import Invite as InviteRow
 from maps.models import Map as MapRow
+from maps.models import MapCover as MapCoverRow
 from maps.models import Membership as MembershipRow
 from maps.schemas import (
-    Invite, InviteSummary, Map, MapCreateRequest, MapUpdateRequest, Member, TrashedMap,
+    Invite, InviteSummary, Map, MapCreateRequest, MapRegion, MapUpdateRequest, Member, TrashedMap,
 )
 from notifications import api as notifications_api
 from pins import api as pins_api
@@ -76,6 +77,15 @@ def _pin_counts(db: Session, map_ids: list[str]) -> dict[str, int]:
     return pins_api.count_public_pins_by_map(db, map_ids)
 
 
+def _cover_versions(db: Session, map_ids: list[str]) -> dict[str, datetime]:
+    """지도별 대표 이미지 갱신 시각(#1445) — 있는 지도만. 목록도 한 번에 읽고 이미지 바이트는 읽지 않는다."""
+    if not map_ids:
+        return {}
+    return dict(db.execute(
+        select(MapCoverRow.map_id, MapCoverRow.updated_at).where(MapCoverRow.map_id.in_(map_ids))
+    ).all())
+
+
 def member_count(db: Session, map_id: str) -> int:
     rosters, withdrawn = _rosters(db, [map_id])
     return _active_count(rosters[map_id], withdrawn)
@@ -87,6 +97,13 @@ def _region_lat_lng_columns():
     ST_X/ST_Y도 NULL을 돌려주므로 region 없는 지도도 그대로 섞어 쿼리할 수 있다."""
     geom_as_geometry = cast(MapRow.region_center, Geometry())
     return func.ST_Y(geom_as_geometry).label("region_lat"), func.ST_X(geom_as_geometry).label("region_lng")
+
+
+def get_map_region_center(db: Session, map_id: str) -> tuple[float, float] | None:
+    row = db.execute(
+        select(*_region_lat_lng_columns()).where(MapRow.id == map_id, MapRow.deleted_at.is_(None))
+    ).one_or_none()
+    return None if row is None or row.region_lat is None else (row.region_lat, row.region_lng)
 
 
 def get_map_or_404(db: Session, map_id: str, *, for_update: bool = False) -> MapRow:
@@ -134,6 +151,7 @@ def _map_record(db: Session, map_row: MapRow) -> core.MapRecord:
         id=map_row.id, title=map_row.title, start_date=map_row.start_date, end_date=map_row.end_date,
         created_by=map_row.created_by,
         region_label=map_row.region_label, region_lat=region_lat, region_lng=region_lng,
+        color=map_row.color,
     )
 
 
@@ -143,10 +161,12 @@ def _map_response(db: Session, map_row: MapRow, *, viewer_id: str, with_next_own
     roster = rosters[map_row.id]
     principal = Principal(user_id=viewer_id, map_id=map_row.id, role=core.role_in(roster, viewer_id))
     successor = core.owner_successor(principal, roster, withdrawn, guests=_guest_ids(db, rosters))
+    owner = core.owner_of(roster)
+    wanted_successor = successor if with_next_owner else None
+    names = auth_api.display_names(db, [u for u in (owner, wanted_successor) if u is not None])
     next_owner = None
-    if with_next_owner and successor is not None:
-        successor_name = auth_api.display_names(db, [successor]).get(successor)
-        next_owner = core.to_next_owner(principal, successor, successor_name)
+    if wanted_successor is not None:
+        next_owner = core.to_next_owner(principal, wanted_successor, names.get(wanted_successor))
     return core.to_map_response(
         _map_record(db, map_row),
         member_count=_active_count(roster, withdrawn),
@@ -156,6 +176,8 @@ def _map_response(db: Session, map_row: MapRow, *, viewer_id: str, with_next_own
         my_role=principal.role,
         viewer_id=viewer_id,
         next_owner=next_owner,
+        cover_updated_at=_cover_versions(db, [map_row.id]).get(map_row.id),
+        owner_display_name=names.get(owner),
     )
 
 
@@ -187,10 +209,15 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str, creator_i
     new_map = core.validate_map_create(req.title, req.start_date, req.end_date, req.region)
     _lock_map_count(db, creator_id)
     core.check_map_limit(_my_map_count(db, creator_id))
+    map_row = _add_owned_map(db, new_map, owner_id=creator_id)
+    return _map_response(db, map_row, viewer_id=creator_id)
 
+
+def _add_owned_map(db: Session, new_map: core.NewMap, *, owner_id: str, color: str | None = None) -> MapRow:
+    """maps 행 + owner 멤버십 행(만들기·복사가 같이 쓴다). 상한 검사는 호출부가 _lock_map_count 뒤에 한다."""
     map_row = MapRow(
         title=new_map.title, start_date=new_map.start_date, end_date=new_map.end_date,
-        created_by=creator_id,
+        created_by=owner_id, color=color,
         region_label=new_map.region.label if new_map.region else None,
         region_center=(
             func.ST_SetSRID(func.ST_MakePoint(new_map.region.lng, new_map.region.lat), 4326)
@@ -200,10 +227,44 @@ def create_map(db: Session, *, req: MapCreateRequest, creator_id: str, creator_i
     db.add(map_row)
     db.flush()  # map_row.id 확정 — 멤버십 행이 참조해야 한다
 
-    db.add(MembershipRow(map_id=map_row.id, user_id=creator_id, role="owner"))
+    db.add(MembershipRow(map_id=map_row.id, user_id=owner_id, role="owner"))
     db.flush()
+    return map_row
 
-    return _map_response(db, map_row, viewer_id=creator_id)
+
+def copy_map(db: Session, *, map_id: str, user_id: str, user_is_guest: bool) -> Map:
+    """지도 복사(#1446). 방장인지는 라우터의 require_on_map("map.copy")가 봤다. 새 지도를 늘리는 일이라 만들기와 같은
+    게스트 403·지도 수 상한(같은 잠금과 세는 쿼리)을 따른다. 여행 기간 상한은 다시 보지 않는다 — 날짜를 그대로 옮긴다.
+    옮기는 것: 날짜·지역·색·올린 대표 이미지·살아 있는 공개 핀(pins.api.copy_pins_to_map, 찍은 사람은 복사한 사람).
+    옮기지 않는 것: 반응·구성원(복사한 사람 혼자 방장)·확정 리스트와 일정·추천과 코스 기록·에이전트·초대·알림.
+    제목은 core.copy_title — 제목 고르기도 잠금 안에서 해서 같은 사람의 동시 복사가 같은 번호를 받지 않는다.
+    잠금 순서는 복구(restore_map)와 같다: 원본 지도 행 → 사용자 단위 지도 수. 지도 행을 잠근 뒤 역할을 다시 본다 —
+    라우터가 본 뒤 방장 위임·나가기·삭제가 끝났으면 이미 방장이 아닌 사람이 핀과 메모를 가져가게 된다."""
+    core.check_can_create_map(user_is_guest)
+    source_row = get_map_or_404(db, map_id, for_update=True)
+    core.check_role_can(role_in_map(db, map_id=map_id, user_id=user_id), map_id, user_id, "map.copy")
+    source = _map_record(db, source_row)
+    _lock_map_count(db, user_id)
+    core.check_map_limit(_my_map_count(db, user_id))
+    taken = set(db.execute(
+        select(MapRow.title)
+        .join(MembershipRow, MembershipRow.map_id == MapRow.id)
+        .where(MembershipRow.user_id == user_id, MapRow.deleted_at.is_(None))
+    ).scalars())
+    region = (
+        MapRegion(label=source.region_label, lat=source.region_lat, lng=source.region_lng)
+        if source.region_label is not None else None
+    )
+    new_map = core.NewMap(
+        title=core.copy_title(source.title, taken), start_date=source.start_date, end_date=source.end_date, region=region,
+    )
+    map_row = _add_owned_map(db, new_map, owner_id=user_id, color=source.color)
+    db.execute(insert(MapCoverRow).from_select(
+        ["map_id", "data", "content_type"],
+        select(literal(map_row.id), MapCoverRow.data, MapCoverRow.content_type).where(MapCoverRow.map_id == map_id),
+    ))
+    pins_api.copy_pins_to_map(db, from_map_id=map_id, to_map_id=map_row.id, created_by=user_id)
+    return _map_response(db, map_row, viewer_id=user_id)
 
 
 def update_map(db: Session, *, map_id: str, req: MapUpdateRequest, viewer_id: str) -> Map:
@@ -214,13 +275,20 @@ def update_map(db: Session, *, map_id: str, req: MapUpdateRequest, viewer_id: st
         _map_record(db, map_row),
         title=req.title, start_date=req.start_date, end_date=req.end_date, region=req.region,
     )
+    dates_changed = (updated.start_date, updated.end_date) != (map_row.start_date, map_row.end_date)
     map_row.title = updated.title
     map_row.start_date = updated.start_date
     map_row.end_date = updated.end_date
     if req.region is not None:
         map_row.region_label = updated.region.label
         map_row.region_center = func.ST_SetSRID(func.ST_MakePoint(updated.region.lng, updated.region.lat), 4326)
+    if "color" in req.model_fields_set:   # null은 색 지우기(#1445)
+        map_row.color = req.color
     db.flush()
+    if dates_changed:
+        shortlist_api.unassign_outside_dates(
+            db, map_id=map_id, start_date=updated.start_date, end_date=updated.end_date,
+        )
     record_event(db, core.map_updated_event(map_id, updated))
     return _map_response(db, map_row, viewer_id=viewer_id, with_next_owner=True)
 
@@ -228,6 +296,38 @@ def update_map(db: Session, *, map_id: str, req: MapUpdateRequest, viewer_id: st
 def get_map_response(db: Session, *, map_id: str, viewer_id: str) -> Map:
     map_row = get_map_or_404(db, map_id)
     return _map_response(db, map_row, viewer_id=viewer_id, with_next_owner=True)
+
+
+def put_cover(db: Session, *, map_id: str, content_type: str | None, data: bytes, viewer_id: str) -> Map:
+    """대표 이미지 올리기·바꾸기(#1445). 방장인지는 라우터의 require_on_map("map.settings.edit")가 봤다. 지도당 한 행이라
+    덮어쓰고 갱신 시각을 새로 찍는다 — cover_url의 v가 바뀌어 캐시된 옛 이미지를 쓰지 않는다."""
+    map_row = get_map_or_404(db, map_id)
+    kind = core.check_cover(content_type, data)
+    db.execute(
+        pg_insert(MapCoverRow)
+        .values(map_id=map_id, data=data, content_type=kind)
+        .on_conflict_do_update(
+            index_elements=["map_id"], set_={"data": data, "content_type": kind, "updated_at": func.now()},
+        )
+    )
+    return _map_response(db, map_row, viewer_id=viewer_id, with_next_owner=True)
+
+
+def delete_cover(db: Session, *, map_id: str, viewer_id: str) -> Map:
+    """대표 이미지 지우기(#1445) — 화면은 지역 기본 이미지로 돌아간다. 없어도 같은 응답이다(멱등)."""
+    map_row = get_map_or_404(db, map_id)
+    db.execute(delete(MapCoverRow).where(MapCoverRow.map_id == map_id))
+    return _map_response(db, map_row, viewer_id=viewer_id, with_next_owner=True)
+
+
+def get_cover(db: Session, *, map_id: str) -> tuple[bytes, str]:
+    """(이미지 바이트, content type). 구성원인지와 삭제된 지도인지는 라우터의 require_map_member()가 봤다. 없으면 404."""
+    row = db.execute(
+        select(MapCoverRow.data, MapCoverRow.content_type).where(MapCoverRow.map_id == map_id)
+    ).one_or_none()
+    if row is None:
+        raise AppError("NOT_FOUND")
+    return row.data, row.content_type
 
 
 def list_maps(db: Session, *, user_id: str) -> list[Map]:
@@ -254,6 +354,9 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
     rosters, withdrawn = _rosters(db, map_ids)
     guests = _guest_ids(db, rosters)
     pin_counts = _pin_counts(db, map_ids)
+    covers = _cover_versions(db, map_ids)
+    owners = {map_id: core.owner_of(roster) for map_id, roster in rosters.items()}
+    owner_names = auth_api.display_names(db, list({u for u in owners.values() if u is not None}))
     responses = []
     for map_row, region_lat, region_lng in rows:
         roster = rosters[map_row.id]
@@ -264,6 +367,7 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
                 id=map_row.id, title=map_row.title, start_date=map_row.start_date,
                 end_date=map_row.end_date, created_by=map_row.created_by,
                 region_label=map_row.region_label, region_lat=region_lat, region_lng=region_lng,
+                color=map_row.color,
             ),
             member_count=_active_count(roster, withdrawn),
             pin_count=pin_counts[map_row.id],
@@ -271,6 +375,8 @@ def list_maps(db: Session, *, user_id: str) -> list[Map]:
             permissions=core.map_permissions(principal, successor),
             my_role=principal.role,
             viewer_id=user_id,
+            cover_updated_at=covers.get(map_row.id),
+            owner_display_name=owner_names.get(owners[map_row.id]),
         ))
     return responses
 
@@ -485,7 +591,7 @@ def list_trash(db: Session, *, user_id: str, now: datetime) -> list[TrashedMap]:
         .join(MembershipRow, MembershipRow.map_id == MapRow.id)
         .where(
             MembershipRow.user_id == user_id, MembershipRow.role == "owner",
-            MapRow.deleted_at.is_not(None), MapRow.deleted_at > now - core.TRASH_RETENTION,
+            MapRow.deleted_at.is_not(None), MapRow.deleted_at > core.purge_cutoff(now),
         )
         .order_by(MapRow.deleted_at.desc(), MapRow.id)
     ).all()
@@ -681,10 +787,10 @@ def restore_maps_deleted_by_withdrawal(db: Session, *, user_id: str, now: dateti
 
 
 def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
-    """지도 정리(#431) — 이 지도들의 초대·멤버십·지도 행을 지운다. 테이블 이름 → 지운 행 수.
-    둘 다 maps를 참조해서 지도 행은 마지막이다. 삭제된 지도(deleted_at)인지는 호출부(maps.purge)가 가린다."""
+    """지도 정리(#431) — 이 지도들의 초대·멤버십·대표 이미지(#1445)·지도 행을 지운다. 테이블 이름 → 지운 행 수.
+    셋 다 maps를 참조해서 지도 행은 마지막이다. 삭제된 지도(deleted_at)인지는 호출부(maps.purge)가 가린다."""
     if not map_ids:
-        return {"invites": 0, "memberships": 0, "maps": 0}
+        return {"invites": 0, "memberships": 0, "map_covers": 0, "maps": 0}
     live = db.execute(
         select(MapRow.id).where(MapRow.id.in_(map_ids), MapRow.deleted_at.is_(None))
     ).scalars().all()
@@ -693,6 +799,7 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     return {
         "invites": db.execute(delete(InviteRow).where(InviteRow.map_id.in_(map_ids))).rowcount,
         "memberships": db.execute(delete(MembershipRow).where(MembershipRow.map_id.in_(map_ids))).rowcount,
+        "map_covers": db.execute(delete(MapCoverRow).where(MapCoverRow.map_id.in_(map_ids))).rowcount,
         "maps": db.execute(delete(MapRow).where(MapRow.id.in_(map_ids))).rowcount,
     }
 

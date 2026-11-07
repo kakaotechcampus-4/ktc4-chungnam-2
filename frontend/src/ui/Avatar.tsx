@@ -5,7 +5,7 @@ export default function Avatar({ name, size = 32 }: { name?: string; size?: 32 |
       aria-hidden="true"
       className={`flex shrink-0 items-center justify-center rounded-full bg-ink-100 font-semibold text-ink-700 ${size === 44 ? 'size-11 text-title' : 'size-8 text-sm'}`}
     >
-      {name?.slice(0, 1)}
+      {name && Array.from(name)[0]}
     </span>
   )
 }

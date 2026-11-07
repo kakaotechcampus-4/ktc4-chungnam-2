@@ -18,13 +18,13 @@ from recommend.ports import PlaceStub
 
 
 class _FakePlaceSearch:
-    """반경과 무관하게 같은 풀을 돌려준다 — 반경 판정은 _run_pipeline의 반경 단계가 한다."""
+    """반경 안만 반환하는 장소 게이트웨이 대역."""
 
     def __init__(self, places):
         self._places = places
 
     def search_nearby(self, *, category, circles):
-        return self._places
+        return [p for p in self._places if core.is_within_any_region(p.lat, p.lng, circles)]
 
     def get_places(self, place_ids):
         return {}
@@ -75,7 +75,7 @@ FACTS = {
 
 def _scenario(db_session):
     """실격 두 줄(남의 붐빔, 내 「좁아요」), 비활성 선호 한 줄, 이미 제안한 곳, 요청자가 🚫한 핀이 있는 run."""
-    run = _run(db_session)
+    run = _run(db_session, default_radius_m=1000, default_radius_walk_min=12)   # 지역 반경과 같은 현재 반경이라 넓히기 상한 배율이 5배다
     db_session.add(Region(
         run_id=run.id, signature="sig", label="기본 반경", center_lat=35.0, center_lng=129.0,
         radius_m=1000, anchor_points=[[35.0, 129.0]], confirmed=True,
@@ -128,12 +128,12 @@ def test_execute_run_result_is_unchanged_by_the_pipeline_refactor(db_session):
 
     flows.execute_run(db_session, run_id=str(run.id), **_gateways())
 
-    assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["ok"]
+    assert [c.place_id for c in service.list_candidates(db_session, str(run.id))] == ["ok", "narrow"]
     assert run.last_funnel == [
         {"label": "카테고리 후보 풀", "removed_count": 0},
         {"label": "반경 밖 제거", "removed_count": 1},
         {"label": "영업 종료 제거", "removed_count": 0},
-        {"label": "실격 조건 제거", "removed_count": 2},
+        {"label": "실격 조건 제거", "removed_count": 1},
         {"label": "이미 제안·거절됨", "removed_count": 2},
         {"label": "상위 3곳 선정", "removed_count": 0},
     ]   # 후보 풀이 처음부터 정예 장소라 「추천 가능 아님 제거」 단계가 없다(#913)
@@ -194,7 +194,7 @@ def test_get_run_funnel_returns_the_last_execution(db_session):
     result = api.get_run_funnel(db_session, run_id=str(run.id))
     funnel = result["funnel"]
 
-    assert (result["result_count"], result["passed_count"]) == (1, 1)
+    assert (result["result_count"], result["passed_count"]) == (2, 2)
     assert [{"label": e["label"], "removed_count": e["removed_count"]} for e in funnel] == run.last_funnel
     assert "추천 가능 아님 제거" not in _removed(funnel)
     funnel[0]["removed_count"] = 99
@@ -288,8 +288,8 @@ def test_passed_count_is_the_number_that_passed_every_filter_before_the_top_thre
     stored, sim = _passed_counts(db_session, run, lines)
 
     assert len(service.list_candidates(db_session, str(run.id))) == 3   # 결과는 3곳에서 잘린다
-    assert (stored["result_count"], stored["passed_count"]) == (3, len(PASSING))
-    assert sim["before"]["passed_count"] == len(PASSING)
+    assert (stored["result_count"], stored["passed_count"]) == (3, len(PASSING) + 1)
+    assert sim["before"]["passed_count"] == len(PASSING) + 1
     assert (sim["after"]["result_count"], sim["after"]["passed_count"]) == (3, len(PASSING) + 1)   # narrow가 풀린다
 
 
@@ -303,7 +303,7 @@ def test_passed_count_does_not_depend_on_the_stage_label(db_session, monkeypatch
 
     assert (stored["funnel"][-1]["key"], stored["funnel"][-1]["label"]) == ("ranking", "추천 3곳 고르기")
     assert (stored["passed_count"], sim["before"]["passed_count"], sim["after"]["passed_count"]) == (
-        len(PASSING), len(PASSING), len(PASSING) + 1,
+        len(PASSING) + 1, len(PASSING) + 1, len(PASSING) + 1,
     )
 
 
@@ -321,7 +321,7 @@ def test_get_run_evidence_returns_every_line_in_canonical_order(db_session):
          "enforced": True, "not_enforced_reason": None, "effect": "filter"},
         {"line_id": lines["좁아요"], "text": "좁아요", "badge": "required", "fact_key": "spacious",
          "wants": True, "is_active": True, "author_id": "user_1", "chip_id": "cafe_narrow",
-         "enforced": True, "not_enforced_reason": None, "effect": "filter"},   # soft 키도 required면 거른다(#751)
+         "enforced": True, "not_enforced_reason": None, "effect": "score"},   # soft 키는 점수에 반영
         {"line_id": lines["조용한 곳"], "text": "조용한 곳", "badge": "preferred", "fact_key": "quiet",
          "wants": True, "is_active": False, "author_id": "user_1", "chip_id": None,
          "enforced": True, "not_enforced_reason": None, "effect": "score"},   # 끈 줄도 켜면 쓰인다(#740)
@@ -362,9 +362,9 @@ def test_get_run_meta_tells_who_where_and_how_far(db_session):
     assert before == {
         "run_id": str(run.id), "map_id": "map_1", "category": "카페", "requested_by": "user_1",
         "status": "collecting_evidence", "result_count": 0, "created_at": run.created_at,
-        "default_radius_walk_min": 15, "widen_limit_walk_min": 30, "widen_step_walk_min": 5,
+        "default_radius_m": 1000, "widen_limit_m": 5000, "widen_step_m": 1000, "default_radius_walk_min": 12, "attempt_no": 1,
     }
-    assert (after["status"], after["result_count"]) == ("done", 1)
+    assert (after["status"], after["result_count"]) == ("done", 2)
 
 
 # ---------- simulate_filter ----------
@@ -378,7 +378,7 @@ def test_simulate_before_equals_the_actual_execution(db_session):
 
     assert result["before"] == api.get_run_funnel(db_session, run_id=str(run.id))   # 키가 붙은 같은 모양(#751)
     assert (result["before"]["result_count"], result["before"]["passed_count"]) == (
-        len(service.list_candidates(db_session, str(run.id))), 1,
+        len(service.list_candidates(db_session, str(run.id))), 2,
     )
     assert result["after"] == result["before"]  # 바꾼 것이 없으면 같다
 
@@ -389,8 +389,8 @@ def test_simulate_turning_off_one_line_lifts_only_that_disqualification(db_sessi
     result = api.simulate_filter(db_session, run_id=str(run.id), disable_line_ids=[lines["좁아요"]], **_gateways())
 
     before, after = _removed(result["before"]["funnel"]), _removed(result["after"]["funnel"])
-    assert (before["실격 조건 제거"], after["실격 조건 제거"]) == (2, 1)  # narrow만 풀리고 crowded는 그대로 빠진다
-    assert (result["before"]["result_count"], result["after"]["result_count"]) == (1, 2)
+    assert (before["실격 조건 제거"], after["실격 조건 제거"]) == (1, 1)  # hard 조건만 거른다
+    assert (result["before"]["result_count"], result["after"]["result_count"]) == (2, 2)
     assert {k: v for k, v in after.items() if k != "실격 조건 제거"} == {k: v for k, v in before.items() if k != "실격 조건 제거"}
 
 
@@ -409,7 +409,7 @@ def test_simulate_larger_radius_factor_drops_fewer_places_at_the_radius_step(db_
 
     before, after = _removed(result["before"]["funnel"]), _removed(result["after"]["funnel"])
     assert (before["반경 밖 제거"], after["반경 밖 제거"]) == (1, 0)
-    assert (result["before"]["result_count"], result["after"]["result_count"]) == (1, 2)  # far가 들어온다
+    assert (result["before"]["result_count"], result["after"]["result_count"]) == (2, 3)  # far가 들어온다
 
 
 def test_simulate_keeps_proposed_and_dismissed_places_out(db_session, monkeypatch):
@@ -466,7 +466,7 @@ def test_simulate_rejects_a_line_of_another_run_and_a_factor_out_of_range(db_ses
         with pytest.raises(AppError) as exc:
             api.simulate_filter(db_session, run_id=str(run.id), disable_line_ids=bad_ids, **_gateways())
         assert exc.value.code == "NOT_FOUND"
-    for factor in (0, -1.0, 2.5):   # 2.5는 넓히기 상한(30분 / 15분 = 2배) 밖이다(#792)
+    for factor in (0, -1.0, 5.5):   # 5.5는 넓히기 상한(5,000m / 1,000m = 5배) 밖이다(#792)
         with pytest.raises(ValueError):
             api.simulate_filter(db_session, run_id=str(run.id), radius_factor=factor, **_gateways())
 
@@ -478,4 +478,4 @@ def test_simulate_uses_the_same_gateways_as_execution_by_default(db_session, mon
 
     result = api.simulate_filter(db_session, run_id=str(run.id))
 
-    assert result["before"]["result_count"] == 1
+    assert result["before"]["result_count"] == 2

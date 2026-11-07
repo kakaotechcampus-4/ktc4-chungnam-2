@@ -25,7 +25,7 @@
 | 배포 | `.github/workflows/deploy.yml`이 OIDC 역할로 SSM 명령을 보내 서버의 `deploy/deploy.sh <환경> <태그>`를 돌린다. develop은 이미지가 만들어지면 스테이징에 자동, 운영은 사람이 v 태그를 골라 수동 | 22번 포트와 서버 키가 없다. 운영은 태그를 골라 올린다(멘토) | — |
 | 확인 | 스테이징에서 QA 하네스(`qa/harness/run_api_cases.py --base-url`)로 핵심 흐름을 돈다. 통과한 `main` 커밋에만 태그를 단다 | 멘토 「배포된 주소의 핵심 흐름 테스트, 통과한 커밋에만 태그」 | — |
 | 환경 맞추기 | 운영, CI, 로컬, 배포 도구가 같은 Python(3.12)과 PostgreSQL/PostGIS(17 / 3.5)를 쓴다. Python은 `backend/.python-version`이 정본이고 CI가 읽는다. 이미지, CI, 로컬, 배포 스크립트의 버전과 아래 DB 줄의 운영 버전은 `backend/integration/test_env_parity.py`가 대조한다(#916) | CI는 운영에서 돌 것을 미리 확인하는 곳이라 환경이 다르면 운영을 대신하지 못한다(멘토). 처음에는 CI만 3.10, PostGIS 16이었다 | 버전을 올릴 때 — 한쪽만 올리면 테스트가 실패한다 |
-| 비밀 | 서버의 `deploy/env/*.env`(권한 600). 세션 비밀, DB 비밀번호, QA 비밀은 서버에서 만들었고 외부 키(카카오, 엘리스)만 옮겼다. 저장소, 이미지, 채팅에 남기지 않는다. 값마다 새면 열리는 범위와 바꾸는 법은 아래 「비밀이 새면」 | 서버 1대에 가장 단순하다. 보관함으로 옮겨도 서버가 값을 읽어야 해서 침입당한 서버에서 새는 범위는 비슷하다(멘토) | 사람이나 서버가 늘 때 보관함과 접근 기록 |
+| 비밀 | 서버의 `deploy/env/*.env`(권한 600). 세션 비밀, DB 비밀번호, QA 비밀은 서버에서 만들었고 외부 키(카카오, 모델 제공자 OpenAI)만 옮겼다. 저장소, 이미지, 채팅에 남기지 않는다. 값마다 새면 열리는 범위와 바꾸는 법은 아래 「비밀이 새면」 | 서버 1대에 가장 단순하다. 보관함으로 옮겨도 서버가 값을 읽어야 해서 침입당한 서버에서 새는 범위는 비슷하다(멘토) | 사람이나 서버가 늘 때 보관함과 접근 기록 |
 | 주기 작업 | 서버 cron(`deploy/crontab`). 두 번 돌아도 안전한 작업만 둔다 | 멘토 「주기 작업은 바깥에서 부르되 두 번 돌아도 안전하게」 | — |
 
 ### 타협과 다시 볼 조건
@@ -49,7 +49,7 @@
 | DB 앱 계정 비밀번호(`DATABASE_URL`) | `env/<환경>.env`, `pingo_prod_app`과 `pingo_staging_app`이 따로다(#873) | 그 환경 DB 전부(사유 글, 구성원). 다른 환경 DB에는 접속이 거절된다. RDS는 팀 EC2에서만 붙으므로 서버 밖에서는 이 값만으로 못 들어온다 | 마스터로 `ALTER ROLE pingo_<환경>_app PASSWORD '…'` → `env/<환경>.env`의 `DATABASE_URL` 고치기 → API 다시 올리기 | 다시 올리는 몇 초 동안 그 환경이 열리지 않는다 |
 | RDS 마스터(`pingo_admin`) | Secrets Manager. 서버에 저장하지 않는다 | 두 환경 DB 전부, 계정 만들기와 지우기 | Secrets Manager가 30일마다 바꾼다. 급하면 콘솔에서 즉시 교체 | 앱은 마스터를 쓰지 않아 영향이 없다 |
 | 카카오 `KAKAO_CLIENT_SECRET`, `KAKAO_REST_API_KEY` | `env/<환경>.env` | 우리 앱 이름으로 로그인 코드 교환, 로컬 API 호출(호출 한도를 쓴다). 두 환경이 같은 카카오 앱이면(「서버 처음 준비」 8번) 한쪽에서 새도 둘 다다 — 같은 앱인지 확인 필요 | 카카오 Developers에서 다시 발급 → 두 환경 env 고치기 → 다시 올리기 | 그 사이 로그인과 장소 검색이 실패한다 |
-| 엘리스 `ELICE_ML_API_KEY` | `env/<환경>.env` | 팀 비용으로 모델 호출. 두 환경이 같은 키인지 확인 필요 | 엘리스에서 다시 발급 → env 고치기 → 다시 올리기 | 그 사이 추천의 사유 구조화와 AI 코스가 실패한다 |
+| 모델 제공자 `ELICE_ML_API_KEY`(2026-11-02부터 OpenAI 프로젝트 키, 이름만 ELICE로 남았다, #1120) | `env/<환경>.env`. 환경마다 OpenAI 프로젝트와 키가 따로다 | 팀 비용으로 모델 호출(그 프로젝트의 월 예산 한도까지 쓴다). 사유 글이 모델로 간다 | OpenAI에서 새 키 발급 → env 고치기 → 다시 올리기. 순서는 아래 「모델 제공자 키 바꾸기」. 옛 키는 OpenAI에서 지운다 | 그 사이 추천의 사유 구조화와 AI 코스가 실패한다 |
 | `QA_LOGIN_SECRET` | `env/staging.env`만. 운영에 있으면 서버가 뜨지 않는다(#789) | 스테이징에 사용자를 만들 수 있다. 운영에는 경로가 없다 | 새 값으로 바꾸고 스테이징 API 다시 올리기 | 없음(하네스는 서버 안에서 같은 값을 읽는다) |
 | DuckDNS 토큰 | `/srv/pingo/secrets/duckdns_token` | 주소가 가리키는 IP를 바꿔 사용자를 다른 서버로 보낼 수 있다 | DuckDNS에서 토큰 재발급 | 없음(고정 IP라 갱신 작업을 꺼 두었다) |
 | 옛 서버 안 DB 비밀번호 | `env/db.env`, `env/<환경>.env.before-rds` | 멈춘 컨테이너 DB(되돌리기용 볼륨). 외부 포트가 없다 | 11/20에 볼륨과 함께 없앤다 | 없음 |
@@ -58,7 +58,7 @@
 
 값이 아닌데 새면 큰 것: `/srv/pingo/backups/*.dump`(운영 DB 전체 덤프, 14일 보관, 암호화 안 됨)는 DB 비밀번호보다 넓다 — 데이터 자체다.
 
-**서버가 통째로 새면**(env 파일, 덤프, 인스턴스 역할이 한꺼번에): 1) 보안 그룹에서 80과 443을 닫아 격리한다 2) 덤프가 있었으니 데이터가 나갔다고 보고 운영진에게 알린다 3) DB 앱 계정 비밀번호 → `SESSION_SECRET` → 카카오, 엘리스 키 순서로 바꾼다(앞의 둘은 우리가 바로 바꿀 수 있고, 데이터와 사용자 사칭을 막는다).
+**서버가 통째로 새면**(env 파일, 덤프, 인스턴스 역할이 한꺼번에): 1) 보안 그룹에서 80과 443을 닫아 격리한다 2) 덤프가 있었으니 데이터가 나갔다고 보고 운영진에게 알린다 3) DB 앱 계정 비밀번호 → `SESSION_SECRET` → 카카오, 모델 제공자(OpenAI) 키 순서로 바꾼다(앞의 둘은 우리가 바로 바꿀 수 있고, 데이터와 사용자 사칭을 막는다).
 
 다시 볼 때: 사람이나 서버가 늘 때(보관함과 접근 기록), 위 교체를 한 번 리허설할 때(바꾸는 법 칸이 실제로 맞는지).
 
@@ -105,6 +105,7 @@
 ## 배포할 때마다
 
 - **스테이징**: develop에 머지하면 `images.yml`이 이미지를 만들고 스테이징에 올린다. 따로 할 일이 없다.
+  - 배포로 API·화면 컨테이너가 다시 뜨는 10~30초 동안 앞단 프록시(Caddy)는 연결을 최대 30초 다시 시도한다(`deploy/Caddyfile`의 `lb_try_duration 30s`, #1403). 그동안 요청은 느려질 뿐 502로 실패하지 않는다. 연결을 잡고 있던 SSE는 끊기고 FE가 마지막 `id`로 다시 연결한다. Caddy 설정은 `sync.sh`가 배포 때마다 다시 읽는다(`caddy reload`).
 - **운영(릴리스)**: 1) develop → main PR(멘토 리뷰)을 머지한다. 2) Actions의 `deploy`를 스테이징, `sha-<main 커밋 7자리>`로 돌린다. 3) Actions의 `staging-check`(QA 하네스를 서버의 스테이징 컨테이너 안에서 공개 주소로 돈다, 비밀은 서버 밖으로 나오지 않는다)를 그 커밋으로 돌린다. 매일 06:00에도 develop으로 돈다. 4) 통과하면 그 main 커밋에 `v0.x.y` 태그를 단다 → `images.yml`이 그 태그로 이미지를 만든다. 5) `deploy`를 운영, `v0.x.y`로 돌린다. 운영은 배포 직전에 DB를 덤프한다(`deploy/backup.sh`).
 - **롤백**: `deploy`를 운영, 이전 `v` 태그로 돌린다. 버그는 그 버전 위에서 고치지 않고 develop에서 고쳐 다음 버전으로 올린다(멘토). 건강 확인에 실패한 배포는 `deploy.sh`가 이전 태그로 되돌린다.
 - **환경 변수를 바꿀 때**: 서버의 `deploy/env/<환경>.env`를 고치고 그 환경을 다시 올린다. 새 키를 더한 PR은 `backend/.env.example`과 `deploy/env/*.env.example`을 같이 고친다. 값은 저장소나 채팅에 남기지 않는다.
@@ -114,7 +115,7 @@
 
 API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 설정은 `common/settings.py`의 `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_PRE_PING`, `DB_POOL_RECYCLE_S`, #810). 기본은 풀 5 + 넘침 10, `pool_pre_ping`은 켬이다. 풀은 1 이상, 넘침은 0 이상, 재활용은 -1 또는 1 이상만 받고 그 밖은 기동에서 막는다(0 이하는 SQLAlchemy에서 연결 무제한이다). 이 계산이 DB의 `max_connections`를 넘지 않게 맞춘다.
 
-`환경 2 × 프로세스 1 × (풀 + 넘침) + 작업 여유 ≤ DB max_connections` — 서버 안 DB는 `max_connections`가 60이라 2 × 1 × 15 = 30에 정리·백업·psql 작업 여유가 들어간다. 프로세스(워커)를 늘리면 곱하는 수가 늘어나니 풀 값을 같이 줄인다. RDS는 인스턴스 크기에 따른 `max_connections`를 확인하고 같은 식으로 센다.
+`환경 2 × 프로세스 1 × (풀 + 넘침) + 작업 여유 ≤ DB max_connections` — `deploy/compose.yml`의 API 컨테이너 둘이 각각 `backend/Dockerfile`의 `--workers 1`로 돈다. 기본 상한은 2 × 1 × (5 + 10) = 30이다. 서버 안 DB의 `max_connections=60` 기준으로 남은 30 안에 정리·백업·마이그레이션·psql과 재배포 중 겹치는 프로세스의 연결을 모두 잡는다. 프로세스(워커)를 늘리면 곱하는 수가 늘어나니 풀 값을 같이 줄인다. 현재 RDS에서는 실제 `SHOW max_connections` 결과를 확인하고 같은 식으로 센다(60으로 가정하지 않는다). 별도 명령 프로세스도 자기 풀이 생기므로 명령 개수와 풀 상한을 작업 여유에 포함한다.
 
 ## 스키마를 바꿀 때
 
@@ -126,6 +127,17 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 - 칸 이름이나 뜻을 바꾸는 것은 「새 칸 더하기 → 옮기기 → 옛 칸 지우기」로 나눈다.
 - API는 하위 호환으로 바꾼다. 필드는 더하기만 하고, 지우기는 화면이 쓰지 않게 된 다음에 한다.
+- 모델에서 칸을 빼도 마이그레이션은 그 칸을 지우지 않는다. 남는 칸이 NOT NULL이면 새 코드의 INSERT를 위해 기본값을 건다. 지우는 일은 아래 「지울 칸」 표에 적고 다음 릴리스에 한다.
+
+검사가 이 규칙을 지킨다(`backend/integration/test_schema_compat.py`, #1464). 빈 DB에 head까지 올리고 이전 릴리스(최신 `v` 태그, 없으면 `origin/main`)의 모델과 비교한다. 이전 코드가 쓰는 테이블·칸이 없거나, 이전 코드가 모르는 NOT NULL 칸에 기본값이 없거나, NULL을 허용하던 칸이 NOT NULL이 되면 실패한다. 그래서 줄이기는 그 칸을 읽는 코드가 이전 릴리스에서도 빠져야 통과한다. 이전 코드의 raw SQL, 이전 코드가 모르는 값, 칸의 뜻 변경은 검사가 못 보니 리뷰로 본다. 이 검사가 생기기 전 0062가 칸 삭제와 기본값 제거를 같은 마이그레이션에서 했다(멘토 리뷰, 0062를 고치고 0067이 되살렸다).
+
+### 지울 칸
+
+모델에서는 뺐지만 DB에 남겨 둔 테이블과 칸이다. 같은 검사가 지금 모델과 head 스키마를 비교해서, 모델에 없는 칸이 이 표에 없거나 표의 줄이 실제와 다르면 실패한다. 줄이기 마이그레이션을 넣을 때 그 줄을 지운다.
+
+| 테이블.칸 | 남긴 이유 | 줄이기 |
+|---|---|---|
+| `agent_course_runs.snapshot_pin_ids` | 일정 version(`snapshot_version`)이 대신한다(#1321). 이전 릴리스가 읽고 쓴다. 새 코드는 쓰지 않아 기본값 `'[]'`가 들어간다 | #1465 — 칸 삭제와 `snapshot_version` 기본값(`'legacy'`) 제거. 운영에 #1321 코드가 올라간 다음 릴리스 |
 
 ## 데이터가 바뀔 때
 
@@ -141,12 +153,13 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 ### 장소 데이터 적재
 
-지금 데이터는 정예DB 공유본 2026-10-25판이다(서울, 그리고 v2 범위인 대전, 춘천, 광주, 대구, 부산). 폴더는 저장소 밖에 둔다. 명령은 `backend`에서 돌리고, 윈도는 먼저 `PYTHONUTF8=1`을 켠다. 공유본 안의 `README.md`가 명령의 정본이고, 아래는 그 순서를 옮긴 것이다.
+지금 데이터는 정예DB 최종본 2026-11-04판이다(`정예DB_final_2026-11-04_서울`·`_타지역` 두 묶음, 한 폴더에 합쳐 쓴다)(서울, 그리고 v2 범위인 대전, 춘천, 광주, 대구, 부산). 폴더는 저장소 밖에 둔다. 명령은 `backend`에서 돌리고, 윈도는 먼저 `PYTHONUTF8=1`을 켠다. 공유본 안의 `README.md`가 명령의 정본이고, 아래는 그 순서를 옮긴 것이다.
 
 1. 새 공유본으로 바꿀 때는 새 DB에서 시작한다. 로더는 파일에서 빠진 장소와 라벨을 지우지 않는다(공유본 `서울/README.md` "적재만으로는 지워지지 않는 것"). 새 DB를 만들고 `python -m alembic upgrade head`를 먼저 한다. **운영 DB는 예외다** — 사용자의 지도와 핀이 장소 id를 가리켜 새 DB로 갈아탈 수 없다. 운영에 새 판을 넣는 절차(제자리 갱신: 장소 id 유지, 출처 기록만 더하고, 빠진 정예는 추천 후보에서만 빠짐)는 #886이 끝나야 생긴다. 그 전에는 운영에 새 판을 넣지 않는다.
 2. 서울 정예: `restaurants`, `cafes`, `tourapi` 순서로 `--authoritative --file <장소> --labels <라벨>`. 관광지 라벨은 JSON이 아니라 CSV다. 음식점 다음에 카페를 넣어 두 파일에 겹치는 6곳을 카페로 둔다(#507).
 3. 서울 커버리지: `permit --encoding cp949`에 인허가 파일 3개를 `--file`로 한 번에 준다. 이어서 `restaurant-labels --file permit_cover_labels.json`.
 4. 지역마다(v2): 2와 3을 `--all-regions`를 붙여 같은 순서로 한다(`restaurant-labels`에는 붙이지 않는다).
+0. 시·도 경계(#1385): 장소보다 먼저 `boundaries --dir <폴더>/시도경계`. 통계청 2018 시·도 경계 17개 파일(`11.json` … `39.json`)이고 정본은 화면의 `frontend/src/features/map/regionBoundaries/`다. 데이터 폴더의 `시도경계/`에 그 파일을 **그대로** 복사해 둔다. 로더가 내용 해시를 `places/boundaries.py`의 기대값과 비교해 정본과 다른 파일이나 빠진 파일은 거절한다(17개를 모두 읽은 뒤에만 쓴다). 멱등이라 다시 돌려도 같은 코드는 덮어쓴다. `load-places.sh`는 데이터 폴더에 `시도경계/`가 없으면 경고만 하고 이 단계를 건너뛰며(장소 적재는 계속, 끝에 「경계 미적재」 안내, `DRY_RUN=1`도 같다), `boundaries`만 요청했는데 폴더가 없으면 중단한다. 이 표가 비어 있으면 `sido_at`은 가장 가까운 장소 주소로 시·도를 읽는 옛 방식으로 돌아가고(표가 있어도 경계에 안 드는 해안·섬·바다 점은 같은 방식으로 한 번 더 본다), `circle_outside_region`은 None(모름)이라 아무것도 막지 않는다. **이미 도는 DB(운영 포함)에는 마이그레이션(0064) 뒤에 `deploy/load-places.sh <환경> <데이터 폴더> boundaries`로 이 단계만 넣을 수 있다**(장소·라벨은 건드리지 않는다). 화면 경계 파일을 바꾸면 `places/boundaries.py`의 기대 해시를 같은 PR에서 고치고(`test_sido_boundaries_1385`가 어긋남을 잡는다), 서버 사본과 표를 다시 넣는다.
 5. 영업시간: 장소를 모두 넣은 뒤 `place-hours`. 서울은 음식점 라벨 JSON, 카페 라벨 JSON, 관광지 `tourist_seoul_closed_days.json`. 지역은 음식점, 카페, 관광지 라벨 JSON에 `--all-regions`.
 
 - 모든 명령은 `--dry-run`을 지원한다. 처음 한 명령은 dry-run으로 경로와 건수를 확인한다.
@@ -160,6 +173,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 - `PINGO_ENV=staging`. 운영과 같은 기동 가드를 받는다(스텁 금지, CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`).
 - `SESSION_SECRET`은 운영과 다른 값이다. 스테이징에서 만든 세션 쿠키가 운영에서 통하지 않게 한다.
 - `QA_LOGIN_SECRET`이 있을 때만 `POST /auth/qa-login`이 붙는다(#789). 운영에는 이 값을 넣지 않는다. 넣으면 서버가 뜨지 않는다.
+- `CREDIT_AD_PROVIDER=fake`면 잔액 부족 안내에 「광고 보고 크레딧 받기」가 뜨고 테스트 광고 창(7초)을 연다(docs/credits-reviews.md 3.7, #1037). 비우면 버튼이 없다. 확인은 잔액이 크레딧 가격보다 적은 계정으로 한다. 운영에 `fake`를 넣으면 서버가 뜨지 않는다(#1038). 운영은 비워 두고, 실제 광고(`adsense`, `gpt`)는 화면에 그 제공자가 생긴 뒤 켠다(아직 없음).
 - DB는 운영과 나눈다. 운영 DB를 복사하지 않는다(실사용자 데이터, #53).
 - 값은 저장소나 채팅에 남기지 않는다.
 
@@ -167,10 +181,11 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 | 작업 | 명령 | 주기 | 상태 |
 |---|---|---|---|
-| 정기 정리: 지도(삭제 30일 후), 알림(90일), 게스트(90일 미사용), 모델 호출 사용량 `llm_calls`(30일, #870) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징) | 서버 cron(`deploy/crontab`) |
+| 정기 정리: 지도, 알림, 게스트, 모델 호출 사용량, 멱등 키, 탈퇴 계정, 이벤트, 삭제된 핀(#1063) | `deploy/run.sh <환경> python -m maintenance.run` | 하루 한 번(03:30 운영, 03:40 스테이징). 단계마다 비지 않으면 라운드·시간 상한까지 되풀이하고, 그래도 남으면 로그에 「정리 적체」(WARNING, 탈퇴 정리는 ERROR). 마지막 성공은 로그 「정리 마지막 성공」(#1213) | 서버 cron(`deploy/crontab`) |
 | 운영 DB 덤프 | `deploy/backup.sh prod` | 하루 한 번(04:00), 14일 보관 | 서버 cron. 운영 배포 직전에도 한다 |
 | v2 계획 보조 에이전트 관찰 | cron이 `python -m agent.tick`을 부른다(#812). 지도마다 lease와 token으로 겹쳐 돌아도 안전하다 | 5분(`docs/agent-v2.md` 12.1) | 서버 cron |
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
+| 헬스 체크 경보: 운영·스테이징의 화면(`/`)과 `/api/health` | `.github/workflows/uptime.yml`. 두 번(30초 간격) 다 실패하면 이슈 「[경보] 운영·스테이징 헬스 체크 실패」를 열고, 회복하면 닫는다(#1280) | 10분 안팎(GitHub 예약 실행) | GitHub Actions — 서버 밖에서 본다 |
 | 장소 후기 신고 확인 | 아래 「후기 신고 확인과 숨김」 | 매일(운영) | **사람이 한다.** 신고가 와도 알림이 없다 — 자동 알림은 아직 없다 |
 
 ### 후기 신고 확인과 숨김
@@ -198,18 +213,70 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 ## 배포 뒤 볼 지표
 
-지도가 늘면 v2 관찰(tick)이 가장 먼저 걸린다(멘토 리뷰 #680). tick은 5분마다 지도를 최대 `TICK_MAX_MAPS`(6)곳 관찰한다(`agent/constants.py`).
+지도가 늘면 v2 관찰(tick)이 가장 먼저 걸린다(멘토 리뷰 #680). tick은 5분마다 지도를 최대 `TICK_MAX_MAPS`(6)곳 관찰한다(`agent/constants.py`). 자동 경보는 두지 않고 아래 기준을 사람이 하루 한 번 본다(2026-11-02 결정, #1072).
 
 | 지표 | 읽는 법 | 이렇게 보이면 |
 |---|---|---|
 | stale로 버린 관찰 비율 | `select outcome, count(*) from agent_runs where trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 stale ÷ 전체 | 늘면 관찰이 겹치거나 늦게 끝나고 있다. 결과가 틀리지는 않지만(저장할 때 지도 행을 잠그고 다시 확인한다) 모델 호출을 버린다 |
-| tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 로그 한 줄 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`(#756). 차례였던 지도, 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산으로 미룬 수, 걸린 ms. 시간 예산으로 미룬 지도가 있으면 warning | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다 |
+| tick당 처리 수와 미룬 지도 수, 걸린 시간 | tick 끝의 로그 한 줄 `agent tick due= observed= deferred_by_max= deferred_by_budget= elapsed_ms=`(#756). 차례였던 지도, 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산으로 미룬 수, 걸린 ms. 시간 예산으로 미룬 지도가 있으면 warning | 미룬 지도가 tick마다 남으면 처리 수나 주기를 바꾼다. 시간 예산으로 미룬 지도가 연속 3 tick이면 본다(#1072). 시간 예산은 150초(`TICK_BUDGET_SEC`)로 두고 이 지표로 본다(#754). 걸린 시간이 lease(180초)를 넘는 tick이 보이면 105초(`LEASE_SEC − 75`)로 낮춘다. 로그는 서버의 `/srv/pingo/logs/agent-tick-<환경>.log`다 |
+| 진단 실패 비율 | `select outcome, count(*) from agent_runs where used_model and trigger in ('activity', 'time') and started_at > now() - interval '1 day' group by 1` 에서 model_failed와 invalid_schema ÷ 전체 | 20% 이상이면 모델 제공자 상태를 본다(#1072). 진단만 실패하고 다른 기능은 돈다. 진단 전체를 끄는 장치는 두지 않았다(`docs/agent-v2.md` 21.3) |
+| 관찰 예외 | `select outcome_detail->>'stage', outcome_detail->>'error', count(*) from agent_runs where outcome = 'error' and started_at > now() - interval '1 day' group by 1, 2` | 1건부터 본다(#1072). 코드 오류다. 그 지도는 30분, 2시간, 6시간 뒤 다시 관찰된다 |
+| 서비스 일일 예산과 웹 확인 | `select date_trunc('day', created_at at time zone 'Asia/Seoul') d, feature, count(*), sum(web_searches), round(sum(cost_krw)) from llm_calls where created_at > now() - interval '7 days' group by 1, 2 order by 1, 2`. 막힌 날은 API 로그의 `llm daily budget paused` | 예산(`LLM_DAILY_BUDGET_KRW`, 3,000원)에 닿는 날이 이어지면 웹 확인 대상(제안당 1줄)이나 예산을 다시 본다. 웹 검색 요금은 OpenAI 대시보드의 web search 줄과 `sum(web_searches)`를 대조한다(#1216). 웹 확인을 끄려면 `LLM_DAILY_BUDGET_KRW=0` 뒤 API 다시 만들기 |
+
+### 에이전트 개입 라벨링 표본 (#1072)
+
+v2 지도 제안이 쓸모 있었는지(탐지 정밀도, `docs/agent-v2.md` 21.5)를 재려고 스테이징의 제안 표본을 뽑아 사람이 라벨을 붙인다. QA로 지도가 쌓인 뒤 한다. **운영에서는 돌리지 않는다**(운영 DB를 밖으로 옮기지 않는다, #53). 명령은 PINGO_ENV가 staging이 아니면 `--staging`을 거부한다(#1076).
+
+1. 콘솔 EC2 → 연결 → Session Manager로 서버에 들어가 `cd /srv/pingo/deploy`.
+2. 표본 뽑기(유형마다 25건까지, 같은 seed면 같은 표본):
+   ```
+   ./run.sh staging python -m agent.label_sample --staging --out - > /tmp/agent-labels.csv
+   ./run.sh staging python -m agent.label_sample --staging --per-type 40 --seed 3 --out - > /tmp/agent-labels.csv
+   ```
+   유형별 건수는 화면(표준 오류)에 나오고 파일에는 CSV만 간다. 모두 0이면 아직 관찰된 제안이 없는 것이다.
+3. 파일 가져오기: 브라우저 터미널에는 내려받기가 없어 `cat /tmp/agent-labels.csv`로 띄워 복사하고, 이 PC에서 `.csv`로 저장한다. 엑셀에서 한글이 깨지면 데이터 → 텍스트/CSV에서 UTF-8로 연다.
+4. 서버의 파일 지우기: `rm /tmp/agent-labels.csv`. CSV는 저장소에 커밋하지 않는다.
+5. 「개입할 만했나」와 메모 칸을 채우고(판정 기준은 `docs/agent-v2.md` 21.5), 유형별 수를 21.5 표에 옮긴다.
+
+CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어가 없다. 인용은 「[인용]」, 핀 이름은 「[핀]」으로 바뀌어 나온다(`agent/label_sample.py`).
+
+### 모델 제공자 키 바꾸기 (#1120)
+
+모델은 2026-11-02부터 OpenAI API를 직접 부른다(`gpt-6-luna`). 환경 변수 이름은 `ELICE_ML_API_*`로 남아 있다. 키를 새로 넣거나 새서 바꿀 때 이 순서로 한다. 환경마다 OpenAI 프로젝트와 키를 따로 쓴다(로컬, 스테이징, 운영).
+
+1. OpenAI 플랫폼에서 그 환경 프로젝트의 새 키를 만든다. 키는 만들 때 한 번만 보인다. 프로젝트마다 월 예산 한도를 걸어 둔다. 코드의 서비스 일일 예산(`LLM_DAILY_BUDGET_KRW`, 하루 3,000원)은 넘으면 웹 확인만 끄고 진단, 현황 문단, 추천, AI 코스는 그대로 부른다(`docs/agent-v2.md` 19절). 그래서 모든 호출을 막는 지출 방어선은 이 프로젝트 한도뿐이다.
+2. 서버 Session Manager에서 `bash`로 바꾼 뒤(기본 셸이 sh라 `read -s`가 안 된다) 키가 화면과 기록에 남지 않게 넣는다. `<환경>`은 `staging` 또는 `prod`다.
+   ```
+   bash
+   cd /srv/pingo/deploy
+   cp -p env/<환경>.env env/<환경>.env.before-key
+   sed -i 's|^ELICE_ML_API_BASE_URL=.*|ELICE_ML_API_BASE_URL=https://api.openai.com/v1|' env/<환경>.env
+   read -s -p "키: " K; echo
+   sed -i "s|^ELICE_ML_API_KEY=.*|ELICE_ML_API_KEY=$K|" env/<환경>.env; unset K
+   docker compose up -d --no-deps --force-recreate api-<환경>
+   docker compose ps api-<환경>        # 1~2분 안에 (healthy)
+   ```
+   `env/<환경>.env`를 `cat`으로 통째로 보지 않는다(비밀값이 나온다). 확인은 주소 줄만 `grep '^ELICE_ML_API_BASE_URL'`로 한다. 키 입력 칸은 붙여 넣어도 화면에 아무것도 안 보이는 것이 정상이다. 여러 줄을 한꺼번에 붙여 넣으면 다음 줄이 키로 들어가므로 한 줄씩 한다.
+3. 키가 통하는지 컨테이너 안에서 본다. 출력은 모델 이름이나 오류 클래스뿐이다.
+   ```
+   docker compose exec -T api-<환경> python -c "
+   from common.settings import settings
+   from openai import OpenAI
+   try:
+       print(OpenAI(base_url=settings.elice_ml_api_base_url, api_key=settings.elice_ml_api_key).models.retrieve('gpt-6-luna').id)
+   except Exception as e:
+       print(type(e).__name__, getattr(e, 'status_code', ''))
+   "
+   ```
+   `gpt-6-luna`가 나오면 된다. `AuthenticationError 401`은 키가 틀렸거나 붙여 넣을 때 잘못 들어간 것이다. `NotFoundError 404`, `PermissionDeniedError 403`은 그 프로젝트에 모델 접근이 없는 것이다.
+4. 스테이징이면 Actions의 `staging-check`를 돌리고 화면에서 추천과 AI 코스를 한 번씩 누른다.
+5. 되돌리기: `cp -p env/<환경>.env.before-key env/<환경>.env` 뒤 같은 `up` 명령. 사본은 바꾸기 전 값이다. 새서 바꾼 거라면 사본을 지운다(`rm`).
 
 ## 배포 전에 정할 것
 
-- `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
-- 세션 쿠키의 `Secure`는 설정 `COOKIE_SECURE`가 정한다(#810). 기본은 staging, prod에서 켬이고 dev, test에서 끔이다. 아직은 설정 정의만 끝났다. 실제 쿠키에 Secure를 거는 일(`settings.cookie_secure` 사용)은 auth 후속이고, 그때 응답의 `Set-Cookie`도 검증한다. 로컬 http로 staging을 띄워 하네스를 돌릴 때만 `COOKIE_SECURE=0`으로 끈다. 배포된 서버의 env에는 적지 않는다.
-- staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 `PLACES_MODE=real`이면 카카오 키(`KAKAO_CLIENT_ID/SECRET/REDIRECT_URI`), `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 비었을 때 서버를 세운다(#810).
-- `/places/nearest`의 쿼리스트링(누른 좌표)은 uvicorn 접근 로그에서만 가린다(`places/logguard.py`). 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.
+- 모델 제공자를 OpenAI 직접 호출로 바꾼 뒤(#1120) 정하지 않은 것: 사유 글이 미국 OpenAI로 가는 데 따른 개인정보 국외 이전 고지(`최종기획안.md` 12절, 개인정보처리방침), 결제 주체(개인 카드인지 팀 계정인지), 운영 전환 시기. 운영은 아직 엘리스 때의 설정이다.
+- auth의 세션·state·선택 대기 쿠키의 `Secure`는 모두 `settings.cookie_secure`를 쓴다(#810). `COOKIE_SECURE` 기본은 staging, prod에서 켬이고 dev, test에서 끔이다. 응답의 `Set-Cookie`는 `auth/tests/test_cookie_secure.py`에서 검증한다. 로컬 http로 staging을 띄워 하네스를 돌릴 때만 `COOKIE_SECURE=0`으로 끈다. 배포 서버에서는 기본값을 유지한다.
+- staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 실제 어댑터의 키가 비거나 공백뿐이면 `ConfigError`로 막는다(#810). `PLACES_MODE=real`일 때 `PLACES_SOURCES`에 `kakao`가 있으면 `KAKAO_REST_API_KEY`(비면 `KAKAO_CLIENT_ID`로 폴백), `naver`가 있으면 `NAVER_SEARCH_CLIENT_ID`와 `NAVER_SEARCH_CLIENT_SECRET`이 필요하다. 선택하지 않은 소스의 키는 요구하지 않는다. 로그인용 `KAKAO_CLIENT_SECRET`, `KAKAO_REDIRECT_URI`는 장소 어댑터 키가 아니며 로그인 설정은 별도로 채운다. `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 필요하다(2026-11-02부터 이 두 값은 OpenAI 주소와 프로젝트 키이고 이름만 ELICE로 남았다, #1120). dev, test에서는 키 없이도 기동한다. 오류에는 누락된 변수 이름만 담고 키 값은 담지 않는다.
+- uvicorn 접근 로그는 모든 경로의 쿼리스트링(code·state·검색어·좌표)을 지우고 초대 토큰 경로는 `/invites/{token}`으로 바꿔 찍는다. DB 오류의 예외 로그는 SQL 매개변수 없이 종류와 호출 위치만 남긴다(`common/logguard.py`, #473, #1201). Dockerfile의 uvicorn 실행 인자는 바꾸지 않았다. 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.
 - 비로그인 `GET /invites/{token}`에는 호출 상한이 없다. 토큰이 256비트라 추측은 비현실적이지만, 넣을지 정한다(#168).
 - 개발 중 로컬 DB에 쌓인 카카오 좌표와 이름은 배포 전에 지운다(`docs/architecture.md`, #53). 배포 DB를 로컬 DB에서 복사하지 않는다.

@@ -79,12 +79,22 @@ class PinCreateLive(BaseModel):
     memo: str | None = Field(default=None, max_length=200)
 
 
+class PinLinkRef(BaseModel):
+    """#1048 번호표 학습 입력 — 핀에는 저장하지 않는다. 번호 형식 판단은 places가 맡는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["kakao", "naver"]
+    external_id: str = Field(min_length=1, max_length=100)
+
+
 class PinCreateSearch(BaseModel):
     """place_id·place_name·lat·lng·category는 **저장하지 않는 매칭 힌트**다(#191, 스펙 PinCreateSearch).
     서버가 같은 자체 DB 장소를 찾아 그 장소의 값으로 핀을 만든다. source를 생략하거나 search로 보낸다."""
 
     category: Category
     source: PinSource = "search"
+    link_ref: PinLinkRef | None = None
     link_url: str | None = Field(default=None, max_length=2000)   # v1은 값이 있으면 422(core) — 길이는 스펙과 맞춘다(#733)
     place_id: str = Field(max_length=100)
     place_name: str = Field(max_length=100)
@@ -185,7 +195,7 @@ class PinUpdateRequest(BaseModel):
         if not self.model_fields_set:
             raise ValueError("수정할 필드(memo, category)가 하나는 있어야 해요")
         if any(getattr(self, name) is None for name in self.model_fields_set):
-            raise ValueError("memo와 category는 null일 수 없어요 — 메모는 빈 문자열로 지운다")
+            raise ValueError("memo와 category는 null일 수 없어요. 메모는 빈 문자열로 지워요")
         return self
 
 
@@ -247,6 +257,22 @@ class ReasonChip(BaseModel):
     label: str
     fact_key: str | None = None
     wants: bool | None = Field(default=None, exclude=True)
+
+
+class TrashedPin(BaseModel):
+    """휴지통의 핀 한 건(#864, 스펙 TrashedPin) — 복구하면 Pin이 된다."""
+
+    pin: Pin
+    deleted_at: datetime
+    deleted_by_name: str | None = Field(default=None, max_length=50)
+    purge_at: datetime
+    days_left: int = Field(ge=0)
+    was_confirmed: bool
+
+
+class PinTrash(BaseModel):
+    items: list[TrashedPin]
+    retention_days: int
 
 
 class FilterCounts(BaseModel):

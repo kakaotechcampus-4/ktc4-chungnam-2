@@ -1,6 +1,8 @@
 """asyncio 폴링 루프 + map_id별 in-memory 구독자 큐. lifespan에서 시작·종료한다."""
 
 import asyncio
+import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -11,6 +13,15 @@ from common.events import EventLog
 from realtime.core import advance, close_after
 
 POLL_INTERVAL = 0.5
+MAX_RETRY_INTERVAL = 8.0
+POLL_STALE_SECONDS = 30.0
+# 한 tick이 가져오는 행 수 상한 — 이벤트가 몰려도 한 번에 큰 결과를 들지 않는다. 남은 행은 마지막으로
+# 처리한 seq 뒤부터 다음 tick이 이어서 가져온다(순서·누락 없음).
+TICK_ROW_LIMIT = 500
+# 구독 큐 상한 — 소비가 느린 연결(끊긴 모바일 등)에 메모리가 끝없이 쌓이지 않게 한다. 넘치면 그 구독만
+# 끊고, 클라이언트가 Last-Event-ID로 재연결해 재전송(24h)·REST 재조회로 따라잡는다(docs/events.md 3·5번).
+SUBSCRIBER_QUEUE_MAX = 1000
+logger = logging.getLogger("pingo.realtime")
 
 # 종료 신호 — 구독 큐에 이 값이 들어오면 SSE 제너레이터는 스스로 빠져나온다(서버 종료, 또는
 # map.deleted·member.left 뒤 구독 끊기 — docs/events.md "구독을 끊는 경우").
@@ -26,7 +37,7 @@ class Subscription:
 
     channel: str            # "public" | "private"
     user_id: str            # 구독한 사람(두 채널 모두)
-    queue: "asyncio.Queue" = field(default_factory=asyncio.Queue)
+    queue: "asyncio.Queue" = field(default_factory=lambda: asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX))
 
     def wants(self, row: EventLog) -> bool:
         if row.channel != self.channel:
@@ -47,6 +58,9 @@ class Dispatcher:
         # 넘나들며 재사용하지 않게 한다.
         self._stop: asyncio.Event | None = None
         self._stop_requested = False   # run_forever가 Event를 만들기 전에 온 정지 요청 보관
+        self.error_count = 0
+        self.last_success_at: float | None = None  # monotonic clock
+        self._health_since: float | None = None
         self._closing = False   # 종료 중이면 새 구독도 곧바로 닫힌 채로 내준다
 
     def initialize_last_seen(self) -> None:
@@ -60,7 +74,7 @@ class Dispatcher:
         sub = Subscription(channel=channel, user_id=user_id)
         self._subscribers.setdefault(map_id, []).append(sub)
         if self._closing:
-            sub.queue.put_nowait(CLOSED)
+            self._close(sub)
         return sub
 
     def request_stop(self) -> None:
@@ -79,8 +93,23 @@ class Dispatcher:
         """열려 있는 모든 SSE 구독을 깨워 스스로 종료하게 한다 — `await sub.queue.get()` 대기 해제."""
         self._closing = True
         for subs in self._subscribers.values():
-            for sub in subs:
-                sub.queue.put_nowait(CLOSED)
+            for sub in list(subs):
+                self._close(sub)
+
+    @staticmethod
+    def _close(sub: Subscription) -> None:
+        """구독 큐에 CLOSED를 넣는다. 큐가 가득 찼으면 쌓인 행을 버리고 넣는다 — 어차피 끊을 구독이고,
+        받은 쪽은 마지막으로 받은 id로 재연결해 따라잡는다."""
+        if sub.queue.full():
+            while not sub.queue.empty():
+                sub.queue.get_nowait()
+        sub.queue.put_nowait(CLOSED)
+
+    def _evict(self, map_id: str, sub: Subscription) -> None:
+        """큐가 넘친 구독을 끊는다 — 구독 목록에서 빼고 CLOSED로 스트림을 끝낸다."""
+        self._close(sub)
+        self.unsubscribe(map_id, sub)
+        logger.warning("subscription closed: queue full map_id=%s channel=%s", map_id, sub.channel)
 
     def unsubscribe(self, map_id: str, sub: Subscription) -> None:
         # list.remove()는 이미 없는 항목이면 ValueError를 던져 finally 블록에서 원래 예외를
@@ -95,10 +124,25 @@ class Dispatcher:
         if not subs:
             self._subscribers.pop(map_id, None)   # 빈 리스트를 계속 안 들고 있는다
 
+    def begin_health_window(self) -> None:
+        """health 상태를 동기로 초기화한다 — lifespan이 task를 만들기 전에 부른다. task 첫 실행 전에
+        /health가 불려도 시작 시각이 이미 있어 오탐 503이 나지 않는다(run_forever도 없으면 스스로 부른다)."""
+        self.error_count = 0
+        self.last_success_at = None
+        self._health_since = time.monotonic()
+
+    def healthy(self) -> bool:
+        # 시작 시각(_health_since)이 있어야 한다 — begin_health_window가 기록하고 run_forever 종료 때 지운다.
+        reference = self.last_success_at if self.last_success_at is not None else self._health_since
+        return reference is not None and time.monotonic() - reference <= POLL_STALE_SECONDS
+
     async def run_forever(self) -> None:
         if self._started:
             raise RuntimeError("Dispatcher.run_forever()는 두 번 시작할 수 없다")
         self._started = True
+        if self._health_since is None:   # lifespan이 미리 기록하지 않은 경우(직접 호출)
+            self.begin_health_window()
+        retry_interval = POLL_INTERVAL
         stop = self._stop = asyncio.Event()
         if self._stop_requested:
             stop.set()
@@ -106,28 +150,51 @@ class Dispatcher:
             while not stop.is_set():
                 try:
                     # sleep 대신 정지 신호를 기다린다 — 신호가 오면 폴링 텀을 안 채우고 바로 깬다.
-                    await asyncio.wait_for(stop.wait(), POLL_INTERVAL)
+                    await asyncio.wait_for(stop.wait(), retry_interval)
                     break
                 except asyncio.TimeoutError:
                     pass
                 # 동기 DB 쿼리를 async 루프 안에서 그대로 부르면 그 500ms 폴링 텀마다 이벤트 루프
-                # 전체(다른 SSE 연결 포함)가 DB 왕복 시간만큼 멈춘다. 스레드로 넘긴다.
-                await asyncio.to_thread(self._tick)
+                # 전체(다른 SSE 연결 포함)가 DB 왕복 시간만큼 멈춘다. 조회만 스레드로 넘기고, 구독 큐와
+                # 구독 목록은 이벤트 루프(여기)에서만 만진다 — asyncio 객체는 스레드에서 만지지 않는다.
+                try:
+                    rows = await asyncio.to_thread(self._tick)
+                    backlog = self._process(rows or [])
+                except Exception as exc:  # noqa: BLE001
+                    self.error_count += 1
+                    logger.warning("dispatcher tick failed: %s", type(exc).__name__)
+                    # backlog 직후라 간격이 0이어도 실패 백오프는 POLL_INTERVAL부터 시작한다(0×2=0 방지, #1200).
+                    retry_interval = min(max(retry_interval, POLL_INTERVAL) * 2, MAX_RETRY_INTERVAL)
+                else:
+                    self.last_success_at = time.monotonic()
+                    retry_interval = 0 if backlog else POLL_INTERVAL   # 남은 행은 텀 없이 이어서
+                    await asyncio.sleep(0)   # 텀이 0이어도 SSE 전송 task들이 큐를 비울 차례를 준다
         finally:
             # 같은 프로세스에서 lifespan이 다시 돌 수 있다(테스트의 여러 TestClient 등).
             self._started = False
+            self.last_success_at = None
+            self._health_since = None   # 멈춘 폴러는 healthy()가 False
             self._stop = None
             self._stop_requested = False
 
-    def _tick(self) -> None:
+    def _tick(self) -> list:
+        """worker thread에서 돈다 — DB 조회 결과(행 목록)만 돌려주고 dispatcher 상태는 바꾸지 않는다.
+        _last_seen은 이벤트 루프만 쓰고, 루프는 이 조회를 기다리는 동안 쓰지 않는다."""
         with SessionLocal() as db:
-            rows = db.execute(
-                select(EventLog).where(EventLog.seq > self._last_seen).order_by(EventLog.seq)
-            ).scalars().all()
+            return list(db.execute(
+                select(EventLog).where(EventLog.seq > self._last_seen)
+                .order_by(EventLog.seq).limit(TICK_ROW_LIMIT)
+            ).scalars().all())
+
+    def _process(self, rows: list) -> bool:
+        """이벤트 루프에서 조회 결과를 처리한다. 상한만큼 가득 가져왔고 그중 일부라도 진행했으면 True
+        (바로 다음 tick을 돌린다). 구멍 대기로 진행이 없으면 False라 텀을 두고 기다린다."""
+        before = self._last_seen
         emit, self._last_seen, self._gap_since = advance(
-            self._last_seen, rows, datetime.now(timezone.utc), self._gap_since
+            before, rows, datetime.now(timezone.utc), self._gap_since
         )
         self._deliver(emit)
+        return len(rows) >= TICK_ROW_LIMIT and self._last_seen > before
 
     def _deliver(self, rows) -> None:
         """행마다 받을 구독에 넣고, 그 행이 구독을 끊는 행이면 해당 구독에 CLOSED를 넣는다.
@@ -136,13 +203,16 @@ class Dispatcher:
             subs = list(self._subscribers.get(row.map_id, []))
             for sub in subs:
                 if sub.wants(row):
-                    sub.queue.put_nowait(row)
+                    try:
+                        sub.queue.put_nowait(row)
+                    except asyncio.QueueFull:
+                        self._evict(row.map_id, sub)
             scope = close_after(row)
             if scope is None:
                 continue
             for sub in subs:
                 if scope.covers(sub.user_id):
-                    sub.queue.put_nowait(CLOSED)
+                    self._close(sub)
 
 
 dispatcher = Dispatcher()
