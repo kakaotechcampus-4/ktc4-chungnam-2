@@ -2,7 +2,7 @@
 # CI (backend-test, e2e) and local development install this file.
 # Keep this file ASCII: pip decodes it with the OS locale on Windows (cp949 fails on UTF-8 Korean).
 -r requirements.txt
-pytest==8.3.3
-pytest-asyncio==0.24.0
+pytest==9.0.3
+pytest-asyncio==1.3.0
 jsonschema==4.23.0
 import-linter==2.15
