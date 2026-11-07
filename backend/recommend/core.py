@@ -480,17 +480,6 @@ def trip_weekdays(start: date | None, end: date | None) -> list[int]:
     return sorted({(start + timedelta(days=i)).weekday() for i in range(days)})
 
 
-def trip_open_status(week_status: Mapping[int, str] | None, weekdays: Sequence[int]) -> str:
-    """여행 요일들에서 이 장소의 영업 여부 → "closed"(모든 여행 요일이 closed) | "open"(하나라도 open) | "unknown".
-    요일별 상태는 places.api.get_week_open_status가 정한다(규칙은 한 곳). 여기서는 여행 요일에 모아 쓸 뿐이다."""
-    if not weekdays or not week_status:
-        return "unknown"
-    statuses = [week_status.get(day, "unknown") for day in weekdays]
-    if all(status == "closed" for status in statuses):
-        return "closed"
-    return "open" if "open" in statuses else "unknown"
-
-
 # 5-6 깔때기 단계 (키, 라벨) — 표의 순서가 깔때기 순서다(#751). 라벨은 화면에 보이고 last_funnel에 저장되는 글자, 키는
 # recommend.api를 읽는 모듈이 단계를 찾는 이름이다. 라벨을 바꾸면 옛 라벨로 저장된 깔때기는 키를 못 찾는다(None).
 FUNNEL_STAGES: tuple[tuple[str, str], ...] = (
