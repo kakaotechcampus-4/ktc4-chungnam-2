@@ -39,7 +39,7 @@ export default function RecommendTab() {
   if (run?.status === 'awaiting_region_confirm') return <EvidenceScreen mapId={mapId} run={run} />
   if (run?.status === 'collecting_evidence') return <ResumeRun mapId={mapId} run={run} />
   // 다시 추천·반경 넓히기마다 화면(어떻게 골랐나요 등)을 처음부터 그린다.
-  if (run) return <RunResult key={`${run.id}-${run.attempt_no}-${run.default_radius_walk_min ?? 0}`} mapId={mapId} run={run} />
+  if (run) return <RunResult key={`${run.id}-${run.attempt_no}-${run.default_radius_m ?? 0}`} mapId={mapId} run={run} />
 
   // 혼자 쓰는 지도도 같은 조건으로 추천을 받는다(2026-10-07, #360) — 구성원 수로 막지 않는다.
   return (

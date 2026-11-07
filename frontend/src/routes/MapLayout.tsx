@@ -23,8 +23,7 @@ import MapSwitcher from '@/features/maps/MapSwitcher'
 import NotificationBell from '@/features/notifications/NotificationBell'
 import { useMapQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
-import { RECOMMEND_RADIUS_M } from '@/features/recommend/model'
-import { useResultQuery } from '@/features/recommend/queries'
+import { useRecommendRadiusM, useResultQuery } from '@/features/recommend/queries'
 import { firstMapLink } from '@/features/kakaoImport/share'
 import { isLinkInput } from '@/features/search/model'
 import { useSourcePlacesQuery } from '@/features/search/queries'
@@ -139,6 +138,8 @@ export default function MapLayout() {
   const regionBoundary = useRegionBoundary(onRecommendTab ? mapInfo?.region?.label : undefined)
   const run = useAiStore((s) => s.runs[mapId])
   const result = useResultQuery(run?.status === 'done' ? run : undefined).data
+  // 원 반경은 준비 화면에서 고른 카테고리의 서버 값이다(Readiness.radius_m, #1468). 없으면 원을 그리지 않는다.
+  const recommendRadiusM = useRecommendRadiusM(mapId)
   const candidateFocus = useAiStore((s) => s.focus)
   const candidates = useMemo(
     () =>
@@ -255,7 +256,7 @@ export default function MapLayout() {
   const fittedResult = useRef<string | null>(null)
   useEffect(() => {
     if (!onRecommendTab || !mapReady || !run || run.status !== 'done' || !result) return
-    const key = `${run.id}-${run.attempt_no}-${run.default_radius_walk_min ?? 0}`
+    const key = `${run.id}-${run.attempt_no}-${run.default_radius_m ?? 0}`
     if (fittedResult.current === key) return
     const points = result.candidates.flatMap((c) => (c.lat == null || c.lng == null ? [] : [{ lat: c.lat, lng: c.lng }]))
     if (!points.length) return
@@ -398,7 +399,7 @@ export default function MapLayout() {
         candidates={candidates}
         route={routeDrawings}
         // 원은 준비 화면(run 없음)에만 그린다. 결과의 다시 추천·넓히기는 run을 만들 때의 가운데에서 찾아서, 지도를 따라가는 원은 그 범위와 어긋난다.
-        recommendArea={onRecommendTab ? { boundary: regionBoundary, radiusM: run ? null : RECOMMEND_RADIUS_M } : null}
+        recommendArea={onRecommendTab ? { boundary: regionBoundary, radiusM: run ? null : recommendRadiusM } : null}
         // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 확정된 장소」로 돌아온다).
         onSelect={(pinId) => {
           setPanelOpen(true)

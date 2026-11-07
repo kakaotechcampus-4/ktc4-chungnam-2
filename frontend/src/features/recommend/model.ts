@@ -111,15 +111,38 @@ export function evidenceLimitMessage(err: unknown): string | null {
   return typeof limit === 'number' ? `직접 추가는 ${limit}개까지예요` : '직접 추가는 더 할 수 없어요'
 }
 
+/** 반경(m)을 화면 글자로. 화면은 표시용 km 변환만 하고 반경 숫자는 서버 값만 쓴다(#733, #1468). */
+export const radiusKm = (m: number) => `${m / 1000}km`
+
 /**
- * AI 추천이 찾는 범위 — 지도 가운데(보이는 가운데, #1331) 반경(m). 화면이 원을 그리고 확인 창에 알린다.
- * 사용자 결정 2026-11-04(#1385): 모든 카테고리 3km. 서버는 아직 도보 15·25분(1.2·2km)으로 찾는다 —
- * 서버가 반경을 응답으로 내리면 그 값을 쓴다(#733, 정책 값은 응답으로).
+ * AI 추천이 찾는 범위 — 고른 카테고리의 기본 반경(m, `Readiness.radius_m`, #1385). 지도 원과 크레딧 확인 창이 같은 값을 쓴다.
+ * 값이 없으면(구버전 서버, 카테고리를 아직 못 고름) null — 원을 그리지 않고 숫자 없이 알린다. 숫자를 지어내지 않는다(#1468).
  */
-export const RECOMMEND_RADIUS_M = 3000
+export function readinessRadiusM(map: Partial<Record<RecommendCategory, ReadinessDto>> | undefined, category: RecommendCategory | null): number | null {
+  return (category && map?.[category]?.radius_m) || null
+}
 
 /** 확인 창에 보이는 범위 한 줄. */
-export const recommendAreaNote = () => `지도 가운데 반경 ${RECOMMEND_RADIUS_M / 1000}km 안에서 찾아요`
+export const recommendAreaNote = (radiusM: number | null) =>
+  radiusM ? `지도 가운데 반경 ${radiusKm(radiusM)} 안에서 찾아요` : '보이는 지도 가운데 주변에서 찾아요'
+
+/** 넓히기 상한 안내 — 409 `WIDEN_LIMIT` 토스트와, 서버가 상한이라고 미리 알려 준 「반경 넓히기」 옆 이유가 같은 말이다. */
+export const WIDEN_LIMIT_MESSAGE = '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
+
+/** 이미 상한이라 넓힐 수 없다 — 서버가 `next_default_radius_m: null`을 내렸을 때만(#1370). 칸이 없으면(구버전 서버) 누른 뒤 409로 안다. */
+export const widenAtLimit = (run: RecommendRunDto) => run.next_default_radius_m === null
+
+/**
+ * 「반경 넓히기」 확인 창의 「넓혀요」 한 줄 — 지금 반경과 넓힌 뒤 반경은 서버 값이다(#1370, #1468).
+ * 다시 추천·넓히기는 추천받을 때의 지도 가운데에서 찾는다(지금 보이는 가운데가 아니다). 모르는 쪽 숫자는 빼고 말한다.
+ */
+export function widenLine(run: RecommendRunDto): string {
+  const now = run.default_radius_m
+  const next = run.next_default_radius_m
+  if (now != null && next != null) return `추천받은 지도 가운데 반경 ${radiusKm(now)}에서 ${radiusKm(next)}로`
+  if (next != null) return `추천받은 지도 가운데 반경을 ${radiusKm(next)}로`
+  return '추천받은 지도 가운데 기본 반경을 한 단계 더'
+}
 
 /**
  * 서버가 같은 요청을 아직 처리 중이다(409 `REQUEST_IN_PROGRESS`) — 기다려도 안 끝나 멈췄을 때. 실패가 아니다:
@@ -142,7 +165,7 @@ export function runErrorMessage(err: unknown): string {
  * 넓히기 상한(`WIDEN_LIMIT`)은 넓히기 버튼이 하는 일이라 다른 길(조건 고치기·직접 찍기)을 알린다.
  */
 export function rerunErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
+  if (err instanceof ApiError && err.code === 'WIDEN_LIMIT') return WIDEN_LIMIT_MESSAGE
   return inProgress(err) ? IN_PROGRESS_MESSAGE : '추천을 끝내지 못했어요. 잠시 뒤 다시 눌러 주세요'
 }
 
@@ -271,4 +294,13 @@ export function runHistoryLine(r: RunSummaryDto): string {
   return r.published_count > 0 ? `${r.candidate_count}곳 찾음 · 지도에 올림 ${r.published_count}곳` : `${r.candidate_count}곳 찾음`
 }
 
-export const summaryToRun = (r: RunSummaryDto): RecommendRunDto => ({ id: r.id, map_id: r.map_id, category: r.category, status: r.status, attempt_no: r.attempt_no })
+export const summaryToRun = (r: RunSummaryDto): RecommendRunDto => ({
+  id: r.id,
+  map_id: r.map_id,
+  category: r.category,
+  status: r.status,
+  attempt_no: r.attempt_no,
+  // 「지난 추천」에서 연 run 도 반경 넓히기 확인 창이 서버 반경을 보인다(#1370).
+  default_radius_m: r.default_radius_m,
+  next_default_radius_m: r.next_default_radius_m,
+})

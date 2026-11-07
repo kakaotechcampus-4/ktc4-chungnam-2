@@ -10,13 +10,19 @@ import {
   memberConditions,
   noResultsExternalSearch,
   notEnforcedNote,
+  readinessRadiusM,
+  recommendAreaNote,
   rerunErrorMessage,
   runErrorMessage,
+  summaryToRun,
+  widenAtLimit,
+  widenLine,
   toReadinessCards,
   type CandidateDto,
   visibleConditionCount,
   runHistoryLine,
   type EvidenceLineDto,
+  type RecommendRunDto,
   type RunSummaryDto,
 } from './model'
 
@@ -169,5 +175,38 @@ describe('추천 실패 문구(#1385, #1386 리뷰)', () => {
     expect(rerunErrorMessage(err('WIDEN_LIMIT'))).toBe('더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요')
     expect(rerunErrorMessage(err('REQUEST_IN_PROGRESS'))).toBe(IN_PROGRESS)
     expect(rerunErrorMessage(err('INTERNAL'))).toBe('추천을 끝내지 못했어요. 잠시 뒤 다시 눌러 주세요')
+  })
+})
+
+describe('추천 반경은 서버 m 값만 쓴다(#1468)', () => {
+  // 입력 값은 임의다 — 화면이 서버 값을 그대로 옮기는지만 본다(정책 값은 docs/constraints.md).
+  const run = (over: Partial<RecommendRunDto>): RecommendRunDto => ({ id: 'r', map_id: 'm', category: '음식점', status: 'done', attempt_no: 1, ...over })
+
+  it('넓히기 확인 창: 지금 → 넓힌 뒤 반경을 km로, 모르는 쪽 숫자는 빼고, 도보 분·「핀 주변」은 없다', () => {
+    expect(widenLine(run({ default_radius_m: 2500, next_default_radius_m: 3500 }))).toBe('추천받은 지도 가운데 반경 2.5km에서 3.5km로')
+    expect(widenLine(run({ next_default_radius_m: 3500 }))).toBe('추천받은 지도 가운데 반경을 3.5km로')
+    expect(widenLine(run({}))).toBe('추천받은 지도 가운데 기본 반경을 한 단계 더')
+  })
+
+  it('상한은 서버가 next 를 null 로 내렸을 때만이다. 칸이 없으면(구버전 서버) 누를 수 있다', () => {
+    expect(widenAtLimit(run({ default_radius_m: 4200, next_default_radius_m: null }))).toBe(true)
+    expect(widenAtLimit(run({ default_radius_m: 4200, next_default_radius_m: 5200 }))).toBe(false)
+    expect(widenAtLimit(run({}))).toBe(false)
+  })
+
+  it('「지난 추천」에서 연 run 도 반경 두 칸을 그대로 갖는다', () => {
+    const summary: RunSummaryDto = { id: 'r', map_id: 'm', category: '카페', status: 'done', attempt_no: 2, created_at: '2026-11-01T00:00:00Z', candidate_count: 3, published_count: 0, default_radius_m: 4200, next_default_radius_m: null }
+    expect(summaryToRun(summary)).toMatchObject({ default_radius_m: 4200, next_default_radius_m: null })
+    expect(widenAtLimit(summaryToRun(summary))).toBe(true)
+  })
+
+  it('찾는 범위는 고른 카테고리의 readiness radius_m 이다. 없으면 null 이고 문구에 숫자가 없다', () => {
+    const map = { 음식점: { radius_m: 2500 }, 카페: {} }
+    expect(readinessRadiusM(map, '음식점')).toBe(2500)
+    expect(readinessRadiusM(map, '카페')).toBeNull()
+    expect(readinessRadiusM(map, null)).toBeNull()
+    expect(readinessRadiusM(undefined, '음식점')).toBeNull()
+    expect(recommendAreaNote(2500)).toBe('지도 가운데 반경 2.5km 안에서 찾아요')
+    expect(recommendAreaNote(null)).not.toMatch(/\d/)
   })
 })
