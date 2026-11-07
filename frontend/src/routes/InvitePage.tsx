@@ -197,7 +197,7 @@ function InviteBroken({ problem }: { problem: InviteProblem }) {
   return (
     <EntryFrame as="div" className="bg-ink-50 px-4 pb-6">
       <div className="flex flex-1 flex-col justify-center">
-        <EmptyState mood="sorry" title={BROKEN_TITLE[problem]}>
+        <EmptyState mood="sad" title={BROKEN_TITLE[problem]}>
           초대한 친구에게 새 링크를 받아주세요
         </EmptyState>
       </div>

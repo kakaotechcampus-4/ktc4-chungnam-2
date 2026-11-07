@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
@@ -19,7 +19,7 @@ import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
-import { isLive, locationState, useLivePlaceStore } from './livePlaces'
+import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
 import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
@@ -108,14 +108,34 @@ export function PinDetailHeader({
  * 실시간 핀(#382) — 자체 장소 데이터에 없는 곳을 사람이 남긴 핀. 조건 확인·AI 추천·동선에는 쓰이지 않는다.
  * 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
  */
-function LiveInfo({ pin }: { pin: Pin }) {
+export function LiveInfo({ pin }: { pin: Pin }) {
   const places = useLivePlaceStore((s) => s.places)
+  const since = useLivePlaceStore((s) => s.since[pin.id])
+  const retry = useLivePlaceStore((s) => s.retry)
   const state = locationState(pin, places)
+  // 찾기 시작한 지 1분이 넘으면(검색 실패로 멈춘 경우 포함) 기다리게 두지 않고 다시 찾을지 묻는다.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (state !== 'loading' || since === undefined) return
+    const wait = since + LOCATE_SLOW_MS - Date.now()
+    if (wait <= 0) return
+    const t = setTimeout(() => setNow(Date.now()), wait)
+    return () => clearTimeout(t)
+  }, [state, since])
+  const slow = state === 'loading' && since !== undefined && now >= since + LOCATE_SLOW_MS
   return (
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
       <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
       <p className="text-ink-600">조건 확인, AI 추천, 동선에는 쓰이지 않아요. 의견은 남길 수 있어요.</p>
-      {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
+      {state === 'loading' && !slow && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
+      {slow && (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-ink-600">위치를 아직 찾지 못했어요. 다시 시도할까요?</p>
+          <button type="button" onClick={retry} className="btn-outline btn-sm shrink-0">
+            다시 시도
+          </button>
+        </div>
+      )}
       {state === 'missing' && <p className="font-semibold text-warn-text">위치를 찾지 못해서 지도에는 보이지 않아요.</p>}
     </div>
   )
