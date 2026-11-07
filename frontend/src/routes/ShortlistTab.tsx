@@ -169,7 +169,7 @@ export default function ShortlistTab() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-ink-500">여행 날짜를 정하면 일정을 짤 수 있어요</p>
+                <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
               )}
               <ShortlistList
                 items={items}

@@ -209,7 +209,7 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
         <SheetTitle>게스트로 시작하기</SheetTitle>
       </div>
       <p className="mt-3 break-keep text-sm text-ink-700">
-        친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요.
+        <Sentences text="친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요." />
       </p>
       <ul className="mt-4 space-y-2 rounded-xl bg-ink-50 p-4 text-sm text-ink-700">
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />핀 찍기와 의견 남기기는 똑같이 쓸 수 있어요</li>

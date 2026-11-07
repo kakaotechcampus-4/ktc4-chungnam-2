@@ -331,7 +331,7 @@ describe('AI 코스 짜기 시트', () => {
   it('위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다', async () => {
     resetScenario('happy-path') // 확정 리스트가 빈 상태로
     renderSheet()
-    expect(await screen.findByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '확정된 장소 보기' })).toHaveAttribute('href', '/maps/map_1/shortlist')
     expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
   })
@@ -363,7 +363,7 @@ describe('AI 코스 짜기 시트', () => {
     server.use(http.get('*/maps/:mapId/courses/latest', () => HttpResponse.json(done)))
     renderSheet()
     expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeDisabled()
-    expect(screen.getByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
+    expect(screen.getByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '최근 코스 보기' })).toBeInTheDocument()
   })
 
@@ -379,9 +379,9 @@ describe('AI 코스 짜기 시트', () => {
     )
     renderSheet()
     expect(await screen.findByText('불러오는 중…')).toBeInTheDocument()
-    expect(screen.queryByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).not.toBeInTheDocument()
+    expect(screen.queryByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).not.toBeInTheDocument()
     release()
-    expect(await screen.findByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).toBeInTheDocument()
   })
 })
 
@@ -426,7 +426,7 @@ describe('CourseBody — 확정 리스트 불러오기 실패', () => {
     server.use(http.get('*/maps/:mapId/shortlist', () => error(500, 'INTERNAL')))
     renderSheet()
     expect(await screen.findByText(/확정 리스트를 불러오지 못했어요/)).toBeInTheDocument()
-    expect(screen.queryByText(/2곳 이상 필요해요/)).not.toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('2곳 이상 필요해요')
     expect(screen.getByRole('button', { name: '다시 불러오기' })).toBeInTheDocument()
   })
 })

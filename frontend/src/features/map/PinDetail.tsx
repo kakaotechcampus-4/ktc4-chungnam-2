@@ -128,7 +128,7 @@ export function LiveInfo({ pin }: { pin: Pin }) {
   return (
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
       <p className="font-semibold text-ink-900">상세 정보가 등록되지 않은 장소예요</p>
-      <p className="text-ink-600">AI 추천이나 동선에는 반영되지 않지만, 구성원 간 의견은 자유롭게 나눌 수 있어요.</p>
+      <p className="text-ink-600"><Sentences text="AI 추천이나 동선에는 반영되지 않지만, 구성원 간 의견은 자유롭게 나눌 수 있어요." /></p>
       {state === 'loading' && !slow && <p className="text-ink-500">장소 위치를 확인하는 중이에요…</p>}
       {slow && (
         <div className="flex items-center justify-between gap-2">
@@ -140,7 +140,7 @@ export function LiveInfo({ pin }: { pin: Pin }) {
           </button>
         </div>
       )}
-      {state === 'missing' && <p className="font-semibold text-warn-text">위치 정보를 확인할 수 없어 지도에 표시되지 않아요.</p>}
+      {state === 'missing' && <p className="font-semibold text-warn-text"><Sentences text="위치 정보를 확인할 수 없어 지도에 표시되지 않아요." /></p>}
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { dayTitle } from '@/features/course/model'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import SidePanel from '@/features/shell/SidePanel'
 import EmptyState from '@/ui/EmptyState'
+import Sentences from '@/ui/Sentences'
 
 import { useShortlistQuery } from './queries'
 import { scheduledIds } from './schedule'
@@ -49,7 +50,7 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
       </div>
     )
   if (!edit.ready) return <p className="text-sm text-ink-500">불러오는 중…</p>
-  if (edit.dates.length === 0) return <p className="text-sm text-ink-500">여행 날짜를 정하면 일정을 짤 수 있어요</p>
+  if (edit.dates.length === 0) return <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
   const items = shortlist.data ?? []
   if (items.length === 0) {
     return <EmptyState title="아직 확정된 장소가 없어요">마킹된 장소에서 확정 리스트에 넣으면 여기서 날짜별로 나눌 수 있어요</EmptyState>
@@ -61,7 +62,7 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-ink-500">일정은 구성원 모두에게 보여요</p>
-      {scheduledIds(edit.schedule).size === 0 && <p className="text-sm text-ink-700">확정된 장소를 날짜별 칸으로 끌어 오거나 「넣기」를 눌러 하루 일정을 완성해 보세요</p>}
+      {scheduledIds(edit.schedule).size === 0 && <p className="text-sm text-ink-700"><Sentences text="확정된 장소를 날짜별 칸으로 끌어 오거나 「넣기」를 눌러 하루 일정을 완성해 보세요" /></p>}
       {edit.dates.map((d, i) => {
         const ids = edit.schedule.days[d] ?? []
         return (

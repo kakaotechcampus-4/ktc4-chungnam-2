@@ -22,7 +22,7 @@ const STEPS: Record<OnboardingKind, ReactNode[]> = {
       <span className="block">
         <Mark kind="against" /> 반대할 땐 이유를 꼭 남겨 주세요.
       </span>
-      <span className="block">AI가 그 이유로 더 좋은 곳을 찾아요</span>
+      <span className="block"><Sentences text="AI가 그 이유로 더 좋은 곳을 찾아요" /></span>
     </>,
     '직접 가고 싶은 장소가 있다면 검색해서 언제든 핀을 추가해 보세요',
   ],

@@ -21,7 +21,9 @@ export default function EmptyState({
   return (
     <div className="flex flex-col items-center py-6 text-center">
       <Pingo size={56} mood={mood} />
-      <p className="mt-3 text-balance break-keep font-bold text-ink-900">{title}</p>
+      <p className="mt-3 text-balance break-keep font-bold text-ink-900">
+        <Sentences text={title} />
+      </p>
       <p className="mt-1 break-keep text-sm text-ink-500">{typeof children === 'string' ? <Sentences text={children} /> : children}</p>
       {/* flex 로 감싸 링크(<a>)도 버튼처럼 블록으로 선다. */}
       {action && <div className="mt-4 flex">{action}</div>}
