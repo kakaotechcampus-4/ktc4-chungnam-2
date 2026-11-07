@@ -20,12 +20,15 @@ import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 import { useCreditsQuery } from '@/features/credits/queries'
+import FieldError from '@/ui/FieldError'
 import Mark from '@/ui/Mark'
+import RangeSlider from '@/ui/RangeSlider'
 
 import { useAiStore } from './aiStore'
 import {
   chosenCategory,
   radiusKm,
+  kmInputToM,
   radiusOptions,
   readinessRadiusM,
   recommendAreaNote,
@@ -113,7 +116,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const pickedRadius = useAiStore((s) => s.radius[mapId])
   const setRadius = useAiStore((s) => s.setRadius)
   const radiusM = readinessRadiusM(readiness.data, chosen, pickedRadius)
-  const radiusChoices = radiusOptions(chosen ? readiness.data?.[chosen] : undefined)
+  const chosenReadiness = chosen ? readiness.data?.[chosen] : undefined
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useRecountOnMapMove(readiness.refetch)
   // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧·찾는 범위). 버튼과 핑고 조언의 「추천 받아 보기」가 같은 창을 거친다.
@@ -158,13 +161,16 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           />
         ))}
       </div>
-      {radiusM && radiusChoices.length > 1 && (
+      {radiusM && chosenReadiness?.radius_min_m && chosenReadiness.radius_max_m && (
         <RadiusPicker
-          options={radiusChoices}
+          min={chosenReadiness.radius_min_m}
+          max={chosenReadiness.radius_max_m}
+          marks={radiusOptions(chosenReadiness)}
           value={radiusM}
-          onPick={(m) => {
+          // 끄는 동안 지도 원이 따라온다. 근처 정예 수(「주변에 추천할 장소가 없어요」)는 손을 뗄 때 한 번 다시 센다.
+          onChange={(m) => setRadius(mapId, m)}
+          onCommit={(m) => {
             setRadius(mapId, m)
-            // 근처 정예 수(「주변에 추천할 장소가 없어요」)를 고른 반경으로 다시 센다.
             void readiness.refetch()
           }}
         />
@@ -219,24 +225,92 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   )
 }
 
+/** 슬라이더 한 칸(m)과 눈금에 붙는 거리(m) — 화면이 고르는 단위다. 하한·상한·기본값은 서버 값이다(#1416). */
+const RADIUS_STEP_M = 100
+const RADIUS_SNAP_M = 150
+
 /**
- * 「찾는 범위」 — 추천 원의 반경을 고르는 칩 줄(#1416). 고를 수 있는 값과 처음 값은 서버가 준다(Readiness.radius_min_m·max_m·radius_m).
- * 고르면 지도 원이 바로 바뀌고, 「추천받기」가 그 반경으로 찾는다.
+ * 「찾는 범위」 — 추천 원의 반경(#1416). 슬라이더는 1km 눈금 근처에서 붙고, 정확한 값은 오른쪽 칸에 km로 넣는다(소수 첫째 자리).
+ * 고를 수 있는 범위와 처음 값은 서버가 준다(Readiness.radius_min_m·max_m·radius_m).
  */
-function RadiusPicker({ options, value, onPick }: { options: number[]; value: number; onPick: (m: number) => void }) {
-  const labelId = useId()
+function RadiusPicker({
+  min,
+  max,
+  marks,
+  value,
+  onChange,
+  onCommit,
+}: {
+  min: number
+  max: number
+  marks: number[]
+  value: number
+  onChange: (m: number) => void
+  onCommit: (m: number) => void
+}) {
+  const inputId = useId()
+  const errorId = useId()
+  // 칸에 쓰는 중인 글자. 쓰는 중이 아니면 고른 값을 보인다.
+  const [typing, setTyping] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  function commitTyped() {
+    if (typing === null) return
+    const m = kmInputToM(typing, min, max, RADIUS_STEP_M)
+    if (m === null) return setError(true)
+    setError(false)
+    setTyping(null)
+    onCommit(m)
+  }
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span id={labelId} className="text-label text-ink-500">
-        찾는 범위
-      </span>
-      <div role="group" aria-labelledby={labelId} className="flex flex-wrap gap-2">
-        {options.map((m) => (
-          <button key={m} type="button" aria-pressed={m === value} onClick={() => onPick(m)} className="chip">
-            {radiusKm(m)}
-          </button>
-        ))}
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor={inputId} className="text-label text-ink-500">
+          찾는 범위
+        </label>
+        <span className="field min-h-10 w-28 px-3">
+          <input
+            id={inputId}
+            type="number"
+            inputMode="decimal"
+            step={RADIUS_STEP_M / 1000}
+            min={min / 1000}
+            max={max / 1000}
+            value={typing ?? value / 1000}
+            onChange={(e) => setTyping(e.target.value)}
+            onBlur={commitTyped}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              e.preventDefault() // 준비 화면의 폼 제출(추천받기)로 번지지 않게
+              commitTyped()
+            }}
+            aria-invalid={error}
+            aria-describedby={error ? errorId : undefined}
+            className="w-full min-w-0 bg-transparent text-right outline-none"
+          />
+          <span aria-hidden="true" className="text-ink-500">km</span>
+        </span>
       </div>
+      <RangeSlider
+        min={min}
+        max={max}
+        step={RADIUS_STEP_M}
+        value={value}
+        marks={marks}
+        snapWithin={RADIUS_SNAP_M}
+        format={radiusKm}
+        label="찾는 범위"
+        onChange={(m) => {
+          setTyping(null)
+          setError(false)
+          onChange(m)
+        }}
+        onCommit={onCommit}
+      />
+      {error && (
+        <FieldError id={errorId}>
+          {radiusKm(min)}에서 {radiusKm(max)} 사이로 넣어 주세요
+        </FieldError>
+      )}
     </div>
   )
 }
