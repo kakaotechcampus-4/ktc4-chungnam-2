@@ -2,6 +2,12 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-07, `default_radius_walk_min`을 deprecated로 표시, 화면이 쓰는 deprecated 필드 검사 (#1467)
+
+- **`RecommendRun.default_radius_walk_min`** 에 `deprecated: true`를 달았다. 값과 응답은 그대로다(서버는 계속 내린다). 생성 타입에 `@deprecated`가 붙는다. #1385에서 반경을 m로 바꿀 때 글로만 "곧 없앤다"로 적어서 화면이 반경 넓히기 확인 창에 옛 칸(도보 분)과 +5분 계산을 계속 썼다(멘토 리뷰).
+- 화면은 `default_radius_m`, `next_default_radius_m`(넓히면 바뀔 반경, 상한이면 `null`)으로 옮긴다 — FE #1468.
+- **검사**: `contracts/checks/deprecated-fields.test.ts`. 스펙에서 deprecated인 속성·파라미터를 `frontend/src`가 쓰면 `docs/openapi-workflow.md` 「화면이 아직 쓰는 deprecated 필드」 표에 FE 이슈와 함께 있어야 통과한다. 표는 비어 가야 한다. 필드를 대체할 때의 절차는 같은 문서 4절 5번.
+
 ## 2026-11-05, 추천 반경을 사용자가 2~5km에서 정해 보낸다 — `radius_m` (#1416)
 
 - **`POST /maps/{mapId}/runs`** 요청에 선택 필드 `radius_m: integer`(2000 이상 5000 이하)를 더했다. 상위 호환 — 없으면 기본 3000(지금 동작). 범위 밖이거나 정수가 아니면 422 `VALIDATION_ERROR`. 값이 있으면 후보를 찾는 원의 반경, `OUTSIDE_TRIP_REGION` 판정의 반경, 저장되는 `default_radius_m`이 이 값이다. 반경 넓히기는 이 값에서 +1000m씩, 상한 5000m(그대로). 멱등 판정에 이 값이 들어간다(같은 키로 다른 반경은 409 `IDEMPOTENCY_CONFLICT`. 기본값 3000을 명시한 요청은 생략한 요청과 같은 요청이다. 반경 없는 요청은 이전과 같다).
@@ -114,6 +120,11 @@
 - `CourseStep.role`의 결정 설명을 「사람의 답 또는 기본값」에서 「코드가 고르거나 가정을 세움」으로 바꿨다.
 - `CourseRun.goals` 설명에 지도 근거 목표를 적었다: 요청이 없어도 우리 조건 요약과 야경 라벨로 목표가 생기고, label 끝에 「(지도에서 세운 목표)」가 붙는다(#1131). 「요청이 없으면 빈 배열」은 틀린 설명이었다.
 - 목 서버의 코스 작업 기록을 실서버 흐름(찾기 → 옮겨 보기 → 결정 → 짜기 → 비교 → 끝 → 가정 → 결과, 14줄)으로 바꿨다. 진행 중 조회의 줄 수(2개, 5개)는 그대로다.
+
+## 2026-11-04, `shortlist.changed(reordered)`는 요청 한 번에 하나 (#1274)
+
+- 페이로드 모양은 그대로다. **동작이 바뀐다**: 순서 바꾸기(`PUT /maps/{mapId}/shortlist/order`)와 일정 저장(`PUT /maps/{mapId}/shortlist/schedule`)이 항목마다 내던 `reordered` 이벤트를 요청 한 번에 하나만 낸다. `item`은 첫 항목이다. 확정된 장소가 없으면 내지 않는다.
+- FE 영향 없음 — 이벤트를 받으면 `docs/events.md` 표대로 확정 리스트를 다시 받고 `item`은 쓰지 않는다. 항목마다 내면 확정 20곳에 구성원마다 다시 받기가 최대 40번 시작됐다.
 
 ## 2026-11-03, `EvidenceLine.filters_candidates` 추가 — 후보를 빼는 줄과 순위만 바꾸는 줄 구분 (#1260)
 

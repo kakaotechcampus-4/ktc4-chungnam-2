@@ -122,6 +122,7 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     return _usage.reassign_user(db, from_user_id=from_user_id, to_user_id=to_user_id)
 
 
-def purge_old(db: Session, *, now: datetime, older_than_days: int = _usage.RETENTION_DAYS) -> dict[str, int]:
-    """보존 기간(30일)이 지난 llm_calls 행을 지운다. maintenance.run이 부른다. 테이블 → 지운 행 수."""
-    return _usage.purge_old(db, now=now, older_than_days=older_than_days)
+def purge_old(db: Session, *, now: datetime) -> dict[str, int]:
+    """보존 기간(`usage.RETENTION_DAYS`)이 지난 llm_calls 행을 지운다. 기간은 llm이 정한다(#1474). maintenance.run이 부른다.
+    테이블 → 지운 행 수."""
+    return _usage.purge_old(db, now=now)

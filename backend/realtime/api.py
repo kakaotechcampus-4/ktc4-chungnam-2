@@ -24,7 +24,8 @@ def purge_map_data(db: Session, *, map_ids: list[str]) -> dict[str, int]:
     return service.purge_map_data(db, map_ids=map_ids)
 
 
-def purge_old_events(db: Session, *, now: datetime, older_than_hours: int = 25) -> int:
-    """maintenance가 부른다(#1016) — 재전송 창(24시간)을 지난 event_log 행을 지운다(기본 25시간 전까지).
-    한 번에 1만 행까지만 지우니 남았으면 다음 실행이 이어서 지운다. 지울 게 없으면 0. 커밋하지 않는다."""
-    return service.purge_old_events(db, now=now, older_than_hours=older_than_hours)
+def purge_old_events(db: Session, *, now: datetime) -> int:
+    """maintenance가 부른다(#1016) — 재전송 창(`service.RETENTION`)을 지난 event_log 행을 지운다. 지우는 기준
+    (`service.PURGE_AFTER_HOURS`)과 한 번에 지우는 양(`service.PURGE_BATCH`)은 realtime이 정한다(#1474). 남았으면 다음 실행이
+    이어서 지운다. 지울 게 없으면 0. 커밋하지 않는다."""
+    return service.purge_old_events(db, now=now)

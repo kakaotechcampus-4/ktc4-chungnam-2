@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { DAYS_SAMPLE, EXPORT_SAMPLE, PC_DAYS_SAMPLE, PC_SAMPLE } from './__fixtures__/kakaotalkExport'
-import { isAddress, LINK_MAX, normalizeUrl, readShares } from './share'
+import { isAddress, isNameOnly, LINK_MAX, normalizeUrl, readShares } from './share'
 
 /** 픽스처 대화가 오간 날(2026-11-02) 하루. */
 const DAY = { from: '2026-11-02', to: '2026-11-02' }
@@ -25,6 +25,40 @@ describe('카톡 대화에서 링크와 공유 글 읽기(#1046)', () => {
 
   it('카카오 공유 글은 머리줄에 붙은 상호명을 읽고, 주소와 링크 사이 빈 줄을 건너뛴다', () => {
     expect(by('https://kko.to/UPShtpIfbq')).toMatchObject({ provider: 'kakao', name: '우슬', address: '대전 중구 중앙로138번길 48 (대흥동)' })
+  })
+
+  it('이름과 주소가 한 줄인 카카오맵 공유 글도 나눠 읽는다(place.map.kakao.com 링크)', () => {
+    const text = '2026년 11월 2일 오전 1:05, 도윤 : 성수동대림창고갤러리 서울 성동구 성수이로 78 1층\n\nhttps://place.map.kakao.com/1038283810'
+    expect(readShares(text, DAY).shares[0]).toMatchObject({
+      provider: 'kakao',
+      name: '성수동대림창고갤러리',
+      address: '서울 성동구 성수이로 78 1층',
+    })
+  })
+
+  it('한 줄 나누기는 건물번호가 있을 때만 — 지번도 나누고, 잡담 줄은 나누지 않고 같이 온 말로 남긴다(#1457)', () => {
+    const at = (above: string) => readShares(`2026년 11월 2일 오전 1:05, 도윤 : ${above}\nhttps://place.map.kakao.com/1`, DAY).shares[0]
+    expect(at('○○식당 서울 성동구 성수동2가 322-32')).toMatchObject({ name: '○○식당', address: '서울 성동구 성수동2가 322-32' })
+    for (const chat of ['이번엔 부산 해운대구 쪽으로 가볼까', '내일은 부산 해운대구 2시에 가자']) {
+      const share = at(chat)
+      expect(share.name).toBeUndefined()
+      expect(share.address).toBeUndefined()
+      expect(share.context).toEqual([chat])
+    }
+  })
+
+  it('링크 없는 「[지도] 이름」은 이름만 든 줄로 한 번 읽고, 링크 없는 다른 말이나 구글 분리형 이름은 넣지 않는다', () => {
+    const text = [
+      '2026년 11월 2일 오전 1:06, 도윤 : [지도] 성수동대림창고갤러리',
+      '2026년 11월 2일 오전 1:07, 도윤 : [지도] 성수동대림창고갤러리',
+      '2026년 11월 2일 오전 1:08, 준영 : 마를리',
+      '2026년 11월 2일 오전 1:08, 준영 : 서울 성동구 연무장길 47 홍원빌딩 1층',
+    ].join('\n')
+    const { shares } = readShares(text, DAY)
+    expect(shares).toEqual([{ url: '[지도] 성수동대림창고갤러리', provider: 'kakao', name: '성수동대림창고갤러리' }])
+    expect(isNameOnly(shares[0].url)).toBe(true)
+    // 픽스처의 구글 분리형 「[지도] 강남면옥 정동점」은 링크 줄의 이름이 됐을 뿐 따로 늘지 않는다(위 8개).
+    expect(found).toBe(8)
   })
 
   it('구글은 「이름 - 링크」 한 줄과, 바로 앞 메시지의 「[지도] 이름」을 이름으로 읽는다(주소는 없다)', () => {

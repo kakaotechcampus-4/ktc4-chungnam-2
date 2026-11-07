@@ -2,11 +2,16 @@ import { useState } from 'react'
 import { MessageSquare, Users } from 'lucide-react'
 
 import type { MemberView } from '@/features/maps/model'
+import Mark from '@/ui/Mark'
 
 import { fulfillmentLine, memberConditions, sourceLabel, toChecks, type AiEvidence, type CheckView } from './model'
 
 const TONE = { pass: 'tag-good', check: 'tag-warn', fail: 'tag-bad' } as const
-const MARK = { pass: '✓', check: '?', fail: '✗' } as const
+const MARK = {
+  pass: <Mark kind="check" size={12} />,
+  check: <Mark kind="unknown" size={12} />,
+  fail: <Mark kind="cross" size={12} />,
+} as const
 
 /**
  * AI가 고른 장소의 근거(가드레일 5) — 추천 이유, 조건별 충족 체크, 구성원 충족 집계, 출처.

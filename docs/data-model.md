@@ -57,7 +57,7 @@ maps(
                                                              -- 있거나 둘 다 없음
   created_by, created_at,              -- created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다(#369, 방장 정본은 memberships.role)
   deleted_at timestamptz null          -- #369: 방장이 삭제하면 찍는다(soft delete). 찍히면 모든 조회 경로에서 없는 지도(404)로 보인다.
-                                       --   #431(2026-10-10): 삭제한 지 30일이 지나면 정리 작업(`python -m maps.purge`)이 지도와 딸린 데이터를 실제로 지운다. **삭제한 지 30일 안이면 방장이 복구할 수 있다**(`POST /maps/{mapId}/restore`, #464) — `deleted_at`을 비우면 구성원·핀·반응·초대·확정 리스트·추천 기록은 그대로 돌아온다.
+                                       --   #431(2026-10-10): 삭제한 지 30일(`maps.core.TRASH_RETENTION`)이 지나면 정기 정리(`maintenance.run`)가 지도와 딸린 데이터를 실제로 지운다. **삭제한 지 30일 안이면 방장이 복구할 수 있다**(`POST /maps/{mapId}/restore`, #464) — `deleted_at`을 비우면 구성원·핀·반응·초대·확정 리스트·추천 기록은 그대로 돌아온다.
                                        --   → docs/architecture.md 「지도 삭제와 정리」
   deleted_by_withdrawal_of uuid null   -- #1000(2026-11-01): 방장이 탈퇴하면서 후임이 없어 지도를 같이 삭제한 경우(auth.WITHDRAW_STEPS의 maps 단계) 그 탈퇴자의 user id.
                                        --   직접 지운 지도는 NULL이다. 7일 안에 계정을 되살리면(`POST /auth/pending` restore) auth가 maps.api.restore_maps_deleted_by_withdrawal로
@@ -564,6 +564,7 @@ agent_course_runs(
   input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
   mode('plan'|'fill'|'review'),       -- 요청 때 서버가 확정 리스트의 일정 상태로 정한다(#1237). 진행 중에도 값이 있다
   snapshot_at, snapshot_version text, -- 요청 때 일정 version(shortlist, #1237 — 장소 집합·날짜 배정·순서·여행 기간). 지금과 다르면 응답의 stale=true. 0062 전 run은 'legacy'(→ stale)
+  snapshot_pin_ids jsonb default '[]', -- 지울 칸(deploy_rules.md, #1464). 이전 릴리스가 읽는 옛 stale 기준이다. 새 코드는 쓰지 않는다. 삭제는 #1465
   headline null, fixes jsonb, checked jsonb, -- 결과 머리 문구, 고칠 점 카드 [{id, kind, strength, text, moves:[{pin_id, from_date, to_date}], resolved_text, remaining_text, not_fixed_reason}], 점검 통과 [{kind, text}]. plan은 fixes·checked가 빈 배열
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]

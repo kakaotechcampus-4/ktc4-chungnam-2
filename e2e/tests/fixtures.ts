@@ -5,7 +5,9 @@ import { API_URL } from '../playwright.config'
 
 type User = { user_id: string; name: string; session: string }
 
-const users = (): Record<'owner' | 'member', User> => JSON.parse(process.env.E2E_USERS ?? '{}')
+type Role = 'owner' | 'member' | 'planner' | 'broke'
+
+const users = (): Record<Role, User> => JSON.parse(process.env.E2E_USERS ?? '{}')
 
 async function signedIn(browser: Browser, user: User, use: (page: Page) => Promise<void>) {
   // 카카오 로그인 대신 백엔드가 서명한 세션 쿠키(e2e/seed.py)를 넣는다. 화면(4173)과 API(8010)는 같은 localhost라 쿠키를 함께 쓴다.
@@ -16,9 +18,12 @@ async function signedIn(browser: Browser, user: User, use: (page: Page) => Promi
   await context.close()
 }
 
-export const test = base.extend<{ owner: Page; member: Page }>({
+// planner와 broke는 크레딧 잔액을 보는 시나리오용이다(#1424). 잔액은 사람마다라 다른 시나리오와 사용자를 나눠 쓰지 않는다.
+export const test = base.extend<Record<Role, Page>>({
   owner: async ({ browser }, use) => signedIn(browser, users().owner, use),
   member: async ({ browser }, use) => signedIn(browser, users().member, use),
+  planner: async ({ browser }, use) => signedIn(browser, users().planner, use),
+  broke: async ({ browser }, use) => signedIn(browser, users().broke, use),
 })
 
 export { expect }
@@ -69,4 +74,18 @@ export async function opposeWithChip(page: Page, chip: string) {
 /** 「마킹된 장소」 목록의 핀 줄. 접근성 이름이 「장소 이름 …」으로 시작한다. */
 export function pinRow(page: Page, name: string) {
   return page.getByRole('main', { name: '바텀시트' }).getByRole('button', { name: new RegExp(`^${name} `) })
+}
+
+/** 열린 핀 상세에서 「확정 리스트에 넣기」를 누른다. */
+export async function confirmPin(page: Page, name: string) {
+  // 일정을 다시 받기 전에 바로 날짜에 넣어도 저장돼야 한다(#1436) — 응답을 기다리지 않고 사람보다 빠르게 누른다.
+  await page.getByRole('button', { name: '확정 리스트에 넣기', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: name }).filter({ hasText: '확정 리스트에 넣었어요' })).toBeVisible()
+}
+
+/** 내 크레딧(GET /credits/me). 가격과 잔액은 화면처럼 응답에서 읽는다 — 숫자를 테스트에 적지 않는다. */
+export async function myCredits(page: Page): Promise<{ balance: number; max_balance: number; prices: Record<'recommend_run' | 'course', number> }> {
+  const res = await page.request.get(`${API_URL}/credits/me`)
+  expect(res.ok()).toBeTruthy()
+  return res.json()
 }

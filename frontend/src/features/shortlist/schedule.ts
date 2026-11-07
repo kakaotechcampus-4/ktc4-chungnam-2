@@ -82,29 +82,6 @@ export function routeDay(schedule: Schedule, dates: string[], chosen: string | n
   return dates.find((d) => (schedule.days[d]?.length ?? 0) > 0) ?? dates[0] ?? null
 }
 
-/**
- * 여행 기간과 확정 리스트에 맞춘다. 기간 밖 날에 넣은 장소는 일정에서 빼(확정 리스트로 돌아간다) 그 수를 `moved`로 센다.
- * 확정 해제된 핀은 그냥 빼고 세지 않는다(확정 탭에서 이미 보였다). 바뀐 게 없으면 같은 객체를 돌려준다.
- */
-export function prune(schedule: Schedule, dates: string[], pinIds: string[]): { schedule: Schedule; moved: number } {
-  const inTrip = new Set(dates)
-  const alive = new Set(pinIds)
-  const days: Record<string, string[]> = {}
-  let moved = 0
-  let changed = false
-  for (const [day, ids] of Object.entries(schedule.days)) {
-    const kept = ids.filter((id) => alive.has(id))
-    if (kept.length !== ids.length) changed = true
-    if (!inTrip.has(day)) {
-      moved += kept.length
-      changed = true
-      continue
-    }
-    if (kept.length > 0) days[day] = kept
-  }
-  return { schedule: changed ? { days } : schedule, moved }
-}
-
 /** 여행 날짜를 `from`에서 `to`로 고치면 빠지는 날(지금 기간 안, 새 기간 밖)에 넣어 둔 장소 수. 지도 정보 수정 창이 미리 알린다. */
 export function droppedCount(schedule: Schedule, from: string[], to: string[]): number {
   const before = new Set(from)

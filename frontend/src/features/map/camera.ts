@@ -8,6 +8,8 @@
  * 무슨 일이 일어났는지 알아볼 수 없다.
  */
 
+import type { MapHeading } from '@/features/shell/sheetStore'
+
 /** 로드맵 레벨 범위. */
 export const MIN_LEVEL = 1
 export const MAX_LEVEL = 14
@@ -90,4 +92,14 @@ export function groupNear(points: Px[], dist: number): number[][] {
     else groups.push([i])
   })
   return groups
+}
+
+/**
+ * 사용자가 지도를 끈 방향(#1433) — 화면에서 움직인 만큼(px)의 가로·세로 중 큰 쪽.
+ * min px 보다 덜 움직였으면 손떨림으로 보고 방향을 정하지 않는다(null).
+ */
+export function dragHeading(d: Px, min = 4): MapHeading | null {
+  if (Math.max(Math.abs(d.x), Math.abs(d.y)) < min) return null
+  if (Math.abs(d.x) >= Math.abs(d.y)) return d.x > 0 ? 'right' : 'left'
+  return d.y > 0 ? 'down' : 'up'
 }

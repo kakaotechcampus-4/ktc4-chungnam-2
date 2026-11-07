@@ -13,7 +13,7 @@ import SheetTitle from '@/ui/SheetTitle'
 
 import { foundLabel, linkErrorMessage, placeKey, rowName, rowPlace, rowState, rowTitle, toPinRequest, type ImportRow, type PlaceSearchResultDto } from './model'
 import { closeImport, openImport, pinsCenter, useImportOpen, useLinkImport, type AddResult } from './queries'
-import type { DayRange } from './share'
+import { isNameOnly, type DayRange } from './share'
 
 const OUTCOME: Record<NonNullable<ImportRow['outcome']>, { label: string; tag: string }> = {
   created: { label: '찍었어요', tag: 'tag-good' },
@@ -55,6 +55,7 @@ export default function ImportSheet({
 
 const NOTICE: Record<Exclude<AddResult, 'added'>, string> = {
   noLinks: '이 기간에 지도 링크가 없어요. 기간을 넓혀 보세요',
+  noNew: '이 기간의 지도 링크는 이미 목록에 있어요',
   noDates: '날짜를 읽지 못했어요. 카톡에서 대화 내보내기로 받은 파일인지 확인해 주세요',
   full: '목록이 가득 차서 새 링크를 더하지 못했어요. 지금 목록을 찍고 완료된 것을 지운 뒤 다시 넣어 주세요',
 }
@@ -161,6 +162,7 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
 
 /** 링크는 제목이 아니라 보조로만 — 짧게 보여 주고 새 창으로 연다. */
 function LinkRef({ url }: { url: string }) {
+  if (isNameOnly(url)) return <span className="block truncate text-xs text-ink-500">링크 없이 이름만 공유됐어요</span>
   const short = url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 40)
   return (
     <a href={url} target="_blank" rel="noopener noreferrer" className="truncate text-xs text-ink-500 underline underline-offset-2">
