@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import ModalSheet from '@/features/shell/ModalSheet'
 import { josa } from '@/ui/josa'
+import Sentences from '@/ui/Sentences'
 import SheetTitle from '@/ui/SheetTitle'
 
 import type { MapRegion } from './model'
@@ -44,14 +45,19 @@ export default function RegionPicker({
       </div>
       {beta.length > 0 && (
         <p className="mt-3 text-xs text-ink-500">
-          {beta.join(' · ')}
-          {josa(beta[beta.length - 1], '은', '는')} 베타라 장소 정보가 아직 적을 수 있어요
+          <Sentences text={`${beta.join(' · ')}${josa(beta[beta.length - 1], '은', '는')} 베타예요. 장소 정보가 아직 적을 수 있어요`} />
         </p>
       )}
+      {/* 준비 중인 곳은 누를 수 없어 칸을 두지 않는다. 이름이 두 글자라 6열로 맞춰 줄 끝이 잘리지 않게 한다. */}
       {soon.length > 0 && (
-        <p className="mt-4 break-keep text-xs text-ink-500">
-          <span className="font-semibold text-ink-600">준비 중</span> {soon.join(' · ')}
-        </p>
+        <div className="mt-4 text-xs text-ink-500">
+          <p className="font-semibold text-ink-600">준비 중</p>
+          <ul className="mt-1 grid grid-cols-6 gap-y-0.5">
+            {soon.map((name) => (
+              <li key={name}>{name}</li>
+            ))}
+          </ul>
+        </div>
       )}
       <div className="mt-6 grid grid-cols-[1fr_2fr] gap-2">
         <button type="button" onClick={() => onDone(null)} className="btn-neutral btn-lg">
