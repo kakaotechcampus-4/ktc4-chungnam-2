@@ -7,11 +7,13 @@ import { readPendingInvite } from '@/features/auth/pendingInvite'
 import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
+import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery, useTrashQuery } from '@/features/maps/queries'
 import TrashSheet from '@/features/maps/TrashSheet'
 import NotificationBell from '@/features/notifications/NotificationBell'
 import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
+import ActionMenu, { type ActionMenuItem } from '@/features/shell/ActionMenu'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import Avatar from '@/ui/Avatar'
@@ -85,15 +87,9 @@ export default function MapListPage() {
           </div>
         ) : (
           <div className="flex-1 space-y-5 md:space-y-10">
-            {/* 내가 만든 지도와 초대받은 지도를 나눈다(회의 14번). 초대받은 지도가 없거나 서버가 아직 구분을 안 주면 한 목록이다. */}
-            {invited.length > 0 ? (
-              <>
-                <MapSection title="내가 만든 지도" maps={mine} empty="아직 만든 지도가 없어요" />
-                <MapSection title="초대받은 지도" maps={invited} />
-              </>
-            ) : (
-              <MapSection maps={mine} />
-            )}
+            {/* 내가 만든 지도와 초대받은 지도를 늘 나눈다(회의 14번, #1444). 게스트는 지도를 만들 수 없어 빈 「내가 만든 지도」를 두지 않는다. */}
+            {!(guest && mine.length === 0) && <MapSection title="내가 만든 지도" maps={mine} empty="아직 만든 지도가 없어요" />}
+            <MapSection title="초대받은 지도" maps={invited} empty="친구가 보낸 초대 링크로 들어간 지도가 여기 모여요" />
           </div>
         )}
 
@@ -171,6 +167,8 @@ function NewMapLink({ className, blockedBy }: { className: string; blockedBy?: s
 }
 
 function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; empty?: string }) {
+  const [open, setOpen] = useState<{ kind: 'edit' | 'delete' | 'leave'; map: MapView } | null>(null)
+  const close = () => setOpen(null)
   return (
     <section className="space-y-3">
       {title && (
@@ -183,10 +181,11 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
       {maps.length === 0 && empty && <p className="rounded-xl bg-white p-4 text-sm text-ink-500">{empty}</p>}
       <ul className="space-y-3 md:grid md:grid-cols-2 md:gap-4 md:space-y-0 lg:grid-cols-3">
         {maps.map((map) => (
-          <li key={map.id}>
+          // 메뉴 버튼은 링크 안에 넣을 수 없어(버튼 안의 버튼) 카드 오른쪽 위에 겹쳐 둔다.
+          <li key={map.id} className="relative">
             <Link
               to={`/maps/${map.id}`}
-              className="press block h-full rounded-xl border border-ink-200 bg-white p-4 md:p-5 md:hover:border-brand-300"
+              className="press block h-full rounded-xl border border-ink-200 bg-white p-4 pr-12 md:p-5 md:pr-14 md:hover:border-brand-300"
             >
               <p className="flex items-center gap-2">
                 <span className="truncate text-title font-bold text-ink-900">{map.title}</span>
@@ -197,9 +196,28 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
               </p>
               <p className="mt-1 text-sm text-ink-500">{map.summary}</p>
             </Link>
+            <div className="absolute right-2 top-2 md:right-3 md:top-3">
+              <ActionMenu label={`${map.title} 메뉴`} items={cardActions(map, (kind) => setOpen({ kind, map }))} />
+            </div>
           </li>
         ))}
       </ul>
+      {open?.kind === 'edit' && <EditMapDialog map={open.map.header} onCancel={close} />}
+      {open?.kind === 'delete' && <DeleteMapConfirm mapId={open.map.id} title={open.map.title} onCancel={close} />}
+      {open?.kind === 'leave' && <LeaveMapConfirm mapId={open.map.id} nextOwnerName={open.map.header.nextOwnerName} onCancel={close} />}
     </section>
   )
+}
+
+/**
+ * 지도 카드 「⋯」 메뉴(#1444). 방장은 고치기와 삭제(빨강, 맨 끝), 구성원은 나가기다.
+ * 권한은 지도 응답의 permissions 를 따른다 — 화면이 방장인지로 다시 판정하지 않는다.
+ */
+function cardActions(map: MapView, open: (kind: 'edit' | 'delete' | 'leave') => void): ActionMenuItem[] {
+  const { canEdit, canDelete, canLeave, isOwner } = map.header
+  return [
+    ...(canEdit ? [{ label: '이름·날짜 수정', onSelect: () => open('edit') }] : []),
+    ...(!isOwner && canLeave ? [{ label: '지도 나가기', onSelect: () => open('leave') }] : []),
+    ...(canDelete ? [{ label: '지도 삭제', danger: true, onSelect: () => open('delete') }] : []),
+  ]
 }

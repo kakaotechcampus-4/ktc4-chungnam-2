@@ -39,8 +39,8 @@ export function useCreateMapMutation() {
 }
 
 /**
- * 지도 수정(방장, #465). 상세만 응답으로 바로 바꾼다. 내 지도 목록은 내게도 오는 map.updated를 받아
- * realtime의 표(refetchTable)대로 다시 받는다.
+ * 지도 수정(방장, #465). 상세는 응답으로 바로 바꾸고, 내 지도 목록도 다시 받는다 — 목록 카드의 「⋯」에서 고치면(#1444)
+ * 지도 화면 밖이라 map.updated 를 받지 않는다.
  * 날짜를 고치면 서버가 기간 밖 일정을 빼고 일정 version도 바뀐다. 확정 리스트·일정(`['shortlist', mapId]` 아래)을 다시 받아야
  * 빠진 장소가 확정 리스트로 돌아오고, 다음 일정 저장이 옛 version으로 409가 나지 않는다.
  */
@@ -50,6 +50,7 @@ export function useUpdateMapMutation(mapId: string) {
     mutationFn: (body: MapUpdateRequest) => updateMap(mapId, body),
     onSuccess: (map) => {
       queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map)
+      void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
       void queryClient.invalidateQueries({ queryKey: shortlistKeys.list(mapId) })
     },
   })
