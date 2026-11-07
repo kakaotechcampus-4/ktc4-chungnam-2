@@ -860,6 +860,14 @@ describe("#472 — 게스트 참여", () => {
     resetScenario("happy-path");
   });
 
+  it("구글 로그인(#1514)도 카카오와 같이 진입점으로 돌아온다", async () => {
+    const start = await fetch(`${BASE}/auth/google/login`, { redirect: "manual" });
+    expect(start.status).toBe(302);
+    expect(start.headers.get("location")).toBe("/");
+    const back = await fetch(`${BASE}/auth/google/callback?code=x&state=y`, { redirect: "manual" });
+    expect(back.headers.get("location")).toBe("/");
+  });
+
   it("게스트 시나리오: 지도 만들기는 403 GUEST_NOT_ALLOWED, 그 밖의 구성원 행동은 된다", async () => {
     resetScenario("guest");
     expect((await (await fetch(`${BASE}/auth/me`)).json()).is_guest).toBe(true);

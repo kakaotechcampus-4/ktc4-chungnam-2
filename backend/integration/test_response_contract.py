@@ -33,6 +33,8 @@ KNOWN_CREDITS_DRIFT: dict[tuple[str, ...], str] = {
 KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/kakao/login"): "카카오로 가는 302 — auth 단위 테스트가 state 쿠키와 함께 검증",
     ("GET", "/auth/kakao/callback"): "외부 카카오 왕복(302) — auth 단위 테스트가 대역으로 검증",
+    ("GET", "/auth/google/login"): "구글로 가는 302 — auth/tests/test_google_login.py가 state 쿠키·범위와 함께 검증(#1514)",
+    ("GET", "/auth/google/callback"): "외부 구글 왕복(302) — auth/tests/test_google_login.py가 대역으로 검증(#1514)",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/places/external-search"): "서버 구현 전(#903) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
