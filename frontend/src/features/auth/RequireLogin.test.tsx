@@ -54,7 +54,7 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
     // 목 서버는 이틀 전에 탈퇴했다 — 남은 날수는 응답의 days_left 그대로다.
     expect(screen.getByText('탈퇴했던 나')).toBeInTheDocument()
     expect(screen.getByText(/5일 안에는 기존 계정을 복구할 수 있어요/)).toBeInTheDocument()
-    expect(screen.getByText(/5일 남음/)).toBeInTheDocument()
+    expect(screen.getByText(/5일 남았어요/)).toBeInTheDocument()
     expect(screen.getByText('기존 계정은 바로 삭제돼요')).toBeInTheDocument()
     expect(screen.getByTestId('search')).toHaveTextContent(/^$/)
     expect(screen.queryByText('내 지도 목록')).not.toBeInTheDocument()

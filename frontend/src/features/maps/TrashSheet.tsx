@@ -39,7 +39,7 @@ export default function TrashSheet({ trash, onClose }: { trash: TrashView; onClo
               <div className="min-w-0">
                 <p className="truncate text-body font-bold text-ink-900">{m.title}</p>
                 <p className="text-xs text-ink-500">
-                  {m.dates} · {m.daysLeft}일 남음
+                  {m.dates}, {m.daysLeft}일 안에 복구할 수 있어요
                 </p>
               </div>
               <button

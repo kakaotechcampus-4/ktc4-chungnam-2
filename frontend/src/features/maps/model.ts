@@ -145,7 +145,7 @@ export function toMapView(map: MapDto): MapView {
     region: map.region?.label,
     createdByMe: map.created_by_me,
     isOwner: map.my_role === 'owner',
-    summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명 · 핀 ${map.pin_count}개`,
+    summary: `${formatTripDates(map.start_date, map.end_date)}, 구성원 ${map.member_count}명, 핀 ${map.pin_count}개`,
     header: toMapHeaderView(map),
     color: map.color ?? undefined,
     coverUrl: map.cover_url ?? undefined,
@@ -153,12 +153,12 @@ export function toMapView(map: MapDto): MapView {
   }
 }
 
-/** 켜진 초대 링크 한 줄(#467) — 「민수님이 만든 링크 · 2명 참여 · 11.7 (토)까지」. */
+/** 켜진 초대 링크 한 줄(#467) — 「민수님이 만든 링크, 2명 참여. 11.7 (토)까지 쓸 수 있어요」. */
 export type InviteRowView = { token: string; label: string }
 
 export function toInviteRowView(invite: InviteDto): InviteRowView {
   const by = invite.created_by_display_name ? `${invite.created_by_display_name}님이 만든 링크` : '초대 링크'
-  return { token: invite.token, label: `${by} · ${invite.used_count ?? 0}명 참여 · ${formatDay(new Date(invite.expires_at))}까지` }
+  return { token: invite.token, label: `${by}, ${invite.used_count ?? 0}명 참여. ${formatDay(new Date(invite.expires_at))}까지 쓸 수 있어요` }
 }
 
 /** 내 지도 목록과 상한(#623). 상한은 서버가 내려 준 값만 쓴다. */

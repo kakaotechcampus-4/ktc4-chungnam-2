@@ -64,8 +64,8 @@ export function PinFilterBar({
         value={filters.createdBy ?? ''}
         onChange={(v) => onChange('by', v || null)}
         options={[
-          { value: '', label: `전체 · ${pins.length}곳` },
-          ...members.map((m) => ({ value: m.userId, label: `${m.name}${m.isMe ? ' (나)' : ''} · ${countBy(m.userId)}곳` })),
+          { value: '', label: `전체 ${pins.length}곳` },
+          ...members.map((m) => ({ value: m.userId, label: `${m.name}${m.isMe ? ' (나)' : ''} ${countBy(m.userId)}곳` })),
         ]}
       />
       <FilterSelect

@@ -82,7 +82,7 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     expect(await screen.findByText('우진해장국을 둘째 날에 넣었어요')).toBeInTheDocument()
     await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1', 'pin_2']))
     expect(screen.queryByRole('button', { name: /^흑돼지식당 .*넣기$/ })).not.toBeInTheDocument()
-    expect(screen.getByText('1곳 · 일정에 넣은 곳 2')).toBeInTheDocument()
+    expect(screen.getByText('일정에 넣을 곳 1곳, 넣은 곳 2곳')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '되돌리기' }))
     expect(await screen.findByRole('button', { name: '우진해장국 둘째 날에 넣기' })).toBeInTheDocument()

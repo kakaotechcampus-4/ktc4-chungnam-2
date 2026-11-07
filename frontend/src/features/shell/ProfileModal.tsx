@@ -84,7 +84,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
           <div className="min-w-0">
             <h2 className="text-xl font-bold text-ink-900">{map.data.title}</h2>
             <p className="text-sm text-ink-500">
-              {map.data.dates} · 구성원 {map.data.memberCount}명
+              {map.data.dates}, 구성원 {map.data.memberCount}명
             </p>
           </div>
           {/* 제목·날짜·지역 수정은 방장만(#465). */}

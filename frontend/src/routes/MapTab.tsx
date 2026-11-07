@@ -127,7 +127,7 @@ export default function MapTab() {
             <p className="text-xs text-ink-500">
               {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
               {counts && counts.members_total > 0 && (
-                <span className="font-bold text-ink-600"> · {counts.members_with_opinion}/{counts.members_total}명이 의견을 남겼어요</span>
+                <span className="font-bold text-ink-600">, {counts.members_total}명 중 {counts.members_with_opinion}명이 의견을 남겼어요</span>
               )}
             </p>
             {/* 목록 줄의 ♥·반대·? 표시가 무엇인지(#1030). */}

@@ -47,7 +47,9 @@ export default function PinTrashSheet({ mapId, onClose }: { mapId: string; onClo
                 <div className="min-w-0">
                   <p className="truncate text-body font-bold text-ink-900">{name}</p>
                   <p className="text-xs text-ink-500">
-                    {[pin.category, deleted_by_name && `${deleted_by_name}님이 삭제`, `${days_left}일 안에 되돌릴 수 있어요`].filter(Boolean).join(' · ')}
+                    {[pin.category, deleted_by_name && `${deleted_by_name}님이 삭제`].filter(Boolean).join(' · ')}
+                    <br />
+                    {days_left}일 안에 되돌릴 수 있어요
                   </p>
                   {was_confirmed && <p className="text-xs text-ink-500">되돌리면 확정 리스트에도 다시 올라가요</p>}
                 </div>

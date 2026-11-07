@@ -5,6 +5,7 @@ import ErrorText from '@/ErrorText'
 import { dayOrdinal } from '@/features/course/model'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import { useEnrichPin } from '@/features/map/livePlaces'
+import ReactionHelp from '@/features/map/ReactionHelp'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
@@ -84,7 +85,9 @@ export default function ShortlistTab() {
     ? '불러오는 중…'
     : routeOn
       ? '일정에 넣은 순서대로 보여요'
-      : `${items.length}곳${scheduled > 0 ? ` · 일정에 넣은 곳 ${scheduled}` : ''}`
+      : scheduled > 0
+        ? `일정에 넣을 곳 ${items.length}곳, 넣은 곳 ${scheduled}곳`
+        : `${items.length}곳`
 
   return (
     <TabSheet
@@ -93,7 +96,11 @@ export default function ShortlistTab() {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <SheetTitle>확정된 장소 모아보기</SheetTitle>
-            <p className="mt-0.5 text-xs text-ink-500">{subtitle}</p>
+            <div className="mt-0.5 flex items-center gap-1">
+              <p className="text-xs text-ink-500">{subtitle}</p>
+              {/* 확정 리스트·일정·동선 보기가 무엇인지(멘토 리뷰 #1401, #1484). */}
+              {all.length > 0 && <ReactionHelp on="shortlist" />}
+            </div>
           </div>
           {all.length > 0 && (
             <div className="flex shrink-0 gap-2">
