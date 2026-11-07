@@ -56,6 +56,8 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 이전 릴리스 호환 검사(integration/test_schema_compat.py, #1464)가 최신 v 태그나 origin/main의 모델을 읽는다
       - uses: actions/setup-python@v5
         with:
           python-version-file: backend/.python-version   # 운영 이미지(backend/Dockerfile)와 같은 버전(#916)
