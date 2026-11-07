@@ -24,7 +24,7 @@ import Mark from '@/ui/Mark'
 import { useAiStore } from './aiStore'
 import {
   chosenCategory,
-  RECOMMEND_RADIUS_M,
+  readinessRadiusM,
   recommendAreaNote,
   runErrorMessage,
   runHistoryLine,
@@ -106,13 +106,15 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const picked = useAiStore((s) => s.picked[mapId])
   const setPicked = useAiStore((s) => s.setPicked)
   const chosen = chosenCategory(cards, picked)
+  // 찾는 범위는 고른 카테고리의 서버 반경이다(Readiness.radius_m, #1468). 지도 원(MapLayout)도 같은 값을 본다.
+  const radiusM = readinessRadiusM(readiness.data, chosen)
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useRecountOnMapMove(readiness.refetch)
   // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧·찾는 범위). 버튼과 핑고 조언의 「추천 받아 보기」가 같은 창을 거친다.
   const [asking, setAsking] = useState<{ category: RecommendCategory; fromAgent: boolean } | null>(null)
   // 추천 원이 통째로 여행 지역 밖이면 크레딧 창 대신 지역으로 돌아가라고 안내한다(그 지역 이름).
   const [away, setAway] = useState<string | null>(null)
-  const outside = useOutsideRegion(mapId)
+  const outside = useOutsideRegion(mapId, radiusM)
   const showRegion = useOutletContext<ShellContext | null>()?.showRegion
   function ask(category: RecommendCategory, fromAgent: boolean) {
     const region = outside()
@@ -175,7 +177,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           feature="recommend_run"
           title={`${asking.category} 추천을 받을까요?`}
           ok="추천받기"
-          note={recommendAreaNote()}
+          note={recommendAreaNote(radiusM)}
           onOk={startAsked}
           onCancel={() => setAsking(null)}
         />
@@ -199,17 +201,17 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
 }
 
 /**
- * 추천 원(보이는 지도 가운데 반경 RECOMMEND_RADIUS_M)이 통째로 여행 지역 밖이면 그 지역 이름, 아니면 null(누를 때 본다).
- * 원이 경계에 걸치기만 해도 막지 않는다. 지역을 고르지 않은 지도, 경계를 아직 못 받은 지도도 막지 않는다.
+ * 추천 원(보이는 지도 가운데 반경 radiusM)이 통째로 여행 지역 밖이면 그 지역 이름, 아니면 null(누를 때 본다).
+ * 원이 경계에 걸치기만 해도 막지 않는다. 지역을 고르지 않은 지도, 경계를 아직 못 받은 지도, 서버 반경이 없는 응답도 막지 않는다.
  * 지금은 화면만 보는 규칙이다 — 서버가 지역 밖 오류를 내리면 그 응답으로 바꾼다(#1385).
  */
-function useOutsideRegion(mapId: string) {
+function useOutsideRegion(mapId: string, radiusM: number | null) {
   const getCenter = useOutletContext<ShellContext | null>()?.getCenter
   const region = useMapQuery(mapId).data?.region?.label
   const boundary = useRegionBoundary(region)
   return () => {
     const at = getCenter?.() ?? null
-    return region && boundary && at && circleOutsideRegion(at, RECOMMEND_RADIUS_M, boundary) ? region : null
+    return region && boundary && at && radiusM && circleOutsideRegion(at, radiusM, boundary) ? region : null
   }
 }
 

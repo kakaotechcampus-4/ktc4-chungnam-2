@@ -1,4 +1,4 @@
-import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { skipToken, useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useOutletContext } from 'react-router'
 
 import { useAiStore } from './aiStore'
@@ -23,7 +23,16 @@ import {
   retryRun,
   widenRun,
 } from './api'
-import { rerunErrorMessage, type EvidencePatchRequest, type RecommendCategory, type RecommendResultDto, type RecommendRunDto } from './model'
+import {
+  chosenCategory,
+  readinessRadiusM,
+  rerunErrorMessage,
+  toReadinessCards,
+  type EvidencePatchRequest,
+  type RecommendCategory,
+  type RecommendResultDto,
+  type RecommendRunDto,
+} from './model'
 
 export const recommendKeys = {
   readiness: (mapId: string) => ['recommend', mapId, 'readiness'] as const,
@@ -51,6 +60,16 @@ function useMapCenter() {
 export function useReadinessQuery(mapId: string) {
   const center = useMapCenter()
   return useQuery({ queryKey: recommendKeys.readiness(mapId), queryFn: () => fetchReadiness(mapId, center()), refetchOnMount: 'always' })
+}
+
+/**
+ * 준비 화면에서 고른 카테고리의 추천 원 반경(m) — 지도(MapLayout)가 원을 그릴 때. 서버 값이 없으면 null(원 없음).
+ * 준비 판정 캐시를 보기만 하고 받지 않는다 — 받는 일은 지도 가운데를 아는 준비 화면(useReadinessQuery)이 한다.
+ */
+export function useRecommendRadiusM(mapId: string): number | null {
+  const readiness = useQuery<Awaited<ReturnType<typeof fetchReadiness>>>({ queryKey: recommendKeys.readiness(mapId), queryFn: skipToken }).data
+  const picked = useAiStore((s) => s.picked[mapId])
+  return readiness ? readinessRadiusM(readiness, chosenCategory(toReadinessCards(readiness), picked)) : null
 }
 
 /** 서버가 아직 같은 키의 첫 요청을 처리 중이다(409 REQUEST_IN_PROGRESS) — 진행 표시를 두고 같은 키로 다시 묻는다(#811). */
@@ -166,7 +185,7 @@ export function useRetryMutation(mapId: string) {
 /** run 이 없으면 묻지 않는다 — 지도(MapLayout)가 AI 후보를 그리려고 같은 캐시를 볼 때(#843). */
 export function useResultQuery(run: RecommendRunDto | undefined) {
   return useQuery({
-    queryKey: [...recommendKeys.result(run?.id ?? ''), run?.attempt_no, run?.default_radius_walk_min],
+    queryKey: [...recommendKeys.result(run?.id ?? ''), run?.attempt_no, run?.default_radius_m],
     queryFn: () => fetchResult(run!.id),
     retry: (count, err) => !(err instanceof ApiError && ['NO_RESULTS', 'RECOMMEND_FAILED', 'FORBIDDEN'].includes(err.code)) && count < 1,
     // v1 은 실행이 요청 안에서 끝난다 — 실행 중에 결과를 물으면 끝나기 전 상태(0곳 등)가 올 수 있어 묻지 않는다(#349).

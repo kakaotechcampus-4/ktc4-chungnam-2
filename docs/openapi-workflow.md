@@ -48,7 +48,6 @@ npm test             # vitest — smoke.test.ts, checks/deprecated-fields.test.t
 
 | 필드 | FE 이슈 | 대신 쓸 것 |
 |---|---|---|
-| `default_radius_walk_min` | #1468 | `default_radius_m`, `next_default_radius_m`(`RecommendRun`, `RunSummary`) |
 
 **서브 디렉토리 Claude Code는 이 스펙을 읽기만 한다.** 구현 중 스펙이 부족하거나 잘못됐다고 판단되면 스펙을 직접 고치지 말고 루트에 보고한다 — `CLAUDE.md` 역할 분리 원칙.
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ExternalLink, RotateCw } from 'lucide-react'
 
 import { ApiError } from '@/api'
@@ -25,6 +25,9 @@ import {
   type FunnelRow,
   type RecommendResultDto,
   type RecommendRunDto,
+  WIDEN_LIMIT_MESSAGE,
+  widenAtLimit,
+  widenLine,
 } from './model'
 import { useEvidencePatching, useEvidenceQuery, useExecuteRunMutation, usePublishMutation, useRetryMutation, useWidenMutation } from './queries'
 import { AiHeader } from './Readiness'
@@ -325,11 +328,25 @@ export function NoResults({
   )
 }
 
-/** 「반경 넓히기」 — 기본값 원만 넓히고, 사람이 쓴 반경은 그대로 둔다고 먼저 묻는다(가드레일 4). */
+/**
+ * 「반경 넓히기」 — 기본값 원만 넓히고, 사람이 쓴 반경은 그대로 둔다고 먼저 묻는다(가드레일 4).
+ * 지금 반경과 넓힌 뒤 반경은 서버 값만 보인다(#1468). 서버가 이미 상한이라고 알려 주면 누르기 전에 끄고 이유를 붙인다(#1370).
+ */
 function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendRunDto; className: string }) {
   const widen = useWidenMutation(mapId)
   const [asking, setAsking] = useState(false)
-  const now = run.default_radius_walk_min ?? 15
+  const limitId = useId()
+  if (widenAtLimit(run))
+    return (
+      <span className="flex flex-col gap-1">
+        <button type="button" disabled aria-describedby={limitId} className={className}>
+          반경 넓히기
+        </button>
+        <span id={limitId} className="text-label text-ink-500">
+          {WIDEN_LIMIT_MESSAGE}
+        </span>
+      </span>
+    )
   return (
     <>
       <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className={className}>
@@ -342,9 +359,7 @@ function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendR
             <dl className="space-y-1">
               <div className="flex gap-2">
                 <dt className="text-ink-500">넓혀요</dt>
-                <dd className="font-semibold text-ink-900">
-                  핀 주변 기본 반경을 도보 {now}분에서 {now + 5}분으로
-                </dd>
+                <dd className="font-semibold text-ink-900">{widenLine(run)}</dd>
               </div>
               <div className="flex gap-2">
                 <dt className="text-ink-500">그대로예요</dt>
