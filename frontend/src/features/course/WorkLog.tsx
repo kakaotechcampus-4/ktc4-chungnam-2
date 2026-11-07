@@ -21,7 +21,7 @@ export default function WorkLog({ steps, running }: { steps: CourseStepDto[]; ru
 
 function UnderstandCard({ step }: { step: CourseStepDto }) {
   return (
-    <section className="space-y-1.5 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3.5">
+    <section className="space-y-1.5 rounded-xl border-[1.5px] border-brand-300 bg-[var(--pingo-bg)] p-3.5">
       <h3 className="flex items-center gap-1.5 text-sm font-bold text-ink-900">
         <ByChip by={step.by} />
         이렇게 이해했어요

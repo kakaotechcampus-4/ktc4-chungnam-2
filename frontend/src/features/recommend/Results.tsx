@@ -182,7 +182,7 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest('a, button')) focus()
       }}
-      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-brand-50 p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
+      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-[var(--pingo-bg)] p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
     >
       <header className="flex items-center gap-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
@@ -279,7 +279,7 @@ export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; coun
 
 function FunnelTable({ funnel, left }: { funnel: FunnelRow[]; left: number }) {
   return (
-    <table className="w-full rounded-xl bg-brand-50 text-body">
+    <table className="w-full rounded-xl bg-[var(--pingo-bg)] text-body">
       <tbody>
         {funnel.map((f) => (
           <tr key={f.label} className="border-b border-brand-100">
@@ -401,7 +401,7 @@ export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) 
   const execute = useExecuteRunMutation(mapId)
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm">
+      <div className="rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-3 text-sm">
         <p className="font-bold text-brand-700">남긴 의견과 조건은 그대로 있어요</p>
         <p className="text-xs text-ink-600">잠시 후 다시 시도해 주세요</p>
       </div>

@@ -84,7 +84,7 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
     return () => clearTimeout(t)
   }, [at, steps.length])
   return (
-    <ol aria-live="polite" className="space-y-2 rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm">
+    <ol aria-live="polite" className="space-y-2 rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-3 text-sm">
       {steps.slice(0, at + 1).map((label, i) => {
         const current = i === at
         return (
@@ -308,7 +308,7 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
       aria-pressed={selected}
       onClick={onPick}
       className={`press rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
-        selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-white'
+        selected ? 'border-brand-600 bg-[var(--selected-bg)]' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-white'
       }`}
     >
       <p className="flex items-start justify-between gap-1 font-bold text-ink-900">
