@@ -223,6 +223,34 @@
     --animate-pingo-flutter: pingo-flutter 700ms ease-in-out infinite;
     --animate-pingo-drift: pingo-drift 4s ease-in-out infinite;
     --animate-pingo-twinkle: pingo-twinkle 2.1s ease-in-out infinite;
+    /* 지도 위 3D 핑고 걷기(MapPingo, #1433) — 걸음마다 들썩이고, 측면 걷기 그림 1·2·3·2 를 0.15초씩 바꾼다. */
+    --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
+    --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
+    --animate-pingo-frame-b: pingo-frame-b 600ms step-end infinite;
+    /* 위·아래로 오르내릴 때 뒷모습과 뒤집은 뒷모습을 걸음마다(0.3초) 바꿔 팔을 번갈아 뻗고, 걸음마다 몸이 한 번 오르거나 내려간다. */
+    --animate-pingo-frame-half: pingo-frame-half 600ms step-end infinite;
+    --animate-pingo-climb: pingo-climb 300ms ease-out infinite;
+    --animate-pingo-descend: pingo-descend 300ms ease-out infinite;
+    @keyframes pingo-climb {
+        0%, 100% { transform: translateY(0); }
+        45% { transform: translateY(-7%); }
+    }
+    @keyframes pingo-descend {
+        0%, 100% { transform: translateY(0); }
+        45% { transform: translateY(7%); }
+    }
+    @keyframes pingo-frame-a {
+        0% { opacity: 1; }
+        25%, 100% { opacity: 0; }
+    }
+    @keyframes pingo-frame-half {
+        0% { opacity: 1; }
+        50%, 100% { opacity: 0; }
+    }
+    @keyframes pingo-frame-b {
+        0%, 50%, 100% { opacity: 0; }
+        25%, 75% { opacity: 1; }
+    }
     @keyframes pingo-bob {
         50% { transform: translateY(-2px) rotate(-3deg); }
     }

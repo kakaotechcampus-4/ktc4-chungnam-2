@@ -53,9 +53,9 @@ declare namespace kakao.maps {
   }
 
   namespace event {
-    /** click 의 인자 — 누른 자리. dragstart·idle·zoom_changed·center_changed 는 인자가 없다. */
+    /** click 의 인자 — 누른 자리. dragstart·drag·idle·zoom_changed·center_changed 는 인자가 없다. */
     type MouseEvent = { latLng: LatLng }
-    type MapEventType = 'dragstart' | 'idle' | 'click' | 'zoom_changed' | 'center_changed'
+    type MapEventType = 'dragstart' | 'drag' | 'idle' | 'click' | 'zoom_changed' | 'center_changed'
     /** click 은 지도 빈 곳을 눌렀을 때만 온다 — clickable 오버레이(핀 등)를 누르거나 끌고 놓으면 오지 않는다. */
     function addListener(target: Map, type: MapEventType, handler: (e?: MouseEvent) => void): void
     function removeListener(target: Map, type: MapEventType, handler: (e?: MouseEvent) => void): void

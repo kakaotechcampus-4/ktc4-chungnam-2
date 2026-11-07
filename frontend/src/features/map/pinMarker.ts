@@ -39,7 +39,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
       <path d="${PIN_PATH}" stroke-linejoin="round"
             style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${shape.width}" />
-      ${shape.heart ? `<path d="${LIKE_PATH}" transform="translate(7.2 5.7) scale(.6)" style="fill:var(--pin-confirmed-mark)" />` : `<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`}
+      ${shape.heart ? `<path d="${LIKE_PATH}" transform="translate(7.2 5.7) scale(.6)" style="fill:var(--pin-confirmed-heart)" />` : `<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`}
     </svg>`
   el.addEventListener('click', onClick)
   return el
