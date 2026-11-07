@@ -223,6 +223,49 @@ describe('AI 코스 짜기 시트', () => {
     expect(sent).toEqual(['실내 위주로', '실내 위주로'])
   })
 
+  it('「하루 걷기」를 고르면 모든 날의 도보 상한으로 보내고, 실패 뒤 「다시 시도」도 같은 상한이다(#1502)', async () => {
+    const sent: unknown[] = []
+    let fail = true
+    server.use(
+      http.post('*/maps/:mapId/courses', async ({ request }) => {
+        sent.push(((await request.json()) as { member_constraints?: unknown }).member_constraints)
+        if (fail) return error(500, 'INTERNAL')
+        return undefined
+      }),
+    )
+    const user = userEvent.setup({ delay: null })
+    renderSheet()
+    const group = await screen.findByRole('group', { name: /하루 걷기/ })
+    expect(within(group).getByRole('button', { name: '상관없음' })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(within(group).getByRole('button', { name: '1시간 30분까지' }))
+    await user.click(screen.getByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
+    expect(await screen.findByText('코스를 요청하지 못했어요')).toBeInTheDocument()
+
+    fail = false
+    await user.click(screen.getByRole('button', { name: '다시 시도' }))
+    await confirmCourse(user)
+    expect(await screen.findByRole('list', { name: '작업 기록' })).toBeInTheDocument()
+    const walk = [{ kind: 'daily_walk_max', value: 90 }]
+    expect(sent).toEqual([walk, walk])
+  })
+
+  it('「하루 걷기」를 안 고르면 상한을 보내지 않는다(서버 기본)', async () => {
+    const sent: unknown[] = []
+    server.use(
+      http.post('*/maps/:mapId/courses', async ({ request }) => {
+        sent.push(await request.json())
+        return undefined
+      }),
+    )
+    const user = userEvent.setup({ delay: null })
+    renderSheet()
+    await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
+    await confirmCourse(user)
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]).not.toHaveProperty('member_constraints')
+  })
+
   it('실패 화면의 「요청 고치기」는 보냈던 글을 그대로 둔 입력 화면으로 돌아간다', async () => {
     server.use(http.post('*/maps/:mapId/courses', () => error(500, 'INTERNAL')))
     const user = userEvent.setup({ delay: null })
