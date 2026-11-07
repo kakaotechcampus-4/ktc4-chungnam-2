@@ -55,6 +55,7 @@ class NearestRow:
     lat: float
     lng: float
     kakao_place_id: str | None = None   # 장소 검색(#822)이 카카오 결과와 같은 가게인지 가리는 데만 쓴다. 응답에 싣지 않는다
+    kakao_place_url: str | None = None  # 이미 기록된 카카오 장소 URL — 검색 결과의 place_source.url(#1486)이 places.core.place_link로 읽는다
 
 
 @dataclass(frozen=True)
@@ -199,7 +200,7 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
     lat, lng = _lat_lng()
     point = _geog(hint_lat, hint_lng)
     near = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng,
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng,
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", Place.category == category,
                func.ST_DWithin(Place.geom, point, matching.MAX_RADIUS_M))
@@ -210,11 +211,11 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
     if kakao_place_id:
         have = {r.id for r in rows}
         rows += [r for r in db.execute(
-            select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng,
+            select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng,
                    cast(null(), Float).label("dist"))   # 반경 밖일 수 있어 거리를 재지 않는다
             .where(Place.status == "open", Place.kakao_place_id == kakao_place_id)
         ).all() if r.id not in have]
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[Candidate]]:
@@ -227,7 +228,7 @@ def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[C
     if not hints:
         return []
     lat, lng = _lat_lng()
-    cols = (Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+    cols = (Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
     keys = list(dict.fromkeys((h.category, h.lat, h.lng) for h in hints))   # 같은 좌표·분류는 한 번만 묻는다
     members = []
     for i, (category, h_lat, h_lng) in enumerate(keys):
@@ -263,7 +264,7 @@ def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[C
         have = {r.id for r in picked}
         if h.kakao_place_id:
             picked += [r for r in by_kakao_id.get(h.kakao_place_id, []) if r.id not in have]
-        out.append([Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in picked])
+        out.append([Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address, r.kakao_place_url, r.source) for r in picked])
     return out
 
 
@@ -272,13 +273,13 @@ def find_nearby_own(db: Session, lat_: float, lng_: float, radius_m: float, limi
     lat, lng = _lat_lng()
     point = _geog(lat_, lng_)
     rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng,
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng,
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", func.ST_DWithin(Place.geom, point, radius_m))
         .order_by(func.ST_Distance(Place.geom, point), Place.id)
         .limit(limit)
     ).all()
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
@@ -290,7 +291,7 @@ def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
         return []
     lat, lng = _lat_lng()
     rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
         .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
                or_(*(Place.name_norm.like(f"{t}%") for t in matching.hint_like_prefixes(name)), Place.name_norm.in_(prefixes)))
         .order_by(Place.id)
@@ -298,7 +299,7 @@ def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
     ).all()
     if len(rows) > matching.HINT_MAX_CANDIDATES:
         return []
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def find_by_address_term(db: Session, term: str) -> list[Candidate]:
@@ -309,7 +310,7 @@ def find_by_address_term(db: Session, term: str) -> list[Candidate]:
     escaped = re.sub(r"(?<=[가-힣])(?=\d)|(?<=\d)(?=[가-힣])", "%", escaped)   # 정규화 키가 공백을 무시하므로 `명동8가길`은 `명동 8가길`도 읽는다
     lat, lng = _lat_lng()
     rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
         .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
                Place.address.ilike(f"%{escaped}%", escape="\\"))
         .order_by(Place.id)
@@ -317,18 +318,18 @@ def find_by_address_term(db: Session, term: str) -> list[Candidate]:
     ).all()
     if len(rows) > matching.ADDRESS_CANDIDATE_MAX_ROWS:
         return []
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def find_by_kakao_place_id(db: Session, kakao_place_id: str) -> list[Candidate]:
     """이미 이 카카오 장소 ID로 매칭된 영업 중 장소(링크 해석 #474)."""
     lat, lng = _lat_lng()
     rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
         .where(Place.status == "open", Place.kakao_place_id == kakao_place_id)
         .order_by(Place.id)
     ).all()
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def record_kakao_match(db: Session, place_id: str, kakao_place_id: str, kakao_place_url: str) -> None:
@@ -388,11 +389,11 @@ def find_open_by_ids(db: Session, place_ids: Sequence[str]) -> list[Candidate]:
         return []
     lat, lng = _lat_lng()
     rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
         .where(Place.id.in_(ids), Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES))
         .order_by(Place.id)
     ).all()
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
@@ -464,14 +465,14 @@ def find_nearest(db: Session, lat: float, lng: float, category: str | None, radi
     """누른 좌표 반경 안의 영업 중 장소를 가까운 순으로. ST_DWithin이 GiST 인덱스(idx_places_geom)를 탄다.
     좌표는 쿼리 파라미터로만 쓰고 어디에도 남기지 않는다(#473)."""
     rows = db.execute(_nearest_stmt(lat, lng, category, radius_m, limit)).all()
-    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng) for r in rows]
+    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id, r.kakao_place_url) for r in rows]
 
 
 def _nearest_stmt(lat: float, lng: float, category: str | None, radius_m: float, limit: int):
     point = _geog(lat, lng)
     p_lat, p_lng = _lat_lng()
     stmt = (
-        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng,
+        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id, Place.kakao_place_url,
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", func.ST_DWithin(Place.geom, point, radius_m))
         .order_by(func.ST_Distance(Place.geom, point), Place.id)
@@ -536,10 +537,10 @@ def search_open_by_query(
         order += [Place.curated.desc(), Place.name.collate("C")]
     p_lat, p_lng = _lat_lng()
     stmt = (
-        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id)
+        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id, Place.kakao_place_url)
         .where(*where).order_by(*order, Place.id).limit(limit).offset(offset)
     )
-    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id) for r in db.execute(stmt).all()]
+    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id, r.kakao_place_url) for r in db.execute(stmt).all()]
 
 
 def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel]]:
