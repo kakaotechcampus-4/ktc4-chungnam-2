@@ -4,6 +4,7 @@ import { ChevronLeft } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { isUnauthorized } from '@/features/auth/api'
+import GoogleButton from '@/features/auth/GoogleButton'
 import KakaoButton from '@/features/auth/KakaoButton'
 import { clearPendingInvite, savePendingInvite } from '@/features/auth/pendingInvite'
 import { DISPLAY_NAME_MAX } from '@/features/auth/model'
@@ -86,6 +87,7 @@ export default function InvitePage() {
         {needsLogin ? (
           <>
             <KakaoButton />
+            <GoogleButton />
             <p className="text-xs text-ink-500">로그인하고 함께 여행 계획을 시작해 보세요</p>
             <GuestJoin token={token} onBroken={setLateProblem} />
           </>

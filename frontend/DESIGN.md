@@ -327,7 +327,8 @@ components:
 | 보상형 광고 자리(테스트 광고, #1039) | `TestAdWindow` (전체 화면 · 포커스 가두기 · 바깥을 눌러도 닫히지 않음. 응답의 초만큼 센 뒤 「보상 받고 닫기」(채움), ✕·Esc는 언제나 닫는다 — 다 보기 전이면 보상 없음). 띄우는 것은 `features/credits/rewardedAd`의 제공자다. 광고 버튼은 잔액 부족 `Notice` 안 `btn-outline btn-sm` + 고지 한 줄 | `ui/TestAdWindow` |
 | 지도 제목·지역·날짜 입력(만들기·수정) | `TripFields` | `features/maps/TripFields` |
 | 카카오 로그인 버튼 | `KakaoButton` (노랑 #FEE500, 문구는 `label`로만 바꾼다 — 게스트 전환은 「카카오로 계정 만들기」) | `features/auth/KakaoButton` |
-| 게스트에게 카카오 계정 권하기(계정 줄 아래) | `GuestAccountNotice` (ink-50 면 + 한 줄 + `KakaoButton`). 게스트 표시는 `tag tag-neutral` 「게스트」 | `features/auth/GuestAccountNotice` |
+| 구글 로그인 버튼(#1514) | `GoogleButton` (흰 바탕 + ink-200 테두리 + 구글 「G」 로고, 카카오 버튼 바로 아래 같은 크기. 게스트 전환은 「Google로 계정 만들기」) | `features/auth/GoogleButton` |
+| 게스트에게 카카오·구글 계정 권하기(계정 줄 아래) | `GuestAccountNotice` (ink-50 면 + 한 줄 + `KakaoButton` + `GoogleButton`). 게스트 표시는 `tag tag-neutral` 「게스트」 | `features/auth/GuestAccountNotice` |
 | 아래에서 올라오는 모달 | `ModalSheet` | `features/shell/ModalSheet` |
 | 크레딧 쓰는 AI 실행 전 확인(「추천받기」·「코스 짜기」, 쓸 크레딧 · 남은 크레딧, `note` 한 줄 — 추천은 찾는 범위) | `CreditConfirm` (`ConfirmDialog` + 회색 상자 두 줄) | `features/credits/CreditConfirm` |
 | 입구 화면 틀(좁으면 세로 띠, 768px 이상 가운데 카드) | `EntryFrame` | `ui/EntryFrame` |
@@ -409,7 +410,8 @@ components:
   - `press`는 `background-image`로 덮는다. 그 요소에 인라인 `background` 단축 속성을 쓰면 지워지니 `backgroundColor`를 쓴다.
 - **글자 버튼:** `btn-text`(조용한 회색 500 — 「닫기」·「핀 삭제」·「확정 해제」·「나중에 할게요」)와 `btn-link`(brand-600 700 — 「카카오맵에서 보기」·「복사」·「직접 찍기」). 둘 다 누르는 곳 44px이 들어 있다. 크기는 놓인 줄의 글자 크기를 따른다.
 - **Kakao:** 카카오 노랑 + 검정 글자, `btn-lg`. 「카카오로 시작하기」 한 곳뿐이다.
-- **게스트:** 로그인 화면 카카오 버튼 바로 아래 `btn-neutral btn-md`(카카오보다 한 단계 작게) + 사람 아이콘 「게스트로 시작하기 · 이름 입력」(「이름 입력」 밑줄)이다. 덧말은 360px 아래에서 뺀다. 게스트는 초대 링크로만 들어가서(#472) 누르면 방법을 알려 주는 모달 시트가 뜬다.
+- **Google(#1514):** 카카오 버튼 바로 아래 같은 `btn-lg`. 흰 바탕 + ink-200 테두리 + 구글 「G」 로고 + 「Google로 시작하기」. 로고 색은 바꾸지 않는다(구글 브랜드 가이드).
+- **게스트:** 로그인 화면 구글 버튼 바로 아래 `btn-neutral btn-md`(카카오보다 한 단계 작게) + 사람 아이콘 「게스트로 시작하기 · 이름 입력」(「이름 입력」 밑줄)이다. 덧말은 360px 아래에서 뺀다. 게스트는 초대 링크로만 들어가서(#472) 누르면 방법을 알려 주는 모달 시트가 뜬다.
 
 ### Chips · Tags
 - **칩(`chip`)** — 누르는 알약이다(카테고리·지역·사유·「동선 보기」). 13/400, 높이 32, 누르는 곳 44. 켜짐은 `aria-pressed`로 정한다: brand-100 + brand-600 테두리 + brand-700 글자 600. 기본은 흰 바탕 + ink-200 테두리 + ink-700 글자다. 그림자는 지도 위에 떠 있을 때만(`CategoryChips floating`) 준다. 조건이 안 돼 못 누르는 칩(확정 2곳 미만의 「동선 보기」)은 `aria-disabled`로 비활성 모양(ink-50 면 + ink-500 글자)을 하되 눌리게 두고, 누르면 이유를 토스트로 알린다.
