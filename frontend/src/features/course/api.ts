@@ -1,8 +1,8 @@
 import { api } from '@/api'
 
-import type { CourseRunDto } from './model'
+import type { CourseRunDto, requestBody } from './model'
 
-export const createCourse = (mapId: string, body: { request_text?: string }) =>
+export const createCourse = (mapId: string, body: ReturnType<typeof requestBody>) =>
   api<{ course_run_id: string }>(`/maps/${mapId}/courses`, { method: 'POST', body: JSON.stringify(body) })
 
 export const fetchCourseRun = (runId: string) => api<CourseRunDto>(`/course-runs/${runId}`)

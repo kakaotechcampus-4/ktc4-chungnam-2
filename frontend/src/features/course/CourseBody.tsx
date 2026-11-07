@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
@@ -21,7 +21,7 @@ import TextField from '@/ui/TextField'
 
 import { useCourseViewStore } from './courseMapStore'
 import CourseRun from './CourseRun'
-import { createErrorMessage, pinNames, pinPoints, REQUEST_MAX } from './model'
+import { createErrorMessage, pinNames, pinPoints, REQUEST_MAX, WALK_MAX_OPTIONS, walkLabel } from './model'
 import { courseKeys, useCreateCourseMutation, useLatestCourseQuery } from './queries'
 
 /**
@@ -46,6 +46,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   // 요청 한 줄은 여기 둔다 — 결과의 「다시 점검」·「다시 짜기」로 입력에 돌아와도 쓴 글이 남는다.
   // 요청이 실패한 뒤 탭을 오가 새로 붙으면 실패한 요청의 글로 시작한다(「요청 고치기」).
   const [text, setText] = useState(() => useCourseViewStore.getState().failed[mapId]?.text ?? '')
+  const [walkMax, setWalkMax] = useState<number | null>(() => useCourseViewStore.getState().failed[mapId]?.walkMax ?? null)
 
   if (viewing) {
     return (
@@ -56,7 +57,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
     )
   }
   if (shortlist.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
-  return <Entry mapId={mapId} routable={routable} text={text} setText={setText} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
+  return <Entry mapId={mapId} routable={routable} text={text} setText={setText} walkMax={walkMax} setWalkMax={setWalkMax} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
 }
 
 /** 코스는 위치를 아는 확정 장소가 2곳부터다 — 안내 화면 제목과 버튼 아래 이유가 같은 말이다. */
@@ -83,12 +84,16 @@ function Entry({
   routable,
   text,
   setText,
+  walkMax,
+  setWalkMax,
   onRun,
 }: {
   mapId: string
   routable: number
   text: string
   setText: (text: string) => void
+  walkMax: number | null
+  setWalkMax: (min: number | null) => void
   onRun: (runId: string, fromInProgress?: boolean) => void
 }) {
   const queryClient = useQueryClient()
@@ -110,7 +115,7 @@ function Entry({
   })
 
   // 만든 run 을 여는 것(이미 짜는 중이면 그 run 으로)은 요청 훅이 한다.
-  const submit = () => create.mutate(text)
+  const submit = () => create.mutate({ text, walkMax })
 
   function openLatest() {
     if (!latest) return
@@ -123,7 +128,7 @@ function Entry({
   if (routable < 2 && !latest) return <NotEnough mapId={mapId} />
   // 장소 부족(known)과 크레딧은 입력 화면에서 바로 고친다. 그 밖의 실패는 핑고가 알리고 같은 요청을 다시 보낸다.
   if (failure && !known && !creditBlock(error)) {
-    return <RequestFailed pending={create.isPending} onRetry={() => create.mutate(failure.text)} onEdit={() => clearFail(mapId)} />
+    return <RequestFailed pending={create.isPending} onRetry={() => create.mutate({ text: failure.text, walkMax: failure.walkMax })} onEdit={() => clearFail(mapId)} />
   }
 
   return (
@@ -147,6 +152,7 @@ function Entry({
         </label>
         <TextField id="course-request" value={text} onChange={setText} maxLength={REQUEST_MAX} placeholder="둘째 날은 실내 위주로" clearLabel="요청 지우기" />
       </div>
+      <WalkPicker value={walkMax} onPick={setWalkMax} />
       {known && <p role="alert" className="text-sm text-warn-text">{known}</p>}
       <div className="space-y-1">
         {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭으로 간다). 확정 장소가 모자라면 막는다. */}
@@ -234,6 +240,31 @@ function RequestFailed({ pending, onRetry, onEdit }: { pending: boolean; onRetry
           onCancel={() => setAsking(false)}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * 「하루 걷기」 — 하루에 걸을 시간의 상한(#1502). 고르면 코스가 그날 도보 합계를 그 안으로 맞춘다(대중교통 시간은 세지 않는다).
+ * 「상관없음」이면 보내지 않아 서버 기본 상한을 쓴다.
+ */
+function WalkPicker({ value, onPick }: { value: number | null; onPick: (min: number | null) => void }) {
+  const labelId = useId()
+  return (
+    <div className="space-y-1.5">
+      <p id={labelId} className="text-sm font-bold text-ink-900">
+        하루 걷기 <span className="font-normal text-ink-500">(선택)</span>
+      </p>
+      <div role="group" aria-labelledby={labelId} className="flex flex-wrap gap-2">
+        <button type="button" aria-pressed={value === null} onClick={() => onPick(null)} className="chip">
+          상관없음
+        </button>
+        {WALK_MAX_OPTIONS.map((m) => (
+          <button key={m} type="button" aria-pressed={value === m} onClick={() => onPick(m)} className="chip">
+            {walkLabel(m)}까지
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
