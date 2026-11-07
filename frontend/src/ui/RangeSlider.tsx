@@ -75,7 +75,10 @@ export default function RangeSlider({
           {marks.map((m, i) => (
             <span
               key={m}
-              className={`absolute top-0 ${i === 0 ? '' : i === marks.length - 1 ? '-translate-x-full' : '-translate-x-1/2'}`}
+              // 손잡이가 이 눈금 위에 있으면 그 숫자를 굵은 파랑 + 밑줄로 짚는다(눈금 사이 값이면 아무것도 짚지 않는다).
+              className={`absolute top-0 whitespace-nowrap ${i === 0 ? '' : i === marks.length - 1 ? '-translate-x-full' : '-translate-x-1/2'} ${
+                m === value ? 'font-bold text-brand-700 underline underline-offset-4' : ''
+              }`}
               style={{ left: at(m) }}
             >
               {markLabel(m)}
