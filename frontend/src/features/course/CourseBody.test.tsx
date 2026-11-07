@@ -85,7 +85,7 @@ describe('AI 코스 짜기 시트', () => {
     // 영업시간을 모르는 장소(needs_check)에는 표시하지 않고, 아는 장소에만 「영업시간 확인됨」(2026-11-02)
     expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
     expect(screen.queryByText('영업시간 확인됨')).not.toBeInTheDocument() // 목 서버는 모든 장소가 영업 여부를 모른다
-    expect(screen.getByText(/^영업시간 정보가 없는 \d+곳은 방문 전 확인을 추천해요\.$/)).toBeInTheDocument()
+    expect(screen.getByText(/^영업시간 정보가 없는 \d+곳은 방문 전에 확인해 주세요\.$/)).toBeInTheDocument()
     expect(screen.queryByText('다시 짜기')).not.toBeInTheDocument() // stale 아님
     expect(screen.queryAllByRole('link', { name: /길찾기/, hidden: true }).every((a) => a.getAttribute('href')?.startsWith('https://map.kakao.com/link/by/') && a.getAttribute('target') === '_blank')).toBe(true)
     // 장소 이름은 이미 받은 확정 리스트에서 찾는다
@@ -265,7 +265,7 @@ describe('AI 코스 짜기 시트', () => {
     await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
     expect(await screen.findByText('이 장소는 첫째 날에 쉬는 날이에요')).toBeInTheDocument()
     expect(screen.queryByText('영업시간 확인됨')).not.toBeInTheDocument()
-    expect(screen.getByText('영업시간 정보가 없는 1곳은 방문 전 확인을 추천해요.')).toBeInTheDocument()
+    expect(screen.getByText('영업시간 정보가 없는 1곳은 방문 전에 확인해 주세요.')).toBeInTheDocument()
   })
 
   it('확정 장소가 2곳 미만이어도 최근 코스가 있으면 입력 화면 — 회색 버튼 아래에 이유를 적는다(#1127 리뷰)', async () => {

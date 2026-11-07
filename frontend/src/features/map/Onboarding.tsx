@@ -13,7 +13,7 @@ const STEPS: Record<OnboardingKind, ReactNode[]> = {
   owner: [
     '상단 검색창에서 가고 싶은 장소를 찾아 첫 핀을 찍어 보세요',
     '친구를 초대해 보세요. 오른쪽 위 구성원 버튼에서도 언제든 초대할 수 있어요',
-    <>각자 <Mark kind="like" /> <Mark kind="against" />로 의견을 남기면 AI가 모두를 위한 대안을 찾아줘요</>,
+    <>각자 <Mark kind="like" /> <Mark kind="against" />로 의견을 남기면 AI가 모두에게 맞는 곳을 찾아 줘요</>,
   ],
   member: [
     <>등록된 핀을 눌러 <Mark kind="like" /> <Mark kind="against" />로 의견을 들려주세요</>,

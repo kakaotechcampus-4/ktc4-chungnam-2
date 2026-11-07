@@ -65,7 +65,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
         {/* 숫자는 GET /credits/me 그대로(#733). 못 받으면 비운다 — 다시 추천은 크레딧과 무관하게 된다. */}
         {credits && <span className="shrink-0 text-label text-ink-500">{balanceText(credits)}</span>}
       </div>
-      <p className="mt-1.5 text-label text-ink-500">수정한 조건을 반영해 새로운 후보를 찾아드려요 · 크레딧은 쓰지 않아요</p>
+      <p className="mt-1.5 text-label text-ink-500">고친 조건으로, 지금 후보를 빼고 찾아 드려요 · 크레딧은 쓰지 않아요</p>
     </div>
   )
 }
@@ -117,7 +117,7 @@ export function ResultsBody({
         <span className="font-bold text-brand-600">어떻게 골랐나요 ›</span>
       </button>
       {/* 알러지는 거르지 않는다 — 데이터로 보장할 수 없어서 사유와 상관없이 항상 안내한다(#425) */}
-      <p className="text-xs text-ink-500">특정 알레르기나 식이 정보는 방문 전 매장에 확인하는 것을 권장해요.</p>
+      <p className="text-xs text-ink-500">알러지가 있다면 가게에 직접 확인해 주세요</p>
       <RunAdvice mapId={mapId} run={run} widen={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />} onOpenEvidence={onOpenConditions} />
       {/* 원한 조건에 맞는 곳이 반경 안에 없으면 다른 곳만 보여 주지 않고 이유를 말한다. 넓히는 건 사람이다(가드레일 4). */}
       {missing.length > 0 && (
