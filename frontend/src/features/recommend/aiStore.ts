@@ -13,6 +13,9 @@ type AiState = {
   /** 추천 전 준비 화면에서 고른 카테고리. 광고 영역도 같은 카테고리로 부른다(docs/ads.md 4절). */
   picked: Record<string, RecommendCategory | undefined>
   setPicked: (mapId: string, category: RecommendCategory) => void
+  /** 준비 화면 「찾는 범위」에서 고른 반경(m, #1416). 안 골랐으면 없고 서버 기본값을 쓴다(model.readinessRadiusM). */
+  radius: Record<string, number | undefined>
+  setRadius: (mapId: string, radiusM: number) => void
   /**
    * 카드나 지도에서 고른 후보(#843). 카드와 지도 점선 핀이 같은 값을 본다.
    * n 은 누를 때마다 늘린다 — 같은 후보를 다시 눌러도 지도가 다시 그리로 간다.
@@ -28,6 +31,8 @@ export const useAiStore = create<AiState>((set) => ({
   setRun: (mapId, run) => set((s) => ({ runs: { ...s.runs, [mapId]: run }, focus: null })),
   picked: {},
   setPicked: (mapId, category) => set((s) => ({ picked: { ...s.picked, [mapId]: category } })),
+  radius: {},
+  setRadius: (mapId, radiusM) => set((s) => ({ radius: { ...s.radius, [mapId]: radiusM } })),
   focus: null,
   focusCandidate: (id) => set((s) => ({ focus: { id, n: (s.focus?.n ?? 0) + 1 } })),
   blurCandidate: () => set({ focus: null }),

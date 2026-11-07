@@ -115,11 +115,31 @@ export function evidenceLimitMessage(err: unknown): string | null {
 export const radiusKm = (m: number) => `${m / 1000}km`
 
 /**
- * AI 추천이 찾는 범위 — 고른 카테고리의 기본 반경(m, `Readiness.radius_m`, #1385). 지도 원과 크레딧 확인 창이 같은 값을 쓴다.
+ * AI 추천이 찾는 범위(m) — 사람이 「찾는 범위」에서 고른 반경, 안 골랐으면 고른 카테고리의 기본 반경(`Readiness.radius_m`, #1385).
+ * 고른 값이 서버가 준 하한·상한 밖이면 기본으로 돌아간다. 지도 원·크레딧 확인 창·run 생성이 같은 값을 쓴다(#1416).
  * 값이 없으면(구버전 서버, 카테고리를 아직 못 고름) null — 원을 그리지 않고 숫자 없이 알린다. 숫자를 지어내지 않는다(#1468).
  */
-export function readinessRadiusM(map: Partial<Record<RecommendCategory, ReadinessDto>> | undefined, category: RecommendCategory | null): number | null {
-  return (category && map?.[category]?.radius_m) || null
+export function readinessRadiusM(
+  map: Partial<Record<RecommendCategory, ReadinessDto>> | undefined,
+  category: RecommendCategory | null,
+  picked?: number,
+): number | null {
+  const r = category ? map?.[category] : undefined
+  if (picked && r?.radius_min_m && r.radius_max_m && picked >= r.radius_min_m && picked <= r.radius_max_m) return picked
+  return r?.radius_m || null
+}
+
+/** 「찾는 범위」 칩 간격(m). 화면이 고르는 단위일 뿐이고 하한·상한·기본값은 서버 값이다(#1416). */
+const RADIUS_PICK_STEP_M = 1000
+
+/** 「찾는 범위」에서 고를 수 있는 반경들 — 서버가 준 하한부터 상한까지 1km 간격, 기본값은 늘 들어간다. 하한·상한이 없으면(구버전 서버) 빈 목록이다. */
+export function radiusOptions(r: ReadinessDto | undefined): number[] {
+  if (!r?.radius_min_m || !r.radius_max_m) return []
+  const out = new Set<number>()
+  for (let m = r.radius_min_m; m <= r.radius_max_m; m += RADIUS_PICK_STEP_M) out.add(m)
+  out.add(r.radius_max_m)
+  if (r.radius_m) out.add(r.radius_m)
+  return [...out].sort((a, b) => a - b)
 }
 
 /** 확인 창에 보이는 범위 한 줄. */
