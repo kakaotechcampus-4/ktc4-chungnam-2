@@ -42,6 +42,7 @@ export default function AgentButton({
   const [open, setOpen] = useState(false)
   const [opens, setOpens] = useState(readOpens)
   const heading = useSheetStore((s) => s.mapHeading)
+  // 조회가 실패하면 새 제안 점만 못 켠다 — 버튼은 남고 시트가 열리면 거기서 오류를 보인다(AgentSheet).
   const state = useAgentQuery(mapId).data
   const dot = Boolean(state?.settings.enabled && state.has_unseen)
   const bubble = opens < BUBBLE_OPENS

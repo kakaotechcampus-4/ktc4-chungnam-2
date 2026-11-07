@@ -15,6 +15,7 @@ import { AiHeader } from '@/features/recommend/Readiness'
 import { showToast } from '@/features/shell/toast'
 import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
+import ErrorText from '@/ErrorText'
 import Notice from '@/ui/Notice'
 import EmptyState from '@/ui/EmptyState'
 import TextField from '@/ui/TextField'
@@ -57,7 +58,20 @@ export default function CourseBody({ mapId }: { mapId: string }) {
     )
   }
   if (shortlist.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  // 실패를 확정 0곳으로 읽으면 「장소가 2곳 이상 필요해요」 안내가 거짓으로 뜬다.
+  if (shortlist.isError) return <LoadFailed error={shortlist.error} onRetry={() => void shortlist.refetch()} />
   return <Entry mapId={mapId} routable={routable} text={text} setText={setText} walkMax={walkMax} setWalkMax={setWalkMax} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
+}
+
+function LoadFailed({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  return (
+    <div className="space-y-2">
+      <ErrorText message="확정 리스트를 불러오지 못했어요" error={error} />
+      <button type="button" onClick={onRetry} className="btn-outline btn-sm">
+        다시 불러오기
+      </button>
+    </div>
+  )
 }
 
 /** 코스는 위치를 아는 확정 장소가 2곳부터다 — 안내 화면 제목과 버튼 아래 이유가 같은 말이다. */
@@ -125,6 +139,7 @@ function Entry({
 
   // 최근 코스를 받기 전에 안내 화면을 먼저 띄우면 받은 뒤 입력 화면으로 바뀌며 깜빡인다(#1127 리뷰).
   if (routable < 2 && latestQuery.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  if (routable < 2 && !latest && latestQuery.isError) return <LoadFailed error={latestQuery.error} onRetry={() => void latestQuery.refetch()} />
   if (routable < 2 && !latest) return <NotEnough mapId={mapId} />
   // 장소 부족(known)과 크레딧은 입력 화면에서 바로 고친다. 그 밖의 실패는 핑고가 알리고 같은 요청을 다시 보낸다.
   if (failure && !known && !creditBlock(error)) {
