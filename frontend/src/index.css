@@ -137,6 +137,19 @@
     /* 단계 클래스가 없는 글자(입력칸 16px 등)도 같은 자간·행간을 따른다. */
     letter-spacing: -0.01em;
     line-height: 1.4;
+    /* 한글은 낱말(어절) 단위로 줄을 바꾼다. 띄어쓰기 없는 긴 글자(링크 등)만 넘칠 때 끊는다(#1511). */
+    word-break: keep-all;
+    overflow-wrap: break-word;
+    }
+  /* 문단 끝줄에 낱말 하나만 남지 않게(#1511). 두 문장 이상은 ui/Sentences 가 문장마다 줄을 바꾼다. */
+  p, li, dd {
+    text-wrap: pretty;
+    }
+  /* 가운데 정렬 글과 짧은 안내 글(text-xs·text-label)은 줄 길이를 고르게 — 「…확정 리스트에 먼저 / 담아 보세요」처럼 끝말만 가운데 떨어지지 않게(#1511). */
+  :where(.text-center) :is(p, li, dd),
+  p.text-center,
+  p:is(.text-xs, .text-label) {
+    text-wrap: balance;
     }
   /* 제목은 낱말 단위로 끊고 줄 길이를 고르게(#1511). 가운데 정렬 제목이 「…있어 / 요」처럼 한 글자만 남지 않게. */
   h1, h2, h3 {

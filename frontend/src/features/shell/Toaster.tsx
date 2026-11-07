@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import Sentences from '@/ui/Sentences'
+
 import { CONTROLS } from './layout'
 
 import { useToastStore } from './toast'
@@ -72,7 +74,9 @@ export default function Toaster({
           onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setFocusId(null)}
           className="pointer-events-auto flex max-w-[361px] items-center gap-3 rounded-xl bg-[var(--toast-bg)] px-4 py-2.5 text-sm text-white backdrop-blur-[12px]"
         >
-          <span className="line-clamp-2 break-keep [text-wrap:balance]">{toast.message}</span>
+          <span className="line-clamp-3 break-keep [text-wrap:balance]">
+            <Sentences text={toast.message} />
+          </span>
           {toast.action && (
             <button
               type="button"

@@ -23,6 +23,7 @@ import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import Mark from '@/ui/Mark'
+import Sentences from '@/ui/Sentences'
 
 /**
  * 확정된 장소 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 위에서 날을 고른 뒤 줄의 「넣기」로 그날에 넣는다.
@@ -150,7 +151,9 @@ export default function ShortlistTab() {
           ) : !edit.ready ? (
             <p className="text-sm text-ink-500">일정을 불러오는 중…</p>
           ) : items.length === 0 ? (
-            <p className="break-keep text-sm text-ink-500">모든 장소를 일정에 넣었어요. 동선 보기로 날짜별 경로를 확인해 보세요.</p>
+            <p className="break-keep text-sm text-ink-500">
+              <Sentences text="모든 장소를 일정에 넣었어요. 동선 보기로 날짜별 경로를 확인해 보세요." />
+            </p>
           ) : (
             <>
               {day ? (

@@ -18,6 +18,7 @@ import FieldError from '@/ui/FieldError'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
+import Sentences from '@/ui/Sentences'
 
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
@@ -131,7 +132,9 @@ export function LiveInfo({ pin }: { pin: Pin }) {
       {state === 'loading' && !slow && <p className="text-ink-500">장소 위치를 확인하는 중이에요…</p>}
       {slow && (
         <div className="flex items-center justify-between gap-2">
-          <p className="text-ink-600">위치를 아직 찾지 못했어요. 다시 시도할까요?</p>
+          <p className="text-ink-600">
+            <Sentences text="위치를 아직 찾지 못했어요. 다시 시도할까요?" />
+          </p>
           <button type="button" onClick={retry} className="btn-outline btn-sm shrink-0">
             다시 시도
           </button>

@@ -5,6 +5,7 @@ import { useShareInvite, type InviteStatus } from '@/features/maps/useShareInvit
 import Mark from '@/ui/Mark'
 import { josa } from '@/ui/josa'
 import Pingo from '@/ui/Pingo'
+import Sentences from '@/ui/Sentences'
 
 export type OnboardingKind = 'owner' | 'member'
 
@@ -17,7 +18,12 @@ const STEPS: Record<OnboardingKind, ReactNode[]> = {
   ],
   member: [
     <>등록된 핀을 눌러 <Mark kind="like" /> <Mark kind="against" />로 의견을 들려주세요</>,
-    <><Mark kind="against" /> 반대할 땐 이유를 꼭 남겨 주세요. AI가 그 이유로 더 좋은 곳을 찾아요</>,
+    <>
+      <span className="block">
+        <Mark kind="against" /> 반대할 땐 이유를 꼭 남겨 주세요.
+      </span>
+      <span className="block">AI가 그 이유로 더 좋은 곳을 찾아요</span>
+    </>,
     '직접 가고 싶은 장소가 있다면 검색해서 언제든 핀을 추가해 보세요',
   ],
 }
@@ -52,7 +58,7 @@ export function OnboardingBody({ mapId, kind, onDone }: { mapId: string; kind: O
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
               {i + 1}
             </span>
-            <span className="break-keep">{step}</span>
+            <span className="break-keep">{typeof step === 'string' ? <Sentences text={step} /> : step}</span>
           </li>
         ))}
       </ol>

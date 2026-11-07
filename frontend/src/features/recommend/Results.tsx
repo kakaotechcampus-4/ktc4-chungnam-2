@@ -225,7 +225,7 @@ function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto;
   // 그사이 누가 같은 곳을 찍었으면(409 PIN_DUPLICATE) 다시 눌러도 같은 오류다 — 광고 칸처럼 버튼을 닫는다.
   const [onMap, setOnMap] = useState(false)
   if (c.visibility === 'published') {
-    return <span className="tag tag-good">지도에 올렸어요. 이제 모두에게 보여요</span>
+    return <span className="tag tag-good">지도에 올려 모두에게 보여요</span>
   }
   if (!c.permissions.can_publish) return null
   if (onMap) {
