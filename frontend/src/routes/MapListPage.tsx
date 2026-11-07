@@ -7,7 +7,8 @@ import { readPendingInvite } from '@/features/auth/pendingInvite'
 import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import { useMeQuery } from '@/features/auth/queries'
 import AccountSheet, { AccountMenu } from '@/features/maps/AccountSheet'
-import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
+import { CopyMapConfirm, DeleteMapConfirm, EditMapDialog, LeaveMapConfirm } from '@/features/maps/MapLifecycle'
+import { ColorSheet, CoverSheet, MapCover } from '@/features/maps/MapLook'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery, useTrashQuery } from '@/features/maps/queries'
 import TrashSheet from '@/features/maps/TrashSheet'
@@ -170,7 +171,7 @@ function NewMapLink({ className, blockedBy }: { className: string; blockedBy?: s
 }
 
 function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; empty?: string }) {
-  const [open, setOpen] = useState<{ kind: 'edit' | 'delete' | 'leave'; map: MapView } | null>(null)
+  const [open, setOpen] = useState<{ kind: CardAction; map: MapView } | null>(null)
   const close = () => setOpen(null)
   return (
     <section className="space-y-3">
@@ -188,8 +189,12 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
           <li key={map.id} className="relative">
             <Link
               to={`/maps/${map.id}`}
-              className="press block h-full rounded-xl border border-ink-200 bg-white p-4 pr-12 md:p-5 md:pr-14 md:hover:border-brand-300"
+              // 지도 색은 카드 바탕이다(#1445). 고르지 않았으면 흰 카드다.
+              style={map.color ? { background: map.color } : undefined}
+              className="press block h-full overflow-hidden rounded-xl border border-ink-200 bg-white md:hover:border-brand-300"
             >
+              <MapCover map={map} className="block aspect-[16/6] w-full" />
+              <div className="p-4 pr-12 md:p-5 md:pr-14">
               <p className="flex items-center gap-2">
                 <span className="truncate text-title font-bold text-ink-900">{map.title}</span>
                 {map.isOwner && <span className="tag tag-neutral">방장</span>}
@@ -197,15 +202,22 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
                   <span className="tag tag-neutral">{map.region}</span>
                 )}
               </p>
-              <p className="mt-1 text-sm text-ink-500">{map.summary}</p>
+              {/* 초대받은 지도는 누구의 지도인지 적는다(#1445). */}
+              {map.createdByMe === false && map.ownerName && <p className="mt-1 text-sm font-semibold text-ink-700">{map.ownerName}님의 지도</p>}
+              <p className="mt-1 text-sm text-ink-600">{map.summary}</p>
+              </div>
             </Link>
-            <div className="absolute right-2 top-2 md:right-3 md:top-3">
+            {/* 메뉴 버튼은 그림 위라 흰 원 위에 둔다. */}
+            <div className="absolute right-2 top-2 rounded-full bg-white/90 shadow-float md:right-3 md:top-3">
               <ActionMenu label={`${map.title} 메뉴`} items={cardActions(map, (kind) => setOpen({ kind, map }))} />
             </div>
           </li>
         ))}
       </ul>
       {open?.kind === 'edit' && <EditMapDialog map={open.map.header} onCancel={close} />}
+      {open?.kind === 'cover' && <CoverSheet map={open.map} onClose={close} />}
+      {open?.kind === 'color' && <ColorSheet map={open.map} onClose={close} />}
+      {open?.kind === 'copy' && <CopyMapConfirm mapId={open.map.id} onCancel={close} />}
       {open?.kind === 'delete' && <DeleteMapConfirm mapId={open.map.id} title={open.map.title} onCancel={close} />}
       {open?.kind === 'leave' && <LeaveMapConfirm mapId={open.map.id} nextOwnerName={open.map.header.nextOwnerName} onCancel={close} />}
     </section>
@@ -216,10 +228,19 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
  * 지도 카드 「⋯」 메뉴(#1444). 방장은 고치기와 삭제(빨강, 맨 끝), 구성원은 나가기다.
  * 권한은 지도 응답의 permissions 를 따른다 — 화면이 방장인지로 다시 판정하지 않는다.
  */
-function cardActions(map: MapView, open: (kind: 'edit' | 'delete' | 'leave') => void): ActionMenuItem[] {
-  const { canEdit, canDelete, canLeave, isOwner } = map.header
+type CardAction = 'edit' | 'cover' | 'color' | 'copy' | 'delete' | 'leave'
+
+function cardActions(map: MapView, open: (kind: CardAction) => void): ActionMenuItem[] {
+  const { canEdit, canCopy, canDelete, canLeave, isOwner } = map.header
   return [
-    ...(canEdit ? [{ label: '이름·날짜 수정', onSelect: () => open('edit') }] : []),
+    ...(canEdit
+      ? [
+          { label: '이름·날짜 수정', onSelect: () => open('edit') },
+          { label: '대표 이미지 편집', onSelect: () => open('cover') },
+          { label: '색상 변경', onSelect: () => open('color') },
+        ]
+      : []),
+    ...(canCopy ? [{ label: '지도 복사', onSelect: () => open('copy') }] : []),
     ...(!isOwner && canLeave ? [{ label: '지도 나가기', onSelect: () => open('leave') }] : []),
     ...(canDelete ? [{ label: '지도 삭제', danger: true, onSelect: () => open('delete') }] : []),
   ]

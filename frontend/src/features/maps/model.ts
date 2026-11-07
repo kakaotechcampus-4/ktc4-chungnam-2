@@ -24,6 +24,12 @@ export type MapView = Pick<MapDto, 'id' | 'title'> & {
   summary: string
   /** 카드 「⋯」 메뉴의 수정·삭제·나가기 창이 쓰는 값(#1444). 지도 화면 머리글과 같은 모양이다. */
   header: MapHeaderView
+  /** 지도 색(#1445). 고르지 않았으면 없다 — 카드는 흰 바탕, 기본 그림은 ink-100 하늘이다. */
+  color?: string
+  /** 방장이 올린 대표 이미지 주소(apiUrl 로 감싸 쓴다). 없으면 지역 기본 그림(RegionCover)이다. */
+  coverUrl?: string
+  /** 지금 방장 이름 — 초대받은 지도 카드의 「○○님의 지도」. */
+  ownerName?: string
 }
 
 /** "10.3 (토)" — 화면의 날짜 표기 하나. */
@@ -48,6 +54,8 @@ export type MapHeaderView = Pick<MapDto, 'id' | 'title'> & {
   isOwner: boolean
   /** 지도 삭제는 방장만(#369). */
   canDelete: boolean
+  /** 지도 복사는 방장만(#1446, permissions.md map.copy). */
+  canCopy: boolean
   /** 넘길 사람이 없는 방장은 나갈 수 없다 — 지도를 삭제해야 한다. */
   canLeave: boolean
   /** 방장이 나가면 방장이 될 사람의 이름. 요청자가 방장이고 넘길 사람이 있을 때만 있다. */
@@ -69,6 +77,7 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
     isOwner: map.my_role === 'owner',
     regionCenter: map.region ? { lat: map.region.lat, lng: map.region.lng } : undefined,
     canDelete: map.permissions.can_delete === true,
+    canCopy: map.permissions.can_copy === true,
     canLeave: map.permissions.can_leave !== false,
     nextOwnerName: map.next_owner?.display_name,
   }
@@ -114,6 +123,9 @@ export function toMapView(map: MapDto): MapView {
     isOwner: map.my_role === 'owner',
     summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명 · 핀 ${map.pin_count}개`,
     header: toMapHeaderView(map),
+    color: map.color ?? undefined,
+    coverUrl: map.cover_url ?? undefined,
+    ownerName: map.owner_display_name ?? undefined,
   }
 }
 
@@ -167,6 +179,13 @@ export function restoreMapErrorMessage(err: unknown, retentionDays: number): str
   if (err instanceof ApiError && err.code === 'MAP_LIMIT') return mapLimitMessage(err)
   if (err instanceof ApiError && err.code === 'MAP_PURGED') return `삭제한 지 ${retentionDays}일이 지나 복구할 수 없어요`
   return '지도를 복구하지 못했어요'
+}
+
+/** 지도 복사 실패 문구(#1446). 복사도 지도를 하나 늘려서 상한(409 MAP_LIMIT)에 걸릴 수 있다. */
+export function copyMapErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  if (err instanceof ApiError && err.code === 'GUEST_NOT_ALLOWED') return '게스트는 지도를 복사할 수 없어요. 카카오로 로그인해 주세요'
+  return '지도를 복사하지 못했어요'
 }
 
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */

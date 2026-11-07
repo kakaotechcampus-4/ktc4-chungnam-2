@@ -35,6 +35,7 @@ CATALOG: dict[str, tuple[int, str]] = {
     "INVITE_NOT_FOUND": (404, "유효하지 않은 초대 링크예요"),
     "MAP_LIMIT": (409, "내 지도가 이미 상한에 도달했어요"),
     "TRIP_TOO_LONG": (422, "여행 기간이 너무 길어요"),
+    "COVER_INVALID": (422, "올릴 수 없는 대표 이미지예요"),
     "OWNER_CANNOT_LEAVE": (409, "넘길 사람이 없는 방장은 나갈 수 없어요"),
     "GUEST_NOT_ALLOWED": (403, "게스트는 할 수 없는 일이에요"),
     "GUEST_LIMIT": (409, "이 초대 링크로 만들 수 있는 게스트 수를 넘었어요"),

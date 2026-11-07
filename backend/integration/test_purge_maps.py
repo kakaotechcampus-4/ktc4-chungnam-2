@@ -27,7 +27,7 @@ from auth.testing import session_cookie
 from common.events import EventLog
 from maps import api as maps_api
 from maps import core, purge
-from maps.models import Invite, Map, Membership
+from maps.models import Invite, Map, MapCover, Membership
 from pins.models import Pin, Reaction
 from places.models import Place, PlaceFact
 from recommend.models import Candidate, EvidenceLine, Exclusion, RecommendRun, Region
@@ -39,7 +39,7 @@ NOW = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
 # 정리가 지우는 테이블 13개(지도 행 포함). 이슈 #431의 "12개"는 maps를 뺀 지도 딸린 데이터까지 합친 표기다.
 TABLE_NAMES = [
     "shortlist_items", "routes", "evidence_lines", "candidates", "regions", "exclusions", "recommend_runs",
-    "reactions", "pins", "event_log", "invites", "memberships", "maps",
+    "reactions", "pins", "event_log", "invites", "memberships", "map_covers", "maps",
     # agent(#512) — 다른 모듈 테이블을 참조하지 않아 정리 순서와 무관하다
     "agent_suggestion_views", "agent_suggestions", "agent_run_advice", "agent_reason_summaries",
     "agent_runs", "agent_cursors", "agent_settings",
@@ -77,6 +77,7 @@ def _rows_by_map(db, map_id: str) -> dict[str, int]:
         "event_log": count(EventLog, EventLog.map_id == map_id),
         "invites": count(Invite, Invite.map_id == map_id),
         "memberships": count(Membership, Membership.map_id == map_id),
+        "map_covers": count(MapCover, MapCover.map_id == map_id),
         "maps": count(Map, Map.id == map_id),
         "agent_suggestion_views": count(AgentSuggestionView, AgentSuggestionView.suggestion_id.in_(suggestion_ids)),
         "agent_suggestions": count(AgentSuggestion, AgentSuggestion.map_id == map_id),
@@ -103,6 +104,8 @@ def _build_map(a, b, db, pin_body, title: str) -> str:
                                    "region": REGION}).json()["id"]
     token = a.post(f"/maps/{map_id}/invite").json()["token"]
     assert b.post(f"/invites/{token}/accept").status_code == 200
+    cover = b"RIFF\x00\x00\x00\x00WEBP"   # 대표 이미지(#1445)
+    assert a.put(f"/maps/{map_id}/cover", content=cover, headers={"Content-Type": "image/webp"}).status_code == 200
 
     pin_ids = []
     for client, key in zip((a, b), ("seongsu-kalguksu", "hongdae-ramen")):
