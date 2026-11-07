@@ -27,12 +27,14 @@ def check_can_spend(db: Session, *, user_id: str, feature: str) -> None:
 def charge(db: Session, *, user_id: str, feature: str, run_id: str) -> int:
     """실행 저장과 같은 트랜잭션에서 가격만큼 뺀다. ref_id = f"{feature}:{run_id}". 남은 잔액.
     첫 쓰기면 계정을 만들고 initial을 남긴다. 같은 run으로 다시 부르면 빼지 않고 잔액만 돌려준다.
-    읽기 확인과 쓰기 사이에 잔액이 줄었으면 여기서 402(모델은 이미 불렸다 — 드문 경합으로 받아들인다). 게스트는 403."""
+    읽기 확인과 쓰기 사이에 잔액이 줄었으면 여기서 402(모델은 이미 불렸다 — 드문 경합으로 받아들인다). 게스트는 403.
+    부르는 곳은 명세 3.2 「기능별 가격·차감·환불」 표에 적는다 — 새로 부르면 표에 줄을 더한다(#1479, 검사가 맞춘다)."""
     return service.charge(db, user_id=user_id, feature=feature, run_id=run_id)
 
 
 def refund(db: Session, *, feature: str, run_id: str) -> bool:
-    """결과 없이 끝난 실행의 차감을 돌려준다(코스 ENGINE_ERROR, INTERRUPTED). 잔액 상한까지만 채운다(명세 3.6). 멱등.
+    """사람이 얻은 게 없이 끝난 실행의 차감을 돌려준다. 잔액 상한까지만 채운다(명세 3.6). 멱등(한 run에 한 번).
+    **언제 돌려줄지는 부르는 기능이 정하고, 조건과 부르는 곳은 명세 3.2 표 한 곳에 적는다**(#1479) — 여기 나열하지 않는다.
     환불을 처리했으면 True(상한에 걸려 0이어도), 차감이 없었거나 이미 돌려줬으면 False."""
     return service.refund(db, feature=feature, run_id=run_id)
 
