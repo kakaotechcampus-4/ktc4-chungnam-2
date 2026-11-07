@@ -15,7 +15,7 @@ from llm.api import (
 
 
 class ModelTurnFailed(RuntimeError):
-    """모델 턴이 실패했다(호출 실패, 타임아웃, 스키마 검증 실패). loop.MODEL_FAILURES에 든다(RuntimeError)."""
+    """모델 턴이 실패했다(호출 실패, 타임아웃, 스키마 검증 실패). constants.MODEL_FAILURES에 든다(RuntimeError)."""
 
     def __init__(self, failure: AgentCallFailed):
         super().__init__(f"{failure.reason}: {failure.detail}")

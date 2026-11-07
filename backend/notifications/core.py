@@ -6,6 +6,8 @@
 import uuid
 from collections.abc import Iterable, Sequence
 
+from auth.api import WITHDRAWN_DISPLAY_NAME
+
 # api-spec NotificationType의 선언 순서 — GET /me/notification-prefs가 이 순서로 돌려준다
 TYPES: tuple[str, ...] = ("pin_reaction", "member_joined", "owner_changed", "map_deleted")
 
@@ -13,7 +15,7 @@ MESSAGE_MAX = 200     # api-spec Notification.message maxLength
 MAP_TITLE_MAX = 100   # api-spec Notification.map_title maxLength
 
 DEFAULT_ACTOR = "구성원"
-WITHDRAWN_ACTOR = "탈퇴한 구성원"   # 탈퇴 정리(#857) 뒤 행위자 이름 자리
+WITHDRAWN_ACTOR = WITHDRAWN_DISPLAY_NAME   # 탈퇴 정리(#857) 뒤 행위자 이름 자리. 글자는 auth 한 곳(#1475)
 
 # 문장은 서버가 만든다. 반대 사유 원문·핀 메모를 받는 자리를 일부러 두지 않는다 — 문장 틀에 넣을 수 있는 값은
 # 행위자 이름·지도 제목·반응 종류뿐이다.
