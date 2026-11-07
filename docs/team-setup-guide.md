@@ -23,7 +23,7 @@
 **Python 3.13, 3.14는 안 됩니다.** 서버 부품 두 개(`psycopg2-binary`, `pyproj`)가 3.12까지만 설치 파일이 있어서 5-1에서 설치가 실패합니다.
 3.10, 3.11도 설치는 되지만 실제 서버와 자동 검사(CI)가 3.12라서 3.12를 쓰세요.
 
-다른 버전이 이미 깔려 있으면 3.12를 하나 더 설치하고, 이 문서의 `python`을 전부 `py -3.12`로 바꿔 쓰면 됩니다(예: `py -3.12 -m pip install -r requirements.txt`).
+다른 버전이 이미 깔려 있으면 3.12를 하나 더 설치하고, 이 문서의 `python`을 전부 `py -3.12`로 바꿔 쓰면 됩니다(예: `py -3.12 -m pip install -r requirements-dev.txt`).
 
 Python을 설치할 때 "Add python.exe to PATH"를 꼭 체크하세요. 체크하지 않으면 `python` 명령이 먹지 않습니다.
 설치가 끝나면 PowerShell 창을 새로 열어야 명령이 인식됩니다.
@@ -121,7 +121,7 @@ notepad .env.local
 
 ```powershell
 cd ..\backend
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 ### 5-2. 데이터베이스 켜기
@@ -234,7 +234,7 @@ npm run dev
 | `failed to connect to the docker API` | Docker Desktop이 꺼져 있다 | Docker Desktop을 실행하고 초록색이 될 때까지 기다린 뒤 다시 |
 | 서버가 안 켜지고 `ConfigError` | `backend\.env`가 없거나 `PINGO_ENV=dev`가 없다 | 3절을 다시 한다(`.env`가 `backend` 폴더 안에 있어야 한다) |
 | `relation "..." does not exist` | 표를 아직 안 만들었다 | `python -m alembic upgrade head` |
-| 5-1에서 `pg_config executable not found`나 `proj executable not found` | Python이 3.13 이상이다 | 1-1대로 3.12를 깔고 `py -3.12 -m pip install -r requirements.txt` |
+| 5-1에서 `pg_config executable not found`나 `proj executable not found` | Python이 3.13 이상이다 | 1-1대로 3.12를 깔고 `py -3.12 -m pip install -r requirements-dev.txt` |
 | `address already in use` | 8000(또는 5173) 포트를 다른 프로그램이 쓴다 | 이전에 켠 서버 창을 닫거나, `netstat -ano \| findstr :8000`으로 찾아 종료 |
 | 로그인 버튼을 누르면 카카오 오류 `KOE010` | `KAKAO_CLIENT_SECRET`이 비었거나 틀렸다(앞뒤 공백 포함) | `.env`의 시크릿을 다시 확인하고 서버를 껐다 켠다 |
 | 카카오 오류 `KOE101`, `KOE004` | `KAKAO_CLIENT_ID`가 틀렸거나 앱의 카카오 로그인이 꺼져 있다 | 키를 다시 확인하고, 계속되면 팀 리드에게 알린다 |
@@ -258,7 +258,7 @@ git pull
 cd frontend
 npm install
 cd ..\backend
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 python -m alembic upgrade head
 ```
 

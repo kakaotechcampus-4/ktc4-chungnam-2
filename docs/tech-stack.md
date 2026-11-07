@@ -24,7 +24,7 @@
 
 ## 2. 백엔드
 
-근거: `backend/requirements.txt`(전부 `==` 고정), `backend/.python-version`, `backend/pyproject.toml`, `backend/main.py`, `backend/Dockerfile`.
+근거: `backend/requirements.txt`(운영, 전부 `==` 고정), `backend/requirements-dev.txt`(테스트·개발 도구, #1439), `backend/.python-version`, `backend/pyproject.toml`, `backend/main.py`, `backend/Dockerfile`.
 
 | 구분 | 패키지 | 버전 | 쓰이는 곳 |
 |---|---|---|---|

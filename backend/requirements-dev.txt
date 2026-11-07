@@ -1,0 +1,7 @@
+# 테스트·개발 전용(#1439). 운영 이미지(backend/Dockerfile)는 requirements.txt만 설치한다.
+# CI(backend-test, e2e)와 로컬 개발은 이 파일을 설치한다.
+-r requirements.txt
+pytest==8.3.3
+pytest-asyncio==0.24.0
+jsonschema==4.23.0
+import-linter==2.15
