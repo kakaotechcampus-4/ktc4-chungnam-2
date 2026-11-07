@@ -1,9 +1,10 @@
 """삭제한 지 오래된 지도 정리(#431, docs/architecture.md 1.4절) — 되돌릴 수 없는 작업이라 "무엇을 지우지 않는가"를
 지우는 것만큼 꼼꼼히 본다. 지도 4개(오래전 삭제 / 정확히 30일 전 삭제 / 최근 삭제 / 살아 있음)를 같은 두 사용자가
-실제 API로 만들고, 12개 테이블과 agent_* 7개 테이블(#512) 전부에 행이 있는 상태에서 정리 명령을 돌린다."""
+실제 API로 만들고, 12개 테이블과 agent_* 7개 테이블(#512) 전부에 행이 있는 상태에서 정리를 돌린다.
 
-import contextlib
-import io
+정기 정리(maintenance)가 부르는 `maps.api.purge_deleted_maps`를 그대로 부른다. 기간은 maps가 정한다(`core.TRASH_RETENTION`,
+#1474) — 기간을 바꿔 보는 대신 `now`를 옮긴다. 실패·dry-run의 되돌리기는 호출자(maintenance)처럼 rollback으로 한다."""
+
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -24,7 +25,8 @@ from agent.tests import rows as agent_rows
 from auth.models import User
 from auth.testing import session_cookie
 from common.events import EventLog
-from maps import purge
+from maps import api as maps_api
+from maps import core, purge
 from maps.models import Invite, Map, Membership
 from pins.models import Pin, Reaction
 from places.models import Place, PlaceFact
@@ -42,19 +44,6 @@ TABLE_NAMES = [
     "agent_suggestion_views", "agent_suggestions", "agent_run_advice", "agent_reason_summaries",
     "agent_runs", "agent_cursors", "agent_settings",
 ]
-
-
-class _KeepOpen:
-    """main()이 끝에 session.close()를 부른다 — 테스트 트랜잭션을 지키려고 close만 무시한다."""
-
-    def __init__(self, session):
-        self._session = session
-
-    def __getattr__(self, name):
-        return getattr(self._session, name)
-
-    def close(self):
-        pass
 
 
 @pytest.fixture()
@@ -165,11 +154,14 @@ def _snapshot(db, ids: dict[str, str], names) -> dict[str, dict[str, int]]:
     return {name: _rows_by_map(db, ids[name]) for name in names}
 
 
-def _run(db, *args: str) -> str:
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        assert purge.main(list(args), session_factory=lambda: _KeepOpen(db), now=NOW) == 0
-    return out.getvalue()
+def _purge(db, *, now: datetime = NOW, dry_run: bool = False) -> dict[str, int]:
+    """maintenance의 maps 단계와 같다 — 부르고 커밋한다. dry_run이면 같은 삭제를 한 뒤 롤백한다."""
+    counts = maps_api.purge_deleted_maps(db, now=now)
+    if dry_run:
+        db.rollback()
+    else:
+        db.commit()
+    return counts
 
 
 def test_purge_removes_every_table_of_expired_maps_and_keeps_everything_else(world, db_session):
@@ -177,49 +169,48 @@ def test_purge_removes_every_table_of_expired_maps_and_keeps_everything_else(wor
     shared = _shared_rows(db_session)
     expired_before = _snapshot(db_session, world, ["old", "edge"])
 
-    output = _run(db_session, "--older-than-days", "30")
+    counts = _purge(db_session)
 
     for name in ("old", "edge"):
         assert set(_rows_by_map(db_session, world[name]).values()) == {0}, f"{name}가 덜 지워졌다"
     assert _snapshot(db_session, world, ["recent", "live"]) == untouched  # 기간 안 된 지도·삭제 안 된 지도
     assert _shared_rows(db_session) == shared                              # places·place_facts·users
-    assert "지운 지도 2개" in output
+    assert counts["deleted_maps"] == 2
     for table in TABLE_NAMES:
-        total = sum(expired_before[name][table] for name in expired_before)
-        assert f"{table}: {total}\n" in output
+        assert counts[table] == sum(expired_before[name][table] for name in expired_before), table
 
 
 def test_dry_run_reports_counts_and_deletes_nothing(world, db_session):
     everything = _snapshot(db_session, world, world)
     shared = _shared_rows(db_session)
 
-    dry = _run(db_session, "--older-than-days", "30", "--dry-run")
+    dry = _purge(db_session, dry_run=True)
 
     assert _snapshot(db_session, world, world) == everything
     assert _shared_rows(db_session) == shared
-    assert dry.startswith("[dry-run] 지울 지도 2개")
-    # 같은 형식·같은 숫자: 실제 실행의 보고와 머리말·꼬리말만 다르다
-    real = _run(db_session, "--older-than-days", "30")
-    assert real.splitlines()[1:] == dry.splitlines()[1:-1]
+    assert dry["deleted_maps"] == 2
+    assert _purge(db_session) == dry   # 실제 실행과 같은 숫자
 
 
-def test_period_decides_which_maps_are_targets(world, db_session):
-    assert _run(db_session, "--older-than-days", "60", "--dry-run").startswith("[dry-run] 지울 지도 0개")
-    assert _run(db_session, "--older-than-days", "5", "--dry-run").startswith("[dry-run] 지울 지도 3개")
-    assert _run(db_session, "--dry-run").startswith("[dry-run] 지울 지도 2개")  # 기본 30일
+def test_retention_from_maps_core_decides_which_maps_are_targets(world, db_session):
+    """기간은 core.TRASH_RETENTION 하나다 — 같은 지도들을 다른 시각에 보면 대상이 달라진다. 30일 경계(edge)는 대상이다."""
+    assert _purge(db_session, now=NOW - timedelta(days=11), dry_run=True)["deleted_maps"] == 0   # old도 29일
+    assert _purge(db_session, now=NOW + timedelta(days=20), dry_run=True)["deleted_maps"] == 3   # recent도 30일
+    assert _purge(db_session, dry_run=True)["deleted_maps"] == 2
+    assert core.purge_cutoff(NOW) == NOW - core.TRASH_RETENTION
 
 
 def test_purging_twice_is_harmless(world, db_session):
-    _run(db_session, "--older-than-days", "30")
-    again = _run(db_session, "--older-than-days", "30")
+    _purge(db_session)
+    again = _purge(db_session)
 
-    assert again.startswith("지운 지도 0개")
-    assert "합계: 0행" in again
+    assert again["deleted_maps"] == 0
+    assert sum(v for k, v in again.items() if k != "deleted_maps") == 0
 
 
 def test_other_maps_of_the_same_users_survive_with_their_members_and_pins(world, db_session, clients):
     a, _ = clients
-    _run(db_session, "--older-than-days", "30")
+    _purge(db_session)
 
     assert {m["id"] for m in a.get("/maps").json()["items"]} == {world["live"]}
     assert a.get(f"/maps/{world['live']}/pins").status_code == 200
@@ -235,11 +226,7 @@ def test_failure_in_the_middle_rolls_everything_back(world, db_session, monkeypa
 
     monkeypatch.setattr(purge, "PURGE_STEPS", purge.PURGE_STEPS[:-1] + (boom,))  # maps 차례에서 실패
     with pytest.raises(RuntimeError):
-        _run(db_session, "--older-than-days", "30")
+        _purge(db_session)
+    db_session.rollback()   # maintenance가 실패한 단계를 되돌리는 것과 같다
 
     assert _snapshot(db_session, world, world) == before
-
-
-def test_zero_days_is_rejected(world, db_session):
-    with pytest.raises(SystemExit):
-        _run(db_session, "--older-than-days", "0")

@@ -497,7 +497,7 @@ def list_trash(db: Session, *, user_id: str, now: datetime) -> list[TrashedMap]:
         .join(MembershipRow, MembershipRow.map_id == MapRow.id)
         .where(
             MembershipRow.user_id == user_id, MembershipRow.role == "owner",
-            MapRow.deleted_at.is_not(None), MapRow.deleted_at > now - core.TRASH_RETENTION,
+            MapRow.deleted_at.is_not(None), MapRow.deleted_at > core.purge_cutoff(now),
         )
         .order_by(MapRow.deleted_at.desc(), MapRow.id)
     ).all()

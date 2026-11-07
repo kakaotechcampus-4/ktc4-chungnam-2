@@ -146,9 +146,9 @@ def anonymize_actor(db: Session, *, user_id: str) -> int:
     return len(rows)
 
 
-def purge_old(db: Session, *, now: datetime, older_than_days: int = RETENTION_DAYS) -> dict[str, int]:
-    """`now` 기준 N일(기본 90)이 지난 알림을 지운다. 읽었든 안 읽었든 같다. 설정은 건드리지 않는다."""
-    cutoff = now - timedelta(days=older_than_days)
+def purge_old(db: Session, *, now: datetime) -> dict[str, int]:
+    """`now` 기준 RETENTION_DAYS일이 지난 알림을 지운다. 읽었든 안 읽었든 같다. 설정은 건드리지 않는다."""
+    cutoff = now - timedelta(days=RETENTION_DAYS)
     return {"notifications": db.execute(delete(NotificationRow).where(NotificationRow.created_at < cutoff)).rowcount}
 
 
