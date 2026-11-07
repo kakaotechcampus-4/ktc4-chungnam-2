@@ -5283,7 +5283,7 @@ export interface components {
             index: number;
             /** @enum {string} */
             type: "open_recommend" | "show_pins" | "search_place" | "open_route" | "widen_radius" | "open_evidence" | "open_pin" | "open_course";
-            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기", "이 핀 보기", "AI 코스로 고칠 안 받기" */
+            /** @description 버튼 문구(서버 렌더). 예: "음식점 추천 받기", "미확인 핀 보기", "이 핀 보기", "AI 코스로 고쳐 보기" */
             label: string;
             /** @description type마다 쓰는 것만 채운다 */
             params: {
