@@ -302,6 +302,8 @@ describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안�
     const slider = screen.getByRole('slider', { name: '찾는 범위' })
     const min = Number(slider.getAttribute('aria-valuemin'))
     const max = Number(slider.getAttribute('aria-valuemax'))
+    // 처음 값은 서버 기본 반경이고, 화면 읽기도 「기본」이라고 읽는다.
+    expect(slider).toHaveAttribute('aria-valuetext', expect.stringMatching(/km, 기본$/))
     const m = Math.round((min + max) / 2 / 100) * 100 + 100 // 범위 가운데에서 한 칸, 100m 단위(눈금이 아닌 값)
     const km = `${m / 1000}km`
 

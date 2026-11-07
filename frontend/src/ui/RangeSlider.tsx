@@ -23,6 +23,7 @@ export default function RangeSlider({
   marks = [],
   snapWithin = 0,
   format,
+  markLabel = format,
   label,
 }: {
   min: number
@@ -33,7 +34,10 @@ export default function RangeSlider({
   onCommit?: (value: number) => void
   marks?: readonly number[]
   snapWithin?: number
+  /** 화면 읽기가 읽는 값과 눈금 위의 값 글자. */
   format: (value: number) => string
+  /** 눈금 아래 글자 — 기본값 눈금에 「기본」을 붙일 때처럼 따로 정한다. 없으면 format 이다. */
+  markLabel?: (value: number) => string
   label: string
 }) {
   const dragging = useRef(false)
@@ -74,7 +78,7 @@ export default function RangeSlider({
               className={`absolute top-0 ${i === 0 ? '' : i === marks.length - 1 ? '-translate-x-full' : '-translate-x-1/2'}`}
               style={{ left: at(m) }}
             >
-              {format(m)}
+              {markLabel(m)}
             </span>
           ))}
         </div>

@@ -160,6 +160,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         <RadiusPicker
           min={chosenReadiness.radius_min_m}
           max={chosenReadiness.radius_max_m}
+          defaultM={chosenReadiness.radius_m}
           marks={radiusOptions(chosenReadiness)}
           value={radiusM}
           // 끄는 동안 지도 원이 따라온다. 근처 정예 수(「주변에 추천할 장소가 없어요」)는 손을 뗄 때 한 번 다시 센다.
@@ -231,6 +232,7 @@ const RADIUS_SNAP_M = 150
 function RadiusPicker({
   min,
   max,
+  defaultM,
   marks,
   value,
   onChange,
@@ -238,6 +240,8 @@ function RadiusPicker({
 }: {
   min: number
   max: number
+  /** 서버 기본 반경(Readiness.radius_m). 그 눈금에 「기본」을 단다. */
+  defaultM?: number
   marks: number[]
   value: number
   onChange: (m: number) => void
@@ -311,7 +315,8 @@ function RadiusPicker({
         value={value}
         marks={marks}
         snapWithin={RADIUS_SNAP_M}
-        format={radiusKm}
+        format={(m) => (m === defaultM ? `${radiusKm(m)}, 기본` : radiusKm(m))}
+        markLabel={(m) => (m === defaultM ? `기본 ${radiusKm(m)}` : radiusKm(m))}
         label="찾는 범위"
         onChange={(m) => {
           setTyping(null)
