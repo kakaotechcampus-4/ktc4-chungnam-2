@@ -605,6 +605,32 @@ def test_map_restore_and_trash_match_the_openapi_spec(clients):
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_map_cover_and_color_match_the_openapi_spec(clients):
+    """지도 색과 대표 이미지(#1445) — PATCH color(지우기 null 포함), 이미지 올리기 200(Map)·받기 200(바이트)·지우기 200(Map),
+    에러 봉투(구성원의 올리기 403, 형식 422 COVER_INVALID, 없는 이미지 404)."""
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "강릉", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    assert b.post(f"/invites/{token}/accept").status_code == 200
+    webp = b"RIFF\x00\x00\x00\x00WEBPVP8 "
+
+    assert a.patch(f"/maps/{map_id}", json={"color": "#3D7BF5"}).json()["color"] == "#3D7BF5"
+    assert a.patch(f"/maps/{map_id}", json={"color": None}).status_code == 200
+    assert a.patch(f"/maps/{map_id}", json={"color": "blue"}).status_code == 422
+    assert b.get(f"/maps/{map_id}/cover").status_code == 404
+    put = a.put(f"/maps/{map_id}/cover", content=webp, headers={"Content-Type": "image/webp"})
+    assert put.status_code == 200
+    assert b.put(f"/maps/{map_id}/cover", content=webp, headers={"Content-Type": "image/webp"}).status_code == 403
+    assert a.put(f"/maps/{map_id}/cover", content=webp, headers={"Content-Type": "image/gif"}).status_code == 422
+    assert b.get(put.json()["cover_url"]).content == webp
+    assert b.get("/maps").json()["items"][0]["owner_display_name"]
+    assert b.delete(f"/maps/{map_id}/cover").status_code == 403
+    assert a.delete(f"/maps/{map_id}/cover").status_code == 200
+
+    unique = list(dict.fromkeys(problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_pin_trash_list_matches_the_openapi_spec(clients, pin_body):
     """핀 휴지통 목록(#1013, 스펙 PinTrash) — 일반 구성원은 내가 찍은 지운 핀만, 방장은 전부. 에러 봉투(모르는 지도 404)."""
     a, b, problems = clients

@@ -28,7 +28,7 @@ def test_purge_deletes_only_target_maps_rows(db_session):
 
     result = api.purge_map_data(db_session, map_ids=[gone])
 
-    assert result == {"invites": 1, "memberships": 2, "maps": 1}
+    assert result == {"invites": 1, "memberships": 2, "map_covers": 0, "maps": 1}
     assert [m.id for m in db_session.query(Map).all()] == [keep]
     assert {m.map_id for m in db_session.query(Membership).all()} == {keep}
     assert {i.map_id for i in db_session.query(Invite).all()} == {keep}
@@ -47,5 +47,5 @@ def test_purge_refuses_maps_that_are_not_deleted_and_deletes_nothing(db_session)
 def test_purge_with_no_map_ids_deletes_nothing(db_session):
     _seed(db_session, deleted=True)
 
-    assert api.purge_map_data(db_session, map_ids=[]) == {"invites": 0, "memberships": 0, "maps": 0}
+    assert api.purge_map_data(db_session, map_ids=[]) == {"invites": 0, "memberships": 0, "map_covers": 0, "maps": 0}
     assert db_session.query(Map).count() == 1

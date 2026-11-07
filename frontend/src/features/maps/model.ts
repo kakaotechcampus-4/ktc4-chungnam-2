@@ -24,6 +24,12 @@ export type MapView = Pick<MapDto, 'id' | 'title'> & {
   summary: string
   /** 카드 「⋯」 메뉴의 수정·삭제·나가기 창이 쓰는 값(#1444). 지도 화면 머리글과 같은 모양이다. */
   header: MapHeaderView
+  /** 지도 색(#1445). 고르지 않았으면 없다 — 카드는 흰 바탕, 기본 그림은 ink-100 하늘이다. */
+  color?: string
+  /** 방장이 올린 대표 이미지 주소(apiUrl 로 감싸 쓴다). 없으면 지역 기본 그림(RegionCover)이다. */
+  coverUrl?: string
+  /** 지금 방장 이름 — 초대받은 지도 카드의 「○○님의 지도」. */
+  ownerName?: string
 }
 
 /** "10.3 (토)" — 화면의 날짜 표기 하나. */
@@ -114,6 +120,9 @@ export function toMapView(map: MapDto): MapView {
     isOwner: map.my_role === 'owner',
     summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명 · 핀 ${map.pin_count}개`,
     header: toMapHeaderView(map),
+    color: map.color ?? undefined,
+    coverUrl: map.cover_url ?? undefined,
+    ownerName: map.owner_display_name ?? undefined,
   }
 }
 

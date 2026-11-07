@@ -30,6 +30,9 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
  */
 export const USE_MOCK = !BASE_URL
 
+/** 응답이 내려 준 경로(`cover_url` 같은 것)를 <img src> 에 쓸 주소로. 인증은 쿠키라 그대로 붙는다. */
+export const apiUrl = (path: string) => `${BASE_URL}${path}`
+
 async function toApiError(res: Response): Promise<ApiError> {
   try {
     const body = (await res.json()) as ErrorBody

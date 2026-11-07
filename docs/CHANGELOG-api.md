@@ -8,6 +8,23 @@
 - 화면은 `default_radius_m`, `next_default_radius_m`(넓히면 바뀔 반경, 상한이면 `null`)으로 옮긴다 — FE #1468.
 - **검사**: `contracts/checks/deprecated-fields.test.ts`. 스펙에서 deprecated인 속성·파라미터를 `frontend/src`가 쓰면 `docs/openapi-workflow.md` 「화면이 아직 쓰는 deprecated 필드」 표에 FE 이슈와 함께 있어야 통과한다. 표는 비어 가야 한다. 필드를 대체할 때의 절차는 같은 문서 4절 5번.
 
+## 2026-11-06, 지도 대표 이미지와 색 — `Map.color`·`cover_url`·`owner_display_name`, `PUT·DELETE·GET /maps/{mapId}/cover`, 422 `COVER_INVALID` (#1445)
+
+- 지도마다 대표 이미지와 색을 둔다. 둘 다 지도 단위라 모든 구성원이 같은 것을 보고, 바꾸는 것은 방장만이다(`map.settings.edit`, `PATCH /maps/{mapId}`와 같다).
+- **`Map`에 선택 필드 셋(상위 호환, `required` 아님).** 목록(`GET /maps`)과 상세·수정·복구·수락 등 `Map`을 돌려주는 모든 응답에 채운다.
+  - `color`: 방장이 고른 색 `#RRGGBB`. 고르지 않았으면 키가 없다.
+  - `cover_url`: 올린 이미지 주소, API 기준 상대 경로 `/maps/{id}/cover?v=<갱신 시각(마이크로초)>`. 올린 이미지가 없으면 키가 없다 — 화면이 지역 기본 이미지를 그린다(서버는 기본 이미지를 저장하지 않는다).
+  - `owner_display_name`: 지금 방장의 표시 이름(memberships.role 기준, 탈퇴했으면 「탈퇴한 구성원」). 초대받은 지도 카드의 「○○님의 지도」용.
+- **`PATCH /maps/{mapId}`** 에 `color`(`^#[0-9A-Fa-f]{6}$` 또는 `null`). **`null`은 색 지우기**(고르지 않은 상태로)다 — 다른 필드는 지금처럼 null이면 422다. 형식이 틀리면 422 `VALIDATION_ERROR`.
+- **새 엔드포인트 셋**
+  - `PUT /maps/{mapId}/cover`(방장만): 본문은 이미지 바이트 그대로, `Content-Type`은 `image/webp`·`image/jpeg`·`image/png`. 크기 상한 512KiB. 브라우저가 긴 변 1200px 이하 WebP로 줄여 올린다. 응답은 `Map`.
+  - `DELETE /maps/{mapId}/cover`(방장만): 지운다. 없어도 200(멱등). 응답은 `Map`.
+  - `GET /maps/{mapId}/cover`(구성원 누구나): 이미지 바이트, `Cache-Control: private, max-age=31536000, immutable`. 로그인 쿠키로 인증해 `<img src>`에 `cover_url`을 API 주소 뒤에 붙여 그대로 쓴다. 없으면 404.
+- **새 오류 422 `COVER_INVALID`**(`docs/errors.md`): 형식이 셋 밖이거나(파일 앞부분도 본다) 크기가 상한을 넘음. `detail: { limit_bytes, types }` — 화면은 이 값으로 안내하고 숫자를 적지 않는다.
+- 이미지는 Postgres `map_covers`에 둔다(S3 없음, 인프라 미정 #1203). 지도를 삭제해도 남고 정리 작업이 함께 지운다. `map.updated` 이벤트에는 색과 이미지를 싣지 않는다 — 다른 구성원은 다음에 지도를 다시 받을 때 본다.
+- data-model: `maps.color`, `map_covers` 테이블(마이그레이션 `0068_map_cover_color`).
+- 목 서버: 지도 응답의 세 칸, `PATCH` 색, 이미지 올리기·지우기·받기(메모리에 보관). 시드 지도는 색·이미지가 없다. 타입 재생성 필요(`npm run gen:types`).
+
 ## 2026-11-05, 추천 반경을 사용자가 2~5km에서 정해 보낸다 — `radius_m` (#1416)
 
 - **`POST /maps/{mapId}/runs`** 요청에 선택 필드 `radius_m: integer`(2000 이상 5000 이하)를 더했다. 상위 호환 — 없으면 기본 3000(지금 동작). 범위 밖이거나 정수가 아니면 422 `VALIDATION_ERROR`. 값이 있으면 후보를 찾는 원의 반경, `OUTSIDE_TRIP_REGION` 판정의 반경, 저장되는 `default_radius_m`이 이 값이다. 반경 넓히기는 이 값에서 +1000m씩, 상한 5000m(그대로). 멱등 판정에 이 값이 들어간다(같은 키로 다른 반경은 409 `IDEMPOTENCY_CONFLICT`. 기본값 3000을 명시한 요청은 생략한 요청과 같은 요청이다. 반경 없는 요청은 이전과 같다).

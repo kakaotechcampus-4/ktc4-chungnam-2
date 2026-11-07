@@ -30,6 +30,16 @@ TRASH_RETENTION = timedelta(days=30)
 # 초대 링크 유효 기간 7일. 정본은 docs/data-model.md invites 절(목서버 contracts/mocks/handlers/maps.ts와 같다).
 INVITE_TTL = timedelta(days=7)
 
+# 지도 대표 이미지(#1445) — 받는 형식과 크기 상한. 422 COVER_INVALID의 detail로 내려 화면이 숫자를 적지 않게 한다.
+# 브라우저가 1200px 이하 WebP로 줄여 올리는 크기에 여유를 둔 값이다. 형식은 앞 바이트로도 확인한다(이름표만 바꾼 파일을 막는다).
+COVER_MAX_BYTES = 512 * 1024
+_COVER_MAGIC = {
+    "image/webp": lambda data: data[:4] == b"RIFF" and data[8:12] == b"WEBP",
+    "image/jpeg": lambda data: data[:3] == b"\xff\xd8\xff",
+    "image/png": lambda data: data[:8] == b"\x89PNG\r\n\x1a\n",
+}
+COVER_TYPES = tuple(_COVER_MAGIC)
+
 
 @dataclass(frozen=True)
 class NewMap:
@@ -56,6 +66,7 @@ class MapRecord:
     region_label: str | None = None
     region_lat: float | None = None
     region_lng: float | None = None
+    color: str | None = None
 
 
 @dataclass(frozen=True)
@@ -256,6 +267,30 @@ def role_in(roster: Iterable[MembershipEntry], user_id: str) -> Role | None:
     return next((m.role for m in roster if m.user_id == user_id), None)
 
 
+def owner_of(roster: Iterable[MembershipEntry]) -> str | None:
+    """지금 방장(memberships.role, #369). 지도당 최대 1명이다(uq_memberships_one_owner_per_map)."""
+    return next((m.user_id for m in roster if m.role == "owner"), None)
+
+
+def check_cover(content_type: str | None, data: bytes) -> str:
+    """올린 대표 이미지 검사(#1445). 형식이 COVER_TYPES 밖이거나, 앞 바이트가 그 형식이 아니거나, COVER_MAX_BYTES를 넘으면
+    422 COVER_INVALID(detail: limit_bytes, types). 통과하면 저장할 content type을 돌려준다."""
+    kind = (content_type or "").split(";")[0].strip().lower()
+    sniff = _COVER_MAGIC.get(kind)
+    if sniff is None or len(data) > COVER_MAX_BYTES or not sniff(data):
+        raise AppError("COVER_INVALID", detail={"limit_bytes": COVER_MAX_BYTES, "types": list(COVER_TYPES)})
+    return kind
+
+
+def cover_url(map_id: str, updated_at: datetime | None) -> str | None:
+    """API 기준 상대 주소. 갱신 시각(초)을 붙여 이미지가 바뀌면 주소도 바뀐다 — 그래서 GET이 영구 캐시를 허락할 수 있다."""
+    if updated_at is None:
+        return None
+    # 마이크로초(DB 시각의 정밀도) — 짧은 사이에 두 번 올려도 주소가 달라야 영구 캐시가 옛 이미지를 붙잡지 않는다.
+    # float 곱셈 대신 정수로 더해 반올림 오차가 없다.
+    return f"/maps/{map_id}/cover?v={int(updated_at.timestamp()) * 1_000_000 + updated_at.microsecond}"
+
+
 def owner_successor(
     principal: Principal, roster: Iterable[MembershipEntry], withdrawn: set[str], *, guests: set[str]
 ) -> str | None:
@@ -318,6 +353,8 @@ def to_map_response(
     my_role: Role | None,
     viewer_id: str,
     next_owner: NextOwner | None = None,
+    cover_updated_at: datetime | None = None,
+    owner_display_name: str | None = None,
 ) -> Map:
     """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다.
     그래도 매개변수를 Optional로 남긴다 — 값을 못 구하는
@@ -342,6 +379,9 @@ def to_map_response(
         my_role=my_role,
         created_by_me=record.created_by == viewer_id,
         next_owner=next_owner,
+        color=record.color,
+        cover_url=cover_url(record.id, cover_updated_at),
+        owner_display_name=owner_display_name,
     )
 
 
