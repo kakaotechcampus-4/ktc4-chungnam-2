@@ -1,4 +1,8 @@
 import back from '@/assets/pingo/back.png'
+import diagDownLeft from '@/assets/pingo/diag-down-left.png'
+import diagDownRight from '@/assets/pingo/diag-down-right.png'
+import diagUpLeft from '@/assets/pingo/diag-up-left.png'
+import diagUpRight from '@/assets/pingo/diag-up-right.png'
 import drowsy from '@/assets/pingo/drowsy.png'
 import front from '@/assets/pingo/front.png'
 import sleep from '@/assets/pingo/sleep.png'
@@ -13,9 +17,10 @@ import type { IdleStage } from '@/features/agent/useIdleStage'
 import type { MapHeading } from '@/features/shell/sheetStore'
 
 // 처음 끌 때 걷는 그림이 늦게 떠 깜빡이지 않게 미리 받아 둔다.
-for (const src of [back, walk1, walk2, walk3, walkLeft1, walkLeft2, walkLeft3, wave, drowsy, sleep]) new Image().src = src
+for (const src of [back, diagDownLeft, diagDownRight, diagUpLeft, diagUpRight, walk1, walk2, walk3, walkLeft1, walkLeft2, walkLeft3, wave, drowsy, sleep]) new Image().src = src
 
 const IMG = 'absolute inset-0 size-full select-none'
+const DIAGONAL = { 'up-left': diagUpLeft, 'up-right': diagUpRight, 'down-left': diagDownLeft, 'down-right': diagDownRight }
 
 /** 새 조언이 있다는 표시 — 평면 「!」 말풍선(새 소식 귤색 `--advice-alert`, 흰 테두리). 핑고 머리 오른쪽 위에 떠서 천천히 들썩인다. */
 function AlertBubble() {
@@ -82,7 +87,8 @@ function SideWalk({ left }: { left: boolean }) {
  * - 좌우: 측면 걷기 1·2·3·2, 걸음마다 들썩인다.
  * - 위·아래: 뒤를 돌아 걸음마다 몸이 한 번 오르거나 내려가고 좌우로 살짝 기운다. 원본 뒷모습 한 장만 쓴다 —
  *   뒤집은 뒷모습을 번갈아 쓰면 하이라이트와 가장자리 그늘이 걸음마다 좌우로 바뀌었다.
- * - 대각선: 그쪽 옆으로 걸으면서 걸음마다 오르거나 내려간다(대각선 원본 그림이 없다).
+ * - 대각선: 반측면 그림이 그쪽을 보고 위·아래처럼 걷는다. 원본 반측면(`01_반측면`)이 오른쪽 아래이고, 왼쪽은 뒤집어 빛을 다시 맞춘 그림,
+ *   위쪽 둘은 눈을 지운 그림이다 — 몸이 둥글고 좌우가 같아서 반대쪽 아래를 보는 모습을 뒤에서 본 모양이 된다(`~/ktc4-drafts-review/pingo-diagonals.py`).
  * 원본 렌더의 빛은 오른쪽 위다. 서 있으면 정면이고 `wave`·`alert` 면 손을 흔든다. `alert`(새 조언)면 머리 옆에 「!」 말풍선이 뜬다.
  * `idle` 이면 쉰다 — 졸 땐 눈을 반쯤 감고 꾸벅이고, 잘 땐 눈을 감고 이불을 덮은 채 숨 쉬며 「z」가 떠오른다.
  * 크기는 부르는 쪽 className 으로 준다. 움직임 줄이기면 그쪽을 보기만 하고(쉴 때는 그 모습으로 서서) 움직이지 않는다.
@@ -102,7 +108,8 @@ export default function MapPingo({
 }) {
   const up = heading?.startsWith('up') ?? false
   const down = heading?.startsWith('down') ?? false
-  const side = heading?.endsWith('left') ? 'left' : heading?.endsWith('right') ? 'right' : null
+  const side = heading === 'left' || heading === 'right' ? heading : null
+  const diagonal = heading && heading.includes('-') ? DIAGONAL[heading as keyof typeof DIAGONAL] : null
   const step = up ? 'motion-safe:animate-pingo-climb' : down ? 'motion-safe:animate-pingo-descend' : 'motion-safe:animate-pingo-walk'
   const resting = !heading && idle
   return (
@@ -113,7 +120,7 @@ export default function MapPingo({
         </span>
       ) : up || down ? (
         <span className={`absolute inset-0 ${step}`}>
-          <img src={back} alt="" draggable={false} className={`${IMG} origin-bottom motion-safe:animate-pingo-sway`} />
+          <img src={diagonal ?? back} alt="" draggable={false} className={`${IMG} origin-bottom motion-safe:animate-pingo-sway`} />
         </span>
       ) : resting ? (
         <span className={`absolute inset-0 origin-bottom ${idle === 'sleep' ? 'motion-safe:animate-pingo-breathe' : 'motion-safe:animate-pingo-nod'}`}>
