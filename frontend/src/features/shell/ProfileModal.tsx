@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
@@ -16,6 +16,7 @@ import Avatar from '@/ui/Avatar'
 
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
+import { useSheetStore } from './sheetStore'
 
 type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | 'trash' | null
 
@@ -26,6 +27,12 @@ type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feed
  */
 export default function ProfileModal({ mapId, onClose }: { mapId: string; onClose: () => void }) {
   const [confirm, setConfirm] = useState<Confirm>(null)
+  // 떠 있는 동안만 지도 버튼·토스트를 숨긴다. 닫기가 아니라 지도 나가기·삭제·화면 넓힘으로 사라져도 풀리게 마운트에 묶는다.
+  const setModalOpen = useSheetStore((s) => s.setModalOpen)
+  useEffect(() => {
+    setModalOpen(true)
+    return () => setModalOpen(false)
+  }, [setModalOpen])
   return (
     <ModalSheet label="지도 정보" fullWidth onClose={onClose} overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}>
       <ProfileBody mapId={mapId} onConfirm={setConfirm} />

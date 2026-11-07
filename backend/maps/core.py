@@ -3,6 +3,7 @@
 쓰지 않는다 — 둘 다 비결정적이라 service.py가 만들어 파라미터로 넘긴다.
 """
 
+import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from authz.policy import Role
 from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event
-from maps.schemas import Invite, InviteSummary, Map, MapRegion, Member, NextOwner, TrashedMap
+from maps.schemas import TITLE_MAX_LENGTH, Invite, InviteSummary, Map, MapRegion, Member, NextOwner, TrashedMap
 
 WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
@@ -23,11 +24,22 @@ MAP_LIMIT = 20
 # 여행 기간 상한 일수(#1371) — 시작일·종료일을 포함한다. 422 TRIP_TOO_LONG의 detail.limit과 GET /maps의 trip_max_days가 같은 값이다.
 TRIP_MAX_DAYS = 90
 
-# 삭제한 지도를 복구할 수 있는 기간(#464). 정리 작업(maps.purge)이 지우는 기준과 같은 값이다 — 한 곳에서 정한다.
+# 삭제한 지도를 복구할 수 있는 기간(#464). 정리 작업이 지우는 기준과 같은 값이다 — 여기 한 곳에서 정한다.
+# 정리 API(api.purge_deleted_maps)는 기간을 받지 않고 이 값을 쓴다(#1474). 응답의 retention_days도 이 값이다.
 TRASH_RETENTION = timedelta(days=30)
 
 # 초대 링크 유효 기간 7일. 정본은 docs/data-model.md invites 절(목서버 contracts/mocks/handlers/maps.ts와 같다).
 INVITE_TTL = timedelta(days=7)
+
+# 지도 대표 이미지(#1445) — 받는 형식과 크기 상한. 422 COVER_INVALID의 detail로 내려 화면이 숫자를 적지 않게 한다.
+# 브라우저가 1200px 이하 WebP로 줄여 올리는 크기에 여유를 둔 값이다. 형식은 앞 바이트로도 확인한다(이름표만 바꾼 파일을 막는다).
+COVER_MAX_BYTES = 512 * 1024
+_COVER_MAGIC = {
+    "image/webp": lambda data: data[:4] == b"RIFF" and data[8:12] == b"WEBP",
+    "image/jpeg": lambda data: data[:3] == b"\xff\xd8\xff",
+    "image/png": lambda data: data[:8] == b"\x89PNG\r\n\x1a\n",
+}
+COVER_TYPES = tuple(_COVER_MAGIC)
 
 
 @dataclass(frozen=True)
@@ -55,6 +67,7 @@ class MapRecord:
     region_label: str | None = None
     region_lat: float | None = None
     region_lng: float | None = None
+    color: str | None = None
 
 
 @dataclass(frozen=True)
@@ -231,6 +244,22 @@ def build_invite_url(base_url: str, token: str) -> str:
     return f"{base_url.rstrip('/')}/invites/{token}"
 
 
+_COPY_SUFFIX = re.compile(r" \((\d+)\)$")
+
+
+def copy_title(source_title: str, taken: set[str]) -> str:
+    """지도 복사본 제목(#1446) — 「원래 제목 (n)」. 원래 제목 끝의 「 (k)」는 떼고 붙인다(복사본을 또 복사해도 「(1) (1)」이 되지 않게).
+    n은 1부터 taken(복사하는 사람의 지도 제목)에 없는 가장 작은 수. 제목 상한을 넘으면 원래 제목 쪽을 자른다."""
+    base = _COPY_SUFFIX.sub("", source_title)
+    n = 1
+    while True:
+        suffix = f" ({n})"
+        title = base[: TITLE_MAX_LENGTH - len(suffix)].rstrip() + suffix
+        if title not in taken:
+            return title
+        n += 1
+
+
 def check_can_create_map(is_guest: bool) -> None:
     """게스트는 지도를 만들 수 없다(#472) — 403 GUEST_NOT_ALLOWED. 지도 수 상한 검사보다 먼저 부른다."""
     if is_guest:
@@ -253,6 +282,30 @@ def pick_successor(
 
 def role_in(roster: Iterable[MembershipEntry], user_id: str) -> Role | None:
     return next((m.role for m in roster if m.user_id == user_id), None)
+
+
+def owner_of(roster: Iterable[MembershipEntry]) -> str | None:
+    """지금 방장(memberships.role, #369). 지도당 최대 1명이다(uq_memberships_one_owner_per_map)."""
+    return next((m.user_id for m in roster if m.role == "owner"), None)
+
+
+def check_cover(content_type: str | None, data: bytes) -> str:
+    """올린 대표 이미지 검사(#1445). 형식이 COVER_TYPES 밖이거나, 앞 바이트가 그 형식이 아니거나, COVER_MAX_BYTES를 넘으면
+    422 COVER_INVALID(detail: limit_bytes, types). 통과하면 저장할 content type을 돌려준다."""
+    kind = (content_type or "").split(";")[0].strip().lower()
+    sniff = _COVER_MAGIC.get(kind)
+    if sniff is None or len(data) > COVER_MAX_BYTES or not sniff(data):
+        raise AppError("COVER_INVALID", detail={"limit_bytes": COVER_MAX_BYTES, "types": list(COVER_TYPES)})
+    return kind
+
+
+def cover_url(map_id: str, updated_at: datetime | None) -> str | None:
+    """API 기준 상대 주소. 갱신 시각(초)을 붙여 이미지가 바뀌면 주소도 바뀐다 — 그래서 GET이 영구 캐시를 허락할 수 있다."""
+    if updated_at is None:
+        return None
+    # 마이크로초(DB 시각의 정밀도) — 짧은 사이에 두 번 올려도 주소가 달라야 영구 캐시가 옛 이미지를 붙잡지 않는다.
+    # float 곱셈 대신 정수로 더해 반올림 오차가 없다.
+    return f"/maps/{map_id}/cover?v={int(updated_at.timestamp()) * 1_000_000 + updated_at.microsecond}"
 
 
 def owner_successor(
@@ -296,6 +349,7 @@ def map_permissions(principal: Principal, successor: str | None) -> Permissions:
         can_edit=can(principal, "map.settings.edit", resource),
         can_manage_invites=can(principal, "invite.revoke", resource),
         can_transfer_owner=can(principal, "owner.transfer", resource),
+        can_copy=can(principal, "map.copy", resource),
     )
 
 
@@ -317,6 +371,8 @@ def to_map_response(
     my_role: Role | None,
     viewer_id: str,
     next_owner: NextOwner | None = None,
+    cover_updated_at: datetime | None = None,
+    owner_display_name: str | None = None,
 ) -> Map:
     """confirmed_count는 shortlist_items 개수 — shortlist.api.count_confirmed로 채운다.
     그래도 매개변수를 Optional로 남긴다 — 값을 못 구하는
@@ -341,6 +397,9 @@ def to_map_response(
         my_role=my_role,
         created_by_me=record.created_by == viewer_id,
         next_owner=next_owner,
+        color=record.color,
+        cover_url=cover_url(record.id, cover_updated_at),
+        owner_display_name=owner_display_name,
     )
 
 
@@ -365,19 +424,30 @@ def member_joined_event(map_id: str, member: Member) -> Event:
     )
 
 
+def purge_cutoff(now: datetime) -> datetime:
+    """이 시각 이전(같은 시각 포함)에 삭제된 지도는 기간이 찼다 — 정리 대상이고 복구할 수 없다(#464, #1474).
+    정리(maps.purge), 복구 판정(is_purge_due), 휴지통 목록이 모두 이 경계를 쓴다."""
+    return now - TRASH_RETENTION
+
+
 def is_purge_due(deleted_at: datetime, now: datetime) -> bool:
-    """삭제한 지 30일이 됐으면 True — 정리 작업이 아직 안 돌았어도 복구할 수 없다(#464). maps.purge가
-    지우는 조건(deleted_at <= now - 30일)과 같다."""
-    return deleted_at <= now - TRASH_RETENTION
+    """삭제한 지 TRASH_RETENTION이 됐으면 True — 정리 작업이 아직 안 돌았어도 복구할 수 없다(#464). maps.purge가
+    지우는 조건과 같은 경계(purge_cutoff)다."""
+    return deleted_at <= purge_cutoff(now)
+
+
+def check_role_can(role: Role | None, map_id: str, user_id: str, action: str) -> None:
+    """지도 행을 잠근 뒤 지금 역할로 권한을 다시 판정한다 — 비구성원은 404, 구성원인데 action이 안 되면 403.
+    라우터의 판정은 잠금 없이 읽은 값이라 그 사이 방장 위임·나가기가 끼어들 수 있다(복구 #464, 복사 #1446)."""
+    if role is None:
+        raise AppError("NOT_FOUND")
+    if not can(Principal(user_id=user_id, map_id=map_id, role=role), action, Resource(type="map", map_id=map_id)):
+        raise AppError("FORBIDDEN")
 
 
 def check_can_restore(role: Role | None, map_id: str, user_id: str) -> None:
-    """복구 권한 판정(#464) — 비구성원은 404, 구성원인데 map.restore가 안 되면 403. 라우터의 restorable_map(요청 초입)과
-    restore_map(지도 행을 잠근 뒤)이 같은 함수로 판정한다."""
-    if role is None:
-        raise AppError("NOT_FOUND")
-    if not can(Principal(user_id=user_id, map_id=map_id, role=role), "map.restore", Resource(type="map", map_id=map_id)):
-        raise AppError("FORBIDDEN")
+    """복구 권한 판정(#464). 라우터의 restorable_map(요청 초입)과 restore_map(지도 행을 잠근 뒤)이 같은 함수로 판정한다."""
+    check_role_can(role, map_id, user_id, "map.restore")
 
 
 def check_restorable(deleted_at: datetime, now: datetime) -> None:

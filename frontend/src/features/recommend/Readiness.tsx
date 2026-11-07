@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router'
 
+import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { timeAgo } from '@/features/map/model'
 import { circleOutsideRegion, useRegionBoundary } from '@/features/map/regionGeo'
@@ -58,7 +59,7 @@ export function ReadinessHeader({ mapId }: { mapId: string }) {
   return short ? (
     <AiHeader title="의견이 부족해요" sub="핀에 좋음 또는 반대 의견을 남겨 주시면 AI가 추천을 준비해요" mood="alert" />
   ) : (
-    <AiHeader title="AI 추천" sub="추천받을 카테고리를 골라 주세요" />
+    <AiHeader title="AI 추천" sub="추천받을 카테고리를 골라 주세요" mood="welcome" />
   )
 }
 
@@ -128,8 +129,9 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   function startAsked() {
     if (!asking) return
     setAsking(null)
-    // 핑고 조언에서 왔으면 크레딧 때문이 아닌 실패는 「상황이 바뀌었어요」다. 크레딧 때문이면(게스트·잔액 부족) 버튼 자리의 안내가 말한다.
-    create.start(asking.category, asking.fromAgent ? { onError: (err) => creditBlock(err) || showToast(CHANGED) } : undefined)
+    // 핑고 조언에서 왔으면 준비가 풀린 것(NOT_READY)만 「상황이 바뀌었어요」다. 크레딧·실패·네트워크는 버튼 자리의 안내가 진짜 이유를 말한다.
+    const changed = (err: Error) => err instanceof ApiError && err.code === 'NOT_READY' && showToast(CHANGED)
+    create.start(asking.category, asking.fromAgent ? { onError: changed } : undefined)
   }
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />

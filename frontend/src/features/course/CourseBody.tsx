@@ -3,7 +3,6 @@ import { Calendar } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
 
-import ErrorText from '@/ErrorText'
 import { CHANGED, START_PARAM } from '@/features/agent/actions'
 import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
@@ -12,6 +11,7 @@ import { useCreditsQuery } from '@/features/credits/queries'
 import { usePinsQuery } from '@/features/map/queries'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { useMapQuery } from '@/features/maps/queries'
+import { AiHeader } from '@/features/recommend/Readiness'
 import { showToast } from '@/features/shell/toast'
 import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
@@ -21,7 +21,7 @@ import TextField from '@/ui/TextField'
 
 import { useCourseViewStore } from './courseMapStore'
 import CourseRun from './CourseRun'
-import { createErrorMessage, inProgressRunId, pinNames, pinPoints, REQUEST_MAX } from './model'
+import { createErrorMessage, pinNames, pinPoints, REQUEST_MAX } from './model'
 import { courseKeys, useCreateCourseMutation, useLatestCourseQuery } from './queries'
 
 /**
@@ -44,7 +44,8 @@ export default function CourseBody({ mapId }: { mapId: string }) {
   // 코스는 위치를 아는 확정 장소가 2곳부터다 — 확정 탭 「동선 보기」와 같은 함수로 센다.
   const routable = routableCount(items)
   // 요청 한 줄은 여기 둔다 — 결과의 「다시 점검」·「다시 짜기」로 입력에 돌아와도 쓴 글이 남는다.
-  const [text, setText] = useState('')
+  // 요청이 실패한 뒤 탭을 오가 새로 붙으면 실패한 요청의 글로 시작한다(「요청 고치기」).
+  const [text, setText] = useState(() => useCourseViewStore.getState().failed[mapId]?.text ?? '')
 
   if (viewing) {
     return (
@@ -95,7 +96,11 @@ function Entry({
   const latestQuery = useLatestCourseQuery(mapId)
   const latest = latestQuery.data
   const create = useCreateCourseMutation(mapId)
-  const known = createErrorMessage(create.error)
+  // 실패는 요청 훅이 지도별로 남긴다 — 탭을 오가 이 화면이 새로 붙어도 보인다.
+  const failure = useCourseViewStore((s) => s.failed[mapId])
+  const clearFail = useCourseViewStore((s) => s.clearFail)
+  const error = failure?.error ?? null
+  const known = createErrorMessage(error)
   // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧). 확인해야 요청한다.
   const [asking, setAsking] = useState(false)
   // 게스트는 버튼 자리가 카카오 안내라 묻지 않는다 — 요청 칸에서 Enter 를 눌러도 확인 창을 띄우지 않는다.
@@ -104,16 +109,8 @@ function Entry({
     if (!guest) setAsking(true)
   })
 
-  function submit() {
-    create.mutate(text, {
-      onSuccess: (res) => onRun(res.course_run_id),
-      // 이미 짜는 중이면 새로 만들지 않고 그 run 으로 간다.
-      onError: (err) => {
-        const running = inProgressRunId(err)
-        if (running) onRun(running, true)
-      },
-    })
-  }
+  // 만든 run 을 여는 것(이미 짜는 중이면 그 run 으로)은 요청 훅이 한다.
+  const submit = () => create.mutate(text)
 
   function openLatest() {
     if (!latest) return
@@ -124,6 +121,10 @@ function Entry({
   // 최근 코스를 받기 전에 안내 화면을 먼저 띄우면 받은 뒤 입력 화면으로 바뀌며 깜빡인다(#1127 리뷰).
   if (routable < 2 && latestQuery.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
   if (routable < 2 && !latest) return <NotEnough mapId={mapId} />
+  // 장소 부족(known)과 크레딧은 입력 화면에서 바로 고친다. 그 밖의 실패는 핑고가 알리고 같은 요청을 다시 보낸다.
+  if (failure && !known && !creditBlock(error)) {
+    return <RequestFailed pending={create.isPending} onRetry={() => create.mutate(failure.text)} onEdit={() => clearFail(mapId)} />
+  }
 
   return (
     <form
@@ -147,12 +148,9 @@ function Entry({
         <TextField id="course-request" value={text} onChange={setText} maxLength={REQUEST_MAX} placeholder="둘째 날은 실내 위주로" clearLabel="요청 지우기" />
       </div>
       {known && <p role="alert" className="text-sm text-warn-text">{known}</p>}
-      {create.error && !known && !inProgressRunId(create.error) && !creditBlock(create.error) && (
-        <ErrorText message="코스를 요청하지 못했어요" error={create.error} />
-      )}
       <div className="space-y-1">
         {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭으로 간다). 확정 장소가 모자라면 막는다. */}
-        <CreditGate feature="course" mapId={mapId} error={create.error} onCharged={create.reset}>
+        <CreditGate feature="course" mapId={mapId} error={error} onCharged={() => clearFail(mapId)}>
           <button type="submit" disabled={create.isPending || routable < 2} className="btn-primary btn-lg w-full">
             {create.isPending ? '요청하는 중…' : '코스 짜기'}
           </button>
@@ -205,4 +203,37 @@ function useAgentStart(routable: number, ask: () => void) {
     if (routable < 2) showToast(CHANGED)
     else ask()
   }, [wanted, routable, ask, setParams])
+}
+
+/**
+ * 코스 요청이 실패했다(장소 부족·크레딧 밖). 당황한 핑고 + 같은 요청 다시 보내기 · 요청 고치기.
+ * 다시 보내기도 크레딧을 쓰는 요청이라 입력 화면처럼 먼저 묻는다.
+ */
+function RequestFailed({ pending, onRetry, onEdit }: { pending: boolean; onRetry: () => void; onEdit: () => void }) {
+  const [asking, setAsking] = useState(false)
+  return (
+    <div className="space-y-3">
+      <AiHeader title="코스를 요청하지 못했어요" sub="잠깐 문제가 생겼어요. 다시 눌러 주세요" mood="flustered" />
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={onEdit} disabled={pending} className="btn-neutral btn-lg">
+          요청 고치기
+        </button>
+        <button type="button" onClick={() => setAsking(true)} disabled={pending} className="btn-primary btn-lg">
+          {pending ? '요청하는 중…' : '다시 시도'}
+        </button>
+      </div>
+      {asking && (
+        <CreditConfirm
+          feature="course"
+          title="코스를 짤까요?"
+          ok="코스 짜기"
+          onOk={() => {
+            setAsking(false)
+            onRetry()
+          }}
+          onCancel={() => setAsking(false)}
+        />
+      )}
+    </div>
+  )
 }

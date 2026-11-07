@@ -203,7 +203,7 @@ def _to_search_result(r: repository.NearestRow) -> PlaceSearchResult:
     return PlaceSearchResult(
         place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
         address=r.address[:200] if r.address else None,
-        place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
+        place_source=PlaceSourceInfo(provider=r.source, url=core.place_link(r.name, r.address, r.kakao_place_url)), pinnable=True,
     )
 
 
@@ -512,4 +512,5 @@ def _to_link_match(c: Candidate) -> PlaceSearchResult:
         place_id=c.kakao_place_id or f"own:{c.place_id}",
         place_name=c.name[:100], lat=c.lat, lng=c.lng, category=c.category,
         address=c.address[:200] if c.address else None, pinnable=True,
+        place_source=PlaceSourceInfo(provider=c.source, url=core.place_link(c.name, c.address, c.kakao_place_url)),
     )

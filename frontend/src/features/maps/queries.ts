@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useMeQuery } from '@/features/auth/queries'
 
-import { acceptInvite, createInvite, createMap, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, restoreMap, revokeInvite, transferOwner, updateMap } from './api'
+import { acceptInvite, copyMap, createInvite, createMap, deleteCover, deleteMap, fetchInvites, fetchInviteSummary, fetchMap, fetchMaps, fetchMembers, fetchTrash, leaveMap, putCover, restoreMap, revokeInvite, transferOwner, updateMap } from './api'
 import { ApiError } from '@/api'
 import { agentKeys } from '@/features/agent/queries'
 import { forgetImport } from '@/features/kakaoImport/queries'
@@ -39,8 +39,8 @@ export function useCreateMapMutation() {
 }
 
 /**
- * 지도 수정(방장, #465). 상세만 응답으로 바로 바꾼다. 내 지도 목록은 내게도 오는 map.updated를 받아
- * realtime의 표(refetchTable)대로 다시 받는다.
+ * 지도 수정(방장, #465). 상세는 응답으로 바로 바꾸고, 내 지도 목록도 다시 받는다 — 목록 카드의 「⋯」에서 고치면(#1444)
+ * 지도 화면 밖이라 map.updated 를 받지 않는다.
  * 날짜를 고치면 서버가 기간 밖 일정을 빼고 일정 version도 바뀐다. 확정 리스트·일정(`['shortlist', mapId]` 아래)을 다시 받아야
  * 빠진 장소가 확정 리스트로 돌아오고, 다음 일정 저장이 옛 version으로 409가 나지 않는다.
  */
@@ -50,7 +50,29 @@ export function useUpdateMapMutation(mapId: string) {
     mutationFn: (body: MapUpdateRequest) => updateMap(mapId, body),
     onSuccess: (map) => {
       queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map)
+      void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
       void queryClient.invalidateQueries({ queryKey: shortlistKeys.list(mapId) })
+    },
+  })
+}
+
+/** 지도 복사(#1446). 새 지도가 목록에 바로 보이게 목록을 다시 받는다. */
+export function useCopyMapMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => copyMap(mapId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true }),
+  })
+}
+
+/** 대표 이미지 올리기·지우기(#1445). 수정과 같이 상세를 응답으로 바꾸고 목록을 다시 받는다. */
+export function useCoverMutation(mapId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (image: Blob | null) => (image ? putCover(mapId, image) : deleteCover(mapId)),
+    onSuccess: (map) => {
+      queryClient.setQueryData<MapDto>(mapKeys.detail(mapId), map)
+      void queryClient.invalidateQueries({ queryKey: mapKeys.all, exact: true })
     },
   })
 }

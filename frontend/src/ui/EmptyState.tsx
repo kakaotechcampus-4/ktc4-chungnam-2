@@ -4,7 +4,7 @@ import Pingo, { type PingoMood } from './Pingo'
 
 /**
  * 비어 있을 때(빈 지도·필터 0곳·확정 0곳·지도 0개·검색 0곳·끊긴 초대). 핑고 + 제목 + 설명 + 다음 행동 하나(#359).
- * 핑고는 서비스의 안내자라 AI 화면이 아니어도 나온다(DESIGN.md 「핑고」). 찾던 게 없거나 끊긴 곳은 sorry 다.
+ * 핑고는 서비스의 안내자라 AI 화면이 아니어도 나온다(DESIGN.md 「핑고」). 찾던 게 없거나 끊긴 곳은 sad 다.
  */
 export default function EmptyState({
   mood = 'default',

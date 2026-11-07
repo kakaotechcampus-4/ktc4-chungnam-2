@@ -137,7 +137,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     const hint = link.name_hint
     return (
       <EmptyState
-        mood="sorry"
+        mood="sad"
         title="링크의 장소를 찾지 못했어요"
         action={
           hint ? (
@@ -157,7 +157,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (source?.kind === 'tap' && results.length === 0) {
     // 지어내지 않는다(가드레일 2). 없으면 이름 검색으로 남기게 한다(api-spec GET /places/nearest).
     return (
-      <EmptyState mood="sorry" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
+      <EmptyState mood="sad" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
         지도에서 장소 바로 위를 다시 누르거나, 장소 이름으로 검색해 보세요.
       </EmptyState>
     )
@@ -236,7 +236,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
 function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; fixed: string | null; onRetry: () => void; onClose: () => void }) {
   return (
     <EmptyState
-      mood="sorry"
+      mood="sad"
       title="찾는 장소가 없어요"
       action={
         <div className="flex flex-col items-center gap-2">

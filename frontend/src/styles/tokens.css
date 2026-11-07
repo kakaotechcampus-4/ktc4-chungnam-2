@@ -63,8 +63,10 @@
   --pingo-line: var(--brand-300);
   --pingo-text: var(--brand-700);
   --pingo-outline: var(--ink-300); /* 평면 핑고 외곽선. brand-50 면 위에서도 몸이 묻히지 않게 */
+  --advice-alert: var(--notify-dot); /* 「핑고 AI 조언」 새 조언 「!」 말풍선(MapPingo, #1433). 새 소식 귤색 그대로, 흰 「!」 5.2:1 */
   --notify-dot: #C2410C;          /* 새 소식 점(알림 종 안 읽음 #1036, 핑고 AI 조언 새 조언). 귤색 — 빨강은 핀·반대·되돌릴 수 없는 동작 몫(#1223). 흰 바탕 5.2:1 */
   --pingo-alert: #DC6A6A;          /* 핑고 ALERT 모자·핀(시안 Alert Pink). 핑고 그림 전용 */
+  --pingo-blush: #F2A9B9;          /* 핑고 설렘의 볼·하트(캐릭터 가이드 v2). 핑고 그림 전용 */
 
   /* ── 핀 · 지도 위 전용 ───────────────── */
   --pin-stroke:     #D02A2A;
@@ -72,7 +74,8 @@
   --pin-fill-full:  #D02A2A;
   --pin-dot:        #8F1D1D;   /* 일반 핀 머리 가운데 점. 테두리 빨강보다 어둡게 — 회색 속·빨강 속 어디서나 보인다 */
   --pin-confirmed:        #F5B301;   /* 확정 핀 속 (#149) */
-  --pin-confirmed-mark:   #6B4500;   /* 확정 핀 ♥ · 순서 번호 글자 */
+  --pin-confirmed-mark:   #6B4500;   /* 확정 핀 윤곽선 · 순서 번호 글자 */
+  --pin-confirmed-heart:  var(--pin-dot); /* 확정 핀 ♥ — 일반 핀 머리 점과 같은 진한 빨강, 골드 위 4.8:1 (#1433) */
   /* 카카오 바탕 지도 그림을 옅게(.map-base). 기본 지도의 가게·건물 표시는 API로 끌 수 없어서 우리 핀이 앞에 서게 그림만 누른다.
      가까이 볼수록 옅어진다 — 이 값은 가장 옅을 때다. 멀리 볼 때는 그대로(MapCanvas 가 --map-fade 0~1 을 정한다) */
   --map-tile-saturate:   0.45;
