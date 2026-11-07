@@ -11,6 +11,7 @@ import {
   memberConditions,
   noResultsExternalSearch,
   notEnforcedNote,
+  radiusOptions,
   readinessRadiusM,
   recommendAreaNote,
   rerunErrorMessage,
@@ -225,5 +226,22 @@ describe('추천 반경은 서버 m 값만 쓴다(#1468)', () => {
     expect(readinessRadiusM(undefined, '음식점')).toBeNull()
     expect(recommendAreaNote(2500)).toBe('지도 가운데 반경 2.5km 안에서 찾아요')
     expect(recommendAreaNote(null)).not.toMatch(/\d/)
+  })
+})
+
+describe('「찾는 범위」 반경 고르기(#1416)', () => {
+  // 입력 값은 임의다 — 하한·상한·기본은 서버 값을 그대로 옮기는지만 본다.
+  const r = { ready: true, answered_count: 1, required_count: 1, radius_m: 2500, radius_min_m: 1500, radius_max_m: 4200 }
+
+  it('하한부터 상한까지 1km 간격에 기본값과 상한을 넣는다. 하한·상한이 없으면 빈 목록', () => {
+    expect(radiusOptions(r)).toEqual([1500, 2500, 3500, 4200])
+    expect(radiusOptions({ ...r, radius_min_m: undefined })).toEqual([])
+    expect(radiusOptions(undefined)).toEqual([])
+  })
+
+  it('고른 값이 하한·상한 안이면 그 값, 밖이거나 안 골랐으면 기본값', () => {
+    expect(readinessRadiusM({ 음식점: r }, '음식점', 3500)).toBe(3500)
+    expect(readinessRadiusM({ 음식점: r }, '음식점', 9000)).toBe(2500)
+    expect(readinessRadiusM({ 음식점: r }, '음식점')).toBe(2500)
   })
 })

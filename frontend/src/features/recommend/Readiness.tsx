@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router'
 
 import { ApiError } from '@/api'
@@ -25,6 +25,8 @@ import Mark from '@/ui/Mark'
 import { useAiStore } from './aiStore'
 import {
   chosenCategory,
+  radiusKm,
+  radiusOptions,
   readinessRadiusM,
   recommendAreaNote,
   runErrorMessage,
@@ -107,8 +109,11 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const picked = useAiStore((s) => s.picked[mapId])
   const setPicked = useAiStore((s) => s.setPicked)
   const chosen = chosenCategory(cards, picked)
-  // 찾는 범위는 고른 카테고리의 서버 반경이다(Readiness.radius_m, #1468). 지도 원(MapLayout)도 같은 값을 본다.
-  const radiusM = readinessRadiusM(readiness.data, chosen)
+  // 찾는 범위는 「찾는 범위」에서 고른 반경, 안 골랐으면 고른 카테고리의 서버 기본값이다(#1416, #1468). 지도 원(MapLayout)도 같은 값을 본다.
+  const pickedRadius = useAiStore((s) => s.radius[mapId])
+  const setRadius = useAiStore((s) => s.setRadius)
+  const radiusM = readinessRadiusM(readiness.data, chosen, pickedRadius)
+  const radiusChoices = radiusOptions(chosen ? readiness.data?.[chosen] : undefined)
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useRecountOnMapMove(readiness.refetch)
   // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧·찾는 범위). 버튼과 핑고 조언의 「추천 받아 보기」가 같은 창을 거친다.
@@ -133,7 +138,8 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
     setAsking(null)
     // 핑고 조언에서 왔으면 준비가 풀린 것(NOT_READY)만 「상황이 바뀌었어요」다. 크레딧·실패·네트워크는 버튼 자리의 안내가 진짜 이유를 말한다.
     const changed = (err: Error) => err instanceof ApiError && err.code === 'NOT_READY' && showToast(CHANGED)
-    create.start(asking.category, asking.fromAgent ? { onError: changed } : undefined)
+    // 사람이 반경을 골랐을 때만 보낸다 — 안 보내면 서버 기본값이다.
+    create.start(asking.category, { onError: asking.fromAgent ? changed : undefined, radiusM: pickedRadius ? radiusM : null })
   }
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
@@ -152,6 +158,17 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           />
         ))}
       </div>
+      {radiusM && radiusChoices.length > 1 && (
+        <RadiusPicker
+          options={radiusChoices}
+          value={radiusM}
+          onPick={(m) => {
+            setRadius(mapId, m)
+            // 근처 정예 수(「주변에 추천할 장소가 없어요」)를 고른 반경으로 다시 센다.
+            void readiness.refetch()
+          }}
+        />
+      )}
       <p className="text-label text-ink-500">지도 가운데 원 안에서 추천해요. 다른 지역은 지도를 움직여 보세요.</p>
       {/* 카테고리마다 의견 핀이 몇 곳 필요한지는 타일(「N곳 더 필요」)이 보여 준다.
           사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
@@ -198,6 +215,28 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         />
       )}
       <RunHistory mapId={mapId} />
+    </div>
+  )
+}
+
+/**
+ * 「찾는 범위」 — 추천 원의 반경을 고르는 칩 줄(#1416). 고를 수 있는 값과 처음 값은 서버가 준다(Readiness.radius_min_m·max_m·radius_m).
+ * 고르면 지도 원이 바로 바뀌고, 「추천받기」가 그 반경으로 찾는다.
+ */
+function RadiusPicker({ options, value, onPick }: { options: number[]; value: number; onPick: (m: number) => void }) {
+  const labelId = useId()
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span id={labelId} className="text-label text-ink-500">
+        찾는 범위
+      </span>
+      <div role="group" aria-labelledby={labelId} className="flex flex-wrap gap-2">
+        {options.map((m) => (
+          <button key={m} type="button" aria-pressed={m === value} onClick={() => onPick(m)} className="chip">
+            {radiusKm(m)}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
