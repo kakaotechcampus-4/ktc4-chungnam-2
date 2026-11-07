@@ -320,6 +320,7 @@ components:
 | 온보딩 장면(핑고가 기능을 쓰는 모습, 4:3 지도 판) | `WelcomeScene` (`kind` = pin·reaction·ai·shortlist) | `features/onboarding/WelcomeScene` |
 | 여러 장 중 몇 번째(온보딩) | `StepDots` (지금 장 brand-600 길쭉한 점 · 나머지 ink-300, 읽는 글은 「4장 중 2장」) | `ui/StepDots` |
 | 서비스 이름(로고) | `Wordmark` 「pingopingo」 — pin ink-900 + go brand-600(12° 기울임). 높이만 정하고 글자로 다시 쓰지 않는다 | `ui/Wordmark` |
+| 그리다 죽었을 때(흰 화면 대신) | `ErrorBoundary` (`mood="sad"` 안내 + 「다시 열기」 + 「처음으로」, `resetKey`가 바뀌면 비움. 앱 전체와 지도 탭 자리에 있다) | `ui/ErrorBoundary` |
 | 확인 창 | `ConfirmDialog` (`danger`면 마지막 버튼이 빨강) | `ui/ConfirmDialog` |
 | 좋음·반대·미확인·확정 리스트의 뜻(핀 상세 집계 줄 끝, 마킹된 장소 목록 머리) | `ReactionHelp` (「?」 글자 버튼 → `MenuPopover` 안 네 줄. 용어는 고정이라 뜻만 적는다) | `features/map/ReactionHelp` |
 | 값을 고치는 창(지도 정보·핀 메모·이름, #480) | `ConfirmDialog` + `children`에 입력칸, 확인 글자는 「저장」. 바뀐 게 없으면 저장을 끈다. 입력칸에서 Enter가 저장이다 | `ui/ConfirmDialog` |

@@ -45,6 +45,7 @@ import { ConnectionBanner } from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop, useIsPc } from '@/features/shell/useIsDesktop'
+import ErrorBoundary from '@/ui/ErrorBoundary'
 import { PingoMark } from '@/ui/Pingo'
 import { ClearButton } from '@/ui/TextField'
 
@@ -568,7 +569,10 @@ export default function MapLayout() {
           )}
         </header>
 
-        <Outlet context={context} />
+        {/* 탭 하나가 죽어도 지도와 탭 바는 남긴다. */}
+        <ErrorBoundary resetKey={pathname}>
+          <Outlet context={context} />
+        </ErrorBoundary>
 
         {!desktop && (
           <nav
