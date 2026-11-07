@@ -56,7 +56,8 @@ export function chosenCategory(cards: ReadinessCard[], picked: RecommendCategory
  */
 export function evidenceLabel(line: EvidenceLineDto): string {
   if (!line.fact_label) return line.text
-  if (line.wants === false) return `${line.fact_label} 제외`
+  // 후보를 빼지 않고 순위만 낮추는 줄은 「제외」가 아니다(#1253, #1260).
+  if (line.wants === false) return line.filters_candidates === false ? `${line.fact_label} 피하기` : `${line.fact_label} 제외`
   if (line.wants === true) return `${line.fact_label} 선호`
   return line.fact_label
 }
@@ -65,14 +66,19 @@ export function evidenceLabel(line: EvidenceLineDto): string {
  * 근거 확인 화면의 구역(최종기획안 5-5). 꼭 = 구성원별 줄, 선호 = 해시태그로 합침, 참고 = 원문 인용.
  * 꼭·선호 줄 중 추천이 쓰지 않는 줄(enforced=false)은 unused 로 따로 모은다 — 「꼭」으로 보이면 걸러질 거라고 믿는다(#742).
  * enforced 가 없으면 쓰이는 줄로 본다(구버전 서버).
+ * 꼭 줄 중 후보를 빼지 않는 줄(`filters_candidates=false`, 서버가 정한다)은 「꼭」에 두지 않는다(#1260) —
+ * 피하는 방향이면 lowered(순위를 낮춤), 아니면 선호 태그로 간다. 필드가 없으면(구버전 서버) 지금처럼 꼭이다.
  */
 export function groupEvidence(lines: EvidenceLineDto[]) {
   const active = lines.filter((l) => l.is_active)
   const pick = (badge: EvidenceLineDto['badge'], enforced: boolean) =>
     active.filter((l) => l.badge === badge && (l.enforced !== false) === enforced)
+  const must = pick('required', true)
+  const ranksOnly = (l: EvidenceLineDto) => l.filters_candidates === false
   return {
-    required: pick('required', true),
-    preferred: pick('preferred', true),
+    required: must.filter((l) => !ranksOnly(l)),
+    lowered: must.filter((l) => ranksOnly(l) && l.wants === false),
+    preferred: [...pick('preferred', true), ...must.filter((l) => ranksOnly(l) && l.wants !== false)],
     reference: active.filter((l) => l.badge === 'reference'),
     unused: [...pick('required', false), ...pick('preferred', false)],
   }
@@ -94,7 +100,7 @@ export function mergeTags(lines: EvidenceLineDto[]) {
 /** 화면에 보이는 조건 수 — 꼭은 줄마다, 선호는 같은 태그끼리 합쳐 센다(EvidenceGroups와 같은 묶음, #1143). */
 export function visibleConditionCount(lines: EvidenceLineDto[]): number {
   const g = groupEvidence(lines)
-  return g.required.length + mergeTags(g.preferred).length
+  return g.required.length + g.lowered.length + mergeTags(g.preferred).length
 }
 
 /** 추천이 쓰지 않는 줄의 이유 한 줄(docs/api-spec.yaml EvidenceLine.not_enforced_reason, #740). */

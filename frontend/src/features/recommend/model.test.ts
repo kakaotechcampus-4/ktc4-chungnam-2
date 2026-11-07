@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/api'
 
 import {
+  evidenceLabel,
   evidenceLimitMessage,
   fulfillmentLine,
   groupEvidence,
@@ -71,6 +72,22 @@ describe('추천이 쓰지 않는 근거 줄(#742)', () => {
     expect(g.required.map((l) => l.id)).toEqual(['매운맛', '구버전'])
     expect(g.preferred).toEqual([])
     expect(g.unused.map((l) => l.id)).toEqual(['땅콩 알레르기', '국물'])
+  })
+
+  it('후보를 빼지 않는 꼭 줄(filters_candidates=false)은 「꼭」이 아니다 — 피함은 순위를 낮춤, 원함은 선호 태그(#1260)', () => {
+    const g = groupEvidence([
+      line('붐빔', 'required', { enforced: true, filters_candidates: true, wants: false, fact_label: '붐비는 대형' }),
+      line('매운맛', 'required', { enforced: true, filters_candidates: false, wants: false, fact_label: '매운맛 전문' }),
+      line('넓은 곳', 'required', { enforced: true, filters_candidates: false, wants: true, fact_label: '넓은 곳' }),
+      line('구버전', 'required', { wants: false, fact_label: '한식' }),
+    ])
+    expect(g.required.map((l) => l.id)).toEqual(['붐빔', '구버전'])
+    expect(g.lowered.map((l) => l.id)).toEqual(['매운맛'])
+    expect(g.preferred.map((l) => l.id)).toEqual(['넓은 곳'])
+    expect(evidenceLabel(g.lowered[0])).toBe('매운맛 전문 피하기')
+    expect(evidenceLabel(g.required[0])).toBe('붐비는 대형 제외')
+    expect(evidenceLabel(g.required[1])).toBe('한식 제외') // 필드가 없으면(구버전 서버) 지금처럼
+    expect(visibleConditionCount([g.required, g.lowered, g.preferred].flat())).toBe(4)
   })
 
   it('이유별 안내 한 줄', () => {
