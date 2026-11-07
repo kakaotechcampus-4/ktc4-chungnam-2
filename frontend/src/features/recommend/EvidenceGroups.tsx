@@ -105,6 +105,20 @@ export default function EvidenceGroups({
           ),
         )}
 
+      {groups.lowered.length > 0 &&
+        group(
+          '피하고 싶어요 — 순위를 낮춰요',
+          // 후보를 빼지 않는 줄이라 빼기 전에 묻지 않는다 — 되돌리기 토스트만(#1260).
+          groups.lowered.map((line) =>
+            chip(
+              line,
+              <Ban size={12} className="shrink-0 text-[var(--bad-line)]" aria-hidden="true" />,
+              editable(line) ? () => toggle([line], false) : undefined,
+            ),
+          ),
+          '이 특징이 있는 곳도 후보에 남고, 순위만 낮아져요',
+        )}
+
       {groups.preferred.length > 0 &&
         group(
           '있으면 좋은 조건',
