@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
-import { allInside, fitCenter, fitLevel, fitPadding, groupNear, zoomSteps } from './camera'
+import { allInside, dragHeading, fitCenter, fitLevel, fitPadding, groupNear, zoomSteps } from './camera'
 import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
 import { usePinDragStore } from './pinDrag'
 import {
@@ -13,6 +13,7 @@ import {
   markSelected,
 } from './pinMarker'
 import type { PlaceSearchResultDto } from '@/features/search/model'
+import { useSheetStore } from '@/features/shell/sheetStore'
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 import type { RouteDrawing } from '@/features/shortlist/model'
 import Pingo from '@/ui/Pingo'
@@ -231,11 +232,24 @@ export default function MapCanvas({
           })
         const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
+        // 끈 방향(#1433) — 끌기 시작한 자리의 좌표가 화면에서 손가락을 따라 움직인 쪽. 지도 위 핑고가 그쪽을 보며 걷는다.
+        let dragAnchor: kakao.maps.LatLng | null = null
+        let dragAt = { x: 0, y: 0 }
         const onDragStart = () => {
           movedRef.current = true
           // 움직이는 도중에 사용자가 지도를 잡으면 남은 옮기기·확대를 하지 않는다.
           stopMoves()
           callbacks.current.onMovingChange(true)
+          dragAnchor = map.getCenter()
+          dragAt = map.getProjection().containerPointFromCoords(dragAnchor)
+        }
+        const onDrag = () => {
+          if (!dragAnchor) return
+          const p = map.getProjection().containerPointFromCoords(dragAnchor)
+          const heading = dragHeading({ x: p.x - dragAt.x, y: p.y - dragAt.y })
+          if (!heading) return
+          dragAt = p
+          useSheetStore.getState().setMapHeading(heading)
         }
         const onIdle = () => callbacks.current.onMovingChange(false)
         // 도형 위를 누르면 카카오가 지도 click 대신(또는 함께) 도형 click 을 준다 — 어느 쪽이 와도 한 번만 알린다.
@@ -251,12 +265,14 @@ export default function MapCanvas({
         }
         mapClickRef.current = onClick
         maps.event.addListener(map, 'dragstart', onDragStart)
+        maps.event.addListener(map, 'drag', onDrag)
         maps.event.addListener(map, 'idle', onIdle)
         maps.event.addListener(map, 'click', onClick)
         maps.event.addListener(map, 'zoom_changed', fade)
         detach = () => {
           stopMoves()
           maps.event.removeListener(map, 'dragstart', onDragStart)
+          maps.event.removeListener(map, 'drag', onDrag)
           maps.event.removeListener(map, 'idle', onIdle)
           maps.event.removeListener(map, 'click', onClick)
           maps.event.removeListener(map, 'zoom_changed', fade)

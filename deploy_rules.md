@@ -127,6 +127,17 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 - 칸 이름이나 뜻을 바꾸는 것은 「새 칸 더하기 → 옮기기 → 옛 칸 지우기」로 나눈다.
 - API는 하위 호환으로 바꾼다. 필드는 더하기만 하고, 지우기는 화면이 쓰지 않게 된 다음에 한다.
+- 모델에서 칸을 빼도 마이그레이션은 그 칸을 지우지 않는다. 남는 칸이 NOT NULL이면 새 코드의 INSERT를 위해 기본값을 건다. 지우는 일은 아래 「지울 칸」 표에 적고 다음 릴리스에 한다.
+
+검사가 이 규칙을 지킨다(`backend/integration/test_schema_compat.py`, #1464). 빈 DB에 head까지 올리고 이전 릴리스(최신 `v` 태그, 없으면 `origin/main`)의 모델과 비교한다. 이전 코드가 쓰는 테이블·칸이 없거나, 이전 코드가 모르는 NOT NULL 칸에 기본값이 없거나, NULL을 허용하던 칸이 NOT NULL이 되면 실패한다. 그래서 줄이기는 그 칸을 읽는 코드가 이전 릴리스에서도 빠져야 통과한다. 이전 코드의 raw SQL, 이전 코드가 모르는 값, 칸의 뜻 변경은 검사가 못 보니 리뷰로 본다. 이 검사가 생기기 전 0062가 칸 삭제와 기본값 제거를 같은 마이그레이션에서 했다(멘토 리뷰, 0062를 고치고 0067이 되살렸다).
+
+### 지울 칸
+
+모델에서는 뺐지만 DB에 남겨 둔 테이블과 칸이다. 같은 검사가 지금 모델과 head 스키마를 비교해서, 모델에 없는 칸이 이 표에 없거나 표의 줄이 실제와 다르면 실패한다. 줄이기 마이그레이션을 넣을 때 그 줄을 지운다.
+
+| 테이블.칸 | 남긴 이유 | 줄이기 |
+|---|---|---|
+| `agent_course_runs.snapshot_pin_ids` | 일정 version(`snapshot_version`)이 대신한다(#1321). 이전 릴리스가 읽고 쓴다. 새 코드는 쓰지 않아 기본값 `'[]'`가 들어간다 | #1465 — 칸 삭제와 `snapshot_version` 기본값(`'legacy'`) 제거. 운영에 #1321 코드가 올라간 다음 릴리스 |
 
 ## 데이터가 바뀔 때
 
@@ -264,7 +275,6 @@ CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어�
 ## 배포 전에 정할 것
 
 - 모델 제공자를 OpenAI 직접 호출로 바꾼 뒤(#1120) 정하지 않은 것: 사유 글이 미국 OpenAI로 가는 데 따른 개인정보 국외 이전 고지(`최종기획안.md` 12절, 개인정보처리방침), 결제 주체(개인 카드인지 팀 계정인지), 운영 전환 시기. 운영은 아직 엘리스 때의 설정이다.
-- `event_log` 오래된 행 삭제: 읽기는 24시간으로 자르지만(`realtime.service.RETENTION`) 지우는 작업은 아직 없다. `created_at` 인덱스는 삭제용으로 있다. 정기 정리(`maintenance.run`)에 단계로 넣을지 정한다.
 - auth의 세션·state·선택 대기 쿠키의 `Secure`는 모두 `settings.cookie_secure`를 쓴다(#810). `COOKIE_SECURE` 기본은 staging, prod에서 켬이고 dev, test에서 끔이다. 응답의 `Set-Cookie`는 `auth/tests/test_cookie_secure.py`에서 검증한다. 로컬 http로 staging을 띄워 하네스를 돌릴 때만 `COOKIE_SECURE=0`으로 끈다. 배포 서버에서는 기본값을 유지한다.
 - staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 실제 어댑터의 키가 비거나 공백뿐이면 `ConfigError`로 막는다(#810). `PLACES_MODE=real`일 때 `PLACES_SOURCES`에 `kakao`가 있으면 `KAKAO_REST_API_KEY`(비면 `KAKAO_CLIENT_ID`로 폴백), `naver`가 있으면 `NAVER_SEARCH_CLIENT_ID`와 `NAVER_SEARCH_CLIENT_SECRET`이 필요하다. 선택하지 않은 소스의 키는 요구하지 않는다. 로그인용 `KAKAO_CLIENT_SECRET`, `KAKAO_REDIRECT_URI`는 장소 어댑터 키가 아니며 로그인 설정은 별도로 채운다. `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 필요하다(2026-11-02부터 이 두 값은 OpenAI 주소와 프로젝트 키이고 이름만 ELICE로 남았다, #1120). dev, test에서는 키 없이도 기동한다. 오류에는 누락된 변수 이름만 담고 키 값은 담지 않는다.
 - uvicorn 접근 로그는 모든 경로의 쿼리스트링(code·state·검색어·좌표)을 지우고 초대 토큰 경로는 `/invites/{token}`으로 바꿔 찍는다. DB 오류의 예외 로그는 SQL 매개변수 없이 종류와 호출 위치만 남긴다(`common/logguard.py`, #473, #1201). Dockerfile의 uvicorn 실행 인자는 바꾸지 않았다. 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.

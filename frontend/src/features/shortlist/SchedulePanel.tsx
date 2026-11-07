@@ -13,7 +13,7 @@ import { closeSchedule, useScheduleOpen } from './scheduleStore'
 import { useScheduleEdit } from './useTripSchedule'
 
 /**
- * 「일정 짜기」 패널을 그리는 자리. 넓은 화면의 확정 탭에서만 지도 화면(MapLayout)에 둔다 — 휴대폰은 리스트 체크박스로 넣고
+ * 「일정 짜기」 패널을 그리는 자리. 넓은 화면의 확정 탭에서만 지도 화면(MapLayout)에 둔다 — 휴대폰은 리스트 줄의 「넣기」로 넣고
  * 「동선 보기」로 고친다(2026-11-03). 탭을 떠나거나 다른 지도로 가면 닫힌다.
  * 열림은 스토어에 있어서 확정 탭 안이 핀 상세로 바뀌어도 닫히지 않는다. 옆 패널이라 지도 버튼·토스트를 숨기지 않는다.
  */
@@ -30,7 +30,7 @@ export function SchedulePanelHost({ mapId }: { mapId: string }) {
 
 /**
  * 여행 날짜마다 칸을 두고 일정을 짠다(넓은 화면 — 일정은 서버에 있어 구성원이 함께 본다). 시간은 정하지 않는다.
- * 넣을 장소는 왼쪽 확정 리스트에 있다 — 줄의 ≡ 를 끌어 칸에 놓거나 체크박스로 골라 넣는다. 칸 안의 줄은 끌어서 다른 날·다른 자리로,
+ * 넣을 장소는 왼쪽 확정 리스트에 있다 — 줄의 ≡ 를 끌어 칸에 놓거나 줄의 「넣기」로 넣는다. 칸 안의 줄은 끌어서 다른 날·다른 자리로,
  * 리스트 쪽에 놓으면 일정에서 빠진다. 그날 순서가 곧 「동선 보기」 순서다.
  */
 export default function SchedulePanel({ mapId }: { mapId: string }) {

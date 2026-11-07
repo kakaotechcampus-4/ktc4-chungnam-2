@@ -78,11 +78,9 @@ export function pinRow(page: Page, name: string) {
 
 /** 열린 핀 상세에서 「확정 리스트에 넣기」를 누른다. */
 export async function confirmPin(page: Page, name: string) {
-  // 넣은 뒤 화면이 일정을 다시 받는다. 그 응답 전에 일정을 고치면 예전 version으로 저장해 409(SHORTLIST_STALE)가 난다.
-  const refetched = page.waitForResponse((r) => r.url().endsWith('/shortlist/schedule') && r.request().method() === 'GET')
+  // 일정을 다시 받기 전에 바로 날짜에 넣어도 저장돼야 한다(#1436) — 응답을 기다리지 않고 사람보다 빠르게 누른다.
   await page.getByRole('button', { name: '확정 리스트에 넣기', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: name }).filter({ hasText: '확정 리스트에 넣었어요' })).toBeVisible()
-  await refetched
 }
 
 /** 내 크레딧(GET /credits/me). 가격과 잔액은 화면처럼 응답에서 읽는다 — 숫자를 테스트에 적지 않는다. */

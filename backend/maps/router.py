@@ -112,12 +112,13 @@ def patch_map(
 async def cover_body(request: Request) -> bytes:
     """PUT /maps/{mapId}/cover 본문(이미지 바이트). 상한보다 1바이트 더 읽으면 멈춘다 — 큰 파일을 메모리에 다 올리지 않는다.
     상한을 넘었는지는 core.check_cover가 길이로 판정한다(COVER_INVALID)."""
+    limit = core.COVER_MAX_BYTES + 1
     data = bytearray()
     async for chunk in request.stream():
-        data += chunk
-        if len(data) > core.COVER_MAX_BYTES:
+        data += chunk[: limit - len(data)]
+        if len(data) >= limit:
             break
-    return bytes(data[: core.COVER_MAX_BYTES + 1])
+    return bytes(data)
 
 
 @router.put("/maps/{mapId}/cover", response_model=Map, response_model_exclude_none=True)
@@ -148,9 +149,11 @@ def get_cover(
 ):
     # 주소에 갱신 시각(v)이 붙어 이미지가 바뀌면 주소도 바뀐다(core.cover_url) — 그래서 영구 캐시를 허락한다.
     # 구성원만 볼 수 있어 공유 캐시(CDN)에는 남기지 않는다(private).
+    # nosniff: 사용자가 올린 바이트를 같은 출처에서 내보내므로 브라우저가 형식을 추측해 HTML로 열지 않게 한다.
     data, content_type = service.get_cover(db, map_id=mapId)
     return Response(content=data, media_type=content_type,
-                    headers={"Cache-Control": "private, max-age=31536000, immutable"})
+                    headers={"Cache-Control": "private, max-age=31536000, immutable",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 @router.delete("/maps/{mapId}", status_code=204)

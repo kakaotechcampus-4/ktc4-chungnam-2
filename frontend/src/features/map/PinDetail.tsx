@@ -14,6 +14,7 @@ import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Mark from '@/ui/Mark'
+import FieldError from '@/ui/FieldError'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
@@ -534,9 +535,9 @@ function MyOpinion({
             describedBy={showMissing ? reasonErrorId : undefined}
           />
           {showMissing && (
-            <p id={reasonErrorId} className="text-xs font-semibold text-warn-text">
+            <FieldError id={reasonErrorId}>
               {MISSING_REASON}
-            </p>
+            </FieldError>
           )}
           {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 추천이 정확해져요</p>}
         </div>

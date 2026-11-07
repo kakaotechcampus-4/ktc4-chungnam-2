@@ -45,10 +45,11 @@ function ownerGate(mapId: string) {
 
 /** 복사본 제목(#1446) — 실서버 maps.core.copy_title과 같은 규칙. 끝의 「 (k)」를 떼고, 내 지도에 없는 가장 작은 n으로 「제목 (n)」. 100자 안. */
 export function copyTitle(source: string, taken: Set<string>) {
-  const base = source.replace(/ \((\d+)\)$/, "");
+  // 서버(파이썬 str)처럼 코드 포인트 단위로 자르고, \d처럼 유니코드 숫자도 숫자로 본다 — 이모지·전각 숫자에서 결과가 갈리지 않게.
+  const base = Array.from(source.replace(/ \((\p{Nd}+)\)$/u, ""));
   for (let n = 1; ; n += 1) {
     const suffix = ` (${n})`;
-    const title = base.slice(0, 100 - suffix.length).trimEnd() + suffix;
+    const title = base.slice(0, 100 - suffix.length).join("").trimEnd() + suffix;
     if (!taken.has(title)) return title;
   }
 }

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
 import { ME_USER_ID, store } from "./store";
-import { MAP_LIMIT } from "./handlers/maps";
+import { MAP_LIMIT, copyTitle } from "./handlers/maps";
 import { SEED_BALANCE } from "./seed";
 
 const BASE = "https://api.pingo.example.com";
@@ -2303,5 +2303,12 @@ describe("지도 만들기 응답(#1197)", () => {
     const guest = await post({ title: "게스트", start_date: "2026-11-01", end_date: "2026-11-02" });
     expect(guest.status).toBe(403);
     expect((await guest.json()).code).toBe("GUEST_NOT_ALLOWED");
+  });
+});
+
+describe("복사본 제목은 서버 maps.core.copy_title과 같다(#1446)", () => {
+  it("코드 포인트 단위로 자르고 유니코드 숫자 꼬리도 뗀다", () => {
+    expect(copyTitle("🌊".repeat(100), new Set())).toBe("🌊".repeat(96) + " (1)");
+    expect(copyTitle("부산 여행 (２)", new Set())).toBe("부산 여행 (1)");
   });
 });

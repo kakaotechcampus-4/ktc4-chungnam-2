@@ -3,6 +3,8 @@ import { ChevronDown } from 'lucide-react'
 
 import TextField, { ClearButton } from '@/ui/TextField'
 
+import FieldError from '@/ui/FieldError'
+
 import { tripDateError, type TripDraft } from './model'
 import RegionPicker from './RegionPicker'
 
@@ -63,9 +65,9 @@ export default function TripFields({
         </Field>
       </div>
       {dateError && (
-        <p id="date-error" className="-mt-2 text-sm text-[var(--warn-text)]">
+        <FieldError id="date-error" className="-mt-2">
           종료일은 시작일과 같거나 뒤여야 해요
-        </p>
+        </FieldError>
       )}
 
       {pickingRegion && (

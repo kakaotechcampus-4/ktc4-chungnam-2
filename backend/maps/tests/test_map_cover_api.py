@@ -73,6 +73,7 @@ def test_owner_uploads_and_member_downloads_cover(app_client, data, content_type
     assert got.content == data
     assert got.headers["content-type"] == content_type
     assert got.headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert got.headers["x-content-type-options"] == "nosniff"
     assert app_client.get(f"/maps/{map_id}", cookies=_auth("user_2")).json()["cover_url"] == url
 
 

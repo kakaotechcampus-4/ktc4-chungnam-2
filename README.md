@@ -63,7 +63,7 @@ cd ktc4-chungnam-2/backend
 python -m venv .venv
 .venv\Scripts\activate        # 맥/리눅스는: source .venv/bin/activate (검증은 못해봤습니다. 전 윈도우라서요.)
 
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 copy .env.example .env        # 맥/리눅스는: cp .env.example .env
 

@@ -24,7 +24,8 @@ MAP_LIMIT = 20
 # 여행 기간 상한 일수(#1371) — 시작일·종료일을 포함한다. 422 TRIP_TOO_LONG의 detail.limit과 GET /maps의 trip_max_days가 같은 값이다.
 TRIP_MAX_DAYS = 90
 
-# 삭제한 지도를 복구할 수 있는 기간(#464). 정리 작업(maps.purge)이 지우는 기준과 같은 값이다 — 한 곳에서 정한다.
+# 삭제한 지도를 복구할 수 있는 기간(#464). 정리 작업이 지우는 기준과 같은 값이다 — 여기 한 곳에서 정한다.
+# 정리 API(api.purge_deleted_maps)는 기간을 받지 않고 이 값을 쓴다(#1474). 응답의 retention_days도 이 값이다.
 TRASH_RETENTION = timedelta(days=30)
 
 # 초대 링크 유효 기간 7일. 정본은 docs/data-model.md invites 절(목서버 contracts/mocks/handlers/maps.ts와 같다).
@@ -302,8 +303,9 @@ def cover_url(map_id: str, updated_at: datetime | None) -> str | None:
     """API 기준 상대 주소. 갱신 시각(초)을 붙여 이미지가 바뀌면 주소도 바뀐다 — 그래서 GET이 영구 캐시를 허락할 수 있다."""
     if updated_at is None:
         return None
-    # 밀리초 — 같은 초에 두 번 올려도 주소가 달라야 영구 캐시가 옛 이미지를 붙잡지 않는다.
-    return f"/maps/{map_id}/cover?v={int(updated_at.timestamp() * 1000)}"
+    # 마이크로초(DB 시각의 정밀도) — 짧은 사이에 두 번 올려도 주소가 달라야 영구 캐시가 옛 이미지를 붙잡지 않는다.
+    # float 곱셈 대신 정수로 더해 반올림 오차가 없다.
+    return f"/maps/{map_id}/cover?v={int(updated_at.timestamp()) * 1_000_000 + updated_at.microsecond}"
 
 
 def owner_successor(
@@ -422,10 +424,16 @@ def member_joined_event(map_id: str, member: Member) -> Event:
     )
 
 
+def purge_cutoff(now: datetime) -> datetime:
+    """이 시각 이전(같은 시각 포함)에 삭제된 지도는 기간이 찼다 — 정리 대상이고 복구할 수 없다(#464, #1474).
+    정리(maps.purge), 복구 판정(is_purge_due), 휴지통 목록이 모두 이 경계를 쓴다."""
+    return now - TRASH_RETENTION
+
+
 def is_purge_due(deleted_at: datetime, now: datetime) -> bool:
-    """삭제한 지 30일이 됐으면 True — 정리 작업이 아직 안 돌았어도 복구할 수 없다(#464). maps.purge가
-    지우는 조건(deleted_at <= now - 30일)과 같다."""
-    return deleted_at <= now - TRASH_RETENTION
+    """삭제한 지 TRASH_RETENTION이 됐으면 True — 정리 작업이 아직 안 돌았어도 복구할 수 없다(#464). maps.purge가
+    지우는 조건과 같은 경계(purge_cutoff)다."""
+    return deleted_at <= purge_cutoff(now)
 
 
 def check_role_can(role: Role | None, map_id: str, user_id: str, action: str) -> None:

@@ -30,7 +30,7 @@ cd contracts && npm run gen:types   # docs/api-spec.yaml → contracts/src/types
 cd contracts
 npm run lint:spec    # @redocly/cli lint docs/api-spec.yaml — 스펙 자체의 문법·스타일 검증
 npm run typecheck    # tsc --noEmit — 핸들러가 생성된 타입과 어긋나지 않는지
-npm test             # vitest — smoke.test.ts
+npm test             # vitest — smoke.test.ts, checks/deprecated-fields.test.ts(화면이 deprecated 필드를 쓰는지, 4절 5번)
 ```
 백엔드 구현체는 별도로 계약 테스트(스펙과 실제 응답 스키마 비교)를 CI에 둔다 — `docs/architecture.md` 6절.
 
@@ -40,6 +40,15 @@ npm test             # vitest — smoke.test.ts
 2. `docs/CHANGELOG-api.md`에 변경 내용·영향받는 엔드포인트·이유 기록
 3. 프론트 담당자에게 즉시 통보 (변경 내용 + 마이그레이션 필요 여부)
 4. 타입 재생성, 목 핸들러 갱신
+5. 필드를 새 필드로 대체하면 옛 필드는 바로 지우지 않고 `deprecated: true`를 단다. 생성 타입에 `@deprecated`가 붙어 에디터가 줄을 긋는다. 화면이 아직 옛 필드를 쓰면 옮길 FE 이슈를 열고 아래 표에 적는다. 화면이 다 옮기면 그 PR에서 표의 줄을 지우고, 서버의 옛 필드는 그 뒤에 지운다(#1467).
+
+### 화면이 아직 쓰는 deprecated 필드
+
+`contracts/checks/deprecated-fields.test.ts`가 지킨다. 스펙에서 `deprecated`인 필드를 `frontend/src`가 쓰는데 이 표에 없으면 실패하고, 표에 있는데 화면이 더는 쓰지 않거나 스펙에서 deprecated가 아니면 실패한다. 표는 비어 가는 것이 정상이다. #1385에서 칸을 m로 바꾸고도 화면이 옛 칸으로 반경을 안내한 이유다(멘토 리뷰).
+
+| 필드 | FE 이슈 | 대신 쓸 것 |
+|---|---|---|
+| `default_radius_walk_min` | #1468 | `default_radius_m`, `next_default_radius_m`(`RecommendRun`, `RunSummary`) |
 
 **서브 디렉토리 Claude Code는 이 스펙을 읽기만 한다.** 구현 중 스펙이 부족하거나 잘못됐다고 판단되면 스펙을 직접 고치지 말고 루트에 보고한다 — `CLAUDE.md` 역할 분리 원칙.
 

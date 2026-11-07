@@ -311,7 +311,7 @@ def test_check_cover_rejects_with_policy_detail(content_type, data):
 
 def test_cover_url_is_versioned_by_update_time():
     assert core.cover_url("m1", None) is None
-    assert core.cover_url("m1", datetime(2026, 11, 6, tzinfo=timezone.utc)) == "/maps/m1/cover?v=1793923200000"
+    assert core.cover_url("m1", datetime(2026, 11, 6, 0, 0, 0, 1, tzinfo=timezone.utc)) == "/maps/m1/cover?v=1793923200000001"
 
 
 @pytest.mark.parametrize("source,taken,expected", [
