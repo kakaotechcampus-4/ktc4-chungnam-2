@@ -88,7 +88,7 @@ function Progress({ run, error, onRetryLoad }: { run: CourseRunDto; error: Error
 function Failed({ run, onRetry, onClose }: { run: CourseRunDto; onRetry: () => void; onClose: () => void }) {
   return (
     <div className="space-y-3">
-      <AiHeader title="코스를 만들지 못했어요" sub={FAILURE_TEXT} mood="sorry" />
+      <AiHeader title="코스를 만들지 못했어요" sub={FAILURE_TEXT} mood="flustered" />
       <WorkLog steps={run.steps} running={false} />
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={onClose} className="btn-neutral btn-lg">
@@ -131,7 +131,7 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
   return (
     <div className="space-y-4">
       {/* 머리 문구는 서버 headline 그대로(#1237). 없으면(실서버 구현 전) 예전 outcome 문구. */}
-      <AiHeader title={run.headline ?? (run.outcome ? outcomeText(run.outcome) : '코스를 짰어요')} sub={mode === 'review' ? undefined : '날짜별 순서와 이동 시간이에요'} mood="happy" />
+      <AiHeader title={run.headline ?? (run.outcome ? outcomeText(run.outcome) : '코스를 짰어요')} sub={mode === 'review' ? undefined : '날짜별 순서와 이동 시간이에요'} mood="proud" />
 
       {run.stale && (
         <Notice
@@ -186,9 +186,9 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
               <DayCard key={day.date} day={day} index={i} names={names} points={points} hoursTag={hoursTag} />
             ))}
           </div>
-          <p className="text-label text-ink-500">이동 시간은 직선거리로 어림한 값이에요. 정확한 길은 카카오맵에서 확인하세요</p>
+          <p className="text-label text-ink-500">이동 시간은 직선거리로 어림했어요. 자세한 길은 카카오맵에서 볼 수 있어요</p>
           {/* 장소마다 붙이지 않고 한 줄로 — 서버 작업 기록 「가게에 확인해야 하는 곳이 남았어요」와 맞춘다(루트 검수 #1127). */}
-          {unchecked > 0 && <p className="text-label text-ink-500">영업시간을 모르는 {unchecked}곳은 가게에 확인해 주세요</p>}
+          {unchecked > 0 && <p className="text-label text-ink-500">영업시간 정보가 없는 {unchecked}곳은 방문 전에 확인해 주세요.</p>}
           {drawings.length > 0 && (
             <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
               <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기

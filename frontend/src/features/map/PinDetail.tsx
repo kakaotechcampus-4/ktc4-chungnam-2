@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import { ExternalLink } from 'lucide-react'
 
@@ -19,9 +19,9 @@ import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 
-import { isLive, locationState, useLivePlaceStore } from './livePlaces'
+import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
-import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, inputExample, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
@@ -35,9 +35,10 @@ const TEXT_MAX = 140
 const MISSING_REASON = '반대 이유를 하나 이상 남겨 주세요'
 const MEMO_MAX = 200
 
-const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
-  like: { title: '무엇이 좋았나요? (선택)', placeholder: '예: 국물이 진하고 양이 많아요' },
-  against: { title: '왜 별로인가요? (필수)', placeholder: '예: 지난번 여행 때 가봤어요' },
+/** 입력칸 예시 문장은 카테고리마다 다르다 — `inputExample`(model). */
+const PROMPT: Record<ReactionType, { title: string }> = {
+  like: { title: '무엇이 좋았나요? (선택)' },
+  against: { title: '왜 별로인가요? (필수)' },
 }
 
 /**
@@ -108,15 +109,35 @@ export function PinDetailHeader({
  * 실시간 핀(#382) — 자체 장소 데이터에 없는 곳을 사람이 남긴 핀. 조건 확인·AI 추천·동선에는 쓰이지 않는다.
  * 위치는 지도를 열 때마다 카카오에서 다시 찾는다(못 찾으면 지도에 안 뜬다).
  */
-function LiveInfo({ pin }: { pin: Pin }) {
+export function LiveInfo({ pin }: { pin: Pin }) {
   const places = useLivePlaceStore((s) => s.places)
+  const since = useLivePlaceStore((s) => s.since[pin.id])
+  const retry = useLivePlaceStore((s) => s.retry)
   const state = locationState(pin, places)
+  // 찾기 시작한 지 1분이 넘으면(검색 실패로 멈춘 경우 포함) 기다리게 두지 않고 다시 찾을지 묻는다.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (state !== 'loading' || since === undefined) return
+    const wait = since + LOCATE_SLOW_MS - Date.now()
+    if (wait <= 0) return
+    const t = setTimeout(() => setNow(Date.now()), wait)
+    return () => clearTimeout(t)
+  }, [state, since])
+  const slow = state === 'loading' && since !== undefined && now >= since + LOCATE_SLOW_MS
   return (
     <div className="space-y-1.5 rounded-xl bg-ink-50 p-3 text-body">
-      <p className="font-semibold text-ink-900">장소 정보가 없는 핀이에요</p>
-      <p className="text-ink-600">조건 확인, AI 추천, 동선에는 쓰이지 않아요. 의견은 남길 수 있어요.</p>
-      {state === 'loading' && <p className="text-ink-500">위치를 찾는 중이에요…</p>}
-      {state === 'missing' && <p className="font-semibold text-warn-text">위치를 찾지 못해서 지도에는 보이지 않아요.</p>}
+      <p className="font-semibold text-ink-900">상세 정보가 등록되지 않은 장소예요</p>
+      <p className="text-ink-600">AI 추천이나 동선에는 반영되지 않지만, 구성원 간 의견은 자유롭게 나눌 수 있어요.</p>
+      {state === 'loading' && !slow && <p className="text-ink-500">장소 위치를 확인하는 중이에요…</p>}
+      {slow && (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-ink-600">위치를 아직 찾지 못했어요. 다시 시도할까요?</p>
+          <button type="button" onClick={retry} className="btn-outline btn-sm shrink-0">
+            다시 시도
+          </button>
+        </div>
+      )}
+      {state === 'missing' && <p className="font-semibold text-warn-text">위치 정보를 확인할 수 없어 지도에 표시되지 않아요.</p>}
     </div>
   )
 }
@@ -189,7 +210,7 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
       }
     >
       <div className="pt-2">
-        <TextField value={memo} onChange={setMemo} maxLength={MEMO_MAX} label="메모" placeholder="예: 여기 곱창 맛있대" clearLabel="메모 지우기" />
+        <TextField value={memo} onChange={setMemo} maxLength={MEMO_MAX} label="메모" placeholder={inputExample(category, 'memo')} clearLabel="메모 지우기" />
       </div>
       {live && (
         <div role="group" aria-label="분류" className="flex flex-wrap gap-2 pt-1">
@@ -337,6 +358,13 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
   )
 }
 
+/** 의견 요약 줄의 주어 — 「현성님, 지우님이」, 나도 있으면 「나와 현성님이」, 나뿐이면 「내가」. */
+function subjectOf(people: { name: string; isMe: boolean }[]) {
+  const others = people.filter((p) => !p.isMe).map((p) => `${p.name}님`).join(', ')
+  if (!others) return '내가'
+  return people.some((p) => p.isMe) ? `나와 ${others}이` : `${others}이`
+}
+
 function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>) {
   // 내 의견은 위 「내 의견」에 이미 있어서 갈린 의견에선 뺀다.
   const split = all.filter((o) => !o.isMe)
@@ -359,7 +387,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
         <div>
           <div className="flex items-center justify-between text-body">
             <p className="font-medium text-ink-900">
-              <span style={{ color: R.like.line }}>{R.like.mark}</span> {likes.map(nameOf).join(', ')} 좋아해요
+              <span style={{ color: R.like.line }}>{R.like.mark}</span> {subjectOf(likes)} 좋아해요
             </p>
             {likes.some((l) => l.chips.length || l.text) && (
               <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text inline-flex items-center gap-0.5 text-xs">
@@ -379,7 +407,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
       )}
       {unknown.some((m) => !m.isMe) && (
         <p className="text-body text-ink-500">
-          <Mark kind="unknown" /> {unknown.filter((m) => !m.isMe).map((m) => m.name).join(', ')} 아직 안 남겼어요
+          <Mark kind="unknown" /> {subjectOf(unknown.filter((m) => !m.isMe))} 아직 의견을 남기지 않았어요
         </p>
       )}
     </section>
@@ -464,7 +492,10 @@ function MyOpinion({
           label: '되돌리기',
           onClick: () =>
             previous &&
-            react.mutate({ type: previous.type, reason_text: previous.reason_text, reason_chip_ids: previous.reason_chip_ids }),
+            react.mutate(
+              { type: previous.type, reason_text: previous.reason_text, reason_chip_ids: previous.reason_chip_ids },
+              { onError: () => showToast('의견을 되돌리지 못했어요') },
+            ),
         }),
       onError: () => showToast('의견을 취소하지 못했어요'),
     })
@@ -528,7 +559,7 @@ function MyOpinion({
             value={text}
             onChange={setText}
             maxLength={TEXT_MAX}
-            placeholder={PROMPT[type].placeholder}
+            placeholder={inputExample(pin.category, type)}
             label={PROMPT[type].title}
             clearLabel="사유 지우기"
             inputRef={reasonRef}

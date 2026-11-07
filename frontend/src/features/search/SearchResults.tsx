@@ -3,7 +3,7 @@ import { ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { useLivePlaceStore } from '@/features/map/livePlaces'
-import { FILTER_CATEGORIES, type Pin, type PinCategory } from '@/features/map/model'
+import { FILTER_CATEGORIES, inputExample, type Pin, type PinCategory } from '@/features/map/model'
 import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
@@ -137,7 +137,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     const hint = link.name_hint
     return (
       <EmptyState
-        mood="sorry"
+        mood="sad"
         title="링크의 장소를 찾지 못했어요"
         action={
           hint ? (
@@ -157,8 +157,8 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (source?.kind === 'tap' && results.length === 0) {
     // 지어내지 않는다(가드레일 2). 없으면 이름 검색으로 남기게 한다(api-spec GET /places/nearest).
     return (
-      <EmptyState mood="sorry" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
-        가게 바로 위를 눌러 보거나, 이름으로 찾아보세요
+      <EmptyState mood="sad" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
+        지도에서 장소 바로 위를 다시 누르거나, 장소 이름으로 검색해 보세요.
       </EmptyState>
     )
   }
@@ -175,7 +175,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
-          {selected.far && <p className="text-body font-semibold text-warn-text">지금 보는 곳에서 멀어요. 다른 지역의 같은 이름 가게일 수 있어요</p>}
+          {selected.far && <p className="text-body font-semibold text-warn-text">현재 보고 있는 지도 중심에서 멀리 있는 장소예요. 다른 지역의 같은 이름 장소일 수 있어요</p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
@@ -189,7 +189,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           </div>
         )}
         {selected.canLeaveLive && !selected.alreadyPinned ? (
-          <LiveLeaveForm pending={create.isPending} onSubmit={(input) => pinLive(selected, input)} />
+          <LiveLeaveForm category={selected.dto.category} pending={create.isPending} onSubmit={(input) => pinLive(selected, input)} />
         ) : (
           <PinItButton result={selected} filled pending={create.isPending} onPin={() => pinIt(selected)} />
         )}
@@ -236,7 +236,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
 function NoResults({ query, fixed, onRetry, onClose }: { query: string | null; fixed: string | null; onRetry: () => void; onClose: () => void }) {
   return (
     <EmptyState
-      mood="sorry"
+      mood="sad"
       title="찾는 장소가 없어요"
       action={
         <div className="flex flex-col items-center gap-2">
@@ -284,8 +284,19 @@ type LiveInput = { memo: string; name?: string; category?: PinCategory }
 /**
  * 자체 DB에 없는 장소 — 장소 정보·AI 추천·동선에는 못 쓰지만 핀으로 남겨 의견을 나눌 수 있다(#382). 메모는 선택이다.
  * `askName`이면(카카오 링크, #487) 이름과 분류도 받는다 — 지도를 열 때 그 이름으로 카카오에서 위치를 다시 찾는다.
+ * 한마디 칸 예시는 분류를 따른다 — 검색 결과의 분류(`category`), 링크로 열었으면 고른 분류(#1461).
  */
-function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boolean; pending: boolean; onSubmit: (input: LiveInput) => void }) {
+function LiveLeaveForm({
+  askName = false,
+  category: known,
+  pending,
+  onSubmit,
+}: {
+  askName?: boolean
+  category?: PinCategory | null
+  pending: boolean
+  onSubmit: (input: LiveInput) => void
+}) {
   const [memo, setMemo] = useState('')
   const [name, setName] = useState('')
   const [category, setCategory] = useState<PinCategory | null>(null)
@@ -294,7 +305,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
     <div className="space-y-2.5">
       <div className="rounded-xl bg-ink-50 p-3.5 text-body text-ink-700">
         <p className="font-semibold text-ink-900">장소 정보가 없는 곳이에요</p>
-        <p className="mt-0.5">조건 확인, AI 추천, 동선에는 쓰이지 않지만 핀으로 남겨 의견을 나눌 수 있어요.</p>
+        <p className="mt-0.5">상세 데이터가 없어 AI 추천과 동선에는 반영되지 않지만, 지도에 핀을 남겨 함께 이야기를 나눌 수 있어요.</p>
       </div>
       {askName && (
         <>
@@ -315,7 +326,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
       <label className="block text-body font-bold text-ink-900" htmlFor="live-pin-memo">
         한마디 남기기 (선택)
       </label>
-      <TextArea id="live-pin-memo" value={memo} onChange={setMemo} maxLength={MEMO_MAX} placeholder="예: 여기 곱창 맛있대" rows={2} clearLabel="한마디 지우기" />
+      <TextArea id="live-pin-memo" value={memo} onChange={setMemo} maxLength={MEMO_MAX} placeholder={inputExample(category ?? known, 'memo')} rows={2} clearLabel="한마디 지우기" />
       <button
         type="button"
         onClick={() => onSubmit({ memo: memo.trim(), name: name.trim() || undefined, category: category ?? undefined })}

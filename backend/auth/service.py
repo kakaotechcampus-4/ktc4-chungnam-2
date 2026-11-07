@@ -468,10 +468,10 @@ def restart_account(db: Session, *, claims: core.PendingClaims) -> User:
     return db.get(User, new.id)
 
 
-def purge_inactive_guests(db: Session, *, now: datetime, older_than_days: int) -> int:
-    """마지막으로 쓴 지 older_than_days일이 지난 게스트를 일반 탈퇴와 같은 규칙으로 지운다(withdraw_user).
+def purge_inactive_guests(db: Session, *, now: datetime) -> int:
+    """마지막으로 쓴 지 core.GUEST_INACTIVE_DAYS일이 지난 게스트를 일반 탈퇴와 같은 규칙으로 지운다(withdraw_user).
     last_seen_at이 없으면 created_at 기준. 이미 탈퇴한 계정은 건너뛴다. 지운 수를 돌려준다."""
-    cutoff = now - timedelta(days=older_than_days)
+    cutoff = now - timedelta(days=core.GUEST_INACTIVE_DAYS)
     ids = db.execute(
         select(User.id).where(
             User.is_guest, User.deleted_at.is_(None),

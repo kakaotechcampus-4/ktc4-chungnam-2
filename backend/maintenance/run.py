@@ -2,8 +2,13 @@
 
     python -m maintenance.run [--dry-run] [--only maps|notifications|guests|llm_calls|idempotency|withdrawn|events|pins]
 
-한 번 돌리면 ① 삭제한 지 30일 지난 지도 ② 90일 지난 알림 ③ 90일 안 쓴 게스트 ④ 30일 지난 모델 호출 사용량(#870)
-⑤ 24시간 지난 「추천 받기」 멱등 키(run이 연결된 것, #811) ⑥ 복구 기간(7일)이 지난 탈퇴 계정의 개인정보(#857) ⑦ 25시간 지난 실시간 이벤트(event_log, #1016) ⑧ 삭제된 핀(#1063)을 차례로 지운다.
+한 번 돌리면 ① 복구 기간이 지난 삭제 지도 ② 보존 기간이 지난 알림 ③ 오래 쓰지 않은 게스트 ④ 보존 기간이 지난 모델 호출
+사용량(#870) ⑤ 보관 기간이 지난 「추천 받기」 멱등 키(run이 연결된 것, #811) ⑥ 복구 기간이 지난 탈퇴 계정의 개인정보(#857)
+⑦ 재전송 창을 지난 실시간 이벤트(event_log, #1016) ⑧ 복구 기간이 지난 삭제 핀(#1063)을 차례로 지운다.
+**기간은 여기 적지 않는다**(#1474) — 각 모듈이 자기 상수로 정하고, 정리 API는 `(db, now)`만 받는다. 기간을 바꿀 때는 그 모듈의
+상수(`maps.core.TRASH_RETENTION`, `notifications.service.RETENTION_DAYS`, `auth.core.GUEST_INACTIVE_DAYS`,
+`llm.usage.RETENTION_DAYS`, `recommend.core.IDEMPOTENCY_RETENTION`, `auth.core.ACCOUNT_RESTORE_DAYS`,
+`realtime.service.PURGE_AFTER_HOURS`, `pins.core.TRASH_RETENTION_DAYS`) 하나만 고친다. `integration/test_purge_periods_one_place.py`가 지킨다.
 실제 삭제는 각 모듈이 한다(`maps.api.purge_deleted_maps`, `notifications.api.purge_old`, `auth.api.purge_inactive_guests`,
 `llm.api.purge_old`, `recommend.api.purge_idempotency_keys`, `auth.api.purge_withdrawn_accounts`, `realtime.api.purge_old_events`, `pins.api.purge_deleted_pins`) — 여기는 부르기만 한다.
 
@@ -30,8 +35,6 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger("maintenance")
 
-MAP_RETENTION_DAYS = 30
-GUEST_INACTIVE_DAYS = 90
 MAX_ROUNDS = 20                 # 한 단계를 한 실행에서 되풀이하는 상한
 TIME_LIMIT_SECONDS = 300        # 한 단계에 쓰는 시간 상한 — 라운드 사이에 확인한다
 PERSONAL_DATA_STEPS = frozenset({"withdrawn"})   # 적체가 개인정보 보존 기간 위반이 되는 단계 — 적체 로그가 ERROR
@@ -48,7 +51,7 @@ def purge_pins(db: Session, now: datetime) -> dict[str, int]:
 def purge_maps(db: Session, now: datetime) -> dict[str, int]:
     from maps import api as maps_api
 
-    return maps_api.purge_deleted_maps(db, now=now, older_than_days=MAP_RETENTION_DAYS)
+    return maps_api.purge_deleted_maps(db, now=now)
 
 
 def purge_notifications(db: Session, now: datetime) -> dict[str, int]:

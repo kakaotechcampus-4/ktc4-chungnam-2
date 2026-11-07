@@ -261,7 +261,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 - **보존 기간 30일, 그 사이 방장이 복구할 수 있다**(#464 — `GET /maps/trash`, `POST /maps/{mapId}/restore`). 30일은 사용 데이터 없이 정한 출발값이다. 복구는 `deleted_at`만 비우면 되도록 정리 작업이 건드리지 않은 데이터가 모두 그대로 있다.
 - **모듈은 자기 테이블만 지운다.** 각 모듈이 `api.py`에 "이 지도들의 데이터 지우기" 공개 함수를 두고, maps의 정리 작업이 자식 테이블부터 순서대로 부른다. 외래키가 연쇄 삭제가 아니고(`NO ACTION`) `map_id`에 외래키가 아예 없는 테이블도 있어서 순서를 지켜 직접 지운다.
 - 지우는 테이블 12개: maps·memberships·invites(maps), pins·reactions(pins), shortlist_items·routes(shortlist), recommend_runs·candidates·evidence_lines·regions·exclusions(recommend), event_log(realtime). **`places`·`place_facts`는 지도에 속하지 않으므로 지우지 않는다.**
-- 실행은 손으로 돌리는 명령이다(`python -m maps.purge --older-than-days 30 [--dry-run]`). 지금 코드에는 예약 실행 장치가 없고, 예약은 배포 환경을 정할 때 붙인다(#168). `--dry-run`은 지울 지도 수와 테이블별 행 수만 보여 준다.
+- 실행은 정기 정리 하나다(`python -m maintenance.run --only maps [--dry-run]`, #168 — 예약 실행은 `deploy_rules.md`). maintenance는 `maps.api.purge_deleted_maps(db, now)`를 부르기만 한다. **기간은 maps가 정한다**(`maps.core.TRASH_RETENTION`, 경계는 `core.purge_cutoff` — 복구 판정, 휴지통 목록, 응답의 `retention_days`가 같은 값을 쓴다). 정리 API는 기간을 인자로 받지 않는다(#1474 — 정리 작업이 30을 따로 적어 넘기던 것을 멘토 리뷰에서 지적받았다). 따로 돌리던 `python -m maps.purge`는 없앴다. `--dry-run`은 같은 삭제를 한 뒤 롤백해 지울 행 수만 보여 준다.
 - 되돌릴 수 없는 작업이라 조건이 엄격하다: `deleted_at`이 있고 기간이 지난 지도만 대상이며, 다른 지도의 데이터에는 손대지 않는다.
 
 ## 1.5 핀 휴지통과 정리 (#864, #1013, #1063)

@@ -57,12 +57,13 @@ maps(
                                                              -- 있거나 둘 다 없음
   created_by, created_at,              -- created_by는 "만든 사람" 기록일 뿐 방장 판단에 쓰지 않는다(#369, 방장 정본은 memberships.role)
   deleted_at timestamptz null          -- #369: 방장이 삭제하면 찍는다(soft delete). 찍히면 모든 조회 경로에서 없는 지도(404)로 보인다.
-                                       --   #431(2026-10-10): 삭제한 지 30일이 지나면 정리 작업(`python -m maps.purge`)이 지도와 딸린 데이터를 실제로 지운다. **삭제한 지 30일 안이면 방장이 복구할 수 있다**(`POST /maps/{mapId}/restore`, #464) — `deleted_at`을 비우면 구성원·핀·반응·초대·확정 리스트·추천 기록은 그대로 돌아온다.
+                                       --   #431(2026-10-10): 삭제한 지 30일(`maps.core.TRASH_RETENTION`)이 지나면 정기 정리(`maintenance.run`)가 지도와 딸린 데이터를 실제로 지운다. **삭제한 지 30일 안이면 방장이 복구할 수 있다**(`POST /maps/{mapId}/restore`, #464) — `deleted_at`을 비우면 구성원·핀·반응·초대·확정 리스트·추천 기록은 그대로 돌아온다.
                                        --   → docs/architecture.md 「지도 삭제와 정리」
   deleted_by_withdrawal_of uuid null   -- #1000(2026-11-01): 방장이 탈퇴하면서 후임이 없어 지도를 같이 삭제한 경우(auth.WITHDRAW_STEPS의 maps 단계) 그 탈퇴자의 user id.
                                        --   직접 지운 지도는 NULL이다. 7일 안에 계정을 되살리면(`POST /auth/pending` restore) auth가 maps.api.restore_maps_deleted_by_withdrawal로
                                        --   이 값이 그 사용자인 지도를 deleted_at과 함께 비운다(`map.restored` 발행). 복구하지 않으면 30일 뒤 정리 작업이 지도를 지운다(마커도 함께).
                                        --   새 계정으로 시작(restart)하면 기존 계정은 즉시 정리되므로 이 지도는 되살릴 사람이 없다(30일 뒤 정리).
+  color text null                      -- #1445(2026-11-06): 방장이 고른 지도 색 "#RRGGBB". NULL이면 고르지 않음(화면 기본 색). 모든 구성원이 같은 색을 본다
 )
   CHECK (end_date >= start_date)   -- 9/4 결정 #22: 여행 제목 + 시작일·종료일. day_count는 폐기
   CHECK ((region_label IS NULL) = (region_center IS NULL))
@@ -77,6 +78,14 @@ memberships(
   unique(map_id) where role = 'owner'   -- #369: 지도당 방장은 최대 1명. 위임은 한 트랜잭션에서 강등 후 승격
   -- 나가기(#369)는 이 행을 지운다. 다시 초대를 수락하면 새 행과 새 joined_at이 생겨 순서 맨 뒤로 간다.
   -- 탈퇴자의 행은 핀 작성자 표시용으로 남는다(#245).
+
+map_covers(                         -- #1445(2026-11-06): 방장이 올린 지도 대표 이미지. 지도당 한 행, 올린 것만(기본 이미지는 화면이 지역으로 그린다)
+  map_id PK → maps.id,
+  data bytea,                        -- 이미지 바이트. S3 없이 Postgres에 둔다(인프라 미정, #1203). 브라우저가 1200px 이하 WebP로 줄여 올리고 512KiB까지 받는다(maps.core.COVER_MAX_BYTES)
+  content_type text,                 -- image/webp | image/jpeg | image/png (maps.core.COVER_TYPES)
+  updated_at timestamptz default now()   -- Map.cover_url의 v. 다시 올리면 갱신된다
+)
+  -- 지도 삭제(soft delete)에는 남고(복구하면 그대로), 정리(maps.purge)가 지도와 함께 지운다. 목록 응답은 updated_at만 읽는다.
 
 invites(
   token, map_id, created_by, expires_at, used_count,

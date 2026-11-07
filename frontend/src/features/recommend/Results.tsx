@@ -57,7 +57,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
           <AiHeader
             title={count ? `${run.category} 대안 ${count}곳을 찾았어요` : '이번엔 새로 찾은 곳이 없어요'}
             sub="지도에 올린 곳만 구성원 모두에게 보여요"
-            mood={count ? 'happy' : 'sorry'}
+            mood={count ? 'heart' : 'sad'}
           />
         </div>
       </div>
@@ -68,7 +68,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
         {/* 숫자는 GET /credits/me 그대로(#733). 못 받으면 비운다 — 다시 추천은 크레딧과 무관하게 된다. */}
         {credits && <span className="shrink-0 text-label text-ink-500">{balanceText(credits)}</span>}
       </div>
-      <p className="mt-1.5 text-label text-ink-500">다시 추천하면 고친 조건으로, 지금 후보를 빼고 찾아요 · 크레딧을 쓰지 않아요</p>
+      <p className="mt-1.5 text-label text-ink-500">고친 조건으로, 지금 후보를 빼고 찾아 드려요 · 크레딧은 쓰지 않아요</p>
     </div>
   )
 }
@@ -115,7 +115,7 @@ export function ResultsBody({
       {conditions}
       <button type="button" onClick={onHow} className="press flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
         <span>
-          {removed}곳을 거르고 {result.candidates.length}곳을 추천했어요
+          {removed}곳을 거르고 {result.new_count ?? result.candidates.length}곳을 추천했어요
         </span>
         <span className="font-bold text-brand-600">어떻게 골랐나요 ›</span>
       </button>
@@ -126,8 +126,8 @@ export function ResultsBody({
       {missing.length > 0 && (
         <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
           {hasExcluded(result.funnel)
-            ? `이미 보여 드린 곳을 빼면 반경 안에 ${quoted(missing)}에 맞는 곳이 더 없어요. 반경을 넓혀 볼까요?`
-            : `반경 안에 ${quoted(missing)}에 맞는 곳이 없어서 다른 곳을 골랐어요. 반경을 넓혀 볼까요?`}
+            ? `현재 검색 반경 내에 ${quoted(missing)} 조건을 만족하는 새로운 장소가 없어요. 반경을 넓혀 볼까요?`
+            : `현재 검색 반경에서는 ${quoted(missing)} 조건을 만족하는 곳이 없어 다른 곳을 골랐어요. 반경을 넓혀 볼까요?`}
         </Notice>
       )}
       <div className="space-y-3">
@@ -222,10 +222,19 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
 /** 올린 뒤에는 "모두에게 보여요"로 바뀐다. */
 function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto; c: CandidateDto }) {
   const publish = usePublishMutation(mapId, run)
+  // 그사이 누가 같은 곳을 찍었으면(409 PIN_DUPLICATE) 다시 눌러도 같은 오류다 — 광고 칸처럼 버튼을 닫는다.
+  const [onMap, setOnMap] = useState(false)
   if (c.visibility === 'published') {
     return <span className="tag tag-good">지도에 올렸어요. 이제 모두에게 보여요</span>
   }
   if (!c.permissions.can_publish) return null
+  if (onMap) {
+    return (
+      <button type="button" disabled className="btn-neutral btn-sm">
+        이미 지도에 있어요
+      </button>
+    )
+  }
   return (
     <button
       type="button"
@@ -236,8 +245,11 @@ function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto;
             const name = c.place_name ?? '이 장소'
             showToast(`${name}${josa(name, '을', '를')} 지도에 올렸어요`)
           },
-          onError: (err) =>
-            showToast(err instanceof ApiError && err.code === 'PIN_DUPLICATE' ? '이미 지도에 있는 장소예요' : '지도에 올리지 못했어요'),
+          onError: (err) => {
+            const dup = err instanceof ApiError && err.code === 'PIN_DUPLICATE'
+            if (dup) setOnMap(true)
+            showToast(dup ? '이미 지도에 있는 장소예요' : '지도에 올리지 못했어요')
+          },
         })
       }
       className="btn-outline btn-sm"
@@ -334,6 +346,8 @@ export function NoResults({
  */
 function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendRunDto; className: string }) {
   const widen = useWidenMutation(mapId)
+  // 조건을 고치는 중에 넓히면 고친 게 빠진 채 찾는다 — 「다시 추천」처럼 막는다.
+  const patching = useEvidencePatching(run.id)
   const [asking, setAsking] = useState(false)
   const limitId = useId()
   if (widenAtLimit(run))
@@ -349,7 +363,7 @@ function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendR
     )
   return (
     <>
-      <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending} className={className}>
+      <button type="button" onClick={() => setAsking(true)} disabled={widen.isPending || patching} className={className}>
         반경 넓히기
       </button>
       {asking && (
@@ -382,14 +396,14 @@ function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendR
   )
 }
 
-/** 추천 실패(Figma '추천 실패'). 조건 탓이 아니다 — 남긴 것은 그대로 있고, 다시 시도는 횟수에서 빠지지 않는다. */
+/** 추천 실패(Figma '추천 실패'). 조건 탓이 아니다 — 남긴 의견과 조건은 그대로 있고, 같은 버튼으로 다시 시도한다. */
 export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const execute = useExecuteRunMutation(mapId)
   return (
     <div className="space-y-3">
       <div className="rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm">
-        <p className="font-bold text-brand-700">남긴 의견과 근거는 그대로 있어요</p>
-        <p className="text-xs text-ink-600">이번 실패는 다시 추천 횟수로 세지 않아요</p>
+        <p className="font-bold text-brand-700">남긴 의견과 조건은 그대로 있어요</p>
+        <p className="text-xs text-ink-600">잠시 후 다시 시도해 주세요</p>
       </div>
       <button
         type="button"

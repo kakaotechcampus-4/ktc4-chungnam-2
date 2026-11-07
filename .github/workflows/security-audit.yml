@@ -9,12 +9,14 @@ on:
     branches: [develop, main]
     paths:
       - "backend/requirements.txt"
+      - "backend/requirements-dev.txt"
       - "**/package-lock.json"
       - ".github/workflows/security-audit.yml"
   push:
     branches: [develop]
     paths:
       - "backend/requirements.txt"
+      - "backend/requirements-dev.txt"
       - "**/package-lock.json"
       - ".github/workflows/security-audit.yml"
   schedule:
@@ -32,16 +34,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version-file: backend/.python-version
-      - name: pip-audit (backend/requirements.txt)
+      - name: pip-audit (backend/requirements.txt, requirements-dev.txt)
         continue-on-error: true   # 알림 전용 — 취약점이 있어도 실패로 치지 않는다
         run: |
           pip install -q pip-audit==2.10.1
-          {
-            echo "### pip-audit — backend/requirements.txt"
-            echo '```'
-            pip-audit -r backend/requirements.txt --no-deps --disable-pip 2>&1 || true
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          # 운영 이미지에 들어가는 것(requirements.txt)과 테스트·개발 도구(requirements-dev.txt)를 나눠 센다(#1439)
+          for f in requirements.txt requirements-dev.txt; do
+            {
+              echo "### pip-audit — backend/$f"
+              echo '```'
+              pip-audit -r backend/$f --no-deps --disable-pip 2>&1 || true
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          done
 
   npm-audit:
     runs-on: ubuntu-latest

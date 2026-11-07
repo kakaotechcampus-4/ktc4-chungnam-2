@@ -125,7 +125,7 @@ function PinScene() {
           </span>
         </div>
       </At>
-      <PingoAt x={32} y={92} w={30} mood={held ? 'wave' : 'happy'} />
+      <PingoAt x={32} y={92} w={30} mood={held ? 'welcome' : 'excited'} />
       {phase >= 2 && (
         <At x={66} y={80} anchor="center">
           <div key={phase === 2 ? 'drop' : 'stay'} className="enter-fade h-1.5 w-6 rounded-full bg-ink-300/70" />
@@ -146,7 +146,7 @@ function PinScene() {
 
 /** ① 핀과 의견 카드 → ② 좋음 → ③ 반대 + 이유 칩. */
 const REACTION_PHASES = [800, 1200, 1800]
-const REACTION_MOOD: PingoMood[] = ['default', 'happy', 'default']
+const REACTION_MOOD: PingoMood[] = ['default', 'heart', 'default']
 function ReactionScene() {
   const phase = usePhaseLoop(REACTION_PHASES)
   const like = phase === 1
@@ -182,7 +182,7 @@ function ReactionScene() {
 function ReactionPill({ on, tone, children }: { on: boolean; tone: 'good' | 'bad'; children: ReactNode }) {
   return (
     <span
-      className="flex items-center justify-center gap-0.5 rounded-lg border py-1 text-label font-bold transition-colors duration-200 ease-out motion-reduce:transition-none"
+      className="flex items-center justify-center gap-0.5 rounded-xl border py-1 text-label font-bold transition-colors duration-200 ease-out motion-reduce:transition-none"
       style={
         on
           ? { background: `var(--${tone}-bg)`, borderColor: `var(--${tone}-line)`, color: `var(--${tone}-text)` }
@@ -238,7 +238,7 @@ function AiScene() {
             </div>
           </At>
         ))}
-      <PingoAt x={74} y={92} w={30} mood={phase === 2 ? 'happy' : phase === 1 ? 'thinking' : 'default'} />
+      <PingoAt x={74} y={92} w={30} mood={phase === 2 ? 'heart' : phase === 1 ? 'thinking' : 'default'} />
     </>
   )
 }
@@ -293,7 +293,7 @@ function ShortlistScene() {
           ))}
         </div>
       </At>
-      <PingoAt x={74} y={94} w={28} mood={confirmed ? 'happy' : 'default'} />
+      <PingoAt x={74} y={94} w={28} mood={confirmed ? 'relieved' : 'default'} />
     </>
   )
 }

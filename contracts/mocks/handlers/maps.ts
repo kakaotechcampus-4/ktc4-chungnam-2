@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
-import { ME_USER_ID, emitEvent, nextId, store, type MapEntity, type MapRegion } from "../store";
-import { apiError, getMapOr404 } from "../util";
+import { ME_USER_ID, emitEvent, nextId, store, type MapEntity, type MapRegion, type Pin } from "../store";
+import { apiError, getMapOr404, pinPermissions } from "../util";
 
 /** 지도 응답의 핀 수는 저장값이 아니라 지금 있는 핀에서 센다(핀을 찍거나 지우면 바로 달라진다). */
 const pinCount = (mapId: string) => Object.values(store.pins).filter((p) => p.map_id === mapId && p.visibility === "public").length;
@@ -19,16 +19,55 @@ const mapLimitError = () =>
 const successorOf = (mapId: string) => (store.members[mapId] ?? []).find((m) => m.user_id !== ME_USER_ID) ?? null;
 const isOwner = (mapId: string) => (store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID && m.role === "owner");
 
+/** 지도 대표 이미지(#1445) — 실서버 maps.core와 같은 값. 422 COVER_INVALID의 detail로 내려 준다. */
+export const COVER_MAX_BYTES = 512 * 1024;
+export const COVER_TYPES = ["image/webp", "image/jpeg", "image/png"] as const;
+const coverInvalid = () =>
+  apiError(422, "COVER_INVALID", "올릴 수 없는 대표 이미지예요", { limit_bytes: COVER_MAX_BYTES, types: [...COVER_TYPES] });
+/** 앞 바이트가 그 형식인지(이름표만 바꾼 파일을 막는다). */
+function looksLike(type: string, bytes: Uint8Array) {
+  const at = (offset: number, sig: number[]) => sig.every((b, i) => bytes[offset + i] === b);
+  if (type === "image/webp") return at(0, [0x52, 0x49, 0x46, 0x46]) && at(8, [0x57, 0x45, 0x42, 0x50]);
+  if (type === "image/jpeg") return at(0, [0xff, 0xd8, 0xff]);
+  if (type === "image/png") return at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  return false;
+}
+const coverUrl = (mapId: string) => {
+  const cover = store.mapCovers[mapId];
+  return cover ? `/maps/${mapId}/cover?v=${cover.updated_at}` : undefined;
+};
+/** 방장이 아니면 403, 구성원이 아니면 404 응답. 통과하면 null. */
+function ownerGate(mapId: string) {
+  if (!getMapOr404(mapId) || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+  if (!isOwner(mapId)) return apiError(403, "FORBIDDEN", "방장만 바꿀 수 있어요");
+  return null;
+}
+
+/** 복사본 제목(#1446) — 실서버 maps.core.copy_title과 같은 규칙. 끝의 「 (k)」를 떼고, 내 지도에 없는 가장 작은 n으로 「제목 (n)」. 100자 안. */
+export function copyTitle(source: string, taken: Set<string>) {
+  // 서버(파이썬 str)처럼 코드 포인트 단위로 자르고, \d처럼 유니코드 숫자도 숫자로 본다 — 이모지·전각 숫자에서 결과가 갈리지 않게.
+  const base = Array.from(source.replace(/ \((\p{Nd}+)\)$/u, ""));
+  for (let n = 1; ; n += 1) {
+    const suffix = ` (${n})`;
+    const title = base.slice(0, 100 - suffix.length).join("").trimEnd() + suffix;
+    if (!taken.has(title)) return title;
+  }
+}
+
 /** 지도 응답 — 핀 수와 요청자(나) 기준 permissions를 붙이고, 상세에서만 next_owner를 채운다(#369). */
 function toMapResponse(map: MapEntity, { detail = false } = {}) {
   const owner = isOwner(map.id);
   const next = owner ? successorOf(map.id) : null;
   const { created_by: createdBy, ...rest } = map;
+  const ownerName = (store.members[map.id] ?? []).find((m) => m.role === "owner")?.display_name;
+  const cover = coverUrl(map.id);
   return {
     ...withPinCount(rest),
+    ...(cover ? { cover_url: cover } : {}), // #1445: 올린 이미지가 없으면 키가 없다
+    ...(ownerName ? { owner_display_name: ownerName } : {}), // #1445: 초대받은 지도 카드의 「○○님의 지도」
     my_role: owner ? ("owner" as const) : ("member" as const),
     created_by_me: createdBy === ME_USER_ID, // #340·회의 14번: 만든 사람이 위임해도 값은 그대로다(my_role과 달라질 수 있다)
-    permissions: { can_delete: owner, can_leave: !owner || next !== null, can_edit: owner, can_manage_invites: owner, can_transfer_owner: owner },
+    permissions: { can_delete: owner, can_leave: !owner || next !== null, can_edit: owner, can_manage_invites: owner, can_transfer_owner: owner, can_copy: owner },
     ...(detail && next ? { next_owner: { user_id: next.user_id!, display_name: next.display_name ?? "" } } : {}),
   };
 }
@@ -108,11 +147,14 @@ export const mapsHandlers = [
     const map = getMapOr404(mapId);
     if (!map || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     if (!isOwner(mapId)) return apiError(403, "FORBIDDEN", "방장만 지도를 수정할 수 있어요");
-    const body = (await request.json()) as { title?: string; start_date?: string; end_date?: string; region?: MapRegion };
+    const body = (await request.json()) as { title?: string; start_date?: string; end_date?: string; region?: MapRegion; color?: string | null };
     const title = body.title ?? map.title;
     const start = body.start_date ?? map.start_date;
     const end = body.end_date ?? map.end_date;
-    if (Object.keys(body).length === 0 || title.trim().length < 1 || title.length > 100 || end < start) {
+    // #1445: color만 null(색 지우기)을 받는다. 다른 필드의 null은 422(실서버와 같다)
+    const nulled = Object.entries(body).some(([key, value]) => value === null && key !== "color");
+    const badColor = body.color !== undefined && body.color !== null && !/^#[0-9A-Fa-f]{6}$/.test(body.color);
+    if (Object.keys(body).length === 0 || nulled || badColor || title.trim().length < 1 || title.length > 100 || end < start) {
       return apiError(422, "VALIDATION_ERROR", "지도 수정 값이 올바르지 않아요");
     }
     if ((body.start_date !== undefined || body.end_date !== undefined) && tripDays(start, end) > TRIP_MAX_DAYS) return tripTooLong(); // #1371: 날짜를 바꿀 때만
@@ -122,10 +164,42 @@ export const mapsHandlers = [
     const outside = ordered.filter(i => i.scheduled_date && (i.scheduled_date < start || i.scheduled_date > end));
     if (outside.length) [...unassigned, ...outside].forEach((item, index) => { item.scheduled_date = null; item.visit_order = index; });
     Object.assign(map, { title, start_date: start, end_date: end, ...(body.region ? { region: body.region } : {}) });
+    if (body.color === null) delete map.color;
+    else if (body.color !== undefined) map.color = body.color;
     emitEvent(mapId, "public", "map.updated", {
       map_id: mapId, title, start_date: start, end_date: end, ...(map.region ? { region: map.region } : {}),
     });
     return HttpResponse.json(toMapResponse(map, { detail: true }));
+  }),
+
+  // #1445 지도 대표 이미지 — 올리기·지우기는 방장만, 받기는 구성원 누구나. 바이트는 메모리에 둔다.
+  http.put("*/maps/:mapId/cover", async ({ params, request }) => {
+    const mapId = params.mapId as string;
+    const gate = ownerGate(mapId);
+    if (gate) return gate;
+    const type = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    const data = await request.arrayBuffer();
+    if (!(COVER_TYPES as readonly string[]).includes(type) || data.byteLength > COVER_MAX_BYTES || !looksLike(type, new Uint8Array(data))) return coverInvalid();
+    const previous = store.mapCovers[mapId]?.updated_at ?? 0;
+    store.mapCovers[mapId] = { data, content_type: type, updated_at: Math.max(Math.floor(Date.now() / 1000), previous + 1) }; // 바꾸면 v가 꼭 바뀐다
+    return HttpResponse.json(toMapResponse(store.maps[mapId], { detail: true }));
+  }),
+
+  http.delete("*/maps/:mapId/cover", ({ params }) => {
+    const mapId = params.mapId as string;
+    const gate = ownerGate(mapId);
+    if (gate) return gate;
+    delete store.mapCovers[mapId];
+    return HttpResponse.json(toMapResponse(store.maps[mapId], { detail: true }));
+  }),
+
+  http.get("*/maps/:mapId/cover", ({ params }) => {
+    const mapId = params.mapId as string;
+    const cover = store.mapCovers[mapId];
+    if (!getMapOr404(mapId) || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID) || !cover) return apiError(404, "NOT_FOUND", "대표 이미지가 없어요");
+    return new HttpResponse(cover.data, {
+      headers: { "Content-Type": cover.content_type, "Cache-Control": "private, max-age=31536000, immutable" },
+    });
   }),
 
   // #468 방장 직접 넘기기 — 방장만. 대상은 지금 구성원이고 나 자신이 아니다. 나는 구성원으로 남는다.
@@ -157,6 +231,39 @@ export const mapsHandlers = [
     delete store.maps[mapId];
     delete store.members[mapId];
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  // #1446 지도 복사 — 방장만. 날짜·지역·색·대표 이미지·공개 핀만 옮긴다(핀은 내가 찍은 일반 핀으로). 반응·구성원·확정 리스트·추천 기록은 옮기지 않는다.
+  http.post("*/maps/:mapId/copy", ({ params }) => {
+    const mapId = params.mapId as string;
+    const gate = ownerGate(mapId);
+    if (gate) return gate;
+    if (store.users[ME_USER_ID]?.is_guest) return apiError(403, "GUEST_NOT_ALLOWED", "지도를 만들려면 카카오로 로그인해 주세요");
+    if (myMapCount() >= MAP_LIMIT) return mapLimitError();
+    const source = store.maps[mapId];
+    const taken = new Set(Object.values(store.maps).filter((m) => (store.members[m.id] ?? []).some((x) => x.user_id === ME_USER_ID)).map((m) => m.title));
+    const newId = nextId("map");
+    store.maps[newId] = {
+      id: newId, title: copyTitle(source.title, taken), start_date: source.start_date, end_date: source.end_date,
+      ...(source.region ? { region: source.region } : {}), ...(source.color ? { color: source.color } : {}),
+      member_count: 1, pin_count: 0, confirmed_count: 0, created_by: ME_USER_ID,
+    };
+    store.members[newId] = [{ user_id: ME_USER_ID, role: "owner", display_name: store.users[ME_USER_ID]?.display_name ?? "나", online: true, is_guest: false }];
+    store.shortlist[newId] = [];
+    const cover = store.mapCovers[mapId];
+    if (cover) store.mapCovers[newId] = { ...cover, updated_at: Math.floor(Date.now() / 1000) };
+    for (const pin of Object.values(store.pins).filter((p) => p.map_id === mapId && p.visibility === "public")) {
+      const { checks: _c, reason: _r, member_fulfillment: _f, place_source: _s, my_reaction: _m, ...rest } = pin;
+      const copy: Pin = {
+        ...rest, id: nextId("pin"), map_id: newId, kind: "일반", created_by: ME_USER_ID,
+        created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나", created_at: new Date().toISOString(),
+        checks: [], reaction_summary: { like: 0, against: 0 },
+      };
+      copy.permissions = pinPermissions(copy);
+      store.pins[copy.id] = copy;
+      store.reactions[copy.id] = [];
+    }
+    return HttpResponse.json(toMapResponse(store.maps[newId]), { status: 201 });
   }),
 
   http.post("*/maps/:mapId/restore", ({ params }) => {

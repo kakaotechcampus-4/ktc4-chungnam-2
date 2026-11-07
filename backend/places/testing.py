@@ -160,7 +160,7 @@ class FakePlaces:
             key=lambda r: haversine_distance_m(lat, lng, r.lat, r.lng),
         )[:limit]
         return [Candidate(r.place_id, r.name, r.lat, r.lng, r.category, r.kakao_place_id,
-                          haversine_distance_m(lat, lng, r.lat, r.lng), r.address) for r in near]
+                          haversine_distance_m(lat, lng, r.lat, r.lng), r.address, r.kakao_place_url, r.source) for r in near]
 
     def sido(self, address: str | None) -> str | None:
         return core.sido(address)
@@ -259,4 +259,4 @@ class FakePlaces:
     def _candidate(r: _Row, hint: PlaceHint | None) -> Candidate:
         # 실제 구현은 DB의 ST_Distance를 싣는다 — 대역은 같은 값을 직접 재고, 카카오 ID로만 붙은 후보(hint=None)는 비운다
         dist = haversine_distance_m(hint.lat, hint.lng, r.lat, r.lng) if hint is not None else None
-        return Candidate(r.place_id, r.name, r.lat, r.lng, r.category, r.kakao_place_id, dist, r.address)
+        return Candidate(r.place_id, r.name, r.lat, r.lng, r.category, r.kakao_place_id, dist, r.address, r.kakao_place_url, r.source)

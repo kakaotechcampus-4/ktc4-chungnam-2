@@ -24,6 +24,7 @@ import NotificationBell from '@/features/notifications/NotificationBell'
 import { useMapQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
 import { useRecommendRadiusM, useResultQuery } from '@/features/recommend/queries'
+import { firstMapLink } from '@/features/kakaoImport/share'
 import { isLinkInput } from '@/features/search/model'
 import { useSourcePlacesQuery } from '@/features/search/queries'
 import { scheduleDrawing } from '@/features/shortlist/model'
@@ -177,7 +178,9 @@ export default function MapLayout() {
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
     const center = controller.current?.getCenter() ?? null
     // 지도 링크를 붙여넣었으면 이름 대신 링크로 장소를 찾는다(#487). 같은 결과 시트에서 핀을 찍는다.
-    if (isLinkInput(q)) search.openLink(q, center)
+    // 카톡 말풍선 「[카카오맵] 가게 / 주소 / 링크」를 통째로 붙여 넣어도 그 안의 링크로 찾는다.
+    const link = isLinkInput(q) ? q : firstMapLink(q)
+    if (link) search.openLink(link, center)
     else {
       search.submit(q.slice(0, 50), center)
       recent.add(q.slice(0, 50))
@@ -192,7 +195,6 @@ export default function MapLayout() {
   const mapMoving = useSheetStore((s) => s.mapMoving)
   const setMapMoving = useSheetStore((s) => s.setMapMoving)
   const modalOpen = useSheetStore((s) => s.modalOpen)
-  const setModalOpen = useSheetStore((s) => s.setModalOpen)
   const controller = useRef<MapController | null>(null)
   const [activeControl, setActiveControl] = useState<ControlKey | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -201,10 +203,7 @@ export default function MapLayout() {
   // 검색은 지도 하나 안의 잠깐 작업이다. 지도를 떠나면(다른 지도로 바꿔도) 닫는다 — 다음 지도에 이전 검색 결과가 남지 않게.
   useEffect(() => () => useSearchStore.getState().close(), [])
 
-  const openProfile = (open: boolean) => {
-    setProfileOpen(open)
-    setModalOpen(open)
-  }
+  const openProfile = setProfileOpen
 
   // 주소로 바로 연 핀(새로고침·공유 링크)은 지도가 뜬 뒤에야 옮길 수 있어서, 준비됐다는 걸 state 로도 둔다.
   const [mapReady, setMapReady] = useState(false)
@@ -316,7 +315,8 @@ export default function MapLayout() {
     const map = controller.current
     if (!map) return showToast('지도를 아직 불러오는 중이에요')
     // 최근 핀은 필터와 상관없이 지도 전체에서, 전체 핀 보기는 지금 보이는(필터된) 핀으로.
-    const placed = (key === 'recent' ? allPins : pins).filter(isPlaced)
+    // 확정·코스 탭은 지도에 확정 핀만 그리니 최근 핀도 그 안에서 찾는다 — 안 보이는 핀으로 옮기지 않게.
+    const placed = (key === 'recent' && !onConfirmedTab ? allPins : pins).filter(isPlaced)
 
     if (key === 'locate') {
       if (!navigator.geolocation) return showToast('이 브라우저에서는 현재 위치를 쓸 수 없어요')
@@ -331,10 +331,15 @@ export default function MapLayout() {
               ? '위치 권한이 꺼져 있어요. 브라우저 설정에서 켜 주세요'
               : '현재 위치를 찾지 못했어요',
           ),
+        // 기본은 끝없이 기다려서, 응답 없는 기기에선 눌러도 아무 일이 없었다.
+        { timeout: 10_000 },
       )
       return
     }
-    if (placed.length === 0) return showToast(pins.length < allPins.length ? '필터에 맞는 핀이 없어요' : '아직 지도에 핀이 없어요')
+    if (placed.length === 0)
+      return showToast(
+        onConfirmedTab ? '아직 확정된 장소가 없어요' : pins.length < allPins.length ? '필터에 맞는 핀이 없어요' : '아직 지도에 핀이 없어요',
+      )
     if (key === 'recent') {
       const pin = [...placed].sort(byNewest)[0]
       map.panTo(pin.lat!, pin.lng!)
@@ -401,7 +406,9 @@ export default function MapLayout() {
           // 검색 결과를 보다가 핀을 고르면 매달린 핑고는 들어간다.
           useSearchStore.getState().select(null)
           // 코스 탭은 코스 탭 안에서 연다 — 확정 탭으로 넘어가면 코스 선이 사라진다(#1127 리뷰).
-          navigate(`/maps/${mapId}${onCourseTab ? '/course' : onShortlistTab ? '/shortlist' : ''}?pin=${encodeURIComponent(pinId)}`)
+          // 탭 안에서 열 때는 주소의 다른 값(카테고리·필터)을 남긴다. 주소를 통째로 바꾸면 켜 둔 필터가 풀린다.
+          if (onMarkingTab || onConfirmedTab) selectPin(pinId)
+          else navigate(`/maps/${mapId}?pin=${encodeURIComponent(pinId)}`)
         }}
         onResultGroup={(ids) => {
           useSearchStore.getState().showGroup(ids)

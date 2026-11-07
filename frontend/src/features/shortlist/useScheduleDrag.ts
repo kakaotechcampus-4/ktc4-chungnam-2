@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { dropSpot, UNSET_DAY, type DropSpot } from './schedule'
 import { setDropHover } from './scheduleStore'
@@ -29,23 +29,30 @@ const markDragging = (from: From | null) => {
 export function useScheduleDrag(pinId: string, onDrop: (spot: DropSpot) => void) {
   const [drag, setDrag] = useState<{ x0: number; y0: number; x: number; y: number; from: From; active: boolean; spot: DropSpot | null } | null>(null)
 
+  // 끄는 도중 줄이 사라지면(다른 구성원이 빼거나 확정을 해제, 다시 받기) 놓기가 오지 않는다 —
+  // 선택 막기·덮개와 놓을 자리 표시를 남기지 않는다.
+  const dragging = useRef(false)
   const release = () => {
     document.removeEventListener('selectstart', blockSelect)
     markDragging(null)
   }
   const end = () => {
+    dragging.current = false
     release()
     setDrag(null)
     setDropHover(null)
   }
-  // 끄는 중에 줄이 사라져도(다시 받기) 선택 막기와 덮개를 남기지 않는다.
-  useEffect(() => release, [])
+  useEffect(() => () => {
+    release()
+    if (dragging.current) setDropHover(null)
+  }, [])
 
   const handlers = {
     onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
       window.getSelection()?.removeAllRanges()
       document.addEventListener('selectstart', blockSelect)
       e.currentTarget.setPointerCapture?.(e.pointerId)
+      dragging.current = true
       const from: From = e.currentTarget.closest<HTMLElement>('[data-day]')?.dataset.day === UNSET_DAY ? 'list' : 'day'
       setDrag({ x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, from, active: false, spot: null })
     },
@@ -62,6 +69,7 @@ export function useScheduleDrag(pinId: string, onDrop: (spot: DropSpot) => void)
       end()
     },
     onPointerCancel: end,
+    onLostPointerCapture: end,
   }
 
   return { handlers, dragging: Boolean(drag?.active), ghost: drag?.active ? { x: drag.x, y: drag.y } : null }

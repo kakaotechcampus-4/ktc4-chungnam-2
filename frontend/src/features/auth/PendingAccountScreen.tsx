@@ -62,7 +62,7 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
         )
       }
     >
-        <Pingo mood="wave" size={56} />
+        <Pingo mood="welcome" size={56} />
         <h1 className="mt-4 break-keep text-xl font-bold text-ink-900">이전에 탈퇴한 계정이 있어요</h1>
         <p className="mt-2 break-keep text-sm text-ink-700">
           ‘<span className="font-semibold text-ink-900">{display_name}</span>’ 계정이에요. 새 계정으로 시작하거나,{' '}
