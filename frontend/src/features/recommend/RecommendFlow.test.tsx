@@ -305,7 +305,9 @@ describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안�
     const m = Math.round((min + max) / 2 / 100) * 100 + 100 // 범위 가운데에서 한 칸, 100m 단위(눈금이 아닌 값)
     const km = `${m / 1000}km`
 
-    const input = screen.getByLabelText('찾는 범위', { selector: 'input' })
+    // 값 글자를 누르면 km 칸이 열린다.
+    await userEvent.click(screen.getByRole('button', { name: /찾는 범위 직접 넣기/ }))
+    const input = screen.getByRole('spinbutton', { name: '찾는 범위' })
     await userEvent.clear(input)
     await userEvent.type(input, `${m / 1000}{Enter}`)
     expect(slider).toHaveAttribute('aria-valuetext', km)
@@ -332,7 +334,9 @@ describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안�
     await waitFor(() => expect(readinessQuery.at(-1)).toContain(`&radius_m=${start + 100}`))
 
     const max = Number(slider.getAttribute('aria-valuemax'))
-    const input = screen.getByLabelText('찾는 범위', { selector: 'input' })
+    // 값 글자를 누르면 km 칸이 열린다.
+    await userEvent.click(screen.getByRole('button', { name: /찾는 범위 직접 넣기/ }))
+    const input = screen.getByRole('spinbutton', { name: '찾는 범위' })
     await userEvent.clear(input)
     await userEvent.type(input, `${max / 1000 + 1}{Enter}`)
     expect(screen.getByText(/사이로 넣어 주세요/)).toBeInTheDocument()

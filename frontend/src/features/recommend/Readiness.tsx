@@ -150,15 +150,10 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        {cards.map((c, i) => (
-          <ReadinessTile
-            key={c.category}
-            card={c}
-            selected={c.category === chosen}
-            wide={cards.length % 2 === 1 && i === cards.length - 1}
-            onPick={() => setPicked(mapId, c.category)}
-          />
+      {/* 카테고리는 같은 폭으로 한 줄에 둔다 — 개수가 홀수라고 한 칸만 커지지 않게. */}
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cards.length}, minmax(0, 1fr))` }}>
+        {cards.map((c) => (
+          <ReadinessTile key={c.category} card={c} selected={c.category === chosen} onPick={() => setPicked(mapId, c.category)} />
         ))}
       </div>
       {radiusM && chosenReadiness?.radius_min_m && chosenReadiness.radius_max_m && (
@@ -248,9 +243,9 @@ function RadiusPicker({
   onChange: (m: number) => void
   onCommit: (m: number) => void
 }) {
-  const inputId = useId()
+  const labelId = useId()
   const errorId = useId()
-  // 칸에 쓰는 중인 글자. 쓰는 중이 아니면 고른 값을 보인다.
+  // 쓰는 중인 글자. null 이면 칸이 닫혀 있고 고른 값을 글자로 보인다 — 입력칸(16px, 아이폰 확대 방지)은 누를 때만 연다.
   const [typing, setTyping] = useState<string | null>(null)
   const [error, setError] = useState(false)
   function commitTyped() {
@@ -263,32 +258,51 @@ function RadiusPicker({
   }
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2">
-        <label htmlFor={inputId} className="text-label text-ink-500">
+      <div className="flex min-h-11 items-center justify-between gap-2">
+        <span id={labelId} className="text-sm font-bold text-ink-900">
           찾는 범위
-        </label>
-        <span className="field min-h-10 w-28 px-3">
-          <input
-            id={inputId}
-            type="number"
-            inputMode="decimal"
-            step={RADIUS_STEP_M / 1000}
-            min={min / 1000}
-            max={max / 1000}
-            value={typing ?? value / 1000}
-            onChange={(e) => setTyping(e.target.value)}
-            onBlur={commitTyped}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter') return
-              e.preventDefault() // 준비 화면의 폼 제출(추천받기)로 번지지 않게
-              commitTyped()
-            }}
-            aria-invalid={error}
-            aria-describedby={error ? errorId : undefined}
-            className="w-full min-w-0 bg-transparent text-right outline-none"
-          />
-          <span aria-hidden="true" className="text-ink-500">km</span>
         </span>
+        {typing === null ? (
+          <button
+            type="button"
+            onClick={() => setTyping(String(value / 1000))}
+            aria-label={`찾는 범위 직접 넣기, 지금 ${radiusKm(value)}`}
+            className="hit-44 text-sm font-bold text-brand-700 underline decoration-dotted underline-offset-4"
+          >
+            {radiusKm(value)}
+          </button>
+        ) : (
+          <span className="field min-h-10 w-28 px-3">
+            <input
+              autoFocus
+              type="number"
+              inputMode="decimal"
+              step={RADIUS_STEP_M / 1000}
+              min={min / 1000}
+              max={max / 1000}
+              value={typing}
+              onChange={(e) => setTyping(e.target.value)}
+              onBlur={commitTyped}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setTyping(null)
+                  setError(false)
+                }
+                if (e.key !== 'Enter') return
+                e.preventDefault() // 준비 화면의 폼 제출(추천받기)로 번지지 않게
+                commitTyped()
+              }}
+              aria-labelledby={labelId}
+              aria-invalid={error}
+              aria-describedby={error ? errorId : undefined}
+              // 브라우저 기본 위아래 화살표는 숨긴다 — 값은 슬라이더와 글자로 바꾼다.
+              className="w-full min-w-0 bg-transparent text-right outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <span aria-hidden="true" className="text-sm text-ink-500">
+              km
+            </span>
+          </span>
+        )}
       </div>
       <RangeSlider
         min={min}
@@ -372,39 +386,24 @@ function useAgentStart(cards: ReadinessCard[], start: (category: RecommendCatego
   }, [wanted, ready, cards, setParams, start])
 }
 
-function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; selected: boolean; wide: boolean; onPick: () => void }) {
+function ReadinessTile({ card, selected, onPick }: { card: ReadinessCard; selected: boolean; onPick: () => void }) {
   const short = Math.max(0, card.required - card.answered)
-  const pct = card.required ? Math.min(100, (card.answered / card.required) * 100) : 0
+  // 이름과 한 줄 상태만 둔다. 고른 칸만 파란 테두리, 준비 안 된 칸은 누를 수 없고 상태를 주의색 글자로 알린다.
+  // 센 것은 사람이 아니라 의견이 달린 핀이다(#360).
   return (
     <button
       type="button"
       disabled={!card.ready}
       aria-pressed={selected}
       onClick={onPick}
-      className={`press rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
-        selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-white'
+      className={`press rounded-xl border px-3 py-2.5 text-left disabled:bg-ink-50 ${
+        selected ? 'border-brand-600 bg-brand-50 ring-1 ring-brand-600' : 'border-ink-200 bg-white'
       }`}
     >
-      <p className="flex items-start justify-between gap-1 font-bold text-ink-900">
-        {/* 상태는 태그 하나에 담는다. 흰 글자 + 주의 선 색(3.5:1)은 작은 글자 기준(4.5:1)에 못 미쳐서 바탕·글자 세트로 칠한다. */}
-        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-          {card.category}
-          <span className={`tag ${card.ready ? 'tag-good' : 'tag-warn'}`}>{card.ready ? '준비 완료' : `${short}곳 더 필요`}</span>
-        </span>
-        {selected && (
-          <span role="img" aria-label="선택됨" className="text-brand-600">
-            <Mark kind="check" size={16} />
-          </span>
-        )}
-      </p>
-      <div className="mt-2 h-1.5 rounded-full bg-ink-200">
-        <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />
-      </div>
-      {/* 센 것은 사람이 아니라 의견이 달린 핀이다(#360). 「4/1」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
-      {/* 360px 폭(태블릿 패널·작은 휴대폰)에서 줄이 어색하게 끊기지 않게 낱말 단위로 바꾼다(#603). 상태는 위 태그에 있다. */}
-      <p className="mt-1.5 break-keep text-label font-semibold text-ink-700">
-        의견 핀 {card.answered}곳 · <span className="whitespace-nowrap">필요 {card.required}곳</span>
-      </p>
+      <span className={`block font-bold ${card.ready ? 'text-ink-900' : 'text-ink-500'}`}>{card.category}</span>
+      <span className={`mt-0.5 block break-keep text-xs ${card.ready ? 'text-ink-600' : 'text-[var(--warn-text)]'}`}>
+        {card.ready ? `의견 핀 ${card.answered}곳` : `${short}곳 더 필요`}
+      </span>
     </button>
   )
 }
