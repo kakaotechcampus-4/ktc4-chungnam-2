@@ -133,12 +133,13 @@ def restore_maps_deleted_by_withdrawal(db: Session, *, user_id: str, now: dateti
     return service.restore_maps_deleted_by_withdrawal(db, user_id=user_id, now=now)
 
 
-def purge_deleted_maps(db: Session, *, now: datetime, older_than_days: int) -> dict[str, int]:
-    """정기 정리(#168)가 부른다 — 삭제한 지 `older_than_days`일이 지난 지도와 딸린 데이터를 지운다(`maps.purge`의 로직).
-    테이블 이름 → 지운 행 수, 지운 지도 수는 `maps` 키가 아니라 `deleted_maps`에 담는다. 커밋은 호출자."""
+def purge_deleted_maps(db: Session, *, now: datetime) -> dict[str, int]:
+    """정기 정리(#168)가 부른다 — 복구 기간(`core.TRASH_RETENTION`)이 지난 삭제 지도와 딸린 데이터를 지운다(`maps.purge`의 로직).
+    기간은 받지 않는다 — maps가 정한다(#1474). 테이블 이름 → 지운 행 수, 지운 지도 수는 `maps` 키가 아니라 `deleted_maps`에 담는다.
+    커밋은 호출자."""
     from maps import purge   # 지연 import — purge가 maps.api를 import해 순환이 된다
 
-    map_count, counts = purge.purge(db, now=now, older_than_days=older_than_days)
+    map_count, counts = purge.purge(db, now=now)
     return {"deleted_maps": map_count, **counts}
 
 

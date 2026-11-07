@@ -201,6 +201,6 @@ def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[st
     return {"llm_calls": moved}
 
 
-def purge_old(db: Session, *, now: datetime, older_than_days: int = RETENTION_DAYS) -> dict[str, int]:
-    cutoff = now - timedelta(days=older_than_days)
+def purge_old(db: Session, *, now: datetime) -> dict[str, int]:
+    cutoff = now - timedelta(days=RETENTION_DAYS)
     return {"llm_calls": db.execute(delete(LlmCall).where(LlmCall.created_at < cutoff)).rowcount}

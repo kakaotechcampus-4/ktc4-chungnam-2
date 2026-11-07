@@ -237,6 +237,7 @@ def display_name_from_kakao_profile(profile: dict) -> str:
 
 
 GUEST_LIMIT_PER_INVITE = 10   # 초대 토큰 하나로 만들 수 있는 게스트 수(#472)
+GUEST_INACTIVE_DAYS = 90      # 마지막으로 쓴 지 이만큼 지난 게스트는 정기 정리가 지운다(#472). 정리 API는 기간을 받지 않는다(#1474)
 LAST_SEEN_REFRESH_SECONDS = 60 * 60 * 24   # last_seen_at은 하루 한 번만 갱신한다
 
 
