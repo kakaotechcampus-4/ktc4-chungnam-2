@@ -60,7 +60,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
 }
 
 /** 코스는 위치를 아는 확정 장소가 2곳부터다 — 안내 화면 제목과 버튼 아래 이유가 같은 말이다. */
-const NOT_ENOUGH = '확정된 장소가 2곳 이상이어야 코스를 짤 수 있어요'
+const NOT_ENOUGH = '코스를 짜려면 확정된 장소가 2곳 이상 필요해요'
 
 /** 위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다(예전에는 칩을 누르면 토스트로 알렸다). */
 function NotEnough({ mapId }: { mapId: string }) {
@@ -73,7 +73,7 @@ function NotEnough({ mapId }: { mapId: string }) {
         </Link>
       }
     >
-      마킹된 장소에서 확정 리스트에 넣어 주세요
+      마킹된 장소 탭에서 가고 싶은 곳들을 확정 리스트에 먼저 담아 보세요.
     </EmptyState>
   )
 }

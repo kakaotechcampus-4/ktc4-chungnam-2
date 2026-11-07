@@ -71,7 +71,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
               <span className="tag tag-ai">AI</span> AI가 정리한 조건
             </p>
             <p className="mt-1 font-bold text-ink-900">이 조건으로 추천해도 될까요?</p>
-            <p className="mt-1 text-xs text-ink-500">지금까지 남긴 의견을 이렇게 정리했어요</p>
+            <p className="mt-1 text-xs text-ink-500">구성원이 남긴 의견으로 추천 조건을 정리했어요</p>
           </div>
         </div>
 

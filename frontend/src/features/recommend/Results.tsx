@@ -65,7 +65,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
         {/* 숫자는 GET /credits/me 그대로(#733). 못 받으면 비운다 — 다시 추천은 크레딧과 무관하게 된다. */}
         {credits && <span className="shrink-0 text-label text-ink-500">{balanceText(credits)}</span>}
       </div>
-      <p className="mt-1.5 text-label text-ink-500">다시 추천하면 고친 조건으로, 지금 후보를 빼고 찾아요 · 크레딧을 쓰지 않아요</p>
+      <p className="mt-1.5 text-label text-ink-500">고친 조건으로, 지금 후보를 빼고 찾아 드려요 · 크레딧은 쓰지 않아요</p>
     </div>
   )
 }
@@ -123,8 +123,8 @@ export function ResultsBody({
       {missing.length > 0 && (
         <Notice action={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />}>
           {hasExcluded(result.funnel)
-            ? `이미 보여 드린 곳을 빼면 반경 안에 ${quoted(missing)}에 맞는 곳이 더 없어요. 반경을 넓혀 볼까요?`
-            : `반경 안에 ${quoted(missing)}에 맞는 곳이 없어서 다른 곳을 골랐어요. 반경을 넓혀 볼까요?`}
+            ? `현재 검색 반경 내에 ${quoted(missing)} 조건을 만족하는 새로운 장소가 없어요. 반경을 넓혀 볼까요?`
+            : `현재 검색 반경에서는 ${quoted(missing)} 조건을 만족하는 곳이 없어 다른 곳을 골랐어요. 반경을 넓혀 볼까요?`}
         </Notice>
       )}
       <div className="space-y-3">
@@ -383,14 +383,14 @@ function WidenButton({ mapId, run, className }: { mapId: string; run: RecommendR
   )
 }
 
-/** 추천 실패(Figma '추천 실패'). 조건 탓이 아니다 — 남긴 것은 그대로 있고, 다시 시도는 횟수에서 빠지지 않는다. */
+/** 추천 실패(Figma '추천 실패'). 조건 탓이 아니다 — 남긴 의견과 조건은 그대로 있고, 같은 버튼으로 다시 시도한다. */
 export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const execute = useExecuteRunMutation(mapId)
   return (
     <div className="space-y-3">
       <div className="rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm">
-        <p className="font-bold text-brand-700">남긴 의견과 근거는 그대로 있어요</p>
-        <p className="text-xs text-ink-600">이번 실패는 다시 추천 횟수로 세지 않아요</p>
+        <p className="font-bold text-brand-700">남긴 의견과 조건은 그대로 있어요</p>
+        <p className="text-xs text-ink-600">잠시 후 다시 시도해 주세요</p>
       </div>
       <button
         type="button"

@@ -70,7 +70,7 @@ describe('「일정 짜기」 패널(넓은 화면)', () => {
 
   it('일정이 비어 있으면 넣는 법을 한 줄로 알린다', async () => {
     renderPanel()
-    expect(await screen.findByText('확정된 장소를 끌어 오거나 골라서 넣어요')).toBeInTheDocument()
+    expect(await screen.findByText('확정된 장소를 날짜별 칸으로 끌어 오거나 「넣기」를 눌러 하루 일정을 완성해 보세요')).toBeInTheDocument()
   })
 })
 
