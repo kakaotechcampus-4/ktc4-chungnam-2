@@ -85,8 +85,9 @@ function SideWalk({ left }: { left: boolean }) {
  * 지도 위 핑고(#1433) — 디자이너 3D 렌더(원본 144px). 시트·패널 안은 평면 `Pingo`다(3D가 겉돈다, DESIGN.md 「핑고」).
  * heading 이 있으면 그쪽(8방향)으로 움직인다.
  * - 좌우: 측면 걷기 1·2·3·2, 걸음마다 들썩인다.
- * - 위·아래: 뒤를 돌아 걸음마다 몸이 한 번 오르거나 내려가고 좌우로 살짝 기운다. 원본 뒷모습 한 장만 쓴다 —
+ * - 위: 뒤를 돌아 걸음마다 몸이 한 번 오르고 좌우로 살짝 기운다. 원본 뒷모습 한 장만 쓴다 —
  *   뒤집은 뒷모습을 번갈아 쓰면 하이라이트와 가장자리 그늘이 걸음마다 좌우로 바뀌었다.
+ * - 아래: 정면으로 걸음마다 한 칸씩 내려온다. 사용자 쪽으로 오는 방향이라 ↙·↘(반측면)처럼 얼굴이 보인다.
  * - 대각선: 반측면 그림이 그쪽을 보고 위·아래처럼 걷는다. 원본 반측면(`01_반측면`)이 오른쪽 아래이고, 왼쪽은 뒤집어 빛을 다시 맞춘 그림,
  *   위쪽 둘은 눈을 지운 그림이다 — 몸이 둥글고 좌우가 같아서 반대쪽 아래를 보는 모습을 뒤에서 본 모양이 된다(`~/ktc4-drafts-review/pingo-diagonals.py`).
  * 원본 렌더의 빛은 오른쪽 위다. 서 있으면 정면이고 `wave`·`alert` 면 손을 흔든다. `alert`(새 조언)면 머리 옆에 「!」 말풍선이 뜬다.
@@ -120,7 +121,7 @@ export default function MapPingo({
         </span>
       ) : up || down ? (
         <span className={`absolute inset-0 ${step}`}>
-          <img src={diagonal ?? back} alt="" draggable={false} className={`${IMG} origin-bottom motion-safe:animate-pingo-sway`} />
+          <img src={diagonal ?? (up ? back : front)} alt="" draggable={false} className={`${IMG} origin-bottom motion-safe:animate-pingo-sway`} />
         </span>
       ) : resting ? (
         <span className={`absolute inset-0 origin-bottom ${idle === 'sleep' ? 'motion-safe:animate-pingo-breathe' : 'motion-safe:animate-pingo-nod'}`}>
