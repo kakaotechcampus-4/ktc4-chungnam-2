@@ -13,6 +13,7 @@ import { PINGO_MARK } from './pingoMark'
  * - alert 의견 부족·주의 — 궁금한 얼굴에 모자·핀·물음표가 분홍(시안 ALERT)
  * - walk 응답을 기다리는 로딩(WALK CYCLE, PingoLoading)
  * - fly 로그인 화면의 첫인상 — 망토를 두르고 지도 위를 날아간다(시안에 없는 자세라 기본형을 기울여 만들었다)
+ * - space 우주복을 입고 둥둥 떠다닌다 — 로그인 상태를 확인하는 동안(배포 중이면 30초까지 걸린다). 머리를 감싼 유리 헬멧 + 목 링 + 가슴 조작판, 주변에 별
  * - hug 고른 AI 후보 핀을 위에서 끌어안는다(지도, 시안에 없는 자세). 팔은 그리지 않는다 — 원을 감싼 손은 핀이 앞에서 그린다(pinMarker)
  */
 export type PingoMood =
@@ -30,6 +31,7 @@ export type PingoMood =
   | 'walk'
   | 'fly'
   | 'hug'
+  | 'space'
 
 const BODY = 'M32 16C43 16 49 23.5 49.5 33C50 38 51.5 42 51 46C50 53 42 57 32 57C22 57 14 53 13 46C12.5 42 14 38 14.5 33C15 23.5 21 16 32 16Z'
 const LINE = { stroke: 'var(--pingo-outline)', strokeWidth: 1.3 }
@@ -58,6 +60,11 @@ const at = (x: number, y: number, s: number, d: string, fill: string, stroke?: s
 )
 
 const DOT_EYES = eyes([27, 36], [37, 36], 2, 2.9)
+
+/** 우주복 핑고 주변에 반짝이는 별. [cx, cy, 크기, 반짝임 지연 ms] */
+const STARS: [number, number, number, number][] = [[6, 10, 3, 0], [58, 16, 2.4, -700], [56, 56, 2, -1400]]
+const star = (cx: number, cy: number, s: number) =>
+  `M${cx} ${cy - s}Q${cx} ${cy} ${cx + s} ${cy}Q${cx} ${cy} ${cx} ${cy + s}Q${cx} ${cy} ${cx - s} ${cy}Q${cx} ${cy} ${cx} ${cy - s}Z`
 
 /**
  * 표정 하나. `back` 은 몸 뒤, `front` 는 얼굴 앞(모은 손·턱 괸 손)에 그린다.
@@ -200,6 +207,15 @@ const POSES: Record<PingoMood, Pose> = {
   // 앞팔은 주먹을 앞으로 뻗고(슈퍼맨), 뒷팔은 몸에 붙여 뒤로 넘긴다.
   fly: { back: [[14, 45, 3.4, 7.5, 25]], front: [[52, 21, 3.4, 8, 25]], face: DOT_EYES },
   hug: { back: [], face: line('M24.6 37Q27 33.6 29.4 37M34.6 37Q37 33.6 39.4 37', 1.8) },
+  // 무중력이라 두 팔이 힘없이 위로 뜬다. 별은 몸과 같이 떠다니지 않는다.
+  space: {
+    back: [[12.5, 37, 3.4, 7.5, 55], [51.5, 37, 3.4, 7.5, -55]],
+    face: DOT_EYES,
+    extra: () =>
+      STARS.map(([cx, cy, s, delay]) => (
+        <path key={cx} d={star(cx, cy, s)} fill="var(--brand-300)" className="motion-safe:animate-pingo-twinkle" style={{ animationDelay: `${delay}ms` }} />
+      )),
+  },
 }
 
 /** 날 때만 몸을 앞으로 기울이고 망토·바람 줄이 붙어서 그림 틀을 넓힌다. */
@@ -220,6 +236,7 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
   // 로그인 화면에서 날 때도 들썩인다. 움직임 줄이기 설정이면 멈춘다.
   const motion = mood === 'thinking' || fly ? 'motion-safe:animate-pingo-bob' : ''
   const walk = mood === 'walk'
+  const space = mood === 'space'
   const [leftFoot, rightFoot] = pose.feet ?? FEET
 
   return (
@@ -233,7 +250,12 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
       className={`shrink-0 ${motion}`}
     >
       {fly && <path d="M-24 18H-10M-25 30H-14M-22 42H-12" stroke="var(--brand-300)" strokeWidth="2" strokeLinecap="round" />}
-      <g transform={fly ? 'rotate(40 32 36)' : pose.tilt}>
+      {/* 우주복은 천천히 오르내리며 좌우로 기운다(가운데를 축으로). */}
+      <g
+        transform={fly ? 'rotate(40 32 36)' : pose.tilt}
+        className={space ? 'motion-safe:animate-pingo-drift' : undefined}
+        style={space ? { transformOrigin: '32px 36px' } : undefined}
+      >
         {fly && <path d={CAPE} fill="var(--brand-600)" className="motion-safe:animate-pingo-flutter" style={{ transformOrigin: '24px 34px' }} />}
         {/* 걸을 땐 두 발을 번갈아 든다(반 박자 차이). 든 발은 몸 뒤로 숨는다. */}
         {!peek && limb(leftFoot, walk ? 'motion-safe:animate-pingo-step' : undefined)}
@@ -251,6 +273,17 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
           <path d="M32 16C28.5 12.8 27 10.6 27 8.5A5 5 0 0 1 37 8.5C37 10.6 35.5 12.8 32 16Z" fill={cap} />
           <circle cx="32" cy="8.5" r="1.9" fill="white" />
           {pose.face}
+          {/* 우주복: 머리를 감싼 유리 헬멧(머리 핀은 안테나처럼 밖으로) + 목 링 + 가슴 조작판. 왼쪽 위 흰 줄은 유리에 비친 빛 */}
+          {space && (
+            <>
+              <circle cx="32" cy="31" r="20" fill="var(--brand-300)" fillOpacity="0.18" {...LINE} />
+              <path d="M17.5 27Q19 19.5 25.5 15.5" stroke="white" strokeWidth="2" strokeLinecap="round" fill="none" />
+              <path d="M17 45.5Q32 53 47 45.5" stroke="var(--brand-300)" strokeWidth="3" strokeLinecap="round" fill="none" />
+              <rect x="27" y="50" width="10" height="4.5" rx="1.5" fill="var(--brand-300)" />
+              <circle cx="30" cy="52.25" r="0.9" fill="white" />
+              <circle cx="34" cy="52.25" r="0.9" fill="white" />
+            </>
+          )}
           {peek ? (
             <>
               <ellipse cx="16" cy="41" rx="6.5" ry="3.2" fill="white" {...LINE} />

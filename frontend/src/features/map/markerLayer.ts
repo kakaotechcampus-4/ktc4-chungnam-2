@@ -1,6 +1,7 @@
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 
 import { fitPadding } from './camera'
+import { attachTrashDrag } from './pinDrag'
 import { createPinMarkerElement, markSelected, setPinLabel, showPinLabel } from './pinMarker'
 import { isPlaced, participationRatio, type Pin, type PlacedPin } from './model'
 
@@ -67,6 +68,8 @@ export function createMarkerLayer(
   /** 이름표와 겹침 정리 순서에 쓰는 값. */
   const info = new Map<string, { name: string; lat: number; lng: number; confirmed: boolean; ratio: number; created: number }>()
   const elements = new Map<string, HTMLElement>()
+  /** 휴지통으로 끌기를 뗀다(#1012). 끄는 도중 마커가 다시 그려지면 끌기도 끝낸다. */
+  const detachDrag = new Map<string, () => void>()
   /** 한 번 떨어진 핀. 의견이 달려 마커를 다시 그려도 또 떨어지지 않게 한다. */
   const dropped = new Set<string>()
   let selected: string | null = null
@@ -125,6 +128,8 @@ export function createMarkerLayer(
   maps.event.addListener(map, 'idle', relabel)
 
   function drop(pinId: string) {
+    detachDrag.get(pinId)?.()
+    detachDrag.delete(pinId)
     overlays.get(pinId)?.setMap(null)
     overlays.delete(pinId)
     signatures.delete(pinId)
@@ -146,6 +151,8 @@ export function createMarkerLayer(
 
         drop(pin.id)
         const el = createPinMarkerElement(pin, ratio, () => onSelect(pin.id))
+        // 찍은 사람·방장만 끌어서 휴지통에 버릴 수 있다. 끄는 그림은 이 마커의 핀 모양 그대로다.
+        if (pin.permissions.can_delete) detachDrag.set(pin.id, attachTrashDrag(el, () => pin, () => el.querySelector('svg')?.outerHTML ?? ''))
         if (!dropped.has(pin.id) && Math.abs(Date.now() - Date.parse(pin.created_at)) < FRESH_MS) {
           dropped.add(pin.id)
           el.classList.add('enter-drop')

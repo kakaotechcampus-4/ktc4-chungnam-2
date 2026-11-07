@@ -1996,7 +1996,7 @@ def action_at(actions: Sequence[Mapping[str, Any]], index: int) -> AgentAction |
 
 STEP_DETECT = {   # 감지. n은 stall 🚫 반응 수, no_reaction 핀 수, category_gap 확정 수, split 반응한 사람 수, schedule 문제 수
     "stall": lambda c, n: f"{c}에 반대 의견 {n}개가 남은 뒤로 새 후보가 없어요",
-    "split": lambda c, n: f"{c} 핀 하나에서 {n}명의 의견이 ♥와 🚫로 갈렸어요",
+    "split": lambda c, n: f"{c} 핀 하나에서 {n}명의 의견이 좋음과 반대로 갈렸어요",
     "no_reaction": lambda c, n: f"아직 확인되지 않은 핀이 {n}개 있어요",
     "category_gap": lambda c, n: f"확정한 {n}곳 중 {c}{_josa(c, '이', '가')} 없어요",
     "schedule": lambda c, n: f"AI 코스 점검으로 확정 일정을 봤어요 · 다시 볼 곳 {n}개",
@@ -2016,7 +2016,7 @@ STEP_TOOLS: dict[str, tuple[str | None, str, str]] = {
     "get_reaction_matrix": ("핀 {n}개의 반응 표를 봤어요", "반응 표를 봤어요", "반응 표를 보려다 멈췄어요"),
     "get_reasons": ("{kind} {n}개를 읽었어요", "{kind}를 읽었어요", "사유를 읽으려다 멈췄어요"),
     "structure_reasons": ("사유 {n}개를 조건으로 나눠 봤어요", "사유를 조건으로 나눠 봤어요", "사유를 조건으로 나누려다 멈췄어요"),
-    "compare_reasons": (None, "♥ 쪽과 🚫 쪽 조건을 견줘 봤어요", "♥ 쪽과 🚫 쪽 조건을 견주려다 멈췄어요"),
+    "compare_reasons": (None, "좋음 쪽과 반대 쪽 조건을 견줘 봤어요", "좋음 쪽과 반대 쪽 조건을 견주려다 멈췄어요"),
     "get_place_facts": ("장소 정보 {n}개를 우리 데이터에서 읽었어요", "장소 정보를 우리 데이터에서 읽었어요",
                         "장소 정보를 읽으려다 멈췄어요"),
     "get_readiness": (None, "추천 준비를 확인했어요", "추천 준비를 확인하려다 멈췄어요"),

@@ -123,6 +123,7 @@ export function buildBaseState(): StoreState {
     lastNewCount: {},
     forceNoResults: false,
     trashedMaps: {},
+    mapCovers: {}, // #1445: 시드 지도는 대표 이미지가 없다(화면이 지역 기본 이미지를 그린다)
     pinTrash: {},
     idempotencyKeys: {},
     pendingLogin: null,

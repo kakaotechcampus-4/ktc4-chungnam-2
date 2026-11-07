@@ -1,4 +1,6 @@
-import { Check, CircleCheck, Eye, Flag } from 'lucide-react'
+import { CircleCheck, Eye, Flag } from 'lucide-react'
+
+import Mark from '@/ui/Mark'
 
 import { timeAgo } from '@/features/map/model'
 
@@ -53,7 +55,9 @@ export function TriedList({ tried }: { tried?: AgentTriedDto[] }) {
       <ol className="space-y-1">
         {items.map((t, i) => (
           <li key={i} className="flex items-start gap-1.5 text-body text-ink-900">
-            <Check size={14} className="mt-[3px] shrink-0 text-ink-500" aria-hidden="true" />
+            <span className="mt-[3px] flex shrink-0 text-ink-500">
+              <Mark kind="check" size={14} />
+            </span>
             <span className="min-w-0 break-keep">
               {t.label}
               <span className="ml-1 text-xs text-ink-500">{timeAgo(t.accepted_at)}</span>

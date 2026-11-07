@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router'
-import { Check } from 'lucide-react'
+import { useOutletContext, useSearchParams } from 'react-router'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { timeAgo } from '@/features/map/model'
+import { circleOutsideRegion, useRegionBoundary } from '@/features/map/regionGeo'
+import { useMapQuery } from '@/features/maps/queries'
 import { CHANGED, START_PARAM } from '@/features/agent/actions'
 import { useSheetStore } from '@/features/shell/sheetStore'
+import type { ShellContext } from '@/features/shell/shellContext'
 import { showToast } from '@/features/shell/toast'
+import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import PingoLoading from '@/ui/PingoLoading'
@@ -17,9 +20,20 @@ import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 import { useCreditsQuery } from '@/features/credits/queries'
+import Mark from '@/ui/Mark'
 
 import { useAiStore } from './aiStore'
-import { chosenCategory, runErrorMessage, runHistoryLine, summaryToRun, toReadinessCards, type ReadinessCard, type RecommendCategory } from './model'
+import {
+  chosenCategory,
+  RECOMMEND_RADIUS_M,
+  recommendAreaNote,
+  runErrorMessage,
+  runHistoryLine,
+  summaryToRun,
+  toReadinessCards,
+  type ReadinessCard,
+  type RecommendCategory,
+} from './model'
 import { useCreateRunMutation, useReadinessQuery, useRunHistoryQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
@@ -73,8 +87,8 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
         const current = i === at
         return (
           <li key={label} className={`flex items-center gap-2 ${current ? 'font-bold text-ink-900' : 'text-ink-700'}`}>
-            <span aria-hidden="true" className={current ? 'animate-pulse' : ''}>
-              {current ? '●' : '✓'}
+            <span aria-hidden="true" className={`flex w-3.5 justify-center ${current ? 'animate-pulse' : ''}`}>
+              {current ? <span className="size-2 rounded-full bg-current" /> : <Mark kind="check" size={14} />}
             </span>
             {label}
             {current && <span className="ml-auto text-xs text-brand-600">진행 중</span>}
@@ -95,13 +109,22 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const chosen = chosenCategory(cards, picked)
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useRecountOnMapMove(readiness.refetch)
-  // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧). 버튼과 핑고 조언의 「추천 받아 보기」가 같은 창을 거친다.
+  // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧·찾는 범위). 버튼과 핑고 조언의 「추천 받아 보기」가 같은 창을 거친다.
   const [asking, setAsking] = useState<{ category: RecommendCategory; fromAgent: boolean } | null>(null)
+  // 추천 원이 통째로 여행 지역 밖이면 크레딧 창 대신 지역으로 돌아가라고 안내한다(그 지역 이름).
+  const [away, setAway] = useState<string | null>(null)
+  const outside = useOutsideRegion(mapId)
+  const showRegion = useOutletContext<ShellContext | null>()?.showRegion
+  function ask(category: RecommendCategory, fromAgent: boolean) {
+    const region = outside()
+    if (region) setAway(region)
+    else setAsking({ category, fromAgent })
+  }
   // 게스트는 묻지 않는다 — 버튼 자리에 이미 카카오 안내가 있고, 실행해도 403 이다.
   const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
   useAgentStart(cards, (category) => {
     setPicked(mapId, category)
-    if (!guest) setAsking({ category, fromAgent: true })
+    if (!guest) ask(category, true)
   })
   function startAsked() {
     if (!asking) return
@@ -127,7 +150,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           />
         ))}
       </div>
-      <p className="text-label text-ink-500">지금 보고 있는 지도 가운데 주변에서 찾아요. 다른 동네는 지도를 옮겨 주세요</p>
+      <p className="text-label text-ink-500">지도의 원 안에서 찾아요. 다른 동네는 지도를 옮겨 주세요</p>
       <p className="text-label text-ink-500">좋음이나 반대 의견이 달린 핀이 카테고리마다 1곳 이상 있어야 추천받을 수 있어요</p>
       {/* 사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
       <p className="text-label text-ink-500">의견이 많을수록 추천이 정확해져요</p>
@@ -143,7 +166,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
         <button
           type="button"
           disabled={!chosen || create.isPending}
-          onClick={() => chosen && setAsking({ category: chosen, fromAgent: false })}
+          onClick={() => chosen && ask(chosen, false)}
           className="btn-primary btn-lg w-full"
         >
           {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
@@ -154,13 +177,42 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           feature="recommend_run"
           title={`${asking.category} 추천을 받을까요?`}
           ok="추천받기"
+          note={recommendAreaNote()}
           onOk={startAsked}
           onCancel={() => setAsking(null)}
+        />
+      )}
+      {away && (
+        <ConfirmDialog
+          title="여행 지역 밖이에요"
+          body={`${away}로 돌아가서 추천받아 주세요`}
+          cancel="닫기"
+          ok="여행 지역으로 가기"
+          onOk={() => {
+            setAway(null)
+            showRegion?.()
+          }}
+          onCancel={() => setAway(null)}
         />
       )}
       <RunHistory mapId={mapId} />
     </div>
   )
+}
+
+/**
+ * 추천 원(보이는 지도 가운데 반경 RECOMMEND_RADIUS_M)이 통째로 여행 지역 밖이면 그 지역 이름, 아니면 null(누를 때 본다).
+ * 원이 경계에 걸치기만 해도 막지 않는다. 지역을 고르지 않은 지도, 경계를 아직 못 받은 지도도 막지 않는다.
+ * 지금은 화면만 보는 규칙이다 — 서버가 지역 밖 오류를 내리면 그 응답으로 바꾼다(#1385).
+ */
+function useOutsideRegion(mapId: string) {
+  const getCenter = useOutletContext<ShellContext | null>()?.getCenter
+  const region = useMapQuery(mapId).data?.region?.label
+  const boundary = useRegionBoundary(region)
+  return () => {
+    const at = getCenter?.() ?? null
+    return region && boundary && at && circleOutsideRegion(at, RECOMMEND_RADIUS_M, boundary) ? region : null
+  }
 }
 
 /**
@@ -224,7 +276,11 @@ function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; 
           {card.category}
           <span className={`tag ${card.ready ? 'tag-good' : 'tag-warn'}`}>{card.ready ? '준비 완료' : `${short}곳 더 필요`}</span>
         </span>
-        {selected && <Check size={16} className="text-brand-600" aria-label="선택됨" />}
+        {selected && (
+          <span role="img" aria-label="선택됨" className="text-brand-600">
+            <Mark kind="check" size={16} />
+          </span>
+        )}
       </p>
       <div className="mt-2 h-1.5 rounded-full bg-ink-200">
         <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />

@@ -32,6 +32,13 @@ export type Share = {
   context?: string[]
 }
 
+/**
+ * 링크 없이 이름만 온 공유(카카오맵에서 채팅방으로 바로 보낸 카드는 내보내기에 「[지도] 이름」만 남는다).
+ * 줄 구분값은 링크 대신 그 머리줄이다 — 서버에 링크로 보내지 않고 이름으로만 찾는다. 미리 체크하지 않는다.
+ */
+export const isNameOnly = (url: string) => !/^https?:\/\//i.test(url)
+const NAME_ONLY = /^\[지도\]\s*\S/
+
 /** 대화 하나에서 확인하는 링크 수(link-preview 설명의 50개). 화면 문구에는 이 숫자를 적지 않는다. */
 export const LINK_MAX = 50
 
@@ -102,6 +109,22 @@ const SIDO_SHORT: Record<string, string> = {
 }
 const SIDO = new Set([...Object.values(SIDO_SHORT), ...Object.keys(SIDO_SHORT)])
 export const shortSido = (token: string) => SIDO_SHORT[token] ?? token
+
+/**
+ * 도로명 + 건물번호까지(「서울 종로구 창덕궁1길 32」). 층·호수·상호 꼬리와 괄호 속 동 이름은 버리고, 시·도는 줄임말로 맞춘다.
+ * 건물번호가 없으면 null — 비교하지 않는다(동 이름만으로 같은 곳이라 하지 않는다).
+ */
+export function roadKey(address: string | undefined): string | null {
+  if (!address) return null
+  const tokens = address.replace(/\([^)]*\)/g, ' ').trim().split(/\s+/)
+  tokens[0] = shortSido(tokens[0])
+  const out: string[] = []
+  for (const t of tokens) {
+    out.push(t)
+    if (out.length >= 3 && /^\d+(-\d+)?$/.test(t)) return out.join('')
+  }
+  return null
+}
 
 /**
  * 주소 줄인가 — 첫 낱말이 시·도이고 다음 낱말이 시·군·구다(세종은 바로 도로명). 「서울숲 카페」 같은 상호를 주소로 읽지 않게 둘째 낱말까지 본다.
@@ -202,8 +225,15 @@ function readAbove(above: string[]): { name?: string; address?: string } {
     const nameLine = lines[at + 1]
     return { address: lines[at].trim().slice(0, 200), name: nameLine ? clean(nameLine, 100) : undefined }
   }
-  // 주소가 없어도 바로 위가 공유 머리줄에 상호명이 붙은 줄이면(구글 「[지도] 이름」) 이름만 읽는다.
   const top = lines[0]
+  // 「이름 주소」가 한 줄인 공유 글(카카오맵 링크 복사, 「성수동대림창고갤러리 서울 성동구 성수이로 78 1층」). 바로 위 줄만 본다.
+  const words = top?.replace(SHARE_HEAD, '').trim().split(/\s+/) ?? []
+  for (let i = 1; i < words.length - 1; i++) {
+    const address = words.slice(i).join(' ')
+    // 잡담(「이번엔 부산 해운대구 쪽으로 가볼까」)을 나누지 않게 건물번호까지 있을 때만 주소로 받는다(#1457).
+    if (isAddress(address) && roadKey(address) !== null) return { name: clean(words.slice(0, i).join(' '), 100), address: address.slice(0, 200) }
+  }
+  // 주소가 없어도 바로 위가 공유 머리줄에 상호명이 붙은 줄이면(구글 「[지도] 이름」) 이름만 읽는다.
   if (top && SHARE_HEAD.test(top)) return { name: clean(top, 100) }
   return {}
 }
@@ -253,6 +283,17 @@ export function readShares(text: string, range: DayRange): { shares: Share[]; fo
       }
     })
   })
+  // 링크가 없는 메시지의 「[지도] 이름」 — 구글 분리형처럼 다음 메시지 링크의 이름으로 이미 읽었으면 넣지 않는다.
+  const linkedNames = new Set([...byUrl.values()].map((s) => s.name))
+  for (const message of messages) {
+    if (message.some((l) => HAS_LINK.test(l.text))) continue
+    for (const line of message) {
+      const name = NAME_ONLY.test(line.text) ? clean(line.text, 100) : undefined
+      if (!name || linkedNames.has(name)) continue
+      const key = `[지도] ${name}`
+      if (!byUrl.has(key)) byUrl.set(key, { url: key, provider: 'kakao', name })
+    }
+  }
   const shares = [...byUrl.values()]
   return { shares: shares.slice(0, LINK_MAX), found: shares.length, dated: all.some((m) => m.day !== undefined) }
 }

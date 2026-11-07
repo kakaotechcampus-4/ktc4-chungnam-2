@@ -287,7 +287,7 @@ paths:
     patch:
       tags: [maps]
       summary: |
-        지도 제목·날짜·지역 수정 — 방장만 (#465, docs/permissions.md map.settings.edit). 보낸 필드만 바꾼다(부분 수정).
+        지도 제목·날짜·지역·색 수정 — 방장만 (#465, #1445, docs/permissions.md map.settings.edit). 보낸 필드만 바꾼다(부분 수정).
         검증은 생성과 같다(제목 1~100자, 종료일은 시작일 이후, 지역은 label·lat·lng 함께). 둘 중 하나만 보내도 합친 결과로 검사한다.
         지역을 지우는 것은 지원하지 않는다(바꾸기만). 이미 실행된 추천 결과는 건드리지 않는다. 전체 채널에 map.updated를 보낸다(docs/events.md).
       parameters: [ { $ref: "#/components/parameters/MapId" } ]
@@ -304,7 +304,7 @@ paths:
               schema: { $ref: "#/components/schemas/Map" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "422": { description: "검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락. 또는 TRIP_TOO_LONG — 날짜(start_date·end_date)를 바꾸는 요청에서 합친 기간이 MapList.trip_max_days(지금 90일)를 넘음, detail: { limit }. 제목·지역만 고치는 요청은 기간을 검사하지 않는다(이미 90일을 넘는 지도의 제목 수정은 허용) (#1371)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: "검증 실패 (VALIDATION_ERROR) — 제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락, 색이 #RRGGBB가 아님. 또는 TRIP_TOO_LONG — 날짜(start_date·end_date)를 바꾸는 요청에서 합친 기간이 MapList.trip_max_days(지금 90일)를 넘음, detail: { limit }. 제목·지역만 고치는 요청은 기간을 검사하지 않는다(이미 90일을 넘는 지도의 제목 수정은 허용) (#1371)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [maps]
       summary: |
@@ -341,6 +341,94 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /maps/{mapId}/copy:
+    post:
+      tags: [maps]
+      summary: |
+        **지도 복사 — 방장만**(#1446, docs/permissions.md map.copy). 요청 본문은 없다. 응답은 새 지도(요청자 기준, 복사한 사람이 방장).
+        - **옮기는 것**: 날짜, 지역(이름·중심), 색, 올린 대표 이미지(있으면, 새 `cover_url`), 핀 — 지우지 않은(휴지통에 없는) 공개 핀만.
+          핀은 장소(자체 DB 장소 또는 실시간 핀의 카카오 장소 ID·검색어)·카테고리·메모를 옮기고, 찍은 사람은 복사한 사람이다.
+          확정 핀과 AI 추천 핀도 **일반 핀**으로 옮긴다 — AI 근거(조건별 충족·구성원 충족 집계·출처)는 원래 지도 구성원 기준이라 옮기지 않는다.
+        - **옮기지 않는 것**: 반응(의견), 구성원(복사한 사람 혼자), 확정 리스트와 일정, 추천·코스 기록, 계획 보조 에이전트, 초대 링크, 알림.
+        - **제목**: `원래 제목 (n)`. 원래 제목 끝의 ` (k)`는 떼고 붙인다. n은 1부터, 내가 구성원인 지도(삭제된 지도 제외)에 같은 제목이 없는 가장 작은 수. 100자를 넘으면 원래 제목 쪽을 자른다.
+        - 새 지도를 늘리는 일이라 만들기(`POST /maps`)와 같은 제한을 따른다: 게스트 403 `GUEST_NOT_ALLOWED`, 내 지도가 이미 상한이면 409 `MAP_LIMIT`(`detail.limit`). 여행 기간 상한은 다시 보지 않는다(날짜를 그대로 옮긴다).
+        - 방장이 아닌 구성원은 403 `FORBIDDEN`, 구성원이 아니거나 없는·삭제된 지도는 404. 이벤트는 보내지 않는다. 화면은 `permissions.can_copy`로 메뉴를 그린다.
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      responses:
+        "201":
+          description: Created. 새 지도
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "403":
+          description: FORBIDDEN — 방장이 아님. 또는 GUEST_NOT_ALLOWED — 게스트 계정
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/MapLimit" }
+
+  /maps/{mapId}/cover:
+    get:
+      tags: [maps]
+      summary: |
+        지도 대표 이미지(#1445) — 구성원 누구나. `Map.cover_url`이 가리키는 주소이고, 로그인 쿠키로 인증해 `<img src>`에 그대로 쓴다.
+        저장한 형식(`image/webp`·`image/jpeg`·`image/png`) 그대로 내려 준다. 주소의 `v`(갱신 시각)가 이미지가 바뀔 때마다 달라져서
+        `Cache-Control: private, max-age=31536000, immutable`로 영구 캐시를 허락한다. 올린 이미지가 없으면 404(화면은 지역 기본 이미지를 그린다).
+      parameters:
+        - { $ref: "#/components/parameters/MapId" }
+        - { name: v, in: query, required: false, schema: { type: string }, description: "캐시 구분용 갱신 시각. 서버는 읽지 않는다 — `cover_url`을 그대로 쓴다" }
+      responses:
+        "200":
+          description: 이미지 바이트
+          headers:
+            Cache-Control: { schema: { type: string }, description: "private, max-age=31536000, immutable" }
+          content:
+            image/webp: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [maps]
+      summary: |
+        지도 대표 이미지 올리기·바꾸기 — 방장만 (#1445, docs/permissions.md map.settings.edit). 모든 구성원이 같은 이미지를 본다.
+        본문은 이미지 바이트 그대로이고 `Content-Type`이 `image/webp`·`image/jpeg`·`image/png` 중 하나여야 한다(파일 앞부분도 그 형식인지 본다).
+        크기 상한은 지금 512KiB다. 브라우저가 긴 변 1200px 이하 WebP로 줄여 올린다. 형식이나 크기가 맞지 않으면 422 `COVER_INVALID`이고
+        `detail`의 `limit_bytes`·`types`로 안내한다(화면은 숫자를 적지 않는다). 지도당 하나라 다시 올리면 바뀌고 `cover_url`의 `v`도 바뀐다.
+        지도를 삭제해도 남고(복구하면 그대로), 정리 작업이 지도를 지울 때 함께 지운다. 이벤트는 보내지 않는다.
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      requestBody:
+        required: true
+        content:
+          image/webp: { schema: { type: string, format: binary } }
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png: { schema: { type: string, format: binary } }
+      responses:
+        "200":
+          description: 올림. 요청자 기준 Map(`cover_url`이 채워진다)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: "COVER_INVALID — 형식이 WebP·JPEG·PNG가 아니거나 크기가 상한을 넘음. detail: { limit_bytes, types }"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      tags: [maps]
+      summary: 지도 대표 이미지 지우기 — 방장만 (#1445). 화면은 지역 기본 이미지로 돌아간다. 올린 이미지가 없어도 200(멱등)
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      responses:
+        "200":
+          description: 지움. 요청자 기준 Map(`cover_url`이 없다)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /maps/{mapId}/members/me:
     delete:
@@ -2003,6 +2091,7 @@ components:
         can_edit: { type: boolean, description: "map: 지도 제목·날짜·지역 수정(map.settings.edit), 방장만 true (#465). pin: 핀 메모·분류 수정(pin.edit), 그 핀을 찍은 사람만 true이고 AI 추천·확정 핀은 false (#466)" }
         can_manage_invites: { type: boolean, description: "map 전용: 초대 링크 목록 보기·끄기(invite.revoke), 방장만 true (#467, #1154). 선택 필드 — 구버전 서버는 보내지 않는다" }
         can_transfer_owner: { type: boolean, description: "map 전용: 방장 직접 넘기기(owner.transfer), 방장만 true (#468, #1154). 선택 필드 — 구버전 서버는 보내지 않는다" }
+        can_copy: { type: boolean, description: "map 전용: 지도 복사(map.copy, POST /maps/{mapId}/copy), 방장만 true (#1446). 선택 필드 — 구버전 서버는 보내지 않는다" }
 
     User:
       type: object
@@ -2104,6 +2193,9 @@ components:
         confirmed_count: { type: integer }
         my_role: { type: string, enum: [owner, member], description: "요청자의 지금 역할(memberships.role). 위임되면 바뀐다. 내 지도 목록의 방장 배지용 (2026-10-07, 회의). 서버가 채우기 시작하면 필수로 올린다" }
         created_by_me: { type: boolean, description: "내가 이 지도를 만들었는가(maps.created_by == 나). 내 지도 목록의 「내가 만든 지도」와 「초대받은 지도」를 가르는 값이다. 방장이 위임되면 my_role과 달라질 수 있다 — 만든 사람이 나가도 값은 바뀌지 않는다. 서버가 채우기 시작하면 필수로 올린다" }
+        color: { type: [string, "null"], pattern: "^#[0-9A-Fa-f]{6}$", description: "방장이 고른 지도 색 #RRGGBB (#1445). 모든 구성원이 같은 색을 본다. 고르지 않았으면 키가 없다(null도 같은 뜻) — 화면이 기본 색을 쓴다" }
+        cover_url: { type: [string, "null"], description: "방장이 올린 대표 이미지 주소 (#1445). API 기준 상대 경로 `/maps/{id}/cover?v=<갱신 시각(마이크로초)>` — 이미지가 바뀌면 v도 바뀌어 영구 캐시해도 된다. 올린 이미지가 없으면 키가 없다(null도 같은 뜻) — 화면이 지역 기본 이미지를 그린다" }
+        owner_display_name: { type: string, maxLength: 50, description: "지금 방장의 표시 이름 (#1445) — 초대받은 지도 카드의 「○○님의 지도」. memberships.role 기준이라 위임되면 바뀐다. 방장이 탈퇴했으면 '탈퇴한 구성원'. 목록과 상세 모두 채운다" }
 
     NextOwner:
       type: object
@@ -2169,13 +2261,14 @@ components:
 
     MapUpdateRequest:
       type: object
-      description: 지도 수정 (#465). 보낸 필드만 바꾼다. 빈 객체는 422. region은 바꾸기만 되고 지우지 못한다
+      description: 지도 수정 (#465, 색은 #1445). 보낸 필드만 바꾼다. 빈 객체는 422. region은 바꾸기만 되고 지우지 못한다. color만 null로 지울 수 있고 다른 필드의 null은 422
       minProperties: 1
       properties:
         title: { type: string, minLength: 1, maxLength: 100 }
         start_date: { type: string, format: date }
         end_date: { type: string, format: date, description: "합친 결과가 start_date와 같거나 그 이후여야 한다" }
         region: { $ref: "#/components/schemas/MapRegion" }
+        color: { type: [string, "null"], pattern: "^#[0-9A-Fa-f]{6}$", description: "지도 색 #RRGGBB (#1445). null을 보내면 색을 지운다(고르지 않은 상태, 화면 기본 색). 다른 필드와 달리 null을 받는다" }
 
     OwnerTransferRequest:
       type: object
@@ -2742,7 +2835,7 @@ components:
         category: { $ref: "#/components/schemas/RecommendCategory" }
         status: { type: string, enum: [collecting_evidence, awaiting_region_confirm, executing, done, failed], description: "`collecting_evidence`는 더 이상 「사용자가 근거를 확인하는 중」이 아니다(#845 — 확인 단계는 없어졌다). `POST /maps/{mapId}/runs`가 `execute: true` 없이 만든 run이거나 서버 장애로 첫 실행 전에 멈춘 run으로, 열면 `POST /runs/{runId}/execute`로 이어서 실행한다. 결과가 있는 건 `done`뿐" }
         attempt_no: { type: integer, description: "이 사람이 이 지도에서 지금까지 한 시도 횟수(카테고리 무관, 새 추천·다시 추천 모두 1씩). 상한은 없다(#432 — 크레딧으로 센다)" }
-        default_radius_walk_min: { type: integer, description: "호환용이다 — 곧 없앤다. 화면은 default_radius_m를 쓴다(#1385). 도보 분 정본은 폐기됐고 값은 default_radius_m를 80m/분으로 나눈 근사다" }
+        default_radius_walk_min: { type: integer, deprecated: true, description: "호환용이다 — 곧 없앤다(deprecated, #1467 — 화면이 쓰는 곳은 docs/openapi-workflow.md 「화면이 아직 쓰는 deprecated 필드」 표). 화면은 default_radius_m를 쓴다(#1385). 도보 분 정본은 폐기됐고 값은 default_radius_m를 80m/분으로 나눈 근사다" }
         default_radius_m: { type: integer, description: "기본값 원의 현재 반경(m). 모든 카테고리 기본 3000, 반경 넓히기마다 +1000, 상한 5000(#1385, docs/constraints.md). 선택 필드 — 구버전 서버에는 없다" }
         next_default_radius_m: { type: [integer, "null"], description: "넓히면 바뀔 반경(m). 이미 상한(5000)이면 null — 화면은 「반경 넓히기」를 막고 안내한다(#1370). 선택 필드" }
 

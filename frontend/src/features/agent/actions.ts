@@ -8,7 +8,7 @@ import { useAiStore } from '@/features/recommend/aiStore'
 import { useSearchStore } from '@/features/search/searchStore'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { showToast } from '@/features/shell/toast'
-import { useRouteStore } from '@/features/shortlist/routeStore'
+import { openRoute } from '@/features/shortlist/routeStore'
 
 import type { AgentActionDto } from './model'
 
@@ -66,7 +66,7 @@ export function useRunAgentAction(mapId: string) {
         navigate(`/maps/${mapId}/course?${new URLSearchParams({ [START_PARAM]: '1' })}`)
         return
       case 'open_route':
-        useRouteStore.getState().set(true)
+        openRoute()
         navigate(`/maps/${mapId}/shortlist`)
         return
       default:

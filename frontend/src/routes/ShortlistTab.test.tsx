@@ -40,7 +40,7 @@ beforeEach(async () => {
   }
 })
 
-const shell: ShellContext = { mapId: MAP, activeControl: null, onControl: () => {}, connection: { state: 'open', reconnect: () => {} }, getCenter: () => null }
+const shell: ShellContext = { mapId: MAP, activeControl: null, onControl: () => {}, connection: { state: 'open', reconnect: () => {} }, getCenter: () => null, showRegion: () => {} }
 
 function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -58,34 +58,35 @@ function renderTab() {
 }
 
 async function putTwoOnSecondDay() {
-  await userEvent.click(await screen.findByRole('checkbox', { name: '흑돼지식당 고르기' }))
-  await userEvent.click(screen.getByRole('checkbox', { name: '우진해장국 고르기' }))
-  await userEvent.selectOptions(screen.getByLabelText('넣을 날짜'), '둘째 날')
-  await userEvent.click(screen.getByRole('button', { name: '2곳 넣기' }))
+  const days = within(await screen.findByRole('group', { name: '넣을 날짜' }))
+  expect(days.getByRole('button', { name: '첫째 날' })).toHaveAttribute('aria-pressed', 'true')
+  await userEvent.click(days.getByRole('button', { name: '둘째 날' }))
+  await userEvent.click(screen.getByRole('button', { name: '흑돼지식당 둘째 날에 넣기' }))
+  await userEvent.click(await screen.findByRole('button', { name: '우진해장국 둘째 날에 넣기' }))
 }
 
-describe('확정 탭 — 체크박스로 일정에 넣기, 동선 보기로 날짜별 일정(휴대폰)', () => {
+describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣기, 동선 보기로 날짜별 일정(휴대폰)', () => {
   it('휴대폰에는 「일정 짜기」 패널 칩이 없고, 일정이 비어 있으면 동선 보기 대신 넣는 법을 알린다', async () => {
     renderTab()
-    await screen.findByRole('checkbox', { name: '흑돼지식당 고르기' })
+    await screen.findByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })
     expect(screen.queryByRole('button', { name: '일정 짜기' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '동선 보기' }))
     expect(await screen.findByText('장소를 골라 날짜에 넣으면 동선을 볼 수 있어요')).toBeInTheDocument()
     expect(useRouteStore.getState().on).toBe(false)
   })
 
-  it('고른 곳을 한 번에 그날로 넣으면 리스트에서 빠지고 토스트가 알린다 — 되돌리기로 돌아온다', async () => {
+  it('「넣기」를 누르면 고른 날 끝에 들어가 리스트에서 빠지고 토스트가 알린다 — 되돌리기로 돌아온다', async () => {
     renderTab()
     await putTwoOnSecondDay()
 
-    expect(await screen.findByText('2곳을 둘째 날에 넣었어요')).toBeInTheDocument()
+    expect(await screen.findByText('우진해장국을 둘째 날에 넣었어요')).toBeInTheDocument()
     await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1', 'pin_2']))
-    expect(screen.queryByRole('checkbox', { name: '흑돼지식당 고르기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^흑돼지식당 .*넣기$/ })).not.toBeInTheDocument()
     expect(screen.getByText('1곳 · 일정에 넣은 곳 2')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '되돌리기' }))
-    expect(await screen.findByRole('checkbox', { name: '흑돼지식당 고르기' })).toBeInTheDocument()
-    await waitFor(async () => expect(await serverDays(MAP)).toEqual({}))
+    expect(await screen.findByRole('button', { name: '우진해장국 둘째 날에 넣기' })).toBeInTheDocument()
+    await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1']))
   })
 
   it('동선 보기를 켜면 날짜 칩과 그날 순서가 보이고, ↑↓ 로 순서를 바꾸고 「빼기」로 리스트에 돌린다', async () => {
@@ -112,7 +113,7 @@ describe('확정 탭 — 체크박스로 일정에 넣기, 동선 보기로 날�
     expect(within(screen.getByRole('region', { name: /^첫째 날/ })).getByText('이 날은 비어 있어요')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /동선 보기/ }))
-    expect(await screen.findByRole('checkbox', { name: '우진해장국 고르기' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^우진해장국 .*넣기$/ })).toBeInTheDocument()
   })
 
   it('넓은 화면의 「일정 짜기」는 다시 누르면 닫힌다', async () => {

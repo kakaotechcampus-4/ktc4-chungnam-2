@@ -1,0 +1,8 @@
+# Test and dev tools only (#1439). The prod image (backend/Dockerfile) installs requirements.txt only.
+# CI (backend-test, e2e) and local development install this file.
+# Keep this file ASCII: pip decodes it with the OS locale on Windows (cp949 fails on UTF-8 Korean).
+-r requirements.txt
+pytest==9.0.3
+pytest-asyncio==1.3.0
+jsonschema==4.23.0
+import-linter==2.15

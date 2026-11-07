@@ -1,6 +1,4 @@
-import { GripVertical } from 'lucide-react'
-
-import Checkbox from '@/ui/Checkbox'
+import { GripVertical, Plus } from 'lucide-react'
 
 import DragGhost from './DragGhost'
 import type { ShortlistItemDto } from './model'
@@ -9,23 +7,22 @@ import { useScheduleDrag } from './useScheduleDrag'
 
 /**
  * 확정 리스트(Figma 7절) — 일정에 아직 넣지 않은 확정 장소다(2026-11-03). 순서는 일정이 정해서 여기서는 바꾸지 않는다.
- * 체크박스로 여러 곳을 골라 아래 막대에서 한 번에 그날로 넣는다(모든 화면, 키보드 포함). 넣은 곳은 이 목록에서 빠진다.
+ * 줄의 「넣기」를 누르면 위에서 고른 날(`dayLabel`) 끝에 바로 들어가고 이 목록에서 빠진다(모든 화면, 키보드 포함). 실수는 토스트의 「되돌리기」로 고친다.
  * 넓은 화면에서 「일정 짜기」 패널이 열려 있으면(`onDrop`) ≡ 를 끌어 패널 날짜 칸에 놓아도 된다 — ≡ 는 손가락·마우스 전용이라 화면 읽기에서 뺀다.
- * 빼기는 「확정 해제」 하나다 — 핀 삭제가 아니라 확정 해제라서 '삭제'라고 부르지 않는다.
+ * 「확정 해제」는 줄에 두지 않고 핀 상세에 있다 — 줄 버튼이 둘이면 누르는 곳이 좁아지고, 넣기와 헷갈린다.
  */
 export default function ShortlistList({
   items,
-  checked,
-  onCheck,
+  dayLabel,
+  onPut,
   onOpen,
-  onRemove,
   onDrop,
 }: {
   items: ShortlistItemDto[]
-  checked: Set<string>
-  onCheck: (pinId: string, on: boolean) => void
+  /** 넣을 날(「첫째 날」). 여행 날짜가 없으면 `onPut`도 없고 「넣기」를 그리지 않는다. */
+  dayLabel: string
+  onPut?: (item: ShortlistItemDto) => void
   onOpen: (pinId: string) => void
-  onRemove: (item: ShortlistItemDto) => void
   onDrop?: (item: ShortlistItemDto, spot: DropSpot) => void
 }) {
   return (
@@ -34,10 +31,9 @@ export default function ShortlistList({
         <Row
           key={item.id}
           item={item}
-          checked={checked.has(item.pin.id)}
-          onCheck={(on) => onCheck(item.pin.id, on)}
+          dayLabel={dayLabel}
+          onPut={onPut && (() => onPut(item))}
           onOpen={() => onOpen(item.pin.id)}
-          onRemove={() => onRemove(item)}
           onDrop={onDrop && ((spot) => onDrop(item, spot))}
         />
       ))}
@@ -47,17 +43,15 @@ export default function ShortlistList({
 
 function Row({
   item,
-  checked,
-  onCheck,
+  dayLabel,
+  onPut,
   onOpen,
-  onRemove,
   onDrop,
 }: {
   item: ShortlistItemDto
-  checked: boolean
-  onCheck: (on: boolean) => void
+  dayLabel: string
+  onPut?: () => void
   onOpen: () => void
-  onRemove: () => void
   onDrop?: (spot: DropSpot) => void
 }) {
   const name = item.pin.place_name ?? '이 장소'
@@ -65,12 +59,6 @@ function Row({
   return (
     <li className={`rounded-xl border border-ink-200 bg-white py-1.5 pl-3 pr-1.5 ${dragging ? 'opacity-40' : ''}`}>
       <div className="flex items-center gap-2">
-        {/* 상자만 보이는 칸(누르는 곳 44×44) — 이름은 화면 읽기용이다. 핀 이름은 옆의 상세 열기 버튼이다. */}
-        <div className="-ml-1.5 w-11 shrink-0">
-          <Checkbox checked={checked} onChange={onCheck}>
-            <span className="sr-only">{name} 고르기</span>
-          </Checkbox>
-        </div>
         {/* 키보드·VoiceOver로도 열리게 버튼이다(검색 결과 줄과 같다, #959). */}
         <button type="button" onClick={onOpen} className="press -mx-1.5 min-w-0 flex-1 select-none rounded-md px-1.5 py-1 text-left">
           <p className="truncate font-bold text-ink-900">{name}</p>
@@ -79,9 +67,10 @@ function Row({
             {item.pin.created_by_display_name && ` · ${item.pin.created_by_display_name}님이 찍은 핀`}
           </p>
         </button>
-        {item.permissions.can_remove_from_shortlist && (
-          <button type="button" onClick={onRemove} className="btn-text shrink-0 text-xs">
-            확정 해제
+        {onPut && (
+          <button type="button" onClick={onPut} aria-label={`${name} ${dayLabel}에 넣기`} className="btn-outline btn-sm shrink-0">
+            <Plus size={16} aria-hidden="true" />
+            넣기
           </button>
         )}
         {onDrop && (

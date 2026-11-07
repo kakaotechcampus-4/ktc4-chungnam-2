@@ -48,7 +48,7 @@ def unconfirm_pin(db, *, item_row, principal) -> None:
 
 def reorder_shortlist(db, *, map_id: str, item_ids: list[str], principal) -> list[ShortlistItem]:
     """PUT /maps/{mapId}/shortlist/order(#142) — visit_order만 바꾼다. 동선(routes)은 건드리지
-    않고 route.recalculated도 내지 않는다. shortlist.changed(reordered)는 같은 트랜잭션에 기록한다."""
+    않고 route.recalculated도 내지 않는다. shortlist.changed(reordered) 하나를 같은 트랜잭션에 기록한다."""
     rows = service.reorder_items(db, map_id=map_id, item_ids=item_ids)
     items = []
     for row in rows:
@@ -56,9 +56,15 @@ def reorder_shortlist(db, *, map_id: str, item_ids: list[str], principal) -> lis
             db, pin_id=str(row.pin_id), viewer_id=principal.user_id, principal=principal,
         )
         items.append(core.to_shortlist_item_response(row, pin, principal))
-    for item in items:
-        record_event(db, core.shortlist_changed_event(item, "reordered"))
+    _record_reordered(db, items)
     return items
+
+
+def _record_reordered(db, items: list[ShortlistItem]) -> None:
+    """순서 바꾸기·일정 저장 한 번에 shortlist.changed(reordered) 하나(#1274). 받는 쪽은 목록을 다시 받아
+    순서를 보므로 item은 첫 항목만 싣는다. 항목마다 내면 확정 20곳에 구성원마다 다시 받기가 수십 번 나갔다."""
+    if items:
+        record_event(db, core.shortlist_changed_event(items[0], "reordered"))
 
 
 def export_shortlist(db, *, map_id: str, principal, fmt: str) -> tuple[str, str, str]:
@@ -112,13 +118,22 @@ def recalculate_route(db, *, map_id: str) -> list[Route]:
 
 
 def schedule(db, *, map_id, principal, update=None):
+    """GET·PUT /maps/{mapId}/shortlist/schedule. 읽기(update=None)는 잠그지 않는다(#1435) — 지도 행 FOR UPDATE와
+    advisory lock을 읽기도 잡으면 구성원마다 몰리는 다시 받기(GET)가 저장(PUT)과 같은 줄에 서서 서로를 기다린다
+    (GET 항목마다 핀 응답을 만드는 동안 잠금을 쥔다). 읽기는 지도가 살아 있는지만 잠금 없이 본다. 저장은 지도 행과
+    확정 리스트를 잠가 같은 지도의 확정 리스트 변경과 줄을 선다(기존 그대로)."""
     from common.errors import AppError
 
-    if not maps_api.lock_map_if_alive(db, map_id):
-        raise AppError("NOT_FOUND")
-    map_info = maps_api.get_map_for_agent(db, map_id)
+    if update is None:
+        map_info = maps_api.get_map_for_agent(db, map_id)
+        if map_info is None or map_info["deleted"]:
+            raise AppError("NOT_FOUND")
+    else:
+        if not maps_api.lock_map_if_alive(db, map_id):
+            raise AppError("NOT_FOUND")
+        map_info = maps_api.get_map_for_agent(db, map_id)
+        service.lock_shortlist(db, map_id)
     start, end = map_info["start_date"], map_info["end_date"]
-    service.lock_shortlist(db, map_id)
     if update is None:
         rows = service.list_items(db, map_id=map_id)
     else:
@@ -126,9 +141,13 @@ def schedule(db, *, map_id, principal, update=None):
                                         version=update.version, groups=update.groups)
     items = []
     for row in rows:
-        pin = pins_api.get_pin_response_for_viewer(db, pin_id=str(row.pin_id), viewer_id=principal.user_id, principal=principal)
+        try:
+            pin = pins_api.get_pin_response_for_viewer(db, pin_id=str(row.pin_id), viewer_id=principal.user_id, principal=principal)
+        except AppError as error:
+            if update is None and error.code == "NOT_FOUND":
+                continue  # 잠금 없이 읽는 사이 핀이 지워졌다 — 그 항목만 빼고 돌려준다(version은 행 기준이라 다음 저장이 STALE로 새로 받게 한다)
+            raise
         items.append(core.to_shortlist_item_response(row, pin, principal))
     if update is not None:
-        for item in items:
-            record_event(db, core.shortlist_changed_event(item, "reordered"))
+        _record_reordered(db, items)
     return Schedule(start_date=start, end_date=end, version=service.schedule_version(start, end, rows), items=items)

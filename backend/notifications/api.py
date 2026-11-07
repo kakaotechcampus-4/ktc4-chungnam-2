@@ -9,9 +9,8 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from notifications import core, service
-from notifications.service import RETENTION_DAYS
 
-__all__ = ["RETENTION_DAYS", "anonymize_actor", "compose_message", "delete_by_user", "notify", "purge_old", "reassign_user"]
+__all__ = ["anonymize_actor", "compose_message", "delete_by_user", "notify", "purge_old", "reassign_user"]
 
 
 def compose_message(type: str, *, actor_name: str | None = None, map_title: str | None = None,
@@ -43,11 +42,12 @@ def delete_by_user(db: Session, *, user_id: str) -> dict[str, int]:
     return service.delete_by_user(db, user_id=user_id)
 
 
-def purge_old(db: Session, *, now: datetime, older_than_days: int = RETENTION_DAYS) -> dict[str, int]:
-    """정리 작업(#168)이 부른다 — `now`보다 `older_than_days`(기본 90)일 넘게 지난 알림을 지운다. 지도 정리(#431)와
+def purge_old(db: Session, *, now: datetime) -> dict[str, int]:
+    """정리 작업(#168)이 부른다 — `now`보다 보존 기간(`service.RETENTION_DAYS`)이 넘게 지난 알림을 지운다. 기간은
+    notifications가 정한다(#1474). 지도 정리(#431)와
     달리 map_id를 보지 않는다(삭제된 지도의 `map_deleted` 알림이 남은 구성원에게 보여야 한다). 테이블 이름 → 지운 행 수.
     `maintenance.run`이 하루 한 번 부른다(#168)."""
-    return service.purge_old(db, now=now, older_than_days=older_than_days)
+    return service.purge_old(db, now=now)
 
 
 def reassign_user(db: Session, *, from_user_id: str, to_user_id: str) -> dict[str, int]:

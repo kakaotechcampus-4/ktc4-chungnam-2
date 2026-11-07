@@ -13,6 +13,11 @@ from pydantic import BaseModel, Field, model_validator
 from authz.schemas import Permissions
 
 
+# 지도 색 "#RRGGBB"(#1445) — docs/api-spec.yaml Map.color·MapUpdateRequest.color의 pattern과 같다.
+COLOR_PATTERN = r"^#[0-9A-Fa-f]{6}$"
+TITLE_MAX_LENGTH = 100  # 지도 제목 상한 — 스펙 maxLength와 같다. 복사본 제목(core.copy_title)도 이 안에 맞춘다(#1446)
+
+
 class MapRegion(BaseModel):
     """지도 만들기의 지역 검색 결과(#22, 2026-09-28 변경 — PR #132). label/lat/lng 셋 다 있거나
     Map/MapCreateRequest 양쪽 다 region 자체가 없거나(선택 필드) 둘 중 하나다 — 필드 일부만
@@ -25,7 +30,7 @@ class MapRegion(BaseModel):
 
 
 class MapCreateRequest(BaseModel):
-    title: str = Field(max_length=100)
+    title: str = Field(max_length=TITLE_MAX_LENGTH)
     start_date: date
     end_date: date
     region: MapRegion | None = None
@@ -38,17 +43,20 @@ class OwnerTransferRequest(BaseModel):
 
 class MapUpdateRequest(BaseModel):
     """PATCH /maps/{mapId}(#465) — 보낸 필드만 바꾼다. 값을 안 보낸 필드는 None이다. 빈 객체와
-    명시적 null은 422다(null로 region을 지우는 건 지원하지 않는다 — 바꾸기만)."""
+    명시적 null은 422다(null로 region을 지우는 건 지원하지 않는다 — 바꾸기만). color만 예외로 null이 「색 지우기」다(#1445) —
+    보냈는지는 model_fields_set으로 가린다."""
 
-    title: str | None = Field(default=None, min_length=1, max_length=100)  # 스펙 minLength 1(#733)
+    title: str | None = Field(default=None, min_length=1, max_length=TITLE_MAX_LENGTH)  # 스펙 minLength 1(#733)
     start_date: date | None = None
     end_date: date | None = None
     region: MapRegion | None = None
+    # 지도 색(#1445). null을 보내면 색을 지운다(고르지 않은 상태로).
+    color: str | None = Field(default=None, pattern=COLOR_PATTERN)
 
     @model_validator(mode="after")
     def _at_least_one_value(self):
         sent = {name: getattr(self, name) for name in self.model_fields_set}
-        if not sent or any(value is None for value in sent.values()):
+        if not sent or any(value is None for name, value in sent.items() if name != "color"):
             raise ValueError("바꿀 항목을 하나 이상 보내 주세요. 값은 null일 수 없어요")
         return self
 
@@ -62,7 +70,7 @@ class NextOwner(BaseModel):
 
 class Map(BaseModel):
     id: str
-    # 요청자 기준. map은 can_delete·can_leave(넘길 사람이 없는 방장은 false)·can_edit·can_manage_invites·can_transfer_owner를 채운다(#369, #1154).
+    # 요청자 기준. map은 can_delete·can_leave(넘길 사람이 없는 방장은 false)·can_edit·can_manage_invites·can_transfer_owner·can_copy를 채운다(#369, #1154, #1446).
     permissions: Permissions
     # 요청자의 지금 역할(memberships.role) — 방장을 위임하면 바뀐다. 내 지도 목록의 방장 배지용(#391).
     my_role: Literal["owner", "member"] | None = None
@@ -79,6 +87,12 @@ class Map(BaseModel):
     pin_count: int | None = None
     # shortlist_items 개수 — shortlist.api.count_confirmed로 채운다. 못 구하면 0이 아니라 None이다.
     confirmed_count: int | None = None
+    # 방장이 고른 지도 색(#1445). 고르지 않았으면 None — 응답에서 키가 빠진다.
+    color: str | None = None
+    # 올린 대표 이미지 주소(#1445) — API 기준 상대 경로 "/maps/{id}/cover?v=<갱신 시각>". 없으면 None(화면이 지역 기본 이미지를 그린다).
+    cover_url: str | None = None
+    # 지금 방장의 표시 이름(#1445) — 초대받은 지도 카드의 「○○님의 지도」. 탈퇴했으면 '탈퇴한 구성원'.
+    owner_display_name: str | None = None
 
 
 class MapList(BaseModel):

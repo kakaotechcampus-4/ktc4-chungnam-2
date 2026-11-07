@@ -217,7 +217,7 @@ def test_dns_answers_must_all_be_public(monkeypatch):
 # ---------------------------------------------------------------- 자체 DB 짝 찾기
 
 def cand(pid, name, dist=10.0, category="음식점", kakao=None):
-    return Candidate(pid, name, 37.5445, 127.0561, category, kakao, dist, "서울 성동구 성수동 1")
+    return Candidate(pid, name, 37.5445, 127.0561, category, kakao, dist, "서울 성동구 성수동 1", source="permit")   # DB 후보는 늘 source가 있다(#1486)
 
 
 @pytest.fixture()
@@ -249,7 +249,8 @@ def test_google_match_uses_own_db_values_and_a_recorded_kakao_id_as_place_id(own
     own["near"] = [cand("p1", "성수 칼국수", kakao="kakao:111")]
     [m] = places_api.parse_link(GOOGLE_PLACE).matches
     assert (m.place_id, m.place_name, m.category, m.address) == ("kakao:111", "성수 칼국수", "음식점", "서울 성동구 성수동 1")
-    assert m.place_source is None   # 카카오 응답이 아니다
+    assert m.place_source.provider == "permit"   # 자체 DB 장소의 출처(카카오 응답이 아니다, #1486)
+    assert m.place_source.url == "https://map.kakao.com/link/search/" + quote("성수 칼국수 성동구", safe="")   # 기록된 카카오 URL이 없어 「이름 동네」 검색 링크
 
 
 def test_google_link_without_a_matching_name_gives_no_matches_but_keeps_the_hint(own):
@@ -335,7 +336,8 @@ def test_route_returns_the_spec_shape(client, own):
     assert r.json() == {
         "provider": "google", "name_hint": "성수 칼국수", "needs_search_query": False,
         "matches": [{"place_id": "own:p1", "place_name": "성수 칼국수", "lat": 37.5445, "lng": 127.0561,
-                     "category": "음식점", "address": "서울 성동구 성수동 1", "pinnable": True}],
+                     "category": "음식점", "address": "서울 성동구 성수동 1", "pinnable": True,
+                     "place_source": {"provider": "permit", "url": "https://map.kakao.com/link/search/" + quote("성수 칼국수 성동구", safe="")}}],
     }
     assert "37.5440" not in r.text   # 링크 안의 좌표를 싣지 않는다(자체 DB 장소의 좌표뿐)
 

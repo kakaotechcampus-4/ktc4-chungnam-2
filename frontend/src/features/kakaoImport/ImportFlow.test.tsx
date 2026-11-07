@@ -241,6 +241,16 @@ describe('카톡 가져오기 — 누적·새로고침 뒤 유지·버튼(#1045)
     expect(screen.getAllByRole('checkbox', { name: /해운대 밀면.*이름·주소가 같아서 찾았어요/ })).toHaveLength(1)
   })
 
+  it('같은 파일을 다시 넣어 새 링크가 없으면 그렇다고 알리고 다시 확인하지 않는다', async () => {
+    const previews = capture(`/maps/${MAP}/pins/link-preview`)
+    await paste()
+    await waitFor(() => expect(previews).toHaveLength(1))
+    await pickFile(MOCK_SAMPLE, '다른 대화 파일 더하기')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('이 기간의 지도 링크는 이미 목록에 있어요')
+    expect(previews).toHaveLength(1)
+  })
+
   it('새로고침해도(화면 메모리를 비워도) 그 지도의 목록·고른 것·찍은 결과가 돌아온다 — 저장소에는 대화 원문과 장소 응답이 없다', async () => {
     const view = await (async () => {
       await paste()

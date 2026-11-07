@@ -25,14 +25,14 @@ import {
   type ImportRow,
   type PlaceSearchResultDto,
 } from './model'
-import { readShares, type DayRange } from './share'
+import { isNameOnly, readShares, type DayRange } from './share'
 import { clearImport, loadImport, saveImport } from './storage'
 
 /** idle: 할 일 없음 · checking: 링크 미리보기 중 · saving: 핀 찍는 중. 결과는 같은 목록에 쌓인다(끝난 화면을 따로 두지 않는다, #1045). */
 export type ImportPhase = 'idle' | 'checking' | 'saving'
 
 /** 파일 하나를 넣은 결과. noLinks: 그 기간에 지도 링크가 없다 · noDates: 날짜를 하나도 읽지 못했다(내보내기 파일이 아니다, #1139) · full: 목록이 가득 차서 새 링크를 하나도 못 더했다(찍고 완료된 것을 지워야 더할 수 있다). */
-export type AddResult = 'added' | 'noLinks' | 'noDates' | 'full'
+export type AddResult = 'added' | 'noNew' | 'noLinks' | 'noDates' | 'full'
 
 type Outcome = NonNullable<BulkPinItemResultDto['status']>
 
@@ -123,7 +123,7 @@ async function checkRemaining(mapId: string) {
     for (;;) {
       const part = useImportStore
         .getState()
-        .rows.filter((r) => !r.item && !sent.has(r.share.url))
+        .rows.filter((r) => !r.item && !isNameOnly(r.share.url) && !sent.has(r.share.url))
         .slice(0, PREVIEW_CHUNK)
         .map((r) => r.share)
       if (part.length === 0) break
@@ -229,7 +229,9 @@ export function useLinkImport(mapId: string, near: LatLng | null = null) {
       }
       // 파일 하나에서 상한을 넘은 링크(readShares 가 자른 것)도 넘친 것으로 센다.
       patch({ rows: merged.rows, truncated: merged.truncated || found > shares.length, lastSaved: null })
-      if (merged.added > 0) void checkRemaining(mapId)
+      // 이미 있는 링크만 읽었으면(같은 파일을 다시 넣는 등) 목록이 그대로라 따로 알린다.
+      if (merged.added === 0) return 'noNew'
+      void checkRemaining(mapId)
       return 'added'
     },
     retryCheck: () => void checkRemaining(mapId),

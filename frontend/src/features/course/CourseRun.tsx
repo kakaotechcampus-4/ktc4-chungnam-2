@@ -1,10 +1,12 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { Bus, ExternalLink, Map as MapIcon } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { AiHeader } from '@/features/recommend/Readiness'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { KAKAO_ROUTE_MAX } from '@/features/shortlist/model'
+import { openRoute } from '@/features/shortlist/routeStore'
 import Notice from '@/ui/Notice'
 import PingoLoading from '@/ui/PingoLoading'
 
@@ -165,7 +167,18 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
 
       {mode !== 'plan' && <FixCards mapId={mapId} run={run} names={names} onRetry={onRetry} />}
 
-      {/* review 의 days 는 지금 일정 그대로라 확정 탭과 겹친다 — 카드만 보인다. */}
+      {mode === 'review' && (
+        <Link
+          to={`/maps/${mapId}/shortlist`}
+          // 점검 당시 days 대신 확정 탭의 현재 일정을 본다.
+          onClick={openRoute}
+          className="btn-outline btn-md w-full"
+        >
+          <MapIcon size={16} aria-hidden="true" /> 현재 일정 동선 보기
+        </Link>
+      )}
+
+      {/* review 는 현재 일정 동선으로 연결하고, plan/fill 은 제안한 날짜별 순서를 보인다. */}
       {mode !== 'review' && (
         <Section title="날짜별 순서">
           <div className="space-y-2">

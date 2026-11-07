@@ -101,4 +101,20 @@ describe('지도 정보 수정 — 빠지는 날의 일정 안내', () => {
     fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-09' } })
     expect(screen.queryByText(/확정된 장소로 돌아가요/)).not.toBeInTheDocument()
   })
+
+  it('저장하면 일정을 다시 받는다 — 서버가 뺀 장소와 바뀐 version을 화면이 들고 있게', async () => {
+    await seedSchedule(MAP, { days: { '2026-10-10': ['pin_1'] } })
+    const gets: string[] = []
+    const listen = ({ request }: { request: Request }) => {
+      if (request.method === 'GET' && request.url.endsWith(`/maps/${MAP}/shortlist/schedule`)) gets.push(request.url)
+    }
+    server.events.on('request:start', listen)
+    renderEdit()
+    await waitFor(() => expect(gets).toHaveLength(1))
+
+    fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-11' } })
+    await userEvent.click(await screen.findByRole('button', { name: '저장' }))
+    await waitFor(() => expect(gets).toHaveLength(2))
+    server.events.removeAllListeners()
+  })
 })

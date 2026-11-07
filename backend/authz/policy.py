@@ -77,6 +77,7 @@ POLICY: Mapping[str, RoleSpec] = {
                 "map.restore",  # 삭제한 지도 복구(#464). 방장만, 삭제한 지 30일 안. 삭제된 지도는 일반 조회가 404라 maps가 복구용 조회로 채운다
                 "invite.revoke",  # 초대 링크 목록·끄기(#467). 방장만
                 "owner.transfer",  # 방장 직접 넘기기(#468). 방장만
+                "map.copy",  # 지도 복사(#1446). 방장만 — 복사본의 방장은 복사한 사람
             }
         ),
     ),
@@ -110,6 +111,7 @@ ACTION_RESOURCE_TYPES: Mapping[str, frozenset[ResourceType]] = {
     "map.settings.edit": frozenset({"map"}),
     "map.delete": frozenset({"map"}),
     "map.restore": frozenset({"map"}),
+    "map.copy": frozenset({"map"}),
     "map.leave": frozenset({"map"}),
     "invite.create": frozenset({"map"}),
     "invite.revoke": frozenset({"map"}),

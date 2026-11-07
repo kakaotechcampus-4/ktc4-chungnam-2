@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { Search } from 'lucide-react'
 
-import AgainstMark from '@/ui/AgainstMark'
+import Mark from '@/ui/Mark'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import { PIN_PATH } from '@/ui/pinPath'
 import { PINGO_MARK } from '@/ui/pingoMark'
@@ -160,10 +160,10 @@ function ReactionScene() {
         <div className={`${CARD} p-2`}>
           <div className="grid grid-cols-2 gap-1.5">
             <ReactionPill on={like} tone="good">
-              ♥ 좋음
+              <Mark kind="like" size={12} /> 좋음
             </ReactionPill>
             <ReactionPill on={against} tone="bad">
-              <AgainstMark size={12} /> 반대
+              <Mark kind="against" size={12} /> 반대
             </ReactionPill>
           </div>
           {against && (
@@ -223,7 +223,7 @@ function AiScene() {
                   : { background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-text)' }
               }
             >
-              {like ? '♥' : <AgainstMark size={10} />} {text}
+              {like ? <Mark kind="like" size={10} /> : <Mark kind="against" size={10} />} {text}
             </span>
           </At>
         ))}

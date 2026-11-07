@@ -9,6 +9,7 @@ import { TriangleAlert } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
 import type { ConnectionState } from '@/features/map/realtime'
+import TrashDropZone from '@/features/map/TrashDropZone'
 
 import Toaster from './Toaster'
 
@@ -54,6 +55,8 @@ export default function TabSheet({
             {/* 「핑고 AI 조언」은 지도 왼쪽 아래(agent-v2 16.1). 조언은 지도 단위라 지도가 떠 있는 네 탭 모두에 있다(#1162). */}
             <AgentButton mapId={mapId} hidden={controlsHidden} fading={mapMoving} />
             {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} inside={stage === 3} />}
+            {/* 핀을 끌 때만 나타나는 휴지통(#1012). 토스트와 같은 자리 규칙이다. */}
+            <TrashDropZone mapId={mapId} placement={stage === 3 ? 'inside' : 'above'} />
           </>
         )
       }

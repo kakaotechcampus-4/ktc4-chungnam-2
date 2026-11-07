@@ -16,11 +16,14 @@ import { CategoryChips } from '@/features/map/PinFilterControls'
 import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
 import { useMapEvents } from '@/features/map/realtime'
+import TrashDropZone from '@/features/map/TrashDropZone'
 import { usePinFilters } from '@/features/map/usePinFilters'
+import { boundaryCorners, useRegionBoundary } from '@/features/map/regionGeo'
 import MapSwitcher from '@/features/maps/MapSwitcher'
 import NotificationBell from '@/features/notifications/NotificationBell'
 import { useMapQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
+import { RECOMMEND_RADIUS_M } from '@/features/recommend/model'
 import { useResultQuery } from '@/features/recommend/queries'
 import { firstMapLink } from '@/features/kakaoImport/share'
 import { isLinkInput } from '@/features/search/model'
@@ -82,7 +85,7 @@ export default function MapLayout() {
   const pins = onConfirmedTab ? allPins.filter((p) => p.kind === '확정') : filterPins(allPins, filters, memberCount)
   const routeOn = useRouteStore((s) => s.on) && onShortlistTab
   const routeChosen = useRouteStore((s) => s.day)
-  // 일정은 이 화면이 늘 기간·확정 리스트에 맞춰 둔다(빠진 장소가 있으면 확정 탭이 알린다).
+  // 일정은 서버가 기간·확정 리스트에 맞춰 둔다(#1172). 여기서는 동선 보기로 고른 날의 순서만 꺼낸다.
   const trip = useTripSchedule(mapId)
   const course = useCourseMapStore()
   // 확정 탭은 「동선 보기」로 고른 날의 일정 순서대로, AI 코스 탭은 이 지도의 코스(#683) 선을 긋는다 — 한 화면에 둘이 겹치지 않는다.
@@ -131,6 +134,9 @@ export default function MapLayout() {
   // AI 추천 탭에선 올리기 전 후보를 점선 핀으로 그린다(#843). 요청한 사람의 화면에만 있고 지도(핀 목록)는 바꾸지 않는다(가드레일 1).
   // 올린 후보는 이미 핀으로 떠 있어서 빼고, 좌표가 없는 후보도 뺀다. 결과는 추천 탭과 같은 캐시를 본다.
   const onRecommendTab = useMatch('/maps/:mapId/recommend') !== null
+  // AI 추천은 보이는 지도 가운데 반경 안에서 찾는다(#1385) — 그 탭에서만 여행 지역 경계·그 밖 어둡게·반경 원을 그린다.
+  // 경계 파일도 그 탭에서만 받는다(시·도 하나에 수십 KB). 한 번 받으면 캐시에 남는다.
+  const regionBoundary = useRegionBoundary(onRecommendTab ? mapInfo?.region?.label : undefined)
   const run = useAiStore((s) => s.runs[mapId])
   const result = useResultQuery(run?.status === 'done' ? run : undefined).data
   const candidateFocus = useAiStore((s) => s.focus)
@@ -353,6 +359,10 @@ export default function MapLayout() {
     onControl,
     connection,
     getCenter: () => controller.current?.getCenter() ?? livePlaceAnchor(allPins, mapInfo?.regionCenter),
+    showRegion: () => {
+      if (regionBoundary) controller.current?.fitPins(boundaryCorners(regionBoundary), { force: true })
+      else if (mapInfo?.regionCenter) controller.current?.panTo(mapInfo.regionCenter.lat, mapInfo.regionCenter.lng)
+    },
   }
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.source
@@ -387,6 +397,8 @@ export default function MapLayout() {
         results={searchMarkers}
         candidates={candidates}
         route={routeDrawings}
+        // 원은 준비 화면(run 없음)에만 그린다. 결과의 다시 추천·넓히기는 run을 만들 때의 가운데에서 찾아서, 지도를 따라가는 원은 그 범위와 어긋난다.
+        recommendArea={onRecommendTab ? { boundary: regionBoundary, radiusM: run ? null : RECOMMEND_RADIUS_M } : null}
         // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 확정된 장소」로 돌아온다).
         onSelect={(pinId) => {
           setPanelOpen(true)
@@ -599,6 +611,8 @@ export default function MapLayout() {
           {/* 조언은 지도 단위라 네 탭 모두(#1162). */}
           <AgentButton docked mapId={mapId} hidden={modalOpen} fading={mapMoving} />
           {!modalOpen && <Toaster docked controlsVisible={!mapMoving} />}
+          {/* 핀을 끌 때만 지도 영역 아래 가운데에 나타난다(#1012). 지도 버튼은 오른쪽이라 겹치지 않는다. */}
+          <TrashDropZone mapId={mapId} placement="docked" />
         </div>
       )}
 

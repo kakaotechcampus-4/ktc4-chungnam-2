@@ -204,9 +204,12 @@
 }
 
 /* 글자 단계·그림자(DESIGN.md Typography · Elevation). Tailwind 기본에 없는 단계만 이름을 붙인다.
-   24 text-2xl · 20 text-xl · 17 text-title · 16 text-base · 14 text-sm · 13 text-body · 12 text-xs · 11 text-label.
+   24 text-2xl · 20 text-xl · 17 text-title · 16 text-base · 14 text-sm · 13 text-body · 13 text-xs(#1447 전 12) · 11 text-label.
    text-lg(18)·text-[…] 같은 단계 밖 크기는 쓰지 않는다. */
 @theme {
+    /* 12px 회색 안내 글이 작아 읽기 어려웠다(#1447) — xs 를 13px 로 올린다. body(13)와 굵기·색으로 가른다. */
+    --text-xs: 0.8125rem;
+    --text-xs--line-height: 1.125rem;
     --text-title: 1.0625rem;
     --text-body: 0.8125rem;
     --text-label: 0.6875rem;
@@ -218,6 +221,36 @@
     --animate-pingo-waddle: pingo-waddle 600ms ease-in-out infinite;
     --animate-pingo-step: pingo-step 600ms ease-in-out infinite;
     --animate-pingo-flutter: pingo-flutter 700ms ease-in-out infinite;
+    --animate-pingo-drift: pingo-drift 4s ease-in-out infinite;
+    --animate-pingo-twinkle: pingo-twinkle 2.1s ease-in-out infinite;
+    /* 지도 위 3D 핑고 걷기(MapPingo, #1433) — 걸음마다 들썩이고, 측면 걷기 그림 1·2·3·2 를 0.15초씩 바꾼다. */
+    --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
+    --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
+    --animate-pingo-frame-b: pingo-frame-b 600ms step-end infinite;
+    /* 위·아래로 오르내릴 때 뒷모습과 뒤집은 뒷모습을 걸음마다(0.3초) 바꿔 팔을 번갈아 뻗고, 걸음마다 몸이 한 번 오르거나 내려간다. */
+    --animate-pingo-frame-half: pingo-frame-half 600ms step-end infinite;
+    --animate-pingo-climb: pingo-climb 300ms ease-out infinite;
+    --animate-pingo-descend: pingo-descend 300ms ease-out infinite;
+    @keyframes pingo-climb {
+        0%, 100% { transform: translateY(0); }
+        45% { transform: translateY(-7%); }
+    }
+    @keyframes pingo-descend {
+        0%, 100% { transform: translateY(0); }
+        45% { transform: translateY(7%); }
+    }
+    @keyframes pingo-frame-a {
+        0% { opacity: 1; }
+        25%, 100% { opacity: 0; }
+    }
+    @keyframes pingo-frame-half {
+        0% { opacity: 1; }
+        50%, 100% { opacity: 0; }
+    }
+    @keyframes pingo-frame-b {
+        0%, 50%, 100% { opacity: 0; }
+        25%, 75% { opacity: 1; }
+    }
     @keyframes pingo-bob {
         50% { transform: translateY(-2px) rotate(-3deg); }
     }
@@ -228,6 +261,15 @@
     /* 날 때 망토 끝이 바람에 펄럭인다(목 쪽은 고정). */
     @keyframes pingo-flutter {
         50% { transform: scaleX(0.92) skewY(4deg); }
+    }
+    /* 우주 유영 — 천천히 떠올랐다 가라앉으며 좌우로 기운다. */
+    @keyframes pingo-drift {
+        0%, 100% { transform: translate(-1px, 1px) rotate(-8deg); }
+        50% { transform: translate(1px, -4px) rotate(8deg); }
+    }
+    @keyframes pingo-twinkle {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.25; }
     }
     @keyframes pingo-step {
         0%, 100% { transform: translateY(-3px); }
@@ -323,12 +365,26 @@
     .drop-target[data-over='true'] {
         @apply outline-2 outline-dashed outline-[var(--action-fill)];
     }
+    /* 끄는 동안(html[data-schedule-drag], useScheduleDrag) 놓을 수 있는 칸은 처음부터 ink-300 점선이다.
+       놓을 수 없는 곳(지도, 리스트 줄을 끌 때의 리스트 자리)은 --scrim을 절반 세기로 덮는다. */
+    html[data-schedule-drag] .drop-target:not([data-over='true']) {
+        @apply outline-2 outline-dashed outline-ink-300;
+    }
+    html[data-schedule-drag] .map-base,
+    html[data-schedule-drag='list'] .drop-target[data-day='unset'] {
+        @apply relative outline-none;
+    }
+    html[data-schedule-drag] .map-base::after,
+    html[data-schedule-drag='list'] .drop-target[data-day='unset']::after {
+        @apply pointer-events-none absolute inset-0 z-[1000] rounded-[inherit] bg-scrim opacity-50 content-[''];
+    }
 
     /* 입력칸 틀 — 안에 input 하나와 ✕·글자 수·동작 글자를 둔다. 글자는 16px(아이폰이 확대하지 않는 크기). */
     .field {
         @apply flex min-h-12 items-center gap-2 rounded-xl border border-ink-300 bg-white px-3.5 text-base focus-within:border-[var(--line-focus)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--line-focus)];
-        &[aria-invalid='true'] {
-            @apply border-[var(--warn-line)];
+        /* 잘못 넣은 칸 — 테두리 2px(안쪽 그림자로 한 겹 더해 칸 크기는 그대로) + 주의색 바탕(#1447). */
+        &[aria-invalid='true'], &:has([aria-invalid='true']) {
+            @apply border-[var(--warn-line)] bg-[var(--warn-bg)] shadow-[inset_0_0_0_1px_var(--warn-line)];
         }
     }
 }
@@ -378,6 +434,20 @@
     .pingo-hands {
         animation: enter-fade 150ms cubic-bezier(0, 0, 0.2, 1) 200ms backwards;
     }
+    /* 휴지통으로 끄는 핀(#1012). 집혀 있는 동안 끝을 붙든 채 좌우로 떤다 — "지금 옮기는 중" 상태 표시라 0.5초 상한 밖(DESIGN Motion 예외). */
+    .pin-wobble {
+        transform-origin: 50% 100%;
+        animation: pin-wobble 150ms ease-in-out infinite alternate;
+    }
+    /* 휴지통 뚜껑(TrashDropZone). 핀이 위에 오면 왼쪽 끝을 붙든 채 열리고, 핀이 들어가면 닫힌다. */
+    .trash-lid {
+        transform-box: view-box;
+        transform-origin: 3px 6px;
+        transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .trash-lid[data-open='true'] {
+        transform: translateY(-1px) rotate(-28deg);
+    }
     @media (prefers-reduced-motion: reduce) {
         .enter-fade,
         .enter-pop,
@@ -386,10 +456,20 @@
         .pin-bounce,
         .pingo-rise,
         .pingo-sink,
-        .pingo-hands {
+        .pingo-hands,
+        .pin-wobble {
             animation: none;
         }
+        .trash-lid,
+        .trash-lid[data-open='true'] {
+            transition: none;
+            transform: none;
+        }
     }
+}
+@keyframes pin-wobble {
+    from { transform: rotate(-4deg); }
+    to { transform: rotate(4deg); }
 }
 @keyframes enter-fade {
     from { opacity: 0; }

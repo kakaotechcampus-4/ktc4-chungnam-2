@@ -37,8 +37,8 @@ def _public_item_payload(item: ShortlistItem) -> dict:
 def shortlist_changed_event(item: ShortlistItem, action: str) -> Event:
     """docs/events.md shortlist.changed. 확정 리스트에는 비공개 개념이 없다 — 확정된 핀은
     flows.confirm_pin이 이미 visibility=public인 핀만 통과시키므로(가드레일 1), pin.created류와
-    달리 채널 분기가 필요 없다. action은 'added'|'removed'|'reordered'다. 'reordered'는 정렬에 들어간
-    항목마다 하나씩(새 visit_order를 담아) 발행한다 — payload가 항목 하나 단위라서다."""
+    달리 채널 분기가 필요 없다. action은 'added'|'removed'|'reordered'다. 'reordered'는 순서 바꾸기·일정
+    저장 한 번에 하나고 item은 첫 항목이다(#1274) — 받는 쪽은 목록을 다시 받아 순서를 본다."""
     return Event(
         map_id=item.pin.map_id, channel="public", type="shortlist.changed",
         payload={"item": _public_item_payload(item), "action": action},
