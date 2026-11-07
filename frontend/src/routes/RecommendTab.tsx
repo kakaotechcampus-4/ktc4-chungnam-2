@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
@@ -52,16 +52,37 @@ export default function RecommendTab() {
   )
 }
 
+/** 열자마자 실행을 보낸 run. 실패하면 run 이 첫 실행 전으로 돌아와 이 화면이 새로 붙는데, 그때 또 보내면 성공할 때까지 끝없이 되풀이한다. */
+const autoSent = new Set<string>()
+
 /** 첫 실행 전인 run(예전 방식으로 만들었거나 첫 실행 전에 멈춘 것) — 근거 확인 없이 바로 실행한다(#849 폴백). */
 function ResumeRun({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const execute = useExecuteRunMutation(mapId)
-  // 한 번만 보낸다(개발 모드는 효과가 두 번 돈다). 보내는 순간 run 이 '실행 중'이 되어 이 화면은 사라진다.
-  const sent = useRef(false)
+  // 저절로는 한 번만 보낸다(개발 모드는 효과가 두 번 돈다). 보내는 순간 run 이 '실행 중'이 되어 이 화면은 사라진다.
+  const [retryOnly] = useState(() => autoSent.has(run.id))
   useEffect(() => {
-    if (sent.current) return
-    sent.current = true
+    if (autoSent.has(run.id)) return
+    autoSent.add(run.id)
     execute.mutate(run)
   }, [execute, run])
+  // 보낸 실행이 실패해 돌아왔다(이유는 토스트가 알렸다) — 사람이 다시 누르게 둔다.
+  if (retryOnly) {
+    return (
+      <TabSheet
+        tab="recommend"
+        header={
+          <>
+            <BackToReadiness mapId={mapId} />
+            <AiHeader title="추천을 시작하지 못했어요" sub="잠깐 문제가 생겼어요. 다시 눌러 주세요" mood="error" />
+          </>
+        }
+      >
+        <button type="button" disabled={execute.isPending} onClick={() => execute.mutate(run)} className="btn-primary btn-md w-full">
+          다시 시도
+        </button>
+      </TabSheet>
+    )
+  }
   return (
     <TabSheet tab="recommend" header={<AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />}>
       <ProgressBody />
@@ -95,8 +116,15 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   )
 
   // 실행 중이면 다른 무엇보다 먼저 '진행 중'이다 — 같은 시도의 예전 결과(0곳·실패)가 캐시에 남아 있어도 덮는다(#349).
+  // 진행·불러오기 실패 화면에도 나가는 길을 둔다 — 다른 기기에서 돌리는 중인 run 을 열면 이 화면이 끝나지 않는다.
   if (run.status === 'executing') {
-    return tab(<AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />, <ProgressBody />)
+    return tab(
+      <>
+        <BackToReadiness mapId={mapId} />
+        <AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />
+      </>,
+      <ProgressBody />,
+    )
   }
   if (failed) {
     return tab(
@@ -124,13 +152,26 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   }
   if (!result.data) {
     return tab(
-      <AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />,
-      result.error ? <ErrorText message="결과를 불러오지 못했어요" error={result.error} /> : <ProgressBody />,
+      <>
+        <BackToReadiness mapId={mapId} />
+        <AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />
+      </>,
+      result.error ? (
+        <div className="space-y-2">
+          <ErrorText message="결과를 불러오지 못했어요" error={result.error} />
+          <button type="button" disabled={result.isFetching} onClick={() => void result.refetch()} className="btn-outline btn-sm">
+            다시 불러오기
+          </button>
+        </div>
+      ) : (
+        <ProgressBody />
+      ),
     )
   }
 
   const data = result.data
-  const count = data.candidates.length
+  // 깔때기는 마지막 실행 기준이라, 예전 시도에서 올린 후보까지 든 candidates 수가 아니라 이번에 찾은 수와 맞춘다.
+  const count = data.new_count ?? data.candidates.length
   if (view.kind === 'how') {
     return tab(<AiHeader title="이렇게 골랐어요" sub="조건에 안 맞는 곳을 빼고, 남은 곳에 순위를 매겼어요" />, <HowPicked funnel={data.funnel} count={count} onBack={back} />)
   }

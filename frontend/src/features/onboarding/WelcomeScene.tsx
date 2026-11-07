@@ -182,7 +182,7 @@ function ReactionScene() {
 function ReactionPill({ on, tone, children }: { on: boolean; tone: 'good' | 'bad'; children: ReactNode }) {
   return (
     <span
-      className="flex items-center justify-center gap-0.5 rounded-lg border py-1 text-label font-bold transition-colors duration-200 ease-out motion-reduce:transition-none"
+      className="flex items-center justify-center gap-0.5 rounded-xl border py-1 text-label font-bold transition-colors duration-200 ease-out motion-reduce:transition-none"
       style={
         on
           ? { background: `var(--${tone}-bg)`, borderColor: `var(--${tone}-line)`, color: `var(--${tone}-text)` }

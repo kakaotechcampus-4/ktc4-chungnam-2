@@ -4,7 +4,8 @@ import { invalidateCredits } from '@/features/credits/queries'
 import { scheduleSaved } from '@/features/shortlist/scheduleQueries'
 
 import { createCourse, fetchCourseRun, fetchLatestCourse } from './api'
-import { isFinished, POLL_MS, requestBody } from './model'
+import { useCourseViewStore } from './courseMapStore'
+import { inProgressRunId, isFinished, POLL_MS, requestBody } from './model'
 
 export const courseKeys = {
   /** 모든 run 상세(`run(runId)`의 앞부분) — 일정이 바뀌면 열려 있는 결과의 `stale`을 다시 받는다. */
@@ -42,9 +43,16 @@ export function useCreateCourseMutation(mapId: string) {
     },
     // 새 run 이 생겼으니 「최근 코스」는 다시 받는다. 코스 1번에 크레딧을 쓴다(#432) — 잔액도 다시 받는다.
     // 결과 없이 끝나면 서버가 돌려준다. 그 잔액은 시트 입구를 다시 열 때 잔액 줄이 새로 받는다.
-    onSuccess: () => {
+    // 만든 run(이미 짜는 중이면 그 run)을 여는 것도 여기서 한다. 요청 중에 탭을 떠났다 오면 입력 화면이 새로 붙어
+    // 그 화면의 mutate 콜백은 불리지 않는다 — 그러면 진행 화면 대신 입력 화면이 남았다.
+    onSuccess: (res) => {
+      useCourseViewStore.getState().open(mapId, res.course_run_id)
       void invalidateCredits(queryClient)
       return queryClient.invalidateQueries({ queryKey: courseKeys.latest(mapId), refetchType: 'none' })
+    },
+    onError: (err) => {
+      const running = inProgressRunId(err)
+      if (running) useCourseViewStore.getState().open(mapId, running, true)
     },
   })
 }

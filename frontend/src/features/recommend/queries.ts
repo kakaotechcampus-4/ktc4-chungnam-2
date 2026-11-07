@@ -31,6 +31,7 @@ export const recommendKeys = {
   evidence: (runId: string) => ['runs', runId, 'evidence'] as const,
   result: (runId: string) => ['runs', runId, 'result'] as const,
   evidencePatch: (runId: string) => ['runs', runId, 'evidence-patch'] as const,
+  create: (mapId: string) => ['recommend', mapId, 'create'] as const,
 }
 
 /** 지난 추천 기록(#482). 새 추천·다시 추천·올리기로 바뀌니 준비 화면에 올 때마다 다시 받는다. */
@@ -69,6 +70,7 @@ export function useCreateRunMutation(mapId: string) {
   const queryClient = useQueryClient()
   const center = useMapCenter()
   const mutation = useMutation({
+    mutationKey: recommendKeys.create(mapId),
     mutationFn: ({ category, key, at }: { category: RecommendCategory; key: string; at: Center | null }) =>
       createRun(mapId, category, key, at),
     retry: (count, err) => inProgress(err) && count < IN_PROGRESS_TRIES,
@@ -79,10 +81,15 @@ export function useCreateRunMutation(mapId: string) {
       void invalidateCredits(queryClient)
     },
   })
-  const start = (category: RecommendCategory, opts?: { onError?: (err: Error) => void }) =>
+  // 요청 중에 탭을 떠났다 오면 이 훅이 새로 붙어 isPending 이 false 다. 그때 다시 누르면 새 키로 run 이 하나 더 생기고
+  // 크레딧도 또 빠진다 — 지도마다 진행 중인 요청이 있는지를 캐시에서 본다.
+  const creating = useIsMutating({ mutationKey: recommendKeys.create(mapId) }) > 0
+  const start = (category: RecommendCategory, opts?: { onError?: (err: Error) => void }) => {
+    if (creating) return
     // 중심은 누른 순간 한 번 읽는다 — 처리 중이라 다시 묻는 것(retry)은 같은 키·같은 중심이어야 한다(멱등 동일성, #1331).
     mutation.mutate({ category, key: crypto.randomUUID(), at: center() }, opts)
-  return { ...mutation, start }
+  }
+  return { ...mutation, isPending: mutation.isPending || creating, start }
 }
 
 /**
@@ -93,6 +100,9 @@ export function useCreateRunMutation(mapId: string) {
  * 이 처리(안내 포함)를 버튼이 아니라 여기에 두는 이유: 누른 화면(근거 확인·결과·0곳)은 '실행 중'이 되는 순간
  * 사라져서 그 화면의 mutate 콜백은 불리지 않는다.
  */
+/** 이 지도 화면이 아직 그 run 을 보고 있는지. */
+const isShown = (mapId: string, runId: string) => useAiStore.getState().runs[mapId]?.id === runId
+
 function useRunningMutation(mapId: string, fn: (runId: string) => Promise<RecommendRunDto>) {
   const setRun = useAiStore((s) => s.setRun)
   const queryClient = useQueryClient()
@@ -105,10 +115,12 @@ function useRunningMutation(mapId: string, fn: (runId: string) => Promise<Recomm
     onSuccess: (run) => {
       // 실패 뒤 「다시 시도」로 성공하면 같은 run·같은 시도 번호라 예전(실패) 결과가 캐시에 남아 있을 수 있다 — 새로 받는다.
       void queryClient.invalidateQueries({ queryKey: recommendKeys.result(run.id) })
-      setRun(mapId, run)
+      if (isShown(mapId, run.id)) setRun(mapId, run)
     },
     onError: (err, _run, ctx) => {
       if (!ctx) return
+      // 기다리는 동안 준비 화면으로 나갔거나 다른 추천을 시작했으면 늦게 온 응답이 그 화면을 덮지 않는다.
+      if (!isShown(mapId, ctx.before.id)) return
       if (err instanceof ApiError && err.code === 'RECOMMEND_FAILED') {
         setRun(mapId, { ...ctx.before, status: 'failed' })
         return

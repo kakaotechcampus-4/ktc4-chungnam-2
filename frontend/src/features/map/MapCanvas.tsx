@@ -172,6 +172,8 @@ export default function MapCanvas({
   const mapClickRef = useRef<(e?: kakao.maps.event.MouseEvent) => void>(() => {})
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<Error | null>(null)
+  // 「다시 시도」마다 올린다 — SDK 요청이 한 번 끊기면 새로고침 전까지 지도가 없던 것을 그 자리에서 다시 부른다.
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -355,7 +357,7 @@ export default function MapCanvas({
       layerRef.current?.destroy()
       layerRef.current = null
     }
-  }, [])
+  }, [attempt])
 
   useEffect(() => {
     const layer = layerRef.current
@@ -671,12 +673,25 @@ export default function MapCanvas({
             <>
               <Pingo size={48} mood="error" />
               <p className="text-sm text-warn-text">지도를 불러오지 못했어요</p>
+              {/* 원인(앱키·도메인)은 개발자에게만 보인다. 쓰는 사람에겐 할 수 있는 일을 말한다. */}
               <p className="text-xs text-ink-500">
-                {error instanceof KakaoMapKeyMissingError
-                  ? 'frontend/.env.local 에 VITE_KAKAO_MAP_KEY 를 넣어주세요 (.env.example 참고)'
-                  : error.message}
+                {import.meta.env.DEV
+                  ? error instanceof KakaoMapKeyMissingError
+                    ? 'frontend/.env.local 에 VITE_KAKAO_MAP_KEY 를 넣어주세요 (.env.example 참고)'
+                    : error.message
+                  : '인터넷 연결을 확인하고 다시 시도해 주세요'}
               </p>
-              <p className="text-xs text-ink-500">핀 {pins.length}개는 아래 목록에 그대로 있어요</p>
+              {pins.length > 0 && <p className="text-xs text-ink-500">핀 {pins.length}곳은 목록에서 그대로 볼 수 있어요</p>}
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null)
+                  setAttempt((n) => n + 1)
+                }}
+                className="btn-outline btn-sm mt-2"
+              >
+                다시 시도
+              </button>
             </>
           ) : (
             <PingoLoading label="지도를 불러오는 중…" />

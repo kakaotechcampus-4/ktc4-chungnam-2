@@ -82,9 +82,12 @@ export default function MapListPage() {
 
         {maps?.length === 0 ? (
           <div className="flex flex-1 flex-col justify-center md:flex-none md:rounded-2xl md:border md:border-dashed md:border-ink-300 md:py-18">
-            <EmptyState title="아직 만든 지도가 없어요">
-              지도를 만들고 친구를 초대해 보세요
-            </EmptyState>
+            {/* 게스트는 지도를 만들 수 없고 초대 링크로만 들어간다(#472). */}
+            {guest ? (
+              <EmptyState title="들어가 있는 지도가 없어요">친구에게 초대 링크를 받아 열면 그 지도로 들어가요</EmptyState>
+            ) : (
+              <EmptyState title="아직 만든 지도가 없어요">지도를 만들고 친구를 초대해 보세요</EmptyState>
+            )}
           </div>
         ) : (
           <div className="flex-1 space-y-5 md:space-y-10">

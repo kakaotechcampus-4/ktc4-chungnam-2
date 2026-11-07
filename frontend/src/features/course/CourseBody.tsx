@@ -104,16 +104,8 @@ function Entry({
     if (!guest) setAsking(true)
   })
 
-  function submit() {
-    create.mutate(text, {
-      onSuccess: (res) => onRun(res.course_run_id),
-      // 이미 짜는 중이면 새로 만들지 않고 그 run 으로 간다.
-      onError: (err) => {
-        const running = inProgressRunId(err)
-        if (running) onRun(running, true)
-      },
-    })
-  }
+  // 만든 run 을 여는 것(이미 짜는 중이면 그 run 으로)은 요청 훅이 한다.
+  const submit = () => create.mutate(text)
 
   function openLatest() {
     if (!latest) return

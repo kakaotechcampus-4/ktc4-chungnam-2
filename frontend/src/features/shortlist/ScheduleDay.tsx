@@ -59,6 +59,7 @@ export function ScheduleDayList({ day, ids, nameOf, subOf, onOpen, onTakeOut, on
             <ScheduleRow
               pinId={id}
               n={i + 1}
+              last={i === ids.length - 1}
               name={nameOf(id)}
               sub={subOf?.(id)}
               onOpen={onOpen}
@@ -81,6 +82,7 @@ export function ScheduleDayList({ day, ids, nameOf, subOf, onOpen, onTakeOut, on
 function ScheduleRow({
   pinId,
   n,
+  last,
   name,
   sub,
   onOpen,
@@ -90,6 +92,7 @@ function ScheduleRow({
 }: {
   pinId: string
   n: number
+  last: boolean
   name: string
   sub?: string
   onOpen?: (pinId: string) => void
@@ -125,7 +128,18 @@ function ScheduleRow({
       ) : (
         <span className="min-w-0 flex-1">{label}</span>
       )}
-      <button type="button" aria-label={`${name} 일정에서 빼기`} onClick={() => onTakeOut(pinId)} className="btn-text shrink-0 text-xs">
+      <button
+        type="button"
+        aria-label={`${name} 일정에서 빼기`}
+        onClick={(e) => {
+          // 줄이 사라지면 포커스가 문서 처음으로 빠진다 — 다음 줄(없으면 앞 줄)의 ≡로 옮겨 둔다.
+          const row = e.currentTarget.closest('li')
+          const near = [row?.nextElementSibling, row?.previousElementSibling].find((el) => el?.matches('li[data-pin]'))
+          near?.querySelector<HTMLElement>('button[aria-keyshortcuts]')?.focus()
+          onTakeOut(pinId)
+        }}
+        className="btn-text shrink-0 text-xs"
+      >
         빼기
       </button>
       <button
@@ -138,8 +152,11 @@ function ScheduleRow({
         onKeyDown={(e) => {
           if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
           e.preventDefault()
+          const up = e.key === 'ArrowUp'
+          // 맨 위에서 ↑·맨 아래에서 ↓는 옮길 곳이 없다. 표시를 남기면 나중에 순서가 바뀔 때 이 줄이 포커스를 가져간다.
+          if (up ? n === 1 : last) return
           keyMoved.current = true
-          onShift(pinId, e.key === 'ArrowUp' ? -1 : 1)
+          onShift(pinId, up ? -1 : 1)
         }}
       >
         <GripVertical size={20} aria-hidden="true" />

@@ -14,7 +14,7 @@ import { useRunAdviceQuery } from './queries'
  * 「이 조건으로 찾았어요」 카드를 연다(#849, `onOpenEvidence`). `widen` 을 주지 않으면(0곳 화면처럼 이미 같은 버튼이 있을 때) 문장만 보인다.
  */
 export default function RunAdvice({ run, widen, onOpenEvidence }: { mapId: string; run: RecommendRunDto; widen?: ReactNode; onOpenEvidence?: () => void }) {
-  const advice = useRunAdviceQuery(run.id)
+  const advice = useRunAdviceQuery(run)
 
   if (advice.isPending) return <div aria-hidden="true" className="h-16 rounded-xl bg-ink-50" />
   if (advice.error) return <ErrorText message="조언을 불러오지 못했어요" error={advice.error} />

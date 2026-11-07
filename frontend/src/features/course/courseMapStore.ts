@@ -21,7 +21,11 @@ export const useCourseViewStore = create<{
 }>((set) => ({
   runs: {},
   open: (mapId, runId, redirected = false) => set((s) => ({ runs: { ...s.runs, [mapId]: { runId, redirected } } })),
-  close: (mapId) => set((s) => ({ runs: { ...s.runs, [mapId]: undefined } })),
+  // 닫은 코스의 선·범례가 지도에 남지 않게 같이 끈다.
+  close: (mapId) => {
+    if (useCourseMapStore.getState().mapId === mapId) useCourseMapStore.getState().hide()
+    set((s) => ({ runs: { ...s.runs, [mapId]: undefined } }))
+  },
 }))
 
 /** 이미 반영한 고칠 점 카드(run id → 카드 id). 탭을 오가도 「반영됨」이 남게 화면 메모리에 둔다. */

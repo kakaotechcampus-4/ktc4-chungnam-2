@@ -464,7 +464,10 @@ function MyOpinion({
           label: '되돌리기',
           onClick: () =>
             previous &&
-            react.mutate({ type: previous.type, reason_text: previous.reason_text, reason_chip_ids: previous.reason_chip_ids }),
+            react.mutate(
+              { type: previous.type, reason_text: previous.reason_text, reason_chip_ids: previous.reason_chip_ids },
+              { onError: () => showToast('의견을 되돌리지 못했어요') },
+            ),
         }),
       onError: () => showToast('의견을 취소하지 못했어요'),
     })
