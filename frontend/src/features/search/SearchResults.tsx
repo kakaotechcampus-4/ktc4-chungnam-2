@@ -3,7 +3,7 @@ import { ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { useLivePlaceStore } from '@/features/map/livePlaces'
-import { FILTER_CATEGORIES, type Pin, type PinCategory } from '@/features/map/model'
+import { FILTER_CATEGORIES, inputExample, type Pin, type PinCategory } from '@/features/map/model'
 import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
@@ -189,7 +189,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           </div>
         )}
         {selected.canLeaveLive && !selected.alreadyPinned ? (
-          <LiveLeaveForm pending={create.isPending} onSubmit={(input) => pinLive(selected, input)} />
+          <LiveLeaveForm category={selected.dto.category} pending={create.isPending} onSubmit={(input) => pinLive(selected, input)} />
         ) : (
           <PinItButton result={selected} filled pending={create.isPending} onPin={() => pinIt(selected)} />
         )}
@@ -284,8 +284,19 @@ type LiveInput = { memo: string; name?: string; category?: PinCategory }
 /**
  * 자체 DB에 없는 장소 — 장소 정보·AI 추천·동선에는 못 쓰지만 핀으로 남겨 의견을 나눌 수 있다(#382). 메모는 선택이다.
  * `askName`이면(카카오 링크, #487) 이름과 분류도 받는다 — 지도를 열 때 그 이름으로 카카오에서 위치를 다시 찾는다.
+ * 한마디 칸 예시는 분류를 따른다 — 검색 결과의 분류(`category`), 링크로 열었으면 고른 분류(#1461).
  */
-function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boolean; pending: boolean; onSubmit: (input: LiveInput) => void }) {
+function LiveLeaveForm({
+  askName = false,
+  category: known,
+  pending,
+  onSubmit,
+}: {
+  askName?: boolean
+  category?: PinCategory | null
+  pending: boolean
+  onSubmit: (input: LiveInput) => void
+}) {
   const [memo, setMemo] = useState('')
   const [name, setName] = useState('')
   const [category, setCategory] = useState<PinCategory | null>(null)
@@ -315,7 +326,7 @@ function LiveLeaveForm({ askName = false, pending, onSubmit }: { askName?: boole
       <label className="block text-body font-bold text-ink-900" htmlFor="live-pin-memo">
         한마디 남기기 (선택)
       </label>
-      <TextArea id="live-pin-memo" value={memo} onChange={setMemo} maxLength={MEMO_MAX} placeholder="예: 여기 곱창 맛있대" rows={2} clearLabel="한마디 지우기" />
+      <TextArea id="live-pin-memo" value={memo} onChange={setMemo} maxLength={MEMO_MAX} placeholder={inputExample(category ?? known, 'memo')} rows={2} clearLabel="한마디 지우기" />
       <button
         type="button"
         onClick={() => onSubmit({ memo: memo.trim(), name: name.trim() || undefined, category: category ?? undefined })}

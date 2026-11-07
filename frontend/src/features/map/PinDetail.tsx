@@ -21,7 +21,7 @@ import TextField from '@/ui/TextField'
 
 import { isLive, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
-import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, inputExample, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
@@ -35,9 +35,10 @@ const TEXT_MAX = 140
 const MISSING_REASON = '반대 이유를 하나 이상 남겨 주세요'
 const MEMO_MAX = 200
 
-const PROMPT: Record<ReactionType, { title: string; placeholder: string }> = {
-  like: { title: '무엇이 좋았나요? (선택)', placeholder: '예: 국물이 진하고 양이 많아요' },
-  against: { title: '왜 별로인가요? (필수)', placeholder: '예: 지난번 여행 때 가봤어요' },
+/** 입력칸 예시 문장은 카테고리마다 다르다 — `inputExample`(model). */
+const PROMPT: Record<ReactionType, { title: string }> = {
+  like: { title: '무엇이 좋았나요? (선택)' },
+  against: { title: '왜 별로인가요? (필수)' },
 }
 
 /**
@@ -189,7 +190,7 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
       }
     >
       <div className="pt-2">
-        <TextField value={memo} onChange={setMemo} maxLength={MEMO_MAX} label="메모" placeholder="예: 여기 곱창 맛있대" clearLabel="메모 지우기" />
+        <TextField value={memo} onChange={setMemo} maxLength={MEMO_MAX} label="메모" placeholder={inputExample(category, 'memo')} clearLabel="메모 지우기" />
       </div>
       {live && (
         <div role="group" aria-label="분류" className="flex flex-wrap gap-2 pt-1">
@@ -535,7 +536,7 @@ function MyOpinion({
             value={text}
             onChange={setText}
             maxLength={TEXT_MAX}
-            placeholder={PROMPT[type].placeholder}
+            placeholder={inputExample(pin.category, type)}
             label={PROMPT[type].title}
             clearLabel="사유 지우기"
             inputRef={reasonRef}
