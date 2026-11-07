@@ -116,9 +116,9 @@ describe('우리 조건 요약(#589)', () => {
   it('이름 없이 개수만, 비어 있지 않은 칸만, 추천 대상 카테고리엔 추천 버튼', async () => {
     setup()
     expect(await screen.findByText('우리 조건 요약')).toBeInTheDocument()
-    expect(screen.getByText('매운 곳 제외 · 1명')).toBeInTheDocument()
-    expect(screen.getByText('횟집 원함 · 2명')).toBeInTheDocument()
-    expect(screen.getByText('체인점 · 원함 1 / 피함 1')).toBeInTheDocument()
+    expect(screen.getByText('매운 곳 제외 (1명)')).toBeInTheDocument()
+    expect(screen.getByText('횟집 원함 (2명)')).toBeInTheDocument()
+    expect(screen.getByText('체인점 (원하는 사람 1명, 피하는 사람 1명)')).toBeInTheDocument()
     expect(screen.getByText('더 적어 주면 반영돼요 (1건)')).toBeInTheDocument()
     expect(screen.getByText('추천에서 거르지 않는 조건 (1건)')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '이 조건으로 음식점 추천 받기' })).toBeInTheDocument()

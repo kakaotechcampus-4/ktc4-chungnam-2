@@ -85,7 +85,7 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
               기존 계정 복구
             </button>
             <p className="mt-1.5 break-keep text-xs text-ink-500">
-              {days_left}일 남음 · {formatRestoreUntil(restore_until)}까지
+              {formatRestoreUntil(restore_until)}까지 {days_left}일 남았어요
               <br />
               복구하면 참여하던 지도와 내 이름이 붙은 핀이 돌아와요. 남긴 의견은 돌아오지 않아요
             </p>
