@@ -123,7 +123,7 @@
 | 네이버 | 장소 소스 코드는 있으나 기본 꺼짐(`PLACES_SOURCES=kakao`) | `naver.me` 단축 링크의 **리다이렉트 한 번**만 따라간다(#1048) |
 | 공공데이터 | 인허가 음식점·카페, TourAPI 관광지 적재 | `places/ingest.py`, `load` 스크립트 |
 | **LLM** | 아래 | `backend/llm/`, `최종기획안.md` 13절 |
-| 광고 | 추천 탭은 자체 등록 광고(CSV 스크립트, `docs/ads.md`). 크레딧 광고는 제공자 스위치 `CREDIT_AD_PROVIDER`(`""`/fake/adsense/gpt) | adsense·gpt는 아직 구현 안 됨, 운영에서 fake면 서버가 뜨지 않는다 |
+| 광고 | 추천 탭은 자체 등록 광고(CSV 스크립트, `docs/ads.md`). 크레딧 광고는 제공자 스위치 `CREDIT_AD_PROVIDER`(`""`/fake/adsense/gpt) | adsense·gpt는 아직 구현 안 됨, 운영에서 fake면 서버가 뜨지 않는다. 페이즈 1 운영은 둘 다 쓰지 않는다(추천 탭 광고는 등록하지 않고 크레딧 광고는 비움, 기획안 16절) |
 
 ### LLM
 - **제공자**: OpenAI를 직접 호출한다(2026-11-02, #1120). 모델 `gpt-6-luna`(`LLM_MODEL`로 바꿀 수 있다). **환경변수 이름은 엘리스 시절 그대로** `ELICE_ML_API_BASE_URL`·`ELICE_ML_API_KEY`다. 코드의 기본 주소는 빈 문자열이고(비면 호출이 실패), `https://api.openai.com/v1`은 `deploy/env/*.env.example`에 들어 있다. **운영 서버가 실제로 전환됐는지는 서버 env를 확인해야 한다**(`deploy_rules.md`는 운영이 아직 옛 설정이라고 적는다).

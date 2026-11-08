@@ -642,7 +642,7 @@ credit_ledger(
   id uuid PK,
   user_id varchar NOT NULL,
   delta integer NOT NULL,
-  reason('initial'|'spend'|'refund'|'review'|'ad') NOT NULL,   -- ad = 광고 보고 충전(#1037). 페이즈 2 구매는 'purchase'로 같은 표에 더한다
+  reason('initial'|'spend'|'refund'|'review'|'ad') NOT NULL,   -- ad = 광고 보고 충전(#1037, 스테이징 전용). 구매(유료 크레딧)는 없다(기획안 16-4절, #1526)
   ref_id varchar NOT NULL UNIQUE,     -- initial:<user> · <feature>:<run_id> · refund:<차감 ref_id> · review:<user>:<place_id>
   created_at timestamptz NOT NULL default now()
 )
