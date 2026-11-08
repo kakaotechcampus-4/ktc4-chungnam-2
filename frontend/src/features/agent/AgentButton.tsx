@@ -68,7 +68,9 @@ export default function AgentButton({
         hidden={hidden}
         onClick={onOpen}
         aria-label={dot ? '핑고 AI 조언, 새 제안 있음' : '핑고 AI 조언'}
-        className={`absolute left-4 ${docked ? 'pointer-events-auto bottom-4' : 'bottom-[calc(100%+12px)]'} press flex min-h-11 min-w-11 items-center gap-2`}
+        // 넓은 화면은 지도 왼쪽 아래 — 카카오 로고·축척 막대(바닥에서 약 20px)와 겹치지 않게 40px 띄운다(#1524).
+        // 휴대폰은 시트 위에 붙어 다니고 로고는 하단 탭 뒤라 겹치지 않는다.
+        className={`absolute left-4 ${docked ? 'pointer-events-auto bottom-10' : 'bottom-[calc(100%+12px)]'} press flex min-h-11 min-w-11 items-center gap-2`}
       >
         {/* 지도 위에 맨몸으로 서서 그림자로 띄운다. 휴대폰 48 · 태블릿 56 · PC 64. */}
         <span className="relative block drop-shadow-md">
