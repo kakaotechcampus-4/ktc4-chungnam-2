@@ -71,7 +71,7 @@ function SceneCandidatePin() {
 
 function PinSvg({ glyph }: { glyph: PinGlyph }) {
   // pinGlyph 는 상수·숫자로만 만든 마크업이다(사용자 글 없음).
-  return <svg viewBox="0 0 24 32" width="24" height="32" className="drop-shadow-[0_1px_2px_rgba(20,22,31,0.3)]" dangerouslySetInnerHTML={{ __html: pinGlyph(glyph) }} />
+  return <svg viewBox="0 0 24 32" width="24" height="32" dangerouslySetInnerHTML={{ __html: pinGlyph(glyph) }} />
 }
 
 /** 판 위 작은 흰 카드(검색창·의견·확정 리스트). 지도 위에 뜬 것이라 그림자를 준다. */

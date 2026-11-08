@@ -21,19 +21,20 @@ export type PinGlyph =
  *   빨강 테두리였을 땐 참여 100%에서 속과 같은 색이라 테두리가 사라졌다(#1519). AI 추천도 「지도에 올리기」 뒤엔 이 모양이다(#1032).
  * - 확정: 골드 채움 + 갈색 윤곽선 + 진한 빨강 하트(좋음 하트 `LIKE_PATH`를 0.6배로). 참여율과 무관하다. 흰 테두리는 없앴다(#1355) —
  *   골드는 어두운 타일에서도 밝고, 밝은 땅 위는 갈색 윤곽선이 가른다(#299). 하트는 색을 못 가르는 사람에게 확정을 알린다(흑백이면 참여 50% 핀과 밝기가 같다).
- * - AI 후보: brand-600 핀 + 흰 테두리 + 머리에 흰 핑고 얼굴(하단 AI 탭 활성 모양과 같은 「파랑 채움 + 흰 얼굴」, #843).
- * 윤곽선 굵기는 일반·확정이 같다(`PIN_OUTLINE`). var()·color-mix() 는 SVG 속성보다 style 에서 확실히 해석된다.
+ * - AI 후보: 파랑(brand-500) 채움 + 진한 파랑(brand-700) 윤곽선 + 머리에 흰 핑고 얼굴(#843). 일반·확정과 같은 「채움 + 같은 계열 진한 윤곽선 + 머리 표식」이다 —
+ *   흰 테두리 + 그림자였을 땐 혼자 옛 모양으로 보였다(2026-11-09). 파랑 500은 빨강 핀과 진하기가 비슷해 지도 위 무게가 맞고, 연한 파랑은 물 위에서 묻혔다.
+ * 윤곽선 굵기는 세 핀이 같다(`PIN_OUTLINE`). 그림자는 없다. var()·color-mix() 는 SVG 속성보다 style 에서 확실히 해석된다.
  * 넣는 값은 상수와 숫자뿐이라 마크업으로 넣어도 된다 — 장소 이름 같은 사용자 글은 여기 들어오지 않는다.
  */
 export function pinGlyph(g: PinGlyph): string {
   if (g.kind === 'candidate') {
     const { pin, hole, face, eyes } = PINGO_MARK
-    return `<path d="${PIN_PATH}" stroke-linejoin="round" style="fill:var(--brand-600);stroke:#fff;stroke-width:2" />
+    return `<path d="${PIN_PATH}" stroke-linejoin="round" style="fill:var(--brand-500);stroke:var(--brand-700);stroke-width:${PIN_OUTLINE}" />
       <g transform="${MARK_IN_HEAD}">
         <path d="${pin}" fill="#fff" />
-        <circle cx="${hole.cx}" cy="${hole.cy}" r="${hole.r}" style="fill:var(--brand-600)" />
+        <circle cx="${hole.cx}" cy="${hole.cy}" r="${hole.r}" style="fill:var(--brand-500)" />
         <rect x="${face.x}" y="${face.y}" width="${face.w}" height="${face.h}" rx="${face.rx}" fill="#fff" />
-        ${eyes.map((e) => `<ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" style="fill:var(--ink-900)" />`).join('')}
+        ${eyes.map((e) => `<ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" style="fill:var(--brand-800)" />`).join('')}
       </g>`
   }
   if (g.kind === 'confirmed') {

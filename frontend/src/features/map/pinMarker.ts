@@ -106,8 +106,7 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
     : ''
   // 순위 배지는 오른쪽 위다. 고르면 핑고 손이 그 자리라 커진 머리 오른쪽 옆으로 내린다.
   el.innerHTML = `
-    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true" overflow="visible"
-         style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))"${c.selected ? ' class="pin-bounce"' : ''}>
+    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true" overflow="visible"${c.selected ? ' class="pin-bounce"' : ''}>
       ${pinGlyph({ kind: 'candidate' })}
       ${hands}
     </svg>
