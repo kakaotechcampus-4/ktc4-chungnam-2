@@ -20,6 +20,16 @@ export const updateMap = (mapId: string, body: MapUpdateRequest) =>
 /** 지도 삭제(방장만, #369). 모든 구성원에게서 사라진다. */
 export const deleteMap = (mapId: string) => api<void>(`/maps/${mapId}`, { method: 'DELETE' })
 
+/** 지도 복사(방장만, #1446). 날짜·지역·이미지·색·핀을 가져가고 의견·구성원·확정 리스트는 두고 온다. 새 지도가 온다. */
+export const copyMap = (mapId: string) => api<MapDto>(`/maps/${mapId}/copy`, { method: 'POST' })
+
+/** 대표 이미지 올리기(방장만, #1445). 본문은 이미지 그대로다. 응답은 cover_url 이 바뀐 지도다. */
+export const putCover = (mapId: string, image: Blob) =>
+  api<MapDto>(`/maps/${mapId}/cover`, { method: 'PUT', body: image, headers: { 'Content-Type': image.type } })
+
+/** 대표 이미지 지우기 — 지역 기본 그림으로 돌아간다(방장만, #1445). */
+export const deleteCover = (mapId: string) => api<MapDto>(`/maps/${mapId}/cover`, { method: 'DELETE' })
+
 /** 내가 방장인 삭제한 지도(#464). 복구할 수 있는 것만, 최근 삭제순. */
 export const fetchTrash = () => api<TrashedMapListDto>('/maps/trash')
 

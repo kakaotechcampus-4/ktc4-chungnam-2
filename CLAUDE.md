@@ -48,6 +48,7 @@
    - 스키마는 늘리기와 줄이기를 다른 릴리스에 한다. 이전 릴리스 코드가 새 스키마에서 돌아야 배포 중과 롤백 뒤에 깨지지 않는다. 모델에서 뺀 칸은 `deploy_rules.md` 「지울 칸」 표에 적고 다음 릴리스에 지운다. 0062가 칸 삭제와 기본값 제거를 같이 해서 멘토 리뷰에서 걸린 이유다(`integration/test_schema_compat.py`, #1464).
    - 같은 규칙을 두 곳에서 정하지 않는다. 정하는 곳 하나를 두고 보여 주는 곳과 다른 모듈은 그 결과를 받는다. 경계가 막으면 복사하지 말고 그 모듈 `api.py`에 요청한다. 정하는 곳과 보여 주는 곳이 따로 있으면 규칙이 바뀔 때 한쪽만 바뀐다. 예: 영업 여부(#747, 세 벌이 서로 달랐다), 근거 줄 enforced(#740, 응답이 파이프라인과 따로 정했다), ♥ 표의 기본값(#738, 문서와 코드가 달랐다), 깔때기 단계 글자(#751)(멘토 리뷰 #680).
    - 정책 값(보관 기간, 상한)은 그 값으로 일하는 모듈이 갖고, 다른 모듈에 여는 함수는 그 값을 인자로 받지 않는다. 인자가 열려 있으면 부르는 쪽이 값을 다시 적는다. 정기 정리가 지도 휴지통 기간 30을 따로 적어 넘긴 이유다(멘토 리뷰, `integration/test_purge_periods_one_place.py`, #1474).
+6. 결정이나 규칙을 바꾸면 문서도 같은 PR에서 따라간다. 규칙은 정본 한 곳에만 적고 다른 문서·모듈 CLAUDE.md·코드 설명은 그 자리를 가리키기만 한다. 다시 적은 곳이 있으면 이번에 가리키게 바꾼다. 바꾸기 전에 옛 표현(숫자, 함수 이름, "없다" 같은 문장)을 저장소 전체에서 검색해 남은 곳을 고치고, 검색어를 PR 본문 「바뀐 결정·규칙」에 남긴다. 표로 된 규칙은 테스트가 문서 표를 읽게 한다. 같은 리뷰에서 환불, 시연 장소, 선호 점수 문장이 결정을 못 따라간 이유다 — 모두 한 규칙을 여러 곳에 글로 적고 한 곳만 고쳤다(멘토 리뷰, #1481).
 
 ## 한 곳이어야 하는 것
 
@@ -68,6 +69,7 @@
 | 조건의 세기(실격, 선호) | 정리 전(#732). 줄이 이번 추천에 쓰이는지는 `recommend/core.py`의 `evidence_line_use` 한 곳이다(#740, 파이프라인, 근거 응답, agent가 함께 쓴다). 그 밖에 19곳이 `test_condition_strength_sites.py`의 목록에 있다(`recommend/flows.py`, `recommend/core.py`, `recommend/service.py`, `agent/core.py`, `agent/tools.py`). 칩의 배지는 `docs/constraints.md` 칩 표의 배지 열 | badge를 `"required"`, `"preferred"` 글자와 비교함, `SOFT_FACT_KEYS`나 `HARD_REGISTRY`를 `recommend/constraints.py` 밖에서 읽음 |
 | 사용자 글의 렌더 | 정리 전. agent 조언은 조각으로 내림(`agent/core.py`의 `render_segments`, #717). 알림 문장 `notifications/core.py`의 `compose_message`, 코스의 요청 원문 조각과 작업 기록(`agent/course`)은 아직 문장에 섞음 | 서버 문장 f-string 안에 사유, 검색어, 표시 이름 |
 | 사람과 로그인 수단 | `auth`: `users`(사람)와 `user_identities`(로그인 수단, #694) | 다른 모듈이 `is_guest`나 provider를 직접 판정함, `users`에 로그인 수단 열을 더함 |
+| 탈퇴한 사람 표시 이름 | `auth.api.WITHDRAWN_DISPLAY_NAME`(정본 `auth.core`), 다른 모듈은 import한다(#1475, `integration/test_withdrawn_name_one_place.py`) | 기능 모듈 안의 「탈퇴한 구성원」 문자열, 복사본이 정본과 같은지 대조하는 테스트 |
 | 영업 여부 판정 | `places.core.day_open_status`, 다른 모듈은 `places.api.get_week_open_status`로 받는다(#747) | 모듈 안의 요일 이름 표("월화수목금토일")로 hours, closed_days를 읽음, 시각 파싱이나 자정 넘김 계산 복사 |
 | 정리·보관 기간 | 그 데이터를 가진 모듈의 상수(`maps.core.TRASH_RETENTION` 등, 목록은 `maintenance/run.py` 설명). 정리 API는 `(db, now)`만 받는다(#1474) | `older_than_*` 인자, `maintenance`의 기간 상수, 설명이나 문서에 「N일 지난」을 다시 적음 |
 
@@ -123,6 +125,8 @@ v2 동선 에이전트(「AI 코스 짜기」, #334)는 사람이 요청할 때 
 | 문서 | 용도 |
 |---|---|
 | `최종기획안.md` | 제품 스펙 정본(변경 이력 포함) |
+| `최종기술문서.md` | 심사 제출용 테크스펙(2026-11-05) — 정본 문서의 요약이고 결정은 담지 않는다. 어긋나면 정본이 맞다 |
+| `시연시나리오.md` | 심사 제출용 시연 영상(5분) 시나리오 — 장면별 사용자 동작과 서비스 동작. 촬영 준비는 `docs/demo-guide.md` 8절 |
 | `docs/architecture.md` | 모듈 경계, 데이터 3층, places 공개 함수 계약 |
 | `docs/data-model.md` | DB 스키마 |
 | `docs/constraints.md` | 실격/선호 조건 레지스트리, `unknown_policy` — 값 변경은 루트만 |

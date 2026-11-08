@@ -6,6 +6,7 @@ import { showToast } from '@/features/shell/toast'
 import CardSkeleton from '@/ui/CardSkeleton'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
+import Sentences from '@/ui/Sentences'
 
 import { restorePinErrorMessage } from './model'
 import { usePinTrashQuery, useRestorePinMutation } from './queries'
@@ -33,7 +34,7 @@ export default function PinTrashSheet({ mapId, onClose }: { mapId: string; onClo
     <ModalSheet label="삭제한 핀" onClose={onClose}>
       <SheetTitle>삭제한 핀</SheetTitle>
       <p className="mb-4 mt-1 text-sm text-ink-500">
-        {days ? `삭제한 지 ${days}일 안에는 되돌릴 수 있어요. ` : ''}되돌리면 남긴 의견도 그대로 돌아와요
+        {days ? `삭제 후 ${days}일 동안 보관되며, ` : ''}되돌리면 이전에 남긴 의견도 함께 복원돼요.
       </p>
       {trash.isPending && <CardSkeleton />}
       {trash.error && <ErrorText message="삭제한 핀을 불러오지 못했어요" error={trash.error} />}
@@ -47,9 +48,11 @@ export default function PinTrashSheet({ mapId, onClose }: { mapId: string; onClo
                 <div className="min-w-0">
                   <p className="truncate text-body font-bold text-ink-900">{name}</p>
                   <p className="text-xs text-ink-500">
-                    {[pin.category, deleted_by_name && `${deleted_by_name}님이 삭제`, `${days_left}일 안에 되돌릴 수 있어요`].filter(Boolean).join(' · ')}
+                    {[pin.category, deleted_by_name && `${deleted_by_name}님이 삭제`].filter(Boolean).join(' · ')}
+                    <br />
+                    {days_left}일 안에 되돌릴 수 있어요
                   </p>
-                  {was_confirmed && <p className="text-xs text-ink-500">되돌리면 확정 리스트에도 다시 올라가요</p>}
+                  {was_confirmed && <p className="text-xs text-ink-500"><Sentences text="되돌리면 확정 리스트에도 다시 올라가요" /></p>}
                 </div>
                 <button
                   type="button"

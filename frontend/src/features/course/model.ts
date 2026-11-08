@@ -27,10 +27,25 @@ export const POLL_MS = 2000
 
 export const isFinished = (run: Pick<CourseRunDto, 'status'> | undefined): boolean => run?.status === 'done' || run?.status === 'failed'
 
-/** 요청 한 줄은 비어 있으면 보내지 않는다(선택 입력). */
-export const requestBody = (text: string): { request_text?: string } => {
+/** 코스 요청 하나 — 요청 한 줄과 「하루 걷기」에서 고른 상한(분, 안 골랐으면 null). 실패 뒤 「다시 시도」도 같은 것을 보낸다. */
+export type CourseAsk = { text: string; walkMax: number | null }
+
+/**
+ * 「하루 걷기」 선택지(분, #1502 사용자 결정). 서버가 받는 범위(10~480분) 안에서 고르는 단위일 뿐이다 —
+ * 정책 상한(하루 도보 합계)은 서버에 있고, 「상관없음」이면 보내지 않아 서버 기본을 쓴다.
+ */
+export const WALK_MAX_OPTIONS = [60, 90, 120] as const
+
+/** 분을 「1시간 30분」처럼. */
+export const walkLabel = (min: number) => [Math.floor(min / 60) && `${Math.floor(min / 60)}시간`, min % 60 && `${min % 60}분`].filter(Boolean).join(' ')
+
+/** 요청 한 줄은 비어 있으면 보내지 않는다(선택 입력). 하루 걷기 상한은 고른 때만 모든 날에 건다. */
+export const requestBody = (text: string, walkMax: number | null = null): { request_text?: string; member_constraints?: { kind: 'daily_walk_max'; value: number }[] } => {
   const trimmed = text.trim()
-  return trimmed ? { request_text: trimmed } : {}
+  return {
+    ...(trimmed ? { request_text: trimmed } : {}),
+    ...(walkMax ? { member_constraints: [{ kind: 'daily_walk_max' as const, value: walkMax }] } : {}),
+  }
 }
 
 /** 첫 줄 「이해」는 카드의 제목이 "이렇게 이해했어요"라서, 문장 앞에 같은 말이 오면 한 번만 보이게 뗀다. */
@@ -69,7 +84,7 @@ export function outcomeText(outcome: NonNullable<CourseRunDto['outcome']>): stri
 }
 
 /** 실패 안내. 계약상 INTERRUPTED(서버 재시작·15분 초과)와 ENGINE_ERROR 는 같은 문구다. */
-export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
+export const FAILURE_TEXT = '코스를 짜다가 중간에 끊겼어요. 잠시 후 다시 시도해 주세요'
 
 /**
  * 코스 요청이 실패했을 때의 안내. 코드가 아닌 HTTP 만으로 갈리지 않는다(docs/errors.md). 모르는 코드는 null 이라 호출부가 ErrorText 로 보인다.

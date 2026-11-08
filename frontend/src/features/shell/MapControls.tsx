@@ -39,7 +39,7 @@ export default function MapControls({
 
   useEffect(() => {
     if (docked || !onCrampedChange) return
-    const sheet = ref.current?.closest('section')
+    const sheet = ref.current?.closest('main')
     const header = document.querySelector('[data-map-header]')
     if (!sheet || !header) return
     // 숨겨진 동안에도 잰다 — 버튼 자리가 아니라 시트 윗변과 상단 UI 아래끝 사이를 본다.

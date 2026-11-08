@@ -139,7 +139,7 @@
 - {id: R22, layer: api, area: recommend, scenario: "readiness 쿼리 radius_m(2500)과 범위 밖·숫자 아님(#1416)", expect: "200 radius_m 3000·radius_min_m 2000·radius_max_m 5000, 범위 밖·\"2500.5\"·\"abc\" 422", status: untested}
 - {id: R23, layer: api, area: recommend, scenario: "서울 지도에서 부산 해운대 중심으로 추천(#1385, 시·도 경계 적재 필요)", expect: "422 OUTSIDE_TRIP_REGION, 크레딧·run 그대로. 지역 안 중심은 202", status: untested}
 - {id: G10, layer: ui, area: agent, scenario: "확정 2곳 이상·카페 0곳이고 지도에 🚫 없는 카페 핀이 있음(#1356)", expect: "카테고리 공백 제안에 「이 핀 보기」, 문장은 이동 분·♥ 수 같은 사실만(「확정하세요」 없음), 누르면 그 핀 카드가 열림, 작업 기록에 「일정에 끼워 봤어요」", status: untested}
-- {id: G11, layer: ui, area: agent, scenario: "확정 일정에 그날 쉬는 장소를 넣음(#1356)", expect: "일정 점검 제안 「AI 코스로 고칠 안 받기」, 누르면 코스 탭에서 크레딧 확인 창부터, 일정을 고치면 풀림", status: untested}
+- {id: G11, layer: ui, area: agent, scenario: "확정 일정에 그날 쉬는 장소를 넣음(#1356)", expect: "일정 점검 제안 「AI 코스로 고쳐 보기」, 누르면 코스 탭에서 크레딧 확인 창부터, 일정을 고치면 풀림", status: untested}
 # ───────── 모델 비용·실패(llm) — AI-B ─────────
 - {id: M01, layer: api, area: llm, scenario: "Actions llm-cost 수동 실행(스테이징)", expect: "기능별 호출 수·토큰·비용 리포트, 실패 0", status: untested}
 - {id: M02, layer: api, area: llm, scenario: "② 🚫 짧은 불평 「주차 안됨」 지도에서 추천(#1078)", expect: "parking_available wants=true, 주차 되는 곳이 실격되지 않음", status: pass}

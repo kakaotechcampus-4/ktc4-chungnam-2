@@ -9,7 +9,8 @@ import { withSummary, withoutSuggestion, type AgentSettingsDto, type AgentStateD
 /** ['maps', mapId] 아래에 두지 않는다 — 지도 상세를 무효화할 때(member.joined 등) 같이 다시 받지 않게. */
 export const agentKeys = {
   state: (mapId: string) => ['agent', mapId] as const,
-  advice: (runId: string) => ['runs', runId, 'advice'] as const,
+  // 넓히기·다시 추천은 같은 run id 로 결과를 바꾸고, 서버는 결과 상태마다 조언을 새로 만든다(#1103) — 키에 그 상태를 넣는다.
+  advice: (runId: string, attempt: number, radius: number | null | undefined) => ['runs', runId, 'advice', attempt, radius ?? null] as const,
 }
 
 /** 「핑고 AI 조언」 상태. 지도에 들어오면 받고, 이후는 agent.* 이벤트 페이로드로 고친다(docs/events.md). */
@@ -105,13 +106,13 @@ export function agentEventHandlers(queryClient: QueryClient, mapId: string): Rec
 }
 
 /**
- * 추천 막힘 조언(agent-v2 16.5). run 당 한 번 만들어 저장되니 다시 받지 않는다. 대상이 아니면 204(null).
+ * 추천 막힘 조언(agent-v2 16.5). 결과 상태마다 한 번 만들어 저장되니 같은 상태는 다시 받지 않는다. 대상이 아니면 204(null).
  * 실패(500)는 다음 요청이 다시 만든다 — 화면은 「조언을 불러오지 못했어요」 한 줄을 보인다(16.5).
  */
-export function useRunAdviceQuery(runId: string) {
+export function useRunAdviceQuery(run: { id: string; attempt_no: number; default_radius_m?: number | null }) {
   return useQuery({
-    queryKey: agentKeys.advice(runId),
-    queryFn: () => fetchRunAdvice(runId),
+    queryKey: agentKeys.advice(run.id, run.attempt_no, run.default_radius_m),
+    queryFn: () => fetchRunAdvice(run.id),
     staleTime: Infinity,
     retry: false,
     refetchOnWindowFocus: false,

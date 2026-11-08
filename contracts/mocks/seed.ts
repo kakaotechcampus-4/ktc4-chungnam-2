@@ -123,6 +123,7 @@ export function buildBaseState(): StoreState {
     lastNewCount: {},
     forceNoResults: false,
     trashedMaps: {},
+    mapCovers: {}, // #1445: 시드 지도는 대표 이미지가 없다(화면이 지역 기본 이미지를 그린다)
     pinTrash: {},
     idempotencyKeys: {},
     pendingLogin: null,
@@ -203,7 +204,8 @@ export function buildEvidenceLines(runId: string) {
       badge: "required" as const,
       fact_key: "cuisine_korean",
       fact_label: "한식",
-      wants: false, // 「한식 제외」 — 방향 표시(#228)
+      wants: false, // 「한식 피하기」 — 방향 표시(#228)
+      filters_candidates: false, // 취향 조건이라 후보는 남고 순위만 낮춘다(#1253, #1260)
       is_active: true,
       permissions: { can_disable: false },
     },

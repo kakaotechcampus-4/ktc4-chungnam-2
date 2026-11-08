@@ -154,7 +154,7 @@ def test_schedule_template_has_one_line_per_problem_and_the_course_button():
 
     assert draft.title == "일정에 다시 볼 곳이 있어요"
     assert [a["type"] for a in draft.actions] == ["open_course"]
-    assert draft.actions[0]["label"] == "AI 코스로 고칠 안 받기"
+    assert draft.actions[0]["label"] == "AI 코스로 고쳐 보기"
     assert [line["slot_text"] for line in draft.advice] == ["1일차에 쉬는 날인 곳이 있어요 · {c1}", "1일차 이동이 길어요"]
     refs = core.RenderRefs(pin_names={"pin_a": "가게가"})
     row = SimpleNamespace(id="s", diagnosis="schedule", category=None, title=draft.title, claims=draft.claims,
@@ -179,7 +179,7 @@ def test_schedule_followup_skips_to_declaration_with_the_schedule_title():
     sig = core.detect_schedule(_schedule_snap(_schedule(closed_first=True)))[0]
     target = core.PastSuggestion(id="h1", diagnosis="schedule", category=None, fingerprint=sig.fingerprint,
                                  status="accepted", created_at=NOW - hours(3), resolved_at=NOW - hours(2),
-                                 resolved_action_type="open_course", resolved_action_label="AI 코스로 고칠 안 받기",
+                                 resolved_action_type="open_course", resolved_action_label="AI 코스로 고쳐 보기",
                                  followup={"status": "watching"})
     hist = core.History(suggestions=(target,))
     found = core.detect_followups(_schedule_snap(_schedule(closed_first=True)), hist, NOW, hours(1))

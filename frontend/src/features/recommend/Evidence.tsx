@@ -35,8 +35,9 @@ export function AiChecks({ evidence }: { evidence: AiEvidence }) {
 function CheckTags({ checks }: { checks: CheckView[] }) {
   return (
     <ul className="flex flex-wrap gap-1.5">
-      {checks.map((k) => (
-        <li key={k.label} className={`tag ${TONE[k.tone]}`}>
+      {/* 같은 조건이 직접 쓴 줄과 ♥ 양쪽에서 와 라벨이 겹칠 수 있다. */}
+      {checks.map((k, i) => (
+        <li key={`${k.label}-${i}`} className={`tag ${TONE[k.tone]}`}>
           {MARK[k.tone]} {k.label}
           {/* 라벨에 이미 「확인」이 들어 있으면 겹쳐 쓰지 않는다(「가격대 확인 필요 (확인 필요)」, #406). */}
           {k.tone === 'check' && !k.label.includes('확인') && ' (확인 필요)'}

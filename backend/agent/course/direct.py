@@ -16,7 +16,7 @@ from typing import Any, Callable, Mapping, Optional
 from pydantic import ValidationError
 
 from agent.course import baseline, core, goals as goals_mod, optimize as opt, verify
-from agent.course.constants import DIRECT_MAX_TURNS
+from agent.course.constants import DIRECT_MAX_TURNS, MODEL_FAILURES
 from agent.course.optimize import Candidate
 from agent.course.ports import OpeningHoursGateway
 from agent.course.schemas import MoveDay, ReorderDay
@@ -27,7 +27,6 @@ from llm.schemas import CourseDirectFinish, CourseDirectTurn, CourseLockCall, Co
 
 Decide = Callable[[dict[str, Any]], CourseDirectTurn]
 OnStep = Callable[["DirectStep", "DirectState"], None]
-MODEL_FAILURES = (ValidationError, RuntimeError, TimeoutError)
 UNUSABLE_ERRORS = ("LIMIT_EXCEEDED",)       # 이 오류가 나면 그 턴은 코드 규칙이 대신한다. 그 밖의 오류는 메시지가 계획에 도움이 된다
 MODEL_FAILED = "MODEL_FAILED"               # 모델 턴이 실패해 코드가 이어받았다(substituted_for.error, #1131 D안)
 # 이어받은 원인의 종류 — 작업 기록 문구를 고르는 데만 쓴다. 예외 메시지와 모델 원문은 남기지 않는다

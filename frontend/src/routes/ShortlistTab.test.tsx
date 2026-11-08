@@ -10,6 +10,7 @@ import { useToastStore } from '@/features/shell/toast'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { serverDays } from '@/features/shortlist/__fixtures__/serverSchedule'
 import { forgetSchedule } from '@/features/shortlist/scheduleStore'
+import { wholeText } from '@/test/text'
 
 import ShortlistTab from './ShortlistTab'
 
@@ -71,7 +72,7 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     await screen.findByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })
     expect(screen.queryByRole('button', { name: '일정 짜기' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '동선 보기' }))
-    expect(await screen.findByText('장소를 골라 날짜에 넣으면 동선을 볼 수 있어요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('장소를 날짜별 일정에 넣으면 동선을 확인할 수 있어요'))).toBeInTheDocument()
     expect(useRouteStore.getState().on).toBe(false)
   })
 
@@ -82,7 +83,7 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     expect(await screen.findByText('우진해장국을 둘째 날에 넣었어요')).toBeInTheDocument()
     await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1', 'pin_2']))
     expect(screen.queryByRole('button', { name: /^흑돼지식당 .*넣기$/ })).not.toBeInTheDocument()
-    expect(screen.getByText('1곳 · 일정에 넣은 곳 2')).toBeInTheDocument()
+    expect(screen.getByText('일정에 넣을 곳 1곳, 넣은 곳 2곳')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '되돌리기' }))
     expect(await screen.findByRole('button', { name: '우진해장국 둘째 날에 넣기' })).toBeInTheDocument()

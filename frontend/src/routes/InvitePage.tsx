@@ -17,6 +17,7 @@ import { josaRo } from '@/ui/josa'
 import PingoLoading from '@/ui/PingoLoading'
 import MapIllustration from '@/ui/MapIllustration'
 import TextField from '@/ui/TextField'
+import Sentences from '@/ui/Sentences'
 
 /**
  * 초대 수락 (#4, Figma 2절). 로그인 전(C-1)·로그인 후 구성원 아님(C-2)·만료(C-3).
@@ -56,7 +57,10 @@ export default function InvitePage() {
   const join = () =>
     // 구성원 온보딩(Figma 2절)은 지도 화면이 이 표시를 보고 띄운다.
     accept.mutate(undefined, {
-      onSuccess: (map) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }),
+      onSuccess: (map) => {
+        clearPendingInvite()
+        navigate(`/maps/${map.id}?onboarding=member`, { replace: true })
+      },
       onError: (err) => setLateProblem(inviteProblem(err)),
     })
 
@@ -83,7 +87,7 @@ export default function InvitePage() {
         {needsLogin ? (
           <>
             <KakaoButton />
-            <p className="text-xs text-ink-500">로그인하면 바로 이 지도에 참여해요</p>
+            <p className="text-xs text-ink-500"><Sentences text="로그인하고 함께 여행 계획을 시작해 보세요" /></p>
             <GuestJoin token={token} onBroken={setLateProblem} />
           </>
         ) : (
@@ -140,7 +144,12 @@ function GuestJoin({ token, onBroken }: { token: string; onBroken: (problem: Inv
         e.preventDefault()
         if (!trimmed) return
         join.mutate(trimmed, {
-          onSuccess: ({ map }) => navigate(`/maps/${map.id}?onboarding=member`, { replace: true }),
+          // 남겨 둔 초대를 여기서 지운다. 화면이 바로 넘어가 「로그인됨」 효과가 돌기 전에 사라지면,
+          // 나중에 내 지도 목록이 이 초대로 다시 보낸다.
+          onSuccess: ({ map }) => {
+            clearPendingInvite()
+            navigate(`/maps/${map.id}?onboarding=member`, { replace: true })
+          },
           onError: (err) => onBroken(inviteProblem(err)),
         })
       }}
@@ -150,8 +159,12 @@ function GuestJoin({ token, onBroken }: { token: string; onBroken: (problem: Inv
         구성원에게 보일 이름
       </label>
       <TextField id="guest-name" value={name} onChange={setName} maxLength={DISPLAY_NAME_MAX} placeholder="예: 지우" clearLabel="이름 지우기" autoFocus />
-      <p className="break-keep text-xs text-ink-500">자동으로 지은 이름이에요. 원하면 바꿔도 돼요</p>
-      <p className="break-keep text-xs text-ink-500">게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 가입하면 기록이 그대로 이어져요</p>
+      <p className="break-keep text-xs text-ink-500">
+        <Sentences text="자동으로 지은 이름이에요. 원하면 바꿔도 돼요" />
+      </p>
+      <p className="break-keep text-xs text-ink-500">
+        <Sentences text="게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 가입하면 기록이 그대로 이어져요" />
+      </p>
       {join.error && <ErrorText message={inviteErrorMessage(join.error)} error={join.error} />}
       <button type="submit" disabled={!trimmed || join.isPending} className="btn-primary btn-md w-full">
         {join.isPending ? '들어가는 중…' : '게스트로 참여하기'}
@@ -189,7 +202,7 @@ function InviteBroken({ problem }: { problem: InviteProblem }) {
   return (
     <EntryFrame as="div" className="bg-ink-50 px-4 pb-6">
       <div className="flex flex-1 flex-col justify-center">
-        <EmptyState mood="sorry" title={BROKEN_TITLE[problem]}>
+        <EmptyState mood="sad" title={BROKEN_TITLE[problem]}>
           초대한 친구에게 새 링크를 받아주세요
         </EmptyState>
       </div>

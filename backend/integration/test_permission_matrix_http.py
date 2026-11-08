@@ -34,6 +34,9 @@ def world(members, place_ids, fake_planner, db_session, real_client):
     item_id = a.get(f"/maps/{map_id}/shortlist").json()[0]["id"]
     evidence = a.get(f"/runs/{run_id}/evidence").json()
     invite = a.post(f"/maps/{map_id}/invite").json()
+    # 대표 이미지(#1445)도 하나 올려 둔다 — 없으면 GET cover가 구성원에게도 404라 대조군이 성립하지 않는다.
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
+    assert a.put(f"/maps/{map_id}/cover", content=png, headers={"Content-Type": "image/png"}).status_code == 200
     yield {
         "a": a, "b": b, "c": c, "anon": anon, "map": map_id, "run": run_id, "pin": pin_id, "item": item_id,
         "candidate": candidates[0]["id"], "evidence": evidence[0]["id"], "token": invite["token"],
@@ -51,8 +54,12 @@ def _endpoints(w):
         ("GET map", "GET", f"/maps/{m}", None),
         ("GET members", "GET", f"/maps/{m}/members", None),
         ("POST owner", "POST", f"/maps/{m}/owner", {"user_id": "user_b"}),
+        ("POST copy", "POST", f"/maps/{m}/copy", None),   # #1446 — 성공하면 새 지도를 만든다. 비구성원은 404라 아무것도 생기지 않는다
 
         ("PATCH map", "PATCH", f"/maps/{m}", {"title": "새 제목"}),
+        ("PUT cover", "PUT", f"/maps/{m}/cover", {}),   # #1445 — 본문 검사(COVER_INVALID)보다 권한이 먼저다
+        ("DELETE cover", "DELETE", f"/maps/{m}/cover", None),
+        ("GET cover", "GET", f"/maps/{m}/cover", None),
         ("POST invite", "POST", f"/maps/{m}/invite", None),
         ("GET invites", "GET", f"/maps/{m}/invites", None),
         ("DELETE invite", "DELETE", f"/invites/{w['token']}", None),
@@ -110,6 +117,7 @@ def test_outsider_gets_404_on_every_map_endpoint_and_changes_nothing(world):
     a = world["a"]
     assert len(a.get(f"/maps/{world['map']}/pins").json()) == 2
     assert len(a.get(f"/maps/{world['map']}/members").json()) == 2
+    assert world["c"].get("/maps").json()["items"] == []   # 복사(#1446)로 새 지도가 생기지 않았다
 
 
 def test_member_who_is_not_the_requester_is_403_on_run_management_and_publish(world):
@@ -202,3 +210,20 @@ def test_only_the_owner_can_edit_the_map(world):
     assert a.get(f"/maps/{m}").json()["title"] != "b가 바꿈"
     assert b.get(f"/maps/{m}").json()["permissions"]["can_edit"] is False
     assert a.patch(f"/maps/{m}", json={"title": "a가 바꿈"}).status_code == 200
+
+
+def test_only_the_owner_can_copy_the_map(world):
+    """지도 복사(#1446, map.copy)는 방장만 — 구성원은 403이고 지도가 늘지 않는다. 방장의 복사본에는 핀이 일반 핀으로 옮겨진다."""
+    a, b, m = world["a"], world["b"], world["map"]
+    before = len(b.get("/maps").json()["items"])
+    assert b.post(f"/maps/{m}/copy").status_code == 403
+    assert len(b.get("/maps").json()["items"]) == before
+    assert b.get(f"/maps/{m}").json()["permissions"]["can_copy"] is False
+    r = a.post(f"/maps/{m}/copy")
+    assert r.status_code == 201, r.text
+    copied = r.json()
+    assert copied["my_role"] == "owner" and copied["member_count"] == 1 and copied["confirmed_count"] == 0
+    pins = a.get(f"/maps/{copied['id']}/pins").json()
+    assert len(pins) == len(a.get(f"/maps/{m}/pins").json())
+    assert {p["kind"] for p in pins} == {"일반"}
+    assert b.get(f"/maps/{copied['id']}").status_code == 404   # 구성원은 옮기지 않는다

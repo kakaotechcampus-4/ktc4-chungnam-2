@@ -10,6 +10,7 @@ import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import Switch from '@/ui/Switch'
+import Sentences from '@/ui/Sentences'
 
 import { badgeText, mapOrigin, notificationTarget, prefLabel, type NotificationDto } from './model'
 import { useMarkReadMutation, useNotificationPrefsQuery, useNotificationsQuery, useUpdatePrefMutation } from './queries'
@@ -111,9 +112,11 @@ function InboxView({ currentMapId, onClose, onSettings }: { currentMapId?: strin
                     {n.message}
                   </span>
                   <span className="mt-0.5 flex items-center gap-2 text-xs text-ink-500">
-                    <span className="shrink-0">
-                      {where === 'here' ? '이 지도 · ' : where === 'all' && n.map_title ? `${n.map_title} · ` : ''}
-                      {timeAgo(n.created_at)}
+                    {/* 지도 제목은 100자까지라 줄 폭을 넘으면 자르고, 시각은 늘 보인다. */}
+                    <span className="flex min-w-0">
+                      {where === 'here' && '이 지도 · '}
+                      {where === 'all' && n.map_title && <span className="min-w-0 truncate">{n.map_title}&nbsp;·&nbsp;</span>}
+                      <span className="shrink-0">{timeAgo(n.created_at)}</span>
                     </span>
                     {where === 'other' && (
                       <span className="tag tag-neutral ml-auto min-w-0 truncate">
@@ -147,7 +150,7 @@ function PrefsView({ onBack }: { onBack: () => void }) {
     <>
       <BackButton label="알림" onClick={onBack} />
       <SheetTitle>알림 설정</SheetTitle>
-      <p className="mb-3 mt-1 text-xs text-ink-500">끄면 그 알림은 더 이상 오지 않아요.</p>
+      <p className="mb-3 mt-1 text-xs text-ink-500"><Sentences text="끄면 그 알림은 더 이상 오지 않아요." /></p>
       {prefs.isPending && <CardSkeleton count={1} />}
       {prefs.error && <ErrorText message="알림 설정을 불러오지 못했어요" error={prefs.error} />}
       <ul className="divide-y divide-ink-100">

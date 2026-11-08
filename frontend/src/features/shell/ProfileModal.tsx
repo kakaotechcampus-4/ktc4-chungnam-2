@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
@@ -13,9 +13,11 @@ import InviteLinks from '@/features/maps/InviteLinks'
 import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm, TransferOwnerConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
 import Avatar from '@/ui/Avatar'
+import Sentences from '@/ui/Sentences'
 
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
+import { useSheetStore } from './sheetStore'
 
 type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | 'trash' | null
 
@@ -26,6 +28,12 @@ type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feed
  */
 export default function ProfileModal({ mapId, onClose }: { mapId: string; onClose: () => void }) {
   const [confirm, setConfirm] = useState<Confirm>(null)
+  // 떠 있는 동안만 지도 버튼·토스트를 숨긴다. 닫기가 아니라 지도 나가기·삭제·화면 넓힘으로 사라져도 풀리게 마운트에 묶는다.
+  const setModalOpen = useSheetStore((s) => s.setModalOpen)
+  useEffect(() => {
+    setModalOpen(true)
+    return () => setModalOpen(false)
+  }, [setModalOpen])
   return (
     <ModalSheet label="지도 정보" fullWidth onClose={onClose} overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}>
       <ProfileBody mapId={mapId} onConfirm={setConfirm} />
@@ -77,7 +85,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
           <div className="min-w-0">
             <h2 className="text-xl font-bold text-ink-900">{map.data.title}</h2>
             <p className="text-sm text-ink-500">
-              {map.data.dates} · 구성원 {map.data.memberCount}명
+              {map.data.dates}, 구성원 {map.data.memberCount}명
             </p>
           </div>
           {/* 제목·날짜·지역 수정은 방장만(#465). */}
@@ -155,7 +163,9 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
               지도 나가기
             </button>
           ) : (
-            <p className="flex-1 self-center text-xs text-ink-500">혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요</p>
+            <p className="flex-1 self-center text-xs text-ink-500">
+              <Sentences text="혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요" />
+            </p>
           )}
           {map.data.canDelete && (
             <button

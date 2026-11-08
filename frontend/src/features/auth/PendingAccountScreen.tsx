@@ -62,10 +62,12 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
         )
       }
     >
-        <Pingo mood="wave" size={56} />
+        <Pingo mood="welcome" size={56} />
         <h1 className="mt-4 break-keep text-xl font-bold text-ink-900">이전에 탈퇴한 계정이 있어요</h1>
         <p className="mt-2 break-keep text-sm text-ink-700">
-          ‘<span className="font-semibold text-ink-900">{display_name}</span>’ 계정이에요. 새 계정으로 시작하거나,{' '}
+          ‘<span className="font-semibold text-ink-900">{display_name}</span>’ 계정이에요.
+          <br />
+          새 계정으로 시작하거나,{' '}
           {days_left}일 안에는 기존 계정을 복구할 수 있어요.
         </p>
 
@@ -85,9 +87,11 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
               기존 계정 복구
             </button>
             <p className="mt-1.5 break-keep text-xs text-ink-500">
-              {days_left}일 남음 · {formatRestoreUntil(restore_until)}까지
+              {formatRestoreUntil(restore_until)}까지 {days_left}일 남았어요
               <br />
-              복구하면 참여하던 지도와 내 이름이 붙은 핀이 돌아와요. 남긴 의견은 돌아오지 않아요
+              복구하면 참여하던 지도와 내 이름이 붙은 핀이 돌아와요.
+              <br />
+              남긴 의견은 돌아오지 않아요
             </p>
           </div>
           {chooseError && !confirmRestart && <ErrorText message="처리하지 못했어요. 다시 시도해 주세요" error={chooseError} />}

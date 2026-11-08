@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router'
 
+import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
 import { timeAgo } from '@/features/map/model'
 import { circleOutsideRegion, useRegionBoundary } from '@/features/map/regionGeo'
@@ -19,12 +20,18 @@ import CreditConfirm from '@/features/credits/CreditConfirm'
 import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 import { useCreditsQuery } from '@/features/credits/queries'
+import FieldError from '@/ui/FieldError'
 import Mark from '@/ui/Mark'
+import RangeSlider from '@/ui/RangeSlider'
+import Sentences from '@/ui/Sentences'
 
 import { useAiStore } from './aiStore'
 import {
   chosenCategory,
-  RECOMMEND_RADIUS_M,
+  radiusKm,
+  kmInputToM,
+  radiusOptions,
+  readinessRadiusM,
   recommendAreaNote,
   runErrorMessage,
   runHistoryLine,
@@ -41,11 +48,17 @@ export function AiHeader({ title, sub, mood }: { title: string; sub?: string; mo
     <div className="flex items-center gap-3 rounded-xl bg-[var(--pingo-bg)] p-3">
       <Pingo size={44} mood={mood} />
       <div className="min-w-0">
-        <p className="flex items-center gap-1.5 font-bold text-ink-900">
-          <span className="tag tag-ai">AI</span>
-          {title}
+        <p className="flex items-start gap-1.5 font-bold text-ink-900">
+          <span className="tag tag-ai mt-px shrink-0">AI</span>
+          <span className="min-w-0">
+            <Sentences text={title} />
+          </span>
         </p>
-        {sub && <p className="text-xs text-ink-600">{sub}</p>}
+        {sub && (
+          <p className="text-xs text-ink-600">
+            <Sentences text={sub} />
+          </p>
+        )}
       </div>
     </div>
   )
@@ -56,9 +69,9 @@ export function ReadinessHeader({ mapId }: { mapId: string }) {
   const readiness = useReadinessQuery(mapId)
   const short = readiness.data !== undefined && !toReadinessCards(readiness.data).some((c) => c.ready)
   return short ? (
-    <AiHeader title="의견이 부족해요" sub="핀에 좋음이나 반대 의견이 모이면 추천할 수 있어요" mood="alert" />
+    <AiHeader title="의견이 부족해요" sub="핀에 좋음 또는 반대 의견을 남겨 주시면 AI가 추천을 준비해요" mood="alert" />
   ) : (
-    <AiHeader title="AI 추천" sub="추천받을 카테고리를 골라 주세요" />
+    <AiHeader title="AI 추천" sub="추천받을 카테고리를 골라 주세요" mood="welcome" />
   )
 }
 
@@ -106,13 +119,18 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   const picked = useAiStore((s) => s.picked[mapId])
   const setPicked = useAiStore((s) => s.setPicked)
   const chosen = chosenCategory(cards, picked)
+  // 찾는 범위는 「찾는 범위」에서 고른 반경, 안 골랐으면 고른 카테고리의 서버 기본값이다(#1416, #1468). 지도 원(MapLayout)도 같은 값을 본다.
+  const pickedRadius = useAiStore((s) => s.radius[mapId])
+  const setRadius = useAiStore((s) => s.setRadius)
+  const radiusM = readinessRadiusM(readiness.data, chosen, pickedRadius)
+  const chosenReadiness = chosen ? readiness.data?.[chosen] : undefined
   const search = cards.find((c) => c.category === chosen)?.externalSearch
   useRecountOnMapMove(readiness.refetch)
   // 크레딧을 쓰기 전에 묻는다(쓸 크레딧·남은 크레딧·찾는 범위). 버튼과 핑고 조언의 「추천 받아 보기」가 같은 창을 거친다.
   const [asking, setAsking] = useState<{ category: RecommendCategory; fromAgent: boolean } | null>(null)
   // 추천 원이 통째로 여행 지역 밖이면 크레딧 창 대신 지역으로 돌아가라고 안내한다(그 지역 이름).
   const [away, setAway] = useState<string | null>(null)
-  const outside = useOutsideRegion(mapId)
+  const outside = useOutsideRegion(mapId, radiusM)
   const showRegion = useOutletContext<ShellContext | null>()?.showRegion
   function ask(category: RecommendCategory, fromAgent: boolean) {
     const region = outside()
@@ -128,8 +146,10 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   function startAsked() {
     if (!asking) return
     setAsking(null)
-    // 핑고 조언에서 왔으면 크레딧 때문이 아닌 실패는 「상황이 바뀌었어요」다. 크레딧 때문이면(게스트·잔액 부족) 버튼 자리의 안내가 말한다.
-    create.start(asking.category, asking.fromAgent ? { onError: (err) => creditBlock(err) || showToast(CHANGED) } : undefined)
+    // 핑고 조언에서 왔으면 준비가 풀린 것(NOT_READY)만 「상황이 바뀌었어요」다. 크레딧·실패·네트워크는 버튼 자리의 안내가 진짜 이유를 말한다.
+    const changed = (err: Error) => err instanceof ApiError && err.code === 'NOT_READY' && showToast(CHANGED)
+    // 사람이 반경을 골랐을 때만 보낸다 — 안 보내면 서버 기본값이다.
+    create.start(asking.category, { onError: asking.fromAgent ? changed : undefined, radiusM: pickedRadius ? radiusM : null })
   }
 
   if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
@@ -137,21 +157,33 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        {cards.map((c, i) => (
-          <ReadinessTile
-            key={c.category}
-            card={c}
-            selected={c.category === chosen}
-            wide={cards.length % 2 === 1 && i === cards.length - 1}
-            onPick={() => setPicked(mapId, c.category)}
-          />
+      {/* 카테고리는 같은 폭으로 한 줄에 둔다 — 개수가 홀수라고 한 칸만 커지지 않게. */}
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cards.length}, minmax(0, 1fr))` }}>
+        {cards.map((c) => (
+          <ReadinessTile key={c.category} card={c} selected={c.category === chosen} onPick={() => setPicked(mapId, c.category)} />
         ))}
       </div>
-      <p className="text-label text-ink-500">지도의 원 안에서 찾아요. 다른 동네는 지도를 옮겨 주세요</p>
-      <p className="text-label text-ink-500">좋음이나 반대 의견이 달린 핀이 카테고리마다 1곳 이상 있어야 추천받을 수 있어요</p>
-      {/* 사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
-      <p className="text-label text-ink-500">의견이 많을수록 추천이 정확해져요</p>
+      {radiusM && chosenReadiness?.radius_min_m && chosenReadiness.radius_max_m && (
+        <RadiusPicker
+          min={chosenReadiness.radius_min_m}
+          max={chosenReadiness.radius_max_m}
+          defaultM={chosenReadiness.radius_m}
+          marks={radiusOptions(chosenReadiness)}
+          value={radiusM}
+          // 끄는 동안 지도 원이 따라온다. 근처 정예 수(「주변에 추천할 장소가 없어요」)는 손을 뗄 때 한 번 다시 센다.
+          onChange={(m) => setRadius(mapId, m)}
+          onCommit={(m) => {
+            setRadius(mapId, m)
+            void readiness.refetch()
+          }}
+        />
+      )}
+      <p className="text-label text-ink-500">
+        <Sentences text="지도 가운데 원 안에서 추천해요. 다른 지역은 지도를 움직여 보세요." />
+      </p>
+      {/* 카테고리마다 의견 핀이 몇 곳 필요한지는 타일(「N곳 더 필요」)이 보여 준다.
+          사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
+      <p className="text-label text-ink-500"><Sentences text="구성원의 의견이 모일수록 모두가 만족할 만한 장소를 찾을 수 있어요." /></p>
       {/* 사유 정리(②)와 첫 검색을 한 요청에서 끝낸다(#845) — 몇 초 걸린다. 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={START_STEPS} />}
       {/* 실패하면 run 이 생기지 않고 크레딧도 쓰지 않는다 — 같은 버튼을 다시 누르면 새 시도다. 크레딧 오류는 CreditGate 가 보인다. */}
@@ -167,7 +199,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           onClick={() => chosen && ask(chosen, false)}
           className="btn-primary btn-lg w-full"
         >
-          {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '아직 추천할 수 있는 곳이 없어요'}
+          {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '의견이 모이면 추천받을 수 있어요'}
         </button>
       </CreditGate>
       {asking && (
@@ -175,7 +207,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           feature="recommend_run"
           title={`${asking.category} 추천을 받을까요?`}
           ok="추천받기"
-          note={recommendAreaNote()}
+          note={recommendAreaNote(radiusM)}
           onOk={startAsked}
           onCancel={() => setAsking(null)}
         />
@@ -198,18 +230,131 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   )
 }
 
+/** 슬라이더 한 칸(m)과 눈금에 붙는 거리(m) — 화면이 고르는 단위다. 하한·상한·기본값은 서버 값이다(#1416). */
+const RADIUS_STEP_M = 100
+const RADIUS_SNAP_M = 150
+
 /**
- * 추천 원(보이는 지도 가운데 반경 RECOMMEND_RADIUS_M)이 통째로 여행 지역 밖이면 그 지역 이름, 아니면 null(누를 때 본다).
- * 원이 경계에 걸치기만 해도 막지 않는다. 지역을 고르지 않은 지도, 경계를 아직 못 받은 지도도 막지 않는다.
+ * 「찾는 범위」 — 추천 원의 반경(#1416). 슬라이더는 1km 눈금 근처에서 붙고, 정확한 값은 오른쪽 칸에 km로 넣는다(소수 첫째 자리).
+ * 고를 수 있는 범위와 처음 값은 서버가 준다(Readiness.radius_min_m·max_m·radius_m).
+ */
+function RadiusPicker({
+  min,
+  max,
+  defaultM,
+  marks,
+  value,
+  onChange,
+  onCommit,
+}: {
+  min: number
+  max: number
+  /** 서버 기본 반경(Readiness.radius_m). 그 눈금에 「기본」을 단다. */
+  defaultM?: number
+  marks: number[]
+  value: number
+  onChange: (m: number) => void
+  onCommit: (m: number) => void
+}) {
+  const labelId = useId()
+  const errorId = useId()
+  // 쓰는 중인 글자. null 이면 칸이 닫혀 있고 고른 값을 글자로 보인다 — 입력칸(16px, 아이폰 확대 방지)은 누를 때만 연다.
+  const [typing, setTyping] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  function commitTyped() {
+    if (typing === null) return
+    const m = kmInputToM(typing, min, max, RADIUS_STEP_M)
+    if (m === null) return setError(true)
+    setError(false)
+    setTyping(null)
+    onCommit(m)
+  }
+  return (
+    <div className="space-y-1">
+      <div className="flex min-h-11 items-center justify-between gap-2">
+        <span id={labelId} className="text-sm font-bold text-ink-900">
+          찾는 범위
+        </span>
+        {typing === null ? (
+          <button
+            type="button"
+            onClick={() => setTyping(String(value / 1000))}
+            aria-label={`찾는 범위 직접 넣기, 지금 ${radiusKm(value)}`}
+            className="hit-44 text-sm font-bold text-brand-700 underline decoration-dotted underline-offset-4"
+          >
+            {radiusKm(value)}
+          </button>
+        ) : (
+          <span className="field min-h-10 w-28 px-3">
+            <input
+              autoFocus
+              type="number"
+              inputMode="decimal"
+              step={RADIUS_STEP_M / 1000}
+              min={min / 1000}
+              max={max / 1000}
+              value={typing}
+              onChange={(e) => setTyping(e.target.value)}
+              onBlur={commitTyped}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setTyping(null)
+                  setError(false)
+                }
+                if (e.key !== 'Enter') return
+                e.preventDefault() // 준비 화면의 폼 제출(추천받기)로 번지지 않게
+                commitTyped()
+              }}
+              aria-labelledby={labelId}
+              aria-invalid={error}
+              aria-describedby={error ? errorId : undefined}
+              // 브라우저 기본 위아래 화살표는 숨긴다 — 값은 슬라이더와 글자로 바꾼다.
+              className="w-full min-w-0 bg-transparent text-right outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <span aria-hidden="true" className="text-sm text-ink-500">
+              km
+            </span>
+          </span>
+        )}
+      </div>
+      <RangeSlider
+        min={min}
+        max={max}
+        step={RADIUS_STEP_M}
+        value={value}
+        marks={marks}
+        snapWithin={RADIUS_SNAP_M}
+        format={(m) => (m === defaultM ? `${radiusKm(m)}, 기본` : radiusKm(m))}
+        markLabel={(m) => (m === defaultM ? `기본 ${radiusKm(m)}` : radiusKm(m))}
+        label="찾는 범위"
+        onChange={(m) => {
+          setTyping(null)
+          setError(false)
+          onChange(m)
+        }}
+        onCommit={onCommit}
+      />
+      {error && (
+        <FieldError id={errorId}>
+          {radiusKm(min)}에서 {radiusKm(max)} 사이로 넣어 주세요
+        </FieldError>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 추천 원(보이는 지도 가운데 반경 radiusM)이 통째로 여행 지역 밖이면 그 지역 이름, 아니면 null(누를 때 본다).
+ * 원이 경계에 걸치기만 해도 막지 않는다. 지역을 고르지 않은 지도, 경계를 아직 못 받은 지도, 서버 반경이 없는 응답도 막지 않는다.
  * 지금은 화면만 보는 규칙이다 — 서버가 지역 밖 오류를 내리면 그 응답으로 바꾼다(#1385).
  */
-function useOutsideRegion(mapId: string) {
+function useOutsideRegion(mapId: string, radiusM: number | null) {
   const getCenter = useOutletContext<ShellContext | null>()?.getCenter
   const region = useMapQuery(mapId).data?.region?.label
   const boundary = useRegionBoundary(region)
   return () => {
     const at = getCenter?.() ?? null
-    return region && boundary && at && circleOutsideRegion(at, RECOMMEND_RADIUS_M, boundary) ? region : null
+    return region && boundary && at && radiusM && circleOutsideRegion(at, radiusM, boundary) ? region : null
   }
 }
 
@@ -255,39 +400,24 @@ function useAgentStart(cards: ReadinessCard[], start: (category: RecommendCatego
   }, [wanted, ready, cards, setParams, start])
 }
 
-function ReadinessTile({ card, selected, wide, onPick }: { card: ReadinessCard; selected: boolean; wide: boolean; onPick: () => void }) {
+function ReadinessTile({ card, selected, onPick }: { card: ReadinessCard; selected: boolean; onPick: () => void }) {
   const short = Math.max(0, card.required - card.answered)
-  const pct = card.required ? Math.min(100, (card.answered / card.required) * 100) : 0
+  // 이름과 한 줄 상태만 둔다. 고른 칸만 파란 테두리, 준비 안 된 칸은 누를 수 없고 상태를 주의색 글자로 알린다.
+  // 센 것은 사람이 아니라 의견이 달린 핀이다(#360).
   return (
     <button
       type="button"
       disabled={!card.ready}
       aria-pressed={selected}
       onClick={onPick}
-      className={`press rounded-xl border-[1.5px] p-3 text-left ${wide ? 'col-span-2' : ''} ${
-        selected ? 'border-brand-600 bg-brand-50' : card.ready ? 'border-[var(--good-line)] bg-white' : 'border-[var(--warn-line)] bg-white'
+      className={`press rounded-xl border px-3 py-2.5 text-left disabled:bg-ink-50 ${
+        selected ? 'border-brand-600 bg-brand-50 ring-1 ring-brand-600' : 'border-ink-200 bg-white'
       }`}
     >
-      <p className="flex items-start justify-between gap-1 font-bold text-ink-900">
-        {/* 상태는 태그 하나에 담는다. 흰 글자 + 주의 선 색(3.5:1)은 작은 글자 기준(4.5:1)에 못 미쳐서 바탕·글자 세트로 칠한다. */}
-        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-          {card.category}
-          <span className={`tag ${card.ready ? 'tag-good' : 'tag-warn'}`}>{card.ready ? '준비 완료' : `${short}곳 더 필요`}</span>
-        </span>
-        {selected && (
-          <span role="img" aria-label="선택됨" className="text-brand-600">
-            <Mark kind="check" size={16} />
-          </span>
-        )}
-      </p>
-      <div className="mt-2 h-1.5 rounded-full bg-ink-200">
-        <div className={`h-full rounded-full ${card.ready ? 'bg-[var(--good-line)]' : 'bg-[var(--warn-line)]'}`} style={{ width: `${pct}%` }} />
-      </div>
-      {/* 센 것은 사람이 아니라 의견이 달린 핀이다(#360). 「4/1」처럼 분자가 분모를 넘으면 뜻이 헷갈려서 두 숫자를 따로 적는다(#344). */}
-      {/* 360px 폭(태블릿 패널·작은 휴대폰)에서 줄이 어색하게 끊기지 않게 낱말 단위로 바꾼다(#603). 상태는 위 태그에 있다. */}
-      <p className="mt-1.5 break-keep text-label font-semibold text-ink-700">
-        의견 핀 {card.answered}곳 · <span className="whitespace-nowrap">필요 {card.required}곳</span>
-      </p>
+      <span className={`block font-bold ${card.ready ? 'text-ink-900' : 'text-ink-500'}`}>{card.category}</span>
+      <span className={`mt-0.5 block break-keep text-xs ${card.ready ? 'text-ink-600' : 'text-[var(--warn-text)]'}`}>
+        {card.ready ? `의견 핀 ${card.answered}곳` : `${short}곳 더 필요`}
+      </span>
     </button>
   )
 }

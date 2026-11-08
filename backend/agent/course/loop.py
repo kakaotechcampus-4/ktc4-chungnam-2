@@ -10,11 +10,9 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 
-from pydantic import ValidationError
-
 from agent.course import baseline, core, tools
 from agent.course.constants import (
-    LESSONS_KEEP, MAX_INVALID_TURNS, MAX_TURNS, PLAN_MAX_STEPS, RUN_TIMEOUT_SEC, TOOL_LIMITS,
+    LESSONS_KEEP, MAX_INVALID_TURNS, MAX_TURNS, MODEL_FAILURES, PLAN_MAX_STEPS, RUN_TIMEOUT_SEC, TOOL_LIMITS,
 )
 from agent.course.ports import OpeningHoursGateway
 from agent.course.schemas import AgentTurn, Finish
@@ -26,7 +24,6 @@ Decide = Callable[[dict[str, Any]], AgentTurn]
 
 # 모델 쪽 실패로 보고 그 턴을 기준선에 넘기는 예외들. llm.client.LlmCallError는 RuntimeError다.
 # 그 밖의 예외(코드 버그)는 삼키지 않고 그대로 올린다(docs/code-quality.md "실패를 감추지 않는다").
-MODEL_FAILURES = (ValidationError, RuntimeError, TimeoutError)
 
 # 모델에게 새로 알려 주는 게 없는 오류. 이 오류가 나면 그 턴은 기준선이 대신 둔다. (그 밖의 오류는 메시지가 계획에 도움이 된다)
 UNUSABLE_ERRORS = ("ALREADY_LOOKED_UP", "LIMIT_EXCEEDED")

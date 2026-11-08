@@ -5,6 +5,7 @@ import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
+import Sentences from '@/ui/Sentences'
 
 import { restoreMapErrorMessage, type TrashView } from './model'
 import { useRestoreMapMutation } from './queries'
@@ -29,7 +30,7 @@ export default function TrashSheet({ trash, onClose }: { trash: TrashView; onClo
     <ModalSheet label="휴지통" onClose={onClose}>
       <SheetTitle>휴지통</SheetTitle>
       <p className="mb-4 mt-1 text-sm text-ink-500">
-        삭제한 지 {trash.retentionDays}일 안에는 복구할 수 있어요. 복구하면 구성원과 핀, 의견이 그대로 돌아와요
+        <Sentences text={`삭제한 지 ${trash.retentionDays}일 안에는 복구할 수 있어요. 복구하면 구성원과 핀, 의견이 그대로 돌아와요`} />
       </p>
       {trash.items.length === 0 && <p className="text-sm text-ink-500">복구할 지도가 없어요</p>}
       <ul className="space-y-2">
@@ -39,13 +40,13 @@ export default function TrashSheet({ trash, onClose }: { trash: TrashView; onClo
               <div className="min-w-0">
                 <p className="truncate text-body font-bold text-ink-900">{m.title}</p>
                 <p className="text-xs text-ink-500">
-                  {m.dates} · {m.daysLeft}일 남음
+                  {m.dates}, {m.daysLeft}일 안에 복구할 수 있어요
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => revive(m.id, m.title)}
-                disabled={restore.isPending && restore.variables === m.id}
+                disabled={restore.isPending}
                 className="btn-outline btn-sm shrink-0"
               >
                 복구

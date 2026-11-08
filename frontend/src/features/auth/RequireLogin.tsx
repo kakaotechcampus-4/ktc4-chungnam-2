@@ -13,6 +13,7 @@ import PingoLoading from '@/ui/PingoLoading'
 import SheetTitle from '@/ui/SheetTitle'
 import EntryFrame from '@/ui/EntryFrame'
 import Wordmark from '@/ui/Wordmark'
+import Sentences from '@/ui/Sentences'
 
 import { isUnauthorized } from './api'
 import KakaoButton from './KakaoButton'
@@ -45,10 +46,17 @@ export default function RequireLogin() {
 }
 
 function SessionGate() {
-  const { isPending, error } = useMeQuery()
+  const { isPending, error, data: me } = useMeQuery()
+  // 실패 안내는 여기서 읽는다. 게스트가 카카오 전환에 실패하면 게스트 세션은 그대로라 로그인 화면이 뜨지 않는다 —
+  // 그때는 토스트로 알린다(LoginScreen 만 읽던 때는 아무 말 없이 목록으로 돌아왔다).
+  const loginError = useLoginError()
+  const loggedIn = !!me
+  useEffect(() => {
+    if (loggedIn && loginError) showToast(loginError)
+  }, [loggedIn, loginError])
 
   if (isPending) return <PingoLoading label="로그인 상태를 확인하는 중…" mood="space" className="min-h-dvh justify-center" />
-  if (isUnauthorized(error)) return <LoginScreen />
+  if (isUnauthorized(error)) return <LoginScreen notice={loginError ?? undefined} />
   if (error) {
     return (
       <div className="p-4">
@@ -94,10 +102,10 @@ function useLoginError(): string | null {
 /**
  * 로그인(랜딩) — 위에서부터 이름 → 날아가는 핑고 → 시작 버튼 둘 → 할 수 있는 일 → 약관 동의 줄.
  * 768px 이상은 종이 배경 가운데 입구 카드다(#602). 1024px 이상은 왼쪽에 이름·핑고를 크게, 오른쪽 카드에 나머지를 둔다.
- * `notice` 는 다른 화면이 넘겨 준 안내(탈퇴 계정 선택 시간 만료)다. 실패 안내와 같은 자리에 같은 모양으로 뜬다.
+ * `notice` 는 넘겨받은 안내(카카오 로그인 실패, 탈퇴 계정 선택 시간 만료)다. 실패 안내와 같은 자리에 같은 모양으로 뜬다.
  */
 function LoginScreen({ notice }: { notice?: string }) {
-  const loginError = useLoginError() ?? notice ?? null
+  const loginError = notice ?? null
   const [sheet, setSheet] = useState<'guest' | 'terms' | null>(null)
   const close = () => setSheet(null)
   return (
@@ -115,17 +123,19 @@ function LoginScreen({ notice }: { notice?: string }) {
           <h1>
             <Wordmark className="h-10 w-auto lg:h-14" />
           </h1>
-          <p className="mt-1 font-semibold text-ink-900 lg:mt-2 lg:text-lg">같이 갈 곳을 한 지도에 모아요</p>
+          <p className="mt-1 font-semibold text-ink-900 lg:mt-2 lg:text-title">같이 갈 곳을 한 지도에 모아요</p>
           <LoginHero />
         </div>
 
         <div className="flex flex-1 flex-col lg:max-w-[400px] lg:rounded-2xl lg:border lg:border-ink-200 lg:bg-white lg:px-8 lg:py-10">
 
-        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">3초면 시작해요. 이름은 카카오에서 가져와요</p>
+        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">
+          <Sentences text="3초면 시작해요. 이름은 카카오에서 가져와요" />
+        </p>
         {/* 빨강은 핀·🚫·되돌릴 수 없는 동작 전용이라(영역 분리 규칙) 로그인 실패는 주의색이다. */}
         {loginError && (
           <p role="alert" className="mt-3 text-balance break-keep rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-2.5 text-center text-sm font-semibold text-[var(--warn-text)]">
-            {loginError}
+            <Sentences text={loginError} />
           </p>
         )}
         {/* 카카오가 주 입구라 큰 버튼, 게스트는 한 단계 작은 버튼이다. */}
@@ -195,11 +205,11 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
   return (
     <ModalSheet label="게스트로 시작하기" onClose={onClose}>
       <div className="flex items-center gap-3">
-        <Pingo mood="wave" size={44} />
+        <Pingo mood="welcome" size={44} />
         <SheetTitle>게스트로 시작하기</SheetTitle>
       </div>
       <p className="mt-3 break-keep text-sm text-ink-700">
-        친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요.
+        <Sentences text="친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요." />
       </p>
       <ul className="mt-4 space-y-2 rounded-xl bg-ink-50 p-4 text-sm text-ink-700">
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />핀 찍기와 의견 남기기는 똑같이 쓸 수 있어요</li>

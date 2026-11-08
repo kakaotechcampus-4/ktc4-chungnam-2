@@ -5,6 +5,7 @@ import ErrorText from '@/ErrorText'
 import { dayOrdinal } from '@/features/course/model'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import { useEnrichPin } from '@/features/map/livePlaces'
+import ReactionHelp from '@/features/map/ReactionHelp'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
@@ -22,6 +23,7 @@ import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import Mark from '@/ui/Mark'
+import Sentences from '@/ui/Sentences'
 
 /**
  * 확정된 장소 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 위에서 날을 고른 뒤 줄의 「넣기」로 그날에 넣는다.
@@ -64,7 +66,7 @@ export default function ShortlistTab() {
   }
 
   function toggleRoute() {
-    if (!routeOn && scheduled === 0) return showToast('장소를 골라 날짜에 넣으면 동선을 볼 수 있어요')
+    if (!routeOn && scheduled === 0) return showToast('장소를 날짜별 일정에 넣으면 동선을 확인할 수 있어요')
     setRouteOn(!routeOn)
   }
 
@@ -84,7 +86,9 @@ export default function ShortlistTab() {
     ? '불러오는 중…'
     : routeOn
       ? '일정에 넣은 순서대로 보여요'
-      : `${items.length}곳${scheduled > 0 ? ` · 일정에 넣은 곳 ${scheduled}` : ''}`
+      : scheduled > 0
+        ? `일정에 넣을 곳 ${items.length}곳, 넣은 곳 ${scheduled}곳`
+        : `${items.length}곳`
 
   return (
     <TabSheet
@@ -93,7 +97,11 @@ export default function ShortlistTab() {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <SheetTitle>확정된 장소 모아보기</SheetTitle>
-            <p className="mt-0.5 text-xs text-ink-500">{subtitle}</p>
+            <div className="mt-0.5 flex items-center gap-1">
+              <p className="text-xs text-ink-500">{subtitle}</p>
+              {/* 확정 리스트·일정·동선 보기가 무엇인지(멘토 리뷰 #1401, #1484). */}
+              {all.length > 0 && <ReactionHelp on="shortlist" />}
+            </div>
           </div>
           {all.length > 0 && (
             <div className="flex shrink-0 gap-2">
@@ -122,7 +130,7 @@ export default function ShortlistTab() {
             </Link>
           }
         >
-          마킹된 장소에서 확정 리스트에 넣은 곳이 여기 모여요
+          가기로 결정한 장소들이 이곳에 모여요. 마킹된 장소에서 확정 리스트에 넣어 보세요.
         </EmptyState>
       )}
       {all.length > 0 && routeOn && <DayRoute mapId={mapId} onOpen={setOpenPin} />}
@@ -143,7 +151,9 @@ export default function ShortlistTab() {
           ) : !edit.ready ? (
             <p className="text-sm text-ink-500">일정을 불러오는 중…</p>
           ) : items.length === 0 ? (
-            <p className="break-keep text-sm text-ink-500">모든 장소를 일정에 넣었어요. 동선 보기를 누르면 날짜별로 보여요</p>
+            <p className="break-keep text-sm text-ink-500">
+              <Sentences text="모든 장소를 일정에 넣었어요. 동선 보기로 날짜별 경로를 확인해 보세요." />
+            </p>
           ) : (
             <>
               {day ? (
@@ -159,7 +169,7 @@ export default function ShortlistTab() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-ink-500">여행 날짜를 정하면 일정을 짤 수 있어요</p>
+                <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
               )}
               <ShortlistList
                 items={items}

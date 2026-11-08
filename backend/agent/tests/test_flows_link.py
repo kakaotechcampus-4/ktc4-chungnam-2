@@ -194,7 +194,7 @@ def test_schedule_problem_suggests_the_course_and_is_resolved_when_fixed(world):
     assert gateway.calls == []                       # 코드 유형 — 모델을 부르지 않는다
     row = world.one(AgentSuggestion, map_id=map_id)
     assert (row.diagnosis, row.category, row.title) == ("schedule", None, "일정에 다시 볼 곳이 있어요")
-    assert [(a["type"], a["label"]) for a in row.actions] == [("open_course", "AI 코스로 고칠 안 받기")]
+    assert [(a["type"], a["label"]) for a in row.actions] == [("open_course", "AI 코스로 고쳐 보기")]
     with world.factory() as db:
         rendered = flows._render(db, db.get(AgentSuggestion, row.id))
     assert [seg.kind for seg in rendered.advice[0].segments] == ["text", "pin"]

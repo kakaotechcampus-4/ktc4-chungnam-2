@@ -30,9 +30,9 @@ export default function SummarySection({ mapId, summaries, onDone }: { mapId: st
           ))}
         </div>
       )}
-      <Box title="지키려는 조건" items={summary.must_keep.map((i) => `${i.label} · ${i.member_count}명`)} />
-      <Box title="겹치는 선호" items={summary.common_prefs.map((i) => `${i.label} · ${i.member_count}명`)} />
-      <Box title="갈리는 선호" items={summary.split_prefs.map((i) => `${i.label} · 원함 ${i.want_count} / 피함 ${i.avoid_count}`)} />
+      <Box title="지키려는 조건" items={summary.must_keep.map((i) => `${i.label} (${i.member_count}명)`)} />
+      <Box title="겹치는 선호" items={summary.common_prefs.map((i) => `${i.label} (${i.member_count}명)`)} />
+      <Box title="갈리는 선호" items={summary.split_prefs.map((i) => `${i.label} (원하는 사람 ${i.want_count}명, 피하는 사람 ${i.avoid_count}명)`)} />
       {summary.vague_fixable.count > 0 && <Box title={`더 적어 주면 반영돼요 (${summary.vague_fixable.count}건)`} items={summary.vague_fixable.requests} />}
       {summary.not_filtered.count > 0 && <Box title={`추천에서 거르지 않는 조건 (${summary.not_filtered.count}건)`} items={summary.not_filtered.notices} />}
       {RECOMMENDABLE.includes(summary.category) && (

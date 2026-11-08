@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { allInside, fitCenter, fitLevel, groupNear, MAX_LEVEL, zoomSteps } from './camera'
+import { allInside, dragHeading, fitCenter, fitLevel, groupNear, MAX_LEVEL, zoomSteps } from './camera'
 
 const size = { w: 1000, h: 800 }
 const none = { top: 0, right: 0, bottom: 0, left: 0 }
@@ -61,5 +61,19 @@ describe('겹친 검색 결과 묶기(#1174)', () => {
   it('하나도 겹치지 않으면 하나씩이다', () => {
     expect(groupNear([{ x: 0, y: 0 }, { x: 40, y: 0 }], 32)).toEqual([[0], [1]])
     expect(groupNear([], 32)).toEqual([])
+  })
+})
+
+describe('지도를 끈 방향(#1433)', () => {
+  it('8방향 중 가장 가까운 쪽, 조금 떨린 것은 방향이 없다', () => {
+    expect(dragHeading({ x: 12, y: -4 })).toBe('right')
+    expect(dragHeading({ x: -12, y: 4 })).toBe('left')
+    expect(dragHeading({ x: 10, y: -9 })).toBe('up-right')
+    expect(dragHeading({ x: -9, y: -10 })).toBe('up-left')
+    expect(dragHeading({ x: 8, y: 6 })).toBe('down-right')
+    expect(dragHeading({ x: -12, y: 5 })).toBe('down-left')
+    expect(dragHeading({ x: 3, y: -9 })).toBe('up')
+    expect(dragHeading({ x: -3, y: 9 })).toBe('down')
+    expect(dragHeading({ x: 2, y: -3 })).toBeNull()
   })
 })

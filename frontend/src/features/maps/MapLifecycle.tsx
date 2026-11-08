@@ -9,9 +9,10 @@ import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
+import Sentences from '@/ui/Sentences'
 
-import { deleteMapBody, mapChanges, tripReady, type MapHeaderView, type MemberView, type TripDraft } from './model'
-import { useDeleteMapMutation, useLeaveMapMutation, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
+import { copyMapErrorMessage, deleteMapBody, mapChanges, tripReady, tripTooLongError, type MapHeaderView, type MemberView, type TripDraft } from './model'
+import { useCopyMapMutation, useDeleteMapMutation, useLeaveMapMutation, useMapsQuery, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
 import TripFields from './TripFields'
 
 /**
@@ -25,6 +26,8 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
   const body = mapChanges(map, draft)
   const scheduleQuery = useScheduleQuery(map.id)
   const schedule = useSchedule(map.id)
+  // 여행 기간 상한은 서버 값이다(#1371, 목록 응답).
+  const maxDays = useMapsQuery().data?.tripMaxDays
   const dropped = tripReady(draft) ? droppedCount(schedule, tripDays(map.startDate, map.endDate), tripDays(draft.startDate, draft.endDate)) : 0
 
   return (
@@ -32,7 +35,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       title="지도 정보 수정"
       body="바꾼 내용은 모든 구성원에게 바로 보여요."
       ok="저장"
-      pending={update.isPending || !body || !tripReady(draft) || !scheduleQuery.data || scheduleQuery.isError}
+      pending={update.isPending || !body || !tripReady(draft, maxDays) || !scheduleQuery.data || scheduleQuery.isError}
       onCancel={onCancel}
       onOk={() =>
         body &&
@@ -45,7 +48,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       }
     >
       <div className="pt-2">
-        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} />
+        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} maxDays={maxDays} />
       </div>
       {scheduleQuery.isError && (
         <div className="space-y-2">
@@ -56,7 +59,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
         </div>
       )}
       {dropped > 0 && <Notice>기간이 줄어 빠지는 날에 넣은 {dropped}곳은 확정된 장소로 돌아가요</Notice>}
-      {update.error && <ErrorText message="지도 정보를 고치지 못했어요" error={update.error} />}
+      {update.error && <ErrorText message={tripTooLongError(update.error) ?? '지도 정보를 고치지 못했어요'} error={update.error} />}
     </ConfirmDialog>
   )
 }
@@ -90,7 +93,9 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
       }
     >
       {cannotLeave ? (
-        <p className="text-sm font-semibold text-warn-text">혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요</p>
+        <p className="text-sm font-semibold text-warn-text">
+          <Sentences text="혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요" />
+        </p>
       ) : (
         leave.error && <ErrorText message="지도에서 나가지 못했어요" error={leave.error} />
       )}
@@ -122,6 +127,33 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
       }
     >
       {del.error && <ErrorText message="지도를 삭제하지 못했어요" error={del.error} />}
+    </ConfirmDialog>
+  )
+}
+
+/**
+ * 지도 복사 확인 창(방장만, #1446). 무엇을 가져가고 무엇을 두고 오는지 먼저 알린다.
+ * 새 지도의 제목(「제주도 여행 (1)」)은 서버가 정해서 토스트에 그대로 적는다.
+ */
+export function CopyMapConfirm({ mapId, onCancel }: { mapId: string; onCancel: () => void }) {
+  const copy = useCopyMapMutation(mapId)
+  return (
+    <ConfirmDialog
+      title="이 지도를 복사할까요?"
+      body="날짜·지역·대표 이미지·색과 핀을 새 지도로 가져가요. 구성원의 의견, 구성원, 확정 리스트는 가져가지 않아요."
+      ok="복사"
+      pending={copy.isPending}
+      onCancel={onCancel}
+      onOk={() =>
+        copy.mutate(undefined, {
+          onSuccess: (map) => {
+            showToast(`${map.title}${josa(map.title, '을', '를')} 만들었어요`)
+            onCancel()
+          },
+        })
+      }
+    >
+      {copy.error && <ErrorText message={copyMapErrorMessage(copy.error)} error={copy.error} />}
     </ConfirmDialog>
   )
 }

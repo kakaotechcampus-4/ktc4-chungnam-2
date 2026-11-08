@@ -28,6 +28,26 @@ export const asReactionType = (t: string | undefined): ReactionType | null => (t
 /** v1에 핀으로 만들 수 있는 카테고리만 칩으로 둔다 — 숙소·기타는 핀을 만들 수 없다(#191). */
 export const FILTER_CATEGORIES: PinCategory[] = ['음식점', '카페', '관광지']
 
+type ExampleKind = ReactionType | 'memo'
+
+/**
+ * 의견·메모 입력칸의 예시 문장(#1461). 카테고리마다 다르다 — 「국물」「곱창」 예시가 카페·관광지 핀에서 어색했다.
+ * 반대 예시는 그 카테고리의 사유 칩(docs/constraints.md 칩 표)에 없는 이유로 골라, 칩에 없는 이유를 글로 쓰게 한다.
+ * 알러지 같은 안전 조건은 예시로 쓰지 않는다(가드레일 8).
+ */
+const INPUT_EXAMPLES: Record<'음식점' | '카페' | '관광지' | 'other', Record<ExampleKind, string>> = {
+  음식점: { like: '예: 국물이 진하고 양이 많아요', against: '예: 메뉴가 적어서 고를 게 없어요', memo: '예: 여기 곱창 맛있대' },
+  카페: { like: '예: 창가 자리가 넓고 조용해요', against: '예: 콘센트가 없어서 오래 있기 힘들어요', memo: '예: 여기 디저트가 유명하대' },
+  관광지: { like: '예: 야경이 예뻐서 사진 찍기 좋아요', against: '예: 볼거리가 적어서 금방 지루해요', memo: '예: 해 질 녘에 가면 예쁘대' },
+  other: { like: '예: 위치가 좋아서 들르기 편해요', against: '예: 지난번 여행 때 가봤어요', memo: '예: 친구가 꼭 가 보래' },
+}
+
+/** 입력칸 예시 문장. 숙소·기타나 분류를 모르면 공통 문장이다. */
+export function inputExample(category: PinCategory | null | undefined, kind: ExampleKind): string {
+  const key = category === '음식점' || category === '카페' || category === '관광지' ? category : 'other'
+  return INPUT_EXAMPLES[key][kind]
+}
+
 export const SORTS = {
   most: '의견 많은 순',
   least: '의견 적은 순',

@@ -10,6 +10,7 @@ import { showToast } from '@/features/shell/toast'
 import Checkbox from '@/ui/Checkbox'
 import Radio from '@/ui/Radio'
 import SheetTitle from '@/ui/SheetTitle'
+import Sentences from '@/ui/Sentences'
 
 import { foundLabel, linkErrorMessage, placeKey, rowName, rowPlace, rowState, rowTitle, toPinRequest, type ImportRow, type PlaceSearchResultDto } from './model'
 import { closeImport, openImport, pinsCenter, useImportOpen, useLinkImport, type AddResult } from './queries'
@@ -102,7 +103,9 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
 
   return (
     <div className="mt-1 space-y-3">
-      {!more && <p className="text-sm text-ink-500">카톡에서 대화 내보내기로 받은 .txt 파일을 넣어 주세요. 대화 내용은 어디에도 보내거나 저장하지 않아요</p>}
+      {!more && <p className="text-sm text-ink-500">
+        <Sentences text="카톡에서 대화 내보내기로 받은 .txt 파일을 넣어 주세요. 대화 내용은 어디에도 보내거나 저장하지 않아요" />
+      </p>}
       <fieldset>
         <legend className="mb-1.5 text-sm font-semibold text-ink-900">여행 얘기를 한 기간</legend>
         <div className="grid grid-cols-2 gap-2">
@@ -145,7 +148,7 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
       />
       {notice && (
         <p role="alert" className="text-sm text-warn-text">
-          {notice}
+          <Sentences text={notice} />
         </p>
       )}
       <button
@@ -216,7 +219,9 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
             모두 비우기
           </button>
         </div>
-        {imp.truncated && <p className="text-xs text-warn-text">목록이 가득 차서 일부 링크가 빠졌어요. 찍고 완료된 것을 지운 뒤 나머지 기간을 다시 넣어 주세요</p>}
+        {imp.truncated && <p className="text-xs text-warn-text">
+          <Sentences text="목록이 가득 차서 일부 링크가 빠졌어요. 찍고 완료된 것을 지운 뒤 나머지 기간을 다시 넣어 주세요" />
+        </p>}
       </div>
 
       {imp.error != null && (
@@ -255,7 +260,9 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
       {confirm.length > 0 && (
         <section>
           <h3 className="text-sm font-bold text-ink-900">이 장소가 맞나요? {confirm.length}</h3>
-          <p className="text-xs text-ink-500">주소는 같은데 이름이 달라요. 같은 곳인지 확인해 주세요</p>
+          <p className="text-xs text-ink-500">
+            <Sentences text="주소는 같은데 이름이 달라요. 같은 곳인지 확인해 주세요" />
+          </p>
           <ul className="mt-1 divide-y divide-ink-100">
             {confirm.map((e) => {
               const candidate = e.row.item?.result?.address_candidates?.[0]
@@ -281,10 +288,14 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
       {search.length > 0 && (
         <section>
           <h3 className="text-sm font-bold text-ink-900">이름으로 찾을 곳 {search.length}</h3>
-          <p className="text-xs text-ink-500">이름으로 찾아봤어요. 맞는 곳을 골라 주세요</p>
+          <p className="text-xs text-ink-500">
+            <Sentences text="이름으로 찾아봤어요. 맞는 곳을 골라 주세요" />
+          </p>
           {imp.searchPaused && (
             <div className="mt-2 flex items-center gap-2">
-              <p className="text-xs text-warn-text">찾을 곳이 많아 잠깐 멈췄어요. 조금 뒤에 이어서 찾아 주세요</p>
+              <p className="text-xs text-warn-text">
+                <Sentences text="찾을 곳이 많아 잠깐 멈췄어요. 조금 뒤에 이어서 찾아 주세요" />
+              </p>
               <button type="button" onClick={imp.retrySearch} className="btn-outline btn-sm">
                 이어서 찾기
               </button>
@@ -301,7 +312,9 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
       {needsName.length > 0 && (
         <section>
           <h3 className="text-sm font-bold text-ink-900">이름 확인 필요 {needsName.length}</h3>
-          <p className="text-xs text-ink-500">링크만으로는 어떤 곳인지 알 수 없어요. 같이 보낸 메시지를 보고 하나씩 찍어 주세요</p>
+          <p className="text-xs text-ink-500">
+            <Sentences text="링크만으로는 어떤 곳인지 알 수 없어요. 같이 보낸 메시지를 보고 하나씩 찍어 주세요" />
+          </p>
           <ul className="mt-1 divide-y divide-ink-100">
             {needsName.map(({ row }) => (
               <li key={row.share.url} className={`flex min-h-11 items-center gap-2 py-1.5 ${row.opened ? 'opacity-60' : ''}`}>

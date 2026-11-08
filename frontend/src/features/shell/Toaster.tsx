@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import Sentences from '@/ui/Sentences'
+
 import { CONTROLS } from './layout'
 
 import { useToastStore } from './toast'
@@ -40,10 +42,10 @@ export default function Toaster({
     if (!box || inside || !controlsVisible) return setMode('center')
     // 가운데 놓인 토스트 양옆 여백이 버튼 묶음 자리(오른쪽 여백 + 버튼 폭 + 틈)보다 좁으면 겹친다.
     // 고정이면 지도 영역 폭으로 잰다. 버튼 묶음 위로 올리면 지도 가운데를 가려서 줄이기만 한다.
-    const frameWidth = docked ? box.parentElement?.parentElement?.clientWidth : box.closest('section')?.clientWidth
+    const frameWidth = docked ? box.parentElement?.parentElement?.clientWidth : box.closest('main')?.clientWidth
     if (((frameWidth ?? window.innerWidth) - box.offsetWidth) / 2 >= CONTROLS.right + CONTROLS.size + 8) return setMode('center')
     const canRaise = () => {
-      const sheetTop = box.closest('section')?.getBoundingClientRect().top ?? 0
+      const sheetTop = box.closest('main')?.getBoundingClientRect().top ?? 0
       const headerBottom = document.querySelector('[data-map-header]')?.getBoundingClientRect().bottom ?? 0
       return sheetTop - 12 - CONTROLS.stackHeight - box.offsetHeight >= headerBottom + 8
     }
@@ -72,7 +74,9 @@ export default function Toaster({
           onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setFocusId(null)}
           className="pointer-events-auto flex max-w-[361px] items-center gap-3 rounded-xl bg-[var(--toast-bg)] px-4 py-2.5 text-sm text-white backdrop-blur-[12px]"
         >
-          <span className="line-clamp-2 break-keep [text-wrap:balance]">{toast.message}</span>
+          <span className="line-clamp-3 break-keep [text-wrap:balance]">
+            <Sentences text={toast.message} />
+          </span>
           {toast.action && (
             <button
               type="button"

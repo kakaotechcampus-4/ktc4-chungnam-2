@@ -258,11 +258,13 @@ AI 추천 대상이 아니다(2026-09-30, #145). v1에서는 숙소 핀도 만�
 
 | 배지 | wants | 장소 라벨이 참(known) | 거짓(known) | 모름 |
 |---|---|---|---|---|
-| required | false ("한식 말고") | 작성자당 3점 감점 | 0점 | 0점 + `needs_check` |
-| required | true ("조용한 곳이어야 해") | 선호 점수 | 작성자당 3점 감점 | 0점 + `needs_check` |
-| preferred | true ("한식 먹자") | 가산(지지 +1) | 0점 | 0점 |
-| preferred | false ("한식은 피하고 싶어") | **감산(반대 +1)** | 0점 | 0점 |
+| required | false ("한식 말고") | 작성자당 감점 | 0점 | 0점 + `needs_check` |
+| required | true ("조용한 곳이어야 해") | 선호 점수 | 작성자당 감점 | 0점 + `needs_check` |
+| preferred | true ("한식 먹자") | 가산 | 직접 쓴 작성자만 감점(#1055), ♥에서 이어받은 선호는 0점 | 0점 |
+| preferred | false ("한식은 피하고 싶어") | **감산** | 0점 | 0점 |
 | reference, 또는 wants가 null | — | 효과 없음(근거 줄에만 남는다) | | |
+
+점수 크기(직접 쓴 사람과 ♥로만 나온 사람의 배점, 감점 폭)는 이 표에 적지 않는다 — 아래 「선호 점수 계산」의 「점수」 절과 `recommend.core`의 `WRITTEN_PREFERENCE_POINTS`, `HEART_PREFERENCE_POINTS`가 정본이다. 이 표가 #414(직접 쓴 선호 3점)와 #1055(확인된 거짓 감점) 전의 「+1」, 「0점」으로 남아 있었다(멘토 리뷰, #1481).
 
 **예외(#1253):** `accessible`, `wants=true`, `required`인 반대 사유는 글·칩 모두 필요 조건으로 필터한다. known 거짓은 제외, known 참은 통과, 모름은 통과 + `needs_check`다. 다른 soft 키와 `accessible`의 다른 방향·배지에는 예외를 적용하지 않는다.
 

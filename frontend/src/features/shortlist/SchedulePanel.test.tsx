@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { EditMapDialog } from '@/features/maps/MapLifecycle'
 import type { MapHeaderView } from '@/features/maps/model'
+import { wholeText } from '@/test/text'
 
 import SchedulePanel from './SchedulePanel'
 import { seedSchedule, serverDays } from './__fixtures__/serverSchedule'
@@ -70,7 +71,7 @@ describe('「일정 짜기」 패널(넓은 화면)', () => {
 
   it('일정이 비어 있으면 넣는 법을 한 줄로 알린다', async () => {
     renderPanel()
-    expect(await screen.findByText('확정된 장소를 끌어 오거나 골라서 넣어요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('확정된 장소를 날짜별 칸으로 끌어 오거나 「넣기」를 눌러 하루 일정을 완성해 보세요'))).toBeInTheDocument()
   })
 })
 

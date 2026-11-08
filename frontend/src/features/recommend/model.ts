@@ -56,7 +56,8 @@ export function chosenCategory(cards: ReadinessCard[], picked: RecommendCategory
  */
 export function evidenceLabel(line: EvidenceLineDto): string {
   if (!line.fact_label) return line.text
-  if (line.wants === false) return `${line.fact_label} 제외`
+  // 후보를 빼지 않고 순위만 낮추는 줄은 「제외」가 아니다(#1253, #1260).
+  if (line.wants === false) return line.filters_candidates === false ? `${line.fact_label} 피하기` : `${line.fact_label} 제외`
   if (line.wants === true) return `${line.fact_label} 선호`
   return line.fact_label
 }
@@ -65,14 +66,19 @@ export function evidenceLabel(line: EvidenceLineDto): string {
  * 근거 확인 화면의 구역(최종기획안 5-5). 꼭 = 구성원별 줄, 선호 = 해시태그로 합침, 참고 = 원문 인용.
  * 꼭·선호 줄 중 추천이 쓰지 않는 줄(enforced=false)은 unused 로 따로 모은다 — 「꼭」으로 보이면 걸러질 거라고 믿는다(#742).
  * enforced 가 없으면 쓰이는 줄로 본다(구버전 서버).
+ * 꼭 줄 중 후보를 빼지 않는 줄(`filters_candidates=false`, 서버가 정한다)은 「꼭」에 두지 않는다(#1260) —
+ * 피하는 방향이면 lowered(순위를 낮춤), 아니면 선호 태그로 간다. 필드가 없으면(구버전 서버) 지금처럼 꼭이다.
  */
 export function groupEvidence(lines: EvidenceLineDto[]) {
   const active = lines.filter((l) => l.is_active)
   const pick = (badge: EvidenceLineDto['badge'], enforced: boolean) =>
     active.filter((l) => l.badge === badge && (l.enforced !== false) === enforced)
+  const must = pick('required', true)
+  const ranksOnly = (l: EvidenceLineDto) => l.filters_candidates === false
   return {
-    required: pick('required', true),
-    preferred: pick('preferred', true),
+    required: must.filter((l) => !ranksOnly(l)),
+    lowered: must.filter((l) => ranksOnly(l) && l.wants === false),
+    preferred: [...pick('preferred', true), ...must.filter((l) => ranksOnly(l) && l.wants !== false)],
     reference: active.filter((l) => l.badge === 'reference'),
     unused: [...pick('required', false), ...pick('preferred', false)],
   }
@@ -94,7 +100,7 @@ export function mergeTags(lines: EvidenceLineDto[]) {
 /** 화면에 보이는 조건 수 — 꼭은 줄마다, 선호는 같은 태그끼리 합쳐 센다(EvidenceGroups와 같은 묶음, #1143). */
 export function visibleConditionCount(lines: EvidenceLineDto[]): number {
   const g = groupEvidence(lines)
-  return g.required.length + mergeTags(g.preferred).length
+  return g.required.length + g.lowered.length + mergeTags(g.preferred).length
 }
 
 /** 추천이 쓰지 않는 줄의 이유 한 줄(docs/api-spec.yaml EvidenceLine.not_enforced_reason, #740). */
@@ -111,15 +117,58 @@ export function evidenceLimitMessage(err: unknown): string | null {
   return typeof limit === 'number' ? `직접 추가는 ${limit}개까지예요` : '직접 추가는 더 할 수 없어요'
 }
 
+/** 반경(m)을 화면 글자로. 화면은 표시용 km 변환만 하고 반경 숫자는 서버 값만 쓴다(#733, #1468). */
+export const radiusKm = (m: number) => `${m / 1000}km`
+
 /**
- * AI 추천이 찾는 범위 — 지도 가운데(보이는 가운데, #1331) 반경(m). 화면이 원을 그리고 확인 창에 알린다.
- * 사용자 결정 2026-11-04(#1385): 모든 카테고리 3km. 서버는 아직 도보 15·25분(1.2·2km)으로 찾는다 —
- * 서버가 반경을 응답으로 내리면 그 값을 쓴다(#733, 정책 값은 응답으로).
+ * AI 추천이 찾는 범위(m) — 사람이 「찾는 범위」에서 고른 반경, 안 골랐으면 고른 카테고리의 기본 반경(`Readiness.radius_m`, #1385).
+ * 고른 값이 서버가 준 하한·상한 밖이면 기본으로 돌아간다. 지도 원·크레딧 확인 창·run 생성이 같은 값을 쓴다(#1416).
+ * 값이 없으면(구버전 서버, 카테고리를 아직 못 고름) null — 원을 그리지 않고 숫자 없이 알린다. 숫자를 지어내지 않는다(#1468).
  */
-export const RECOMMEND_RADIUS_M = 3000
+export function readinessRadiusM(
+  map: Partial<Record<RecommendCategory, ReadinessDto>> | undefined,
+  category: RecommendCategory | null,
+  picked?: number,
+): number | null {
+  const r = category ? map?.[category] : undefined
+  if (picked && r?.radius_min_m && r.radius_max_m && picked >= r.radius_min_m && picked <= r.radius_max_m) return picked
+  return r?.radius_m || null
+}
+
+/** 「찾는 범위」 눈금 간격(m). 화면이 고르는 단위일 뿐이고 하한·상한·기본값은 서버 값이다(#1416). */
+const RADIUS_MARK_STEP_M = 1000
+
+/** 「찾는 범위」 눈금 — 서버가 준 하한부터 상한까지 1km 간격, 기본값과 상한은 늘 들어간다. 하한·상한이 없으면(구버전 서버) 빈 목록이다. */
+export function radiusOptions(r: ReadinessDto | undefined): number[] {
+  if (!r?.radius_min_m || !r.radius_max_m) return []
+  const out = new Set<number>()
+  for (let m = r.radius_min_m; m <= r.radius_max_m; m += RADIUS_MARK_STEP_M) out.add(m)
+  out.add(r.radius_max_m)
+  if (r.radius_m) out.add(r.radius_m)
+  return [...out].sort((a, b) => a - b)
+}
 
 /** 확인 창에 보이는 범위 한 줄. */
-export const recommendAreaNote = () => `지도 가운데 반경 ${RECOMMEND_RADIUS_M / 1000}km 안에서 찾아요`
+export const recommendAreaNote = (radiusM: number | null) =>
+  radiusM ? `지도 가운데 반경 ${radiusKm(radiusM)} 안에서 찾아요` : '보이는 지도 가운데 주변에서 찾아요'
+
+/** 넓히기 상한 안내 — 409 `WIDEN_LIMIT` 토스트와, 서버가 상한이라고 미리 알려 준 「반경 넓히기」 옆 이유가 같은 말이다. */
+export const WIDEN_LIMIT_MESSAGE = '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
+
+/** 이미 상한이라 넓힐 수 없다 — 서버가 `next_default_radius_m: null`을 내렸을 때만(#1370). 칸이 없으면(구버전 서버) 누른 뒤 409로 안다. */
+export const widenAtLimit = (run: RecommendRunDto) => run.next_default_radius_m === null
+
+/**
+ * 「반경 넓히기」 확인 창의 「넓혀요」 한 줄 — 지금 반경과 넓힌 뒤 반경은 서버 값이다(#1370, #1468).
+ * 다시 추천·넓히기는 추천받을 때의 지도 가운데에서 찾는다(지금 보이는 가운데가 아니다). 모르는 쪽 숫자는 빼고 말한다.
+ */
+export function widenLine(run: RecommendRunDto): string {
+  const now = run.default_radius_m
+  const next = run.next_default_radius_m
+  if (now != null && next != null) return `추천받은 지도 가운데 반경 ${radiusKm(now)}에서 ${radiusKm(next)}로`
+  if (next != null) return `추천받은 지도 가운데 반경을 ${radiusKm(next)}로`
+  return '추천받은 지도 가운데 기본 반경을 한 단계 더'
+}
 
 /**
  * 서버가 같은 요청을 아직 처리 중이다(409 `REQUEST_IN_PROGRESS`) — 기다려도 안 끝나 멈췄을 때. 실패가 아니다:
@@ -142,7 +191,7 @@ export function runErrorMessage(err: unknown): string {
  * 넓히기 상한(`WIDEN_LIMIT`)은 넓히기 버튼이 하는 일이라 다른 길(조건 고치기·직접 찍기)을 알린다.
  */
 export function rerunErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.code === 'WIDEN_LIMIT') return '더 넓히면 여행지를 벗어나요. 조건을 고치거나 직접 찍어 보세요'
+  if (err instanceof ApiError && err.code === 'WIDEN_LIMIT') return WIDEN_LIMIT_MESSAGE
   return inProgress(err) ? IN_PROGRESS_MESSAGE : '추천을 끝내지 못했어요. 잠시 뒤 다시 눌러 주세요'
 }
 
@@ -271,4 +320,24 @@ export function runHistoryLine(r: RunSummaryDto): string {
   return r.published_count > 0 ? `${r.candidate_count}곳 찾음 · 지도에 올림 ${r.published_count}곳` : `${r.candidate_count}곳 찾음`
 }
 
-export const summaryToRun = (r: RunSummaryDto): RecommendRunDto => ({ id: r.id, map_id: r.map_id, category: r.category, status: r.status, attempt_no: r.attempt_no })
+export const summaryToRun = (r: RunSummaryDto): RecommendRunDto => ({
+  id: r.id,
+  map_id: r.map_id,
+  category: r.category,
+  status: r.status,
+  attempt_no: r.attempt_no,
+  // 「지난 추천」에서 연 run 도 반경 넓히기 확인 창이 서버 반경을 보인다(#1370).
+  default_radius_m: r.default_radius_m,
+  next_default_radius_m: r.next_default_radius_m,
+})
+
+/**
+ * 「찾는 범위」 칸에 쓴 km 글자를 반경(m)으로 — step(m) 단위로 반올림한다(소수 첫째 자리면 100m).
+ * 숫자가 아니거나 서버가 준 하한·상한 밖이면 null(화면이 안내한다). 서버는 정수 m만 받는다(#1416).
+ */
+export function kmInputToM(text: string, min: number, max: number, step: number): number | null {
+  const km = Number(text.replace(',', '.'))
+  if (!text.trim() || !Number.isFinite(km)) return null
+  const m = Math.round((km * 1000) / step) * step
+  return m >= min && m <= max ? m : null
+}

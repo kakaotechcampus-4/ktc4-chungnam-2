@@ -5,7 +5,7 @@ import type { Pin } from '@/features/map/model'
 
 import { kakaoTrafficUrl } from '@/features/shortlist/model'
 
-import { courseDrawings, createErrorMessage, dayLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, showHoursKnown, transitLink, uncheckedPlaceCount, understandBody, walkLinks } from './model'
+import { courseDrawings, createErrorMessage, dayLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, showHoursKnown, walkLabel, transitLink, uncheckedPlaceCount, understandBody, walkLinks } from './model'
 
 const err = (code: string, detail?: Record<string, unknown>) => new ApiError(409, { code, message: code, detail })
 
@@ -13,6 +13,9 @@ describe('course model', () => {
   it('요청 한 줄은 비면 보내지 않고, 있으면 앞뒤 공백을 뗀다', () => {
     expect(requestBody('   ')).toEqual({})
     expect(requestBody(' 둘째 날은 실내 위주로 ')).toEqual({ request_text: '둘째 날은 실내 위주로' })
+    expect(requestBody('', 90)).toEqual({ member_constraints: [{ kind: 'daily_walk_max', value: 90 }] })
+    expect(walkLabel(60)).toBe('1시간')
+    expect(walkLabel(90)).toBe('1시간 30분')
   })
 
   it('done·failed 에서만 끝난 것으로 본다', () => {

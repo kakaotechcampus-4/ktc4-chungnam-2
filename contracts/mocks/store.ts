@@ -130,6 +130,7 @@ export interface StoreState {
   pendingLogin: { display_name: string; withdrawn_at: string } | null; // #855 선택 대기 중인 탈퇴 계정(카카오 콜백이 ?login_pending=withdrawn_account로 돌려보낸 상태)
   forceNoResults: boolean; // #1015 시나리오 no-results: 새 run의 첫 실행이 후보 0곳이다(그러면 크레딧을 돌려준다)
   trashedMaps: Record<string, { map: StoreState["maps"][string]; members: StoreState["members"][string]; deleted_at: string }>; // #464 삭제한 지도(30일 안 복구)
+  mapCovers: Record<string, { data: ArrayBuffer; content_type: string; updated_at: number }>; // mapId -> 올린 대표 이미지(#1445, updated_at은 초). 지도를 지워도 남는다(복구)
   pinTrash: Record<string, { pin: Pin; reactions: Reaction[]; deleted_at: string; deleted_by: string; was_confirmed: boolean }>; // #864 지운 핀(30일 안 복구), pinId ->
   lastNewCount: Record<string, number>; // runId -> 마지막 실행이 새로 찾은 후보 수(#845, 그 뒤 게시해도 안 바뀐다)
   candidates: Record<string, Candidate[]>; // runId -> candidates
@@ -175,6 +176,7 @@ function emptyState(): StoreState {
     lastNewCount: {},
     forceNoResults: false,
     trashedMaps: {},
+    mapCovers: {},
     pinTrash: {},
     idempotencyKeys: {},
     pendingLogin: null,

@@ -33,7 +33,7 @@ import { useIsDesktop } from '@/features/shell/useIsDesktop'
 export default function MapTab() {
   const { mapId } = useShell()
   const { selectedPinId, selectPin } = usePinSelection()
-  const { data: pins, isPending, error } = usePinsQuery(mapId)
+  const { data: pins, isPending, error, refetch } = usePinsQuery(mapId)
   const counts = useCountsQuery(mapId).data
   const setStage = useSheetStore((s) => s.setStage)
   const stage = useSheetStore((s) => s.stages.map)
@@ -127,7 +127,7 @@ export default function MapTab() {
             <p className="text-xs text-ink-500">
               {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
               {counts && counts.members_total > 0 && (
-                <span className="font-bold text-ink-600"> · {counts.members_with_opinion}/{counts.members_total}명이 의견을 남겼어요</span>
+                <span className="font-bold text-ink-600">, {counts.members_total}명 중 {counts.members_with_opinion}명이 의견을 남겼어요</span>
               )}
             </p>
             {/* 목록 줄의 ♥·반대·? 표시가 무엇인지(#1030). */}
@@ -138,7 +138,14 @@ export default function MapTab() {
     >
       {unavailable && <PinUnavailable onClose={() => selectPin(null)} />}
       {isPending && <CardSkeleton />}
-      {error && <ErrorText message="핀을 불러오지 못했어요" error={error} />}
+      {error && (
+        <div className="space-y-2">
+          <ErrorText message="핀을 불러오지 못했어요" error={error} />
+          <button type="button" onClick={() => void refetch()} className="btn-outline btn-sm">
+            다시 불러오기
+          </button>
+        </div>
+      )}
       {pins?.length === 0 && <EmptyMap />}
       {pins && pins.length > 0 && shown?.length === 0 && filtered && (
         <FilterEmpty who={members.find((m) => m.userId === filters.createdBy)?.name} category={filters.category} onClear={clear} />

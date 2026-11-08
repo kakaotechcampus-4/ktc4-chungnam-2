@@ -7,6 +7,7 @@ import type { CandidateDto, RecommendCategory } from '@/features/recommend/model
 import { pinErrorMessage } from '@/features/search/model'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
+import Sentences from '@/ui/Sentences'
 
 import type { AdDto } from './api'
 import { overlapsCandidate } from './model'
@@ -14,7 +15,7 @@ import { adKeys, recordClickOnce, useRecommendAds } from './queries'
 
 /**
  * 추천 탭 맨 아래 광고 영역(docs/ads.md 4절). 추천 결과와 따로 놓인 흰 카드라 AI 후보 카드(brand-50)와 섞이지 않는다.
- * 광고는 필터를 거치지 않아서 이유·조건 체크·구성원 집계를 싣지 않는다. 0개면 그리지 않는다.
+ * 광고는 필터를 거치지 않아서 이유·조건 체크·구성원 집계를 싣지 않는다. 0개면 그리지 않는다. 불러오기에 실패해도 숨긴다 — 광고는 추천을 막지 않는 덧붙임이라 오류 문구로 화면을 어지럽히지 않는다.
  * 탭을 연 뒤 나온 추천 결과에 같은 장소가 있으면 그 칸만 숨긴다(다른 광고로 채우지 않는다).
  */
 export default function AdArea({ mapId, hide = [] }: { mapId: string; hide?: CandidateDto[] }) {
@@ -23,7 +24,9 @@ export default function AdArea({ mapId, hide = [] }: { mapId: string; hide?: Can
   if (ads.length === 0) return null
   return (
     <section aria-label="광고" className="mt-6 space-y-2 border-t border-ink-200 pt-4">
-      <p className="text-label text-ink-500">광고예요. 추천 조건과는 상관없는 장소예요</p>
+      <p className="text-label text-ink-500">
+        <Sentences text="광고예요. 추천 조건과는 상관없는 장소예요" />
+      </p>
       <ul className="space-y-2">
         {ads.map((ad) => (
           <li key={ad.ad_id}>

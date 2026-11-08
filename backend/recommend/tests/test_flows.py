@@ -131,11 +131,11 @@ class _FakePlaceHours(_FakePlaceFacts):
         super().__init__()
         self._hours = hours_by_place
 
-    def get_week_open_status(self, place_ids):
+    def get_open_status_on_weekdays(self, place_ids, weekdays):
         from places import api as places_api
 
         return {
-            pid: places_api.week_open_status(self._hours[pid].hours, self._hours[pid].closed_days)
+            pid: places_api.open_status_on_weekdays(self._hours[pid].hours, self._hours[pid].closed_days, weekdays)
             for pid in place_ids if pid in self._hours
         }
 
@@ -1497,7 +1497,7 @@ class _RecordingPlaceFacts(_FakePlaceFacts):
         self.read.update(place_ids)
         return super().get_facts(place_ids)
 
-    def get_week_open_status(self, place_ids):
+    def get_open_status_on_weekdays(self, place_ids, weekdays):
         self.read.update(place_ids)
         return {}
 

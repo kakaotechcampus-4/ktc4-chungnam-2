@@ -9,7 +9,7 @@ export default function DragGhost({ name, x, y }: { name: string; x: number; y: 
     <div
       aria-hidden="true"
       style={{ left: x, top: y }}
-      className="pointer-events-none fixed z-[60] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-white px-3 py-2 text-body font-semibold text-ink-900 shadow-float ring-1 ring-ink-200"
+      className="pointer-events-none fixed z-[60] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-xl bg-white px-3 py-2 text-body font-semibold text-ink-900 shadow-float ring-1 ring-ink-200"
     >
       {name}
     </div>,
