@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 
+import DatePicker from '@/ui/DatePicker'
 import TextField, { ClearButton } from '@/ui/TextField'
 
 import FieldError from '@/ui/FieldError'
@@ -53,20 +54,18 @@ export default function TripFields({
 
       <div className="grid grid-cols-2 gap-2">
         <Field label="시작일">
-          <input type="date" value={value.startDate} onChange={(e) => set({ startDate: e.target.value })} className="field w-full" />
+          <DatePicker value={value.startDate} onChange={(startDate) => set({ startDate })} />
         </Field>
         <Field label="종료일">
-          <input
-            type="date"
+          <DatePicker
             value={value.endDate}
             min={value.startDate || undefined}
             // 상한은 서버 값이다 — 달력에서 그 뒤 날짜를 고를 수 없게 막는다(#1371).
             max={value.startDate && maxDays ? tripEndMax(value.startDate, maxDays) : undefined}
-            onChange={(e) => set({ endDate: e.target.value })}
+            onChange={(endDate) => set({ endDate })}
+            // 입력 오류는 빨강이 아니라 주의색이다 — 빨강은 파괴적 동작 전용(colors.md 6절).
             aria-invalid={Boolean(dateError)}
             aria-describedby={dateError ? 'date-error' : undefined}
-            // 입력 오류는 빨강이 아니라 주의색이다 — 빨강은 파괴적 동작 전용(colors.md 6절).
-            className="field w-full"
           />
         </Field>
       </div>

@@ -59,9 +59,11 @@ function renderTab() {
 }
 
 async function putTwoOnSecondDay() {
-  const days = within(await screen.findByRole('group', { name: '넣을 날짜' }))
-  expect(days.getByRole('button', { name: '첫째 날' })).toHaveAttribute('aria-pressed', 'true')
-  await userEvent.click(days.getByRole('button', { name: '둘째 날' }))
+  // 넣을 날짜는 여행 날짜만 고를 수 있는 달력이다 — 날 이름 끝에 「첫째 날」이 붙는다.
+  const days = within(await screen.findByRole('group', { name: /^넣을 날짜/ }))
+  expect(days.getByRole('button', { name: /첫째 날$/ })).toHaveAttribute('aria-pressed', 'true')
+  expect(days.getByRole('button', { name: /^2026년 10월 9일 / })).toBeDisabled()
+  await userEvent.click(days.getByRole('button', { name: /둘째 날$/ }))
   await userEvent.click(screen.getByRole('button', { name: '흑돼지식당 둘째 날에 넣기' }))
   await userEvent.click(await screen.findByRole('button', { name: '우진해장국 둘째 날에 넣기' }))
 }

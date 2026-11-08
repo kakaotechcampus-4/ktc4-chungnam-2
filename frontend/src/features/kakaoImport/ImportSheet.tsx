@@ -8,6 +8,7 @@ import ModalSheet from '@/features/shell/ModalSheet'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { showToast } from '@/features/shell/toast'
 import Checkbox from '@/ui/Checkbox'
+import DatePicker from '@/ui/DatePicker'
 import Radio from '@/ui/Radio'
 import SheetTitle from '@/ui/SheetTitle'
 import Sentences from '@/ui/Sentences'
@@ -111,18 +112,17 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className="mb-1 block text-xs text-ink-500">시작일</span>
-            <input type="date" value={range.from} onChange={(e) => setDay({ from: e.target.value })} className="field w-full" />
+            <DatePicker value={range.from} onChange={(from) => setDay({ from })} />
           </label>
           <label className="block">
             <span className="mb-1 block text-xs text-ink-500">종료일 (선택)</span>
-            <input
-              type="date"
+            <DatePicker
               value={range.to}
               min={range.from || undefined}
-              onChange={(e) => setDay({ to: e.target.value })}
+              onChange={(to) => setDay({ to })}
+              clearLabel="종료일 지우기"
               aria-invalid={wrongOrder}
               aria-describedby={hintId}
-              className="field w-full"
             />
           </label>
         </div>
