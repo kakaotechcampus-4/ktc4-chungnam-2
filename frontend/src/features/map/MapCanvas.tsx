@@ -108,6 +108,7 @@ export type MapController = {
 export default function MapCanvas({
   pins,
   memberCount,
+  freshPinIds,
   selectedPinId = null,
   results = [],
   candidates = [],
@@ -125,6 +126,8 @@ export default function MapCanvas({
   pins: Pin[]
   /** 핀 색(참여율)의 분모 — 지도 전체 구성원 수. */
   memberCount: number
+  /** 마지막으로 본 뒤 새 핀·의견이 있는 핀(#1454) — 파란 점. */
+  freshPinIds?: ReadonlySet<string>
   /** 상세를 연 핀(주소의 ?pin=). 지도에서 강조한다. */
   selectedPinId?: string | null
   /** 장소 검색 결과(Figma 4절) — 파란 핀으로 띄운다. 핀이 아니다. */
@@ -363,7 +366,7 @@ export default function MapCanvas({
     const layer = layerRef.current
     if (!ready || !layer) return
 
-    layer.sync(pins, memberCount)
+    layer.sync(pins, memberCount, freshPinIds)
 
     // 처음 위치를 아는 핀이 생겼을 때 한 번만 시야를 맞춘다. 매번 하면 사용자가 옮긴 시야를 뺏는다.
     // 실시간 핀(#382)은 처음엔 좌표가 없고 카카오에서 찾은 뒤에 생긴다 — 좌표 없는 핀만 있을 때 맞추기를 써 버리면
@@ -373,7 +376,7 @@ export default function MapCanvas({
       layer.fit(placed)
       fittedRef.current = true
     }
-  }, [pins, memberCount, ready])
+  }, [pins, memberCount, freshPinIds, ready])
 
   // 위치를 아는 핀이 없는 지도는 지도 만들 때 고른 지역에서 시작한다(지역 정보가 지도보다 늦게 왔을 때 한 번).
   // 핀 좌표가 오면(실시간 핀은 나중에 온다) 위에서 핀들에 맞춘다.

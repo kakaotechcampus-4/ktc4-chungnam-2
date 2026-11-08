@@ -392,6 +392,10 @@
     .tag-ai {
         @apply bg-brand-600 text-white;
     }
+    /* 마지막으로 본 뒤 새로 생긴 핀(#1454). 새 소식은 브랜드 파랑이고, 채운 파랑(tag-ai)은 AI에만 쓰므로 연한 면이다. */
+    .tag-new {
+        @apply bg-brand-50 text-brand-700;
+    }
     .tag-good {
         @apply bg-[var(--good-bg)] text-[var(--good-text)];
     }

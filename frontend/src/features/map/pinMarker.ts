@@ -1,4 +1,5 @@
 import type { PlaceSearchResultDto } from '@/features/search/model'
+import { categoryIconPath } from '@/ui/CategoryIcon'
 import { LIKE_PATH } from '@/ui/Mark'
 import { PIN_OUTLINE, PIN_PATH } from '@/ui/pinPath'
 import { PINGO_MARK } from '@/ui/pingoMark'
@@ -26,37 +27,34 @@ function shapeOf(kind: PinKind, ratio: number) {
   return { fill, stroke: 'var(--pin-outline)', heart: false }
 }
 
-/** var()·color-mix() 는 SVG 속성보다 style 에서 확실히 해석된다. */
-export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => void): HTMLElement {
+/**
+ * var()·color-mix() 는 SVG 속성보다 style 에서 확실히 해석된다.
+ * fresh: 마지막으로 본 뒤 새로 생긴 핀·의견이 있는 핀(#1454) — 머리 오른쪽 위에 파란 점을 단다(목록 「새 핀」 태그와 같은 브랜드 파랑).
+ */
+export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => void, fresh = false): HTMLElement {
   const shape = shapeOf(pin.kind, ratio)
 
   const el = document.createElement('button')
   el.type = 'button'
   // 장소 이름은 setAttribute 로만 넣는다 — innerHTML 로 들어가면 이름이 마크업으로 해석된다.
-  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'}, ${kindLabel(pin.kind)} 핀`)
+  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'}, ${kindLabel(pin.kind)} 핀${fresh ? ', 새 소식 있음' : ''}`)
   el.style.cssText =
-    'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
+    'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
       <path d="${PIN_PATH}" stroke-linejoin="round"
             style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${PIN_OUTLINE}" />
       ${shape.heart ? `<path d="${LIKE_PATH}" transform="translate(7.2 5.7) scale(.6)" style="fill:var(--pin-confirmed-heart)" />` : `<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`}
-    </svg>`
+    </svg>${
+      fresh
+        ? '<span data-new-dot aria-hidden="true" style="position:absolute;left:28px;top:3px;width:10px;height:10px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff"></span>'
+        : ''
+    }`
   el.addEventListener('click', onClick)
   return el
 }
 
 type SearchCategory = NonNullable<PlaceSearchResultDto['category']>
-
-/** 검색 핀 안의 카테고리 아이콘. lucide(ISC) 아이콘의 선 경로를 옮겨 적었다 — 마커는 React 밖이라 컴포넌트를 못 쓴다. */
-const CATEGORY_ICON: Record<SearchCategory, string> = {
-  음식점: '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>',
-  카페: '<path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/><path d="M6 2v2"/>',
-  관광지:
-    '<path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/>',
-  숙소: '<path d="M2 20v-8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8"/><path d="M4 10V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4"/><path d="M12 4v6"/><path d="M2 18h20"/>',
-  기타: '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
-}
 
 /**
  * 장소 검색 결과 — 빨간 원 + 흰 카테고리 아이콘, 아래 짧은 꼬리 끝이 좌표다(네이버 검색 핀처럼).
@@ -80,7 +78,7 @@ export function createSearchMarkerElement(
       <path d="M11 26L16 36.5L21 26Z" stroke-linejoin="round" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <circle cx="16" cy="16" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <g transform="translate(9.5 9.5) scale(0.5417)" style="fill:none;stroke:#fff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round">
-        ${CATEGORY_ICON[r.category ?? '기타']}
+        ${categoryIconPath(r.category)}
       </g>
     </svg>`
   el.addEventListener('click', onClick)

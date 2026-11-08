@@ -6,8 +6,11 @@ import { createPinMarkerElement, markSelected, setPinLabel, showPinLabel } from 
 import { isPlaced, participationRatio, type Pin, type PlacedPin } from './model'
 
 export interface MarkerLayer {
-  /** 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. 구성원 수는 핀 색(참여율)의 분모다. */
-  sync(pins: Pin[], memberCount: number): void
+  /**
+   * 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. 구성원 수는 핀 색(참여율)의 분모다.
+   * fresh 는 마지막으로 본 뒤 새 핀·의견이 있는 핀 id(#1454) — 파란 점을 단다.
+   */
+  sync(pins: Pin[], memberCount: number, fresh?: ReadonlySet<string>): void
   /** 상세를 연 핀을 크게·맨 위로·이름과 함께 보여 준다. null 이면 해제. */
   select(pinId: string | null): void
   /** 점 전체가 들어오도록 시야를 바로 맞춘다(지도를 처음 열 때). */
@@ -47,8 +50,8 @@ type Box = { l: number; t: number; r: number; b: number }
 const overlaps = (a: Box, b: Box) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
 
 /** 이 값이 그대로면 오버레이를 다시 만들 이유가 없다. */
-function signature(pin: Placed, ratio: number): string {
-  return [pin.kind, pin.lat, pin.lng, pin.place_name, ratio].join('|')
+function signature(pin: Placed, ratio: number, fresh: boolean): string {
+  return [pin.kind, pin.lat, pin.lng, pin.place_name, ratio, fresh].join('|')
 }
 
 /**
@@ -138,7 +141,7 @@ export function createMarkerLayer(
   }
 
   return {
-    sync(pins, memberCount) {
+    sync(pins, memberCount, fresh) {
       const alive = new Set<string>()
 
       for (const pin of pins) {
@@ -146,11 +149,12 @@ export function createMarkerLayer(
         alive.add(pin.id)
 
         const ratio = participationRatio(pin, memberCount)
-        const sig = signature(pin, ratio)
+        const isFresh = fresh?.has(pin.id) ?? false
+        const sig = signature(pin, ratio, isFresh)
         if (signatures.get(pin.id) === sig) continue
 
         drop(pin.id)
-        const el = createPinMarkerElement(pin, ratio, () => onSelect(pin.id))
+        const el = createPinMarkerElement(pin, ratio, () => onSelect(pin.id), isFresh)
         // 찍은 사람·방장만 끌어서 휴지통에 버릴 수 있다. 끄는 그림은 이 마커의 핀 모양 그대로다.
         if (pin.permissions.can_delete) detachDrag.set(pin.id, attachTrashDrag(el, () => pin, () => el.querySelector('svg')?.outerHTML ?? ''))
         if (!dropped.has(pin.id) && Math.abs(Date.now() - Date.parse(pin.created_at)) < FRESH_MS) {

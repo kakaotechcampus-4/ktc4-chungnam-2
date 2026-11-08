@@ -130,6 +130,7 @@ export function timeAgo(iso: string, now = Date.now()): string {
 export type PinCardView = {
   id: string
   name: string
+  category: PinCategory
   meta: string
   counts: Record<ReactionType | 'unknown', number>
   mine: ReactionType | null
@@ -144,6 +145,7 @@ export function toPinCard(pin: Pin, memberCount: number, myId?: string): PinCard
   return {
     id: pin.id,
     name: pin.place_name ?? '이름 없는 장소',
+    category: pin.category,
     meta: [
       pin.category,
       pin.created_by === myId ? '내가 찍음' : pin.created_by_display_name && `${pin.created_by_display_name}님이 찍음`,
