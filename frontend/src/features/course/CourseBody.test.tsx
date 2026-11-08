@@ -11,6 +11,7 @@ import { saveSchedule, scheduleKeys } from '@/features/shortlist/scheduleQueries
 
 import CourseBody from './CourseBody'
 import { useCourseViewStore } from './courseMapStore'
+import { wholeText } from '@/test/text'
 
 const BASE = 'http://localhost'
 
@@ -83,7 +84,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByText('지킴')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /첫째 날 · / })).toBeInTheDocument()
     // 영업시간을 모르는 장소(needs_check)에는 표시하지 않고, 아는 장소에만 「영업시간 확인됨」(2026-11-02)
-    expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
+    expect(screen.queryByText(wholeText('? 영업 확인 필요'))).not.toBeInTheDocument()
     expect(screen.queryByText('영업시간 확인됨')).not.toBeInTheDocument() // 목 서버는 모든 장소가 영업 여부를 모른다
     expect(screen.getByText(/^영업시간 정보가 없는 \d+곳은 방문 전에 확인해 주세요\.$/)).toBeInTheDocument()
     expect(screen.queryByText('다시 짜기')).not.toBeInTheDocument() // stale 아님
@@ -161,7 +162,7 @@ describe('AI 코스 짜기 시트', () => {
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     await confirmCourse(user)
 
-    expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
+    expect(await screen.findByText(wholeText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`))).toBeInTheDocument()
     expect(screen.queryByText(/코스를 요청하지 못했어요/)).not.toBeInTheDocument()
     const link = screen.getByRole('link', { name: '후기 쓰러 가기' })
     expect(link).toHaveAttribute('href', '/maps/map_1/shortlist')
@@ -294,7 +295,7 @@ describe('AI 코스 짜기 시트', () => {
     await user.click(await screen.findByRole('button', { name: '코스 짜기' }))
     await confirmCourse(user)
     expect(await screen.findByText('코스를 만들지 못했어요')).toBeInTheDocument()
-    expect(screen.getByText('코스를 짜다가 중간에 끊겼어요. 잠시 후 다시 시도해 주세요')).toBeInTheDocument()
+    expect(screen.getByText(wholeText('코스를 짜다가 중간에 끊겼어요. 잠시 후 다시 시도해 주세요'))).toBeInTheDocument()
     expect(screen.getByText('이미 짜고 있는 코스를 보여 드려요')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '다시 짜기' }))
     expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeInTheDocument() // 진입으로 돌아감
@@ -322,7 +323,7 @@ describe('AI 코스 짜기 시트', () => {
     expect(screen.getByRole('button', { name: '다시 짜기' })).toBeInTheDocument()
     expect(screen.getByText(/반영하지 못한 요청: 아무거나/)).toBeInTheDocument()
     expect(screen.getAllByText('도보 5분')).toHaveLength(2) // 구간 + 하루 합계
-    expect(screen.queryByText('? 영업 확인 필요')).not.toBeInTheDocument()
+    expect(screen.queryByText(wholeText('? 영업 확인 필요'))).not.toBeInTheDocument()
     expect(screen.getAllByText('영업시간 확인됨')).toHaveLength(1) // pin_1 만 영업 여부를 안다
     expect(screen.queryByText(/영업시간 정보가 없는/)).not.toBeInTheDocument() // checks 가 비었다
   })
@@ -330,7 +331,7 @@ describe('AI 코스 짜기 시트', () => {
   it('위치를 아는 확정 장소가 2곳 미만이면 입력 대신 이유와 확정 탭으로 가는 길을 보인다', async () => {
     resetScenario('happy-path') // 확정 리스트가 빈 상태로
     renderSheet()
-    expect(await screen.findByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '확정된 장소 보기' })).toHaveAttribute('href', '/maps/map_1/shortlist')
     expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
   })
@@ -362,7 +363,7 @@ describe('AI 코스 짜기 시트', () => {
     server.use(http.get('*/maps/:mapId/courses/latest', () => HttpResponse.json(done)))
     renderSheet()
     expect(await screen.findByRole('button', { name: '코스 짜기' })).toBeDisabled()
-    expect(screen.getByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
+    expect(screen.getByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '최근 코스 보기' })).toBeInTheDocument()
   })
 
@@ -378,9 +379,9 @@ describe('AI 코스 짜기 시트', () => {
     )
     renderSheet()
     expect(await screen.findByText('불러오는 중…')).toBeInTheDocument()
-    expect(screen.queryByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).not.toBeInTheDocument()
+    expect(screen.queryByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).not.toBeInTheDocument()
     release()
-    expect(await screen.findByText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).toBeInTheDocument()
   })
 })
 
@@ -425,7 +426,7 @@ describe('CourseBody — 확정 리스트 불러오기 실패', () => {
     server.use(http.get('*/maps/:mapId/shortlist', () => error(500, 'INTERNAL')))
     renderSheet()
     expect(await screen.findByText(/확정 리스트를 불러오지 못했어요/)).toBeInTheDocument()
-    expect(screen.queryByText(/2곳 이상 필요해요/)).not.toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('2곳 이상 필요해요')
     expect(screen.getByRole('button', { name: '다시 불러오기' })).toBeInTheDocument()
   })
 })

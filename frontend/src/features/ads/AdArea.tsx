@@ -7,6 +7,7 @@ import type { CandidateDto, RecommendCategory } from '@/features/recommend/model
 import { pinErrorMessage } from '@/features/search/model'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
+import Sentences from '@/ui/Sentences'
 
 import type { AdDto } from './api'
 import { overlapsCandidate } from './model'
@@ -23,7 +24,9 @@ export default function AdArea({ mapId, hide = [] }: { mapId: string; hide?: Can
   if (ads.length === 0) return null
   return (
     <section aria-label="광고" className="mt-6 space-y-2 border-t border-ink-200 pt-4">
-      <p className="text-label text-ink-500">광고예요. 추천 조건과는 상관없는 장소예요</p>
+      <p className="text-label text-ink-500">
+        <Sentences text="광고예요. 추천 조건과는 상관없는 장소예요" />
+      </p>
       <ul className="space-y-2">
         {ads.map((ad) => (
           <li key={ad.ad_id}>

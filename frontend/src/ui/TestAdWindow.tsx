@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Dialog } from 'radix-ui'
 import { X } from 'lucide-react'
+import Sentences from './Sentences'
 
 /**
  * 테스트 광고 창 — 보상형 광고 자리를 대신하는 전체 화면 창(#1039, 제공자 fake). 실제 광고 스크립트는 없다.
@@ -57,7 +58,7 @@ export default function TestAdWindow({ seconds, onClose }: { seconds: number; on
               끝까지 보면 보상을 받아요
             </Dialog.Description>
             <p role="status" className="break-keep text-xs text-ink-500">
-              {finished ? '다 봤어요. 닫으면 보상을 받아요' : '지금 닫으면 보상을 받지 못해요'}
+              <Sentences text={finished ? '다 봤어요. 닫으면 보상을 받아요' : '지금 닫으면 보상을 받지 못해요'} />
             </p>
           </div>
           <div className="px-4 pb-[max(16px,env(safe-area-inset-bottom))]">

@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 
 import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import Notice from '@/ui/Notice'
+import Sentences from '@/ui/Sentences'
 
 import { adButtonText, adOfferText, balanceText, creditBlock, guestCreditText, insufficientText, type CreditFeature } from './model'
 import { useCreditsQuery } from './queries'
@@ -51,7 +52,9 @@ export default function CreditGate({
           action={
             <>
               {/* 누르기 전에 무엇을 보면 무엇을 받는지 알린다(구글 보상형 광고 정책). 버튼은 서버의 available 로만 띄운다. */}
-              {ad && charge.ready && <p className="text-xs text-ink-600">{adOfferText(ad)}</p>}
+              {ad && charge.ready && <p className="text-xs text-ink-600">
+                  <Sentences text={adOfferText(ad)} />
+                </p>}
               <div className="flex flex-wrap gap-2">
                 {ad && charge.ready && (
                   <button type="button" disabled={charge.busy} onClick={() => void charge.start()} className="btn-outline btn-sm">

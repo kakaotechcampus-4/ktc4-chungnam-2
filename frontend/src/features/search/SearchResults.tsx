@@ -14,6 +14,7 @@ import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import TextArea from '@/ui/TextArea'
+import Sentences from '@/ui/Sentences'
 
 import { livePinRequest, pinErrorMessage, searchPinRequest, toSearchResult, type SearchResultView } from './model'
 import { searchErrorMessage, useExternalSearchQuery, useSourcePlacesQuery } from './queries'
@@ -175,7 +176,9 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
-          {selected.far && <p className="text-body font-semibold text-warn-text">현재 보고 있는 지도 중심에서 멀리 있는 장소예요. 다른 지역의 같은 이름 장소일 수 있어요</p>}
+          {selected.far && <p className="text-body font-semibold text-warn-text">
+            <Sentences text="현재 보고 있는 지도 중심에서 멀리 있는 장소예요. 다른 지역의 같은 이름 장소일 수 있어요" />
+          </p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
         {(selected.address || selected.url) && (
@@ -305,7 +308,7 @@ function LiveLeaveForm({
     <div className="space-y-2.5">
       <div className="rounded-xl bg-ink-50 p-3.5 text-body text-ink-700">
         <p className="font-semibold text-ink-900">장소 정보가 없는 곳이에요</p>
-        <p className="mt-0.5">상세 데이터가 없어 AI 추천과 동선에는 반영되지 않지만, 지도에 핀을 남겨 함께 이야기를 나눌 수 있어요.</p>
+        <p className="mt-0.5"><Sentences text="상세 데이터가 없어 AI 추천과 동선에는 반영되지 않지만, 지도에 핀을 남겨 함께 이야기를 나눌 수 있어요." /></p>
       </div>
       {askName && (
         <>
@@ -313,7 +316,7 @@ function LiveLeaveForm({
             <span className="block text-body font-bold text-ink-900">장소 이름</span>
             <TextField value={name} onChange={setName} maxLength={NAME_MAX} placeholder="카카오맵에 나온 이름 그대로" clearLabel="이름 지우기" />
           </label>
-          <p className="text-xs text-ink-500">지도를 열 때 이 이름으로 카카오맵에서 위치를 찾아요</p>
+          <p className="text-xs text-ink-500"><Sentences text="지도를 열 때 이 이름으로 카카오맵에서 위치를 찾아요" /></p>
           <div role="group" aria-label="분류" className="flex flex-wrap gap-2">
             {FILTER_CATEGORIES.map((c) => (
               <button key={c} type="button" aria-pressed={category === c} onClick={() => setCategory(c)} className="chip">

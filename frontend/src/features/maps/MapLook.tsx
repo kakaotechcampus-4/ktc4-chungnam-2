@@ -7,6 +7,7 @@ import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import RegionCover from '@/ui/RegionCover'
 import SheetTitle from '@/ui/SheetTitle'
+import Sentences from '@/ui/Sentences'
 
 import { MAP_COLORS, shrinkImage } from './look'
 import type { MapView } from './model'
@@ -55,7 +56,7 @@ export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void
   return (
     <ModalSheet label="대표 이미지 편집" onClose={onClose}>
       <SheetTitle>대표 이미지 편집</SheetTitle>
-      <p className="mt-1 text-sm text-ink-600">구성원 모두에게 같은 이미지가 보여요</p>
+      <p className="mt-1 text-sm text-ink-600"><Sentences text="구성원 모두에게 같은 이미지가 보여요" /></p>
       <div className="mt-4 overflow-hidden rounded-xl border border-ink-200">
         <MapCover map={map} className="block aspect-[16/7] w-full" />
       </div>
@@ -113,7 +114,7 @@ export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void
   return (
     <ModalSheet label="색상 변경" onClose={onClose}>
       <SheetTitle>색상 변경</SheetTitle>
-      <p className="mt-1 text-sm text-ink-600">목록 카드 바탕과 기본 그림의 하늘 색이에요</p>
+      <p className="mt-1 text-sm text-ink-600"><Sentences text="목록 카드 바탕과 기본 그림의 하늘 색이에요" /></p>
       <div className="mt-4 overflow-hidden rounded-xl border border-ink-200">
         <MapCover map={{ ...map, color: color ?? undefined }} className="block aspect-[16/7] w-full" />
       </div>

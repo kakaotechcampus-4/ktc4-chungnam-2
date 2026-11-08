@@ -2,6 +2,7 @@ import { CircleHelp } from 'lucide-react'
 
 import MenuPopover from '@/features/shell/MenuPopover'
 import Mark from '@/ui/Mark'
+import Sentences from '@/ui/Sentences'
 
 const CONFIRMED_MARK = (
   <span className="text-[var(--pin-confirmed-mark)]">
@@ -70,7 +71,9 @@ export default function ReactionHelp({ on = 'pins' }: { on?: keyof typeof VARIAN
               </span>
               {t.term}
             </dt>
-            <dd className="break-keep text-ink-700">{t.text}</dd>
+            <dd className="break-keep text-ink-700">
+              <Sentences text={t.text} />
+            </dd>
           </div>
         ))}
       </dl>

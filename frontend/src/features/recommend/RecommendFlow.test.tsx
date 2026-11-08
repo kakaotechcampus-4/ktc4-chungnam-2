@@ -17,6 +17,7 @@ import ConditionsCard from './ConditionsCard'
 import type { RecommendResultDto, RecommendRunDto } from './model'
 import { ReadinessBody } from './Readiness'
 import { ResultsHeader } from './Results'
+import { wholeText } from '@/test/text'
 
 const MAP = 'map_1'
 
@@ -144,7 +145,7 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     await userEvent.click(await screen.findByRole('button', { name: '음식점 추천받기' }))
     await confirmCredit()
 
-    expect(await screen.findByText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`)).toBeInTheDocument()
+    expect(await screen.findByText(wholeText(`크레딧이 부족해요. 후기를 쓰면 ${review_reward} 크레딧을 드려요`))).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '후기 쓰러 가기' })).toHaveAttribute('href', `/maps/${MAP}/shortlist`)
     expect(screen.queryByText('추천 장소를 찾지 못했어요')).not.toBeInTheDocument()
     expect(useAiStore.getState().runs[MAP]).toBeUndefined()

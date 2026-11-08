@@ -63,7 +63,7 @@ test('방장이 반대한 곳을 빼고 추천받아 지도에 올리면 구성�
   await test.step('방장이 첫 후보를 지도에 올린다', async () => {
     const card = owner.getByRole('article').filter({ has: owner.getByRole('heading', { name: new RegExp(`^${picked} `) }) })
     await card.getByRole('button', { name: '지도에 올리기' }).click()
-    await expect(card).toContainText('지도에 올렸어요')
+    await expect(card).toContainText('지도에 올려 모두에게 보여요')
   })
 
   await test.step('구성원 화면에 올린 핀이 실시간으로 뜬다', async () => {

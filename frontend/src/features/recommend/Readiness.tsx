@@ -23,6 +23,7 @@ import { useCreditsQuery } from '@/features/credits/queries'
 import FieldError from '@/ui/FieldError'
 import Mark from '@/ui/Mark'
 import RangeSlider from '@/ui/RangeSlider'
+import Sentences from '@/ui/Sentences'
 
 import { useAiStore } from './aiStore'
 import {
@@ -47,11 +48,17 @@ export function AiHeader({ title, sub, mood }: { title: string; sub?: string; mo
     <div className="flex items-center gap-3 rounded-xl bg-[var(--pingo-bg)] p-3">
       <Pingo size={44} mood={mood} />
       <div className="min-w-0">
-        <p className="flex items-center gap-1.5 font-bold text-ink-900">
-          <span className="tag tag-ai">AI</span>
-          {title}
+        <p className="flex items-start gap-1.5 font-bold text-ink-900">
+          <span className="tag tag-ai mt-px shrink-0">AI</span>
+          <span className="min-w-0">
+            <Sentences text={title} />
+          </span>
         </p>
-        {sub && <p className="text-xs text-ink-600">{sub}</p>}
+        {sub && (
+          <p className="text-xs text-ink-600">
+            <Sentences text={sub} />
+          </p>
+        )}
       </div>
     </div>
   )
@@ -171,10 +178,12 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           }}
         />
       )}
-      <p className="text-label text-ink-500">지도 가운데 원 안에서 추천해요. 다른 지역은 지도를 움직여 보세요.</p>
+      <p className="text-label text-ink-500">
+        <Sentences text="지도 가운데 원 안에서 추천해요. 다른 지역은 지도를 움직여 보세요." />
+      </p>
       {/* 카테고리마다 의견 핀이 몇 곳 필요한지는 타일(「N곳 더 필요」)이 보여 준다.
           사유가 곧 추천 조건이 된다(②) — 의견이 많을수록 거르고 고를 근거가 늘어난다. */}
-      <p className="text-label text-ink-500">구성원의 의견이 모일수록 모두가 만족할 만한 장소를 찾을 수 있어요.</p>
+      <p className="text-label text-ink-500"><Sentences text="구성원의 의견이 모일수록 모두가 만족할 만한 장소를 찾을 수 있어요." /></p>
       {/* 사유 정리(②)와 첫 검색을 한 요청에서 끝낸다(#845) — 몇 초 걸린다. 그동안 진행을 보인다. */}
       {create.isPending && <ProgressBody steps={START_STEPS} />}
       {/* 실패하면 run 이 생기지 않고 크레딧도 쓰지 않는다 — 같은 버튼을 다시 누르면 새 시도다. 크레딧 오류는 CreditGate 가 보인다. */}

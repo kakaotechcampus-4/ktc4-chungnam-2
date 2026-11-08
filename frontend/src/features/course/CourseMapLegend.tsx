@@ -1,4 +1,5 @@
 import { useCourseMapStore } from './courseMapStore'
+import Sentences from '@/ui/Sentences'
 
 /**
  * AI 코스 탭 머리에 붙는 범례(#683) — 지도에 그린 날짜별 선 모양과 「끄기」.
@@ -12,7 +13,7 @@ export default function CourseMapLegend({ mapId }: { mapId: string }) {
   return (
     <div className="mt-2 flex items-start gap-2 rounded-xl bg-white p-2.5 ring-1 ring-ink-200">
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold text-ink-900">AI 코스를 지도에 보여 주고 있어요</p>
+        <p className="text-xs font-semibold text-ink-900"><Sentences text="AI 코스를 지도에 보여 주고 있어요" /></p>
         <ul aria-label="날짜별 선" className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
           {days.map((d) => (
             <li key={d.title} className="flex items-center gap-1.5 text-xs text-ink-700">
