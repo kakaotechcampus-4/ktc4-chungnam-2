@@ -345,6 +345,7 @@ components:
 | 이유를 알리는 안내(결과 위) | `Notice` (ink-100 면 + warn-line 아이콘 + ink-700 글자 + 다음 행동 버튼) | `ui/Notice` |
 | 불러오는 중(모양을 아는 목록) | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리 — 핀·지도·알림 목록, 일정, 확정 리스트, 검색 결과. 옆에 글이 없으면 `label`로 화면 읽기에만 알린다) | `ui/CardSkeleton` |
 | 응답 기다림(무엇이 나올지 모름) | `PingoLoading` (1초 뒤 걷는 핑고 + 한 줄, 로그인 상태 확인만 `mood="space"` 우주복 핑고) | `ui/PingoLoading` |
+| 끝나지 않은 일의 진행(#1547) | `TaskProgress` (흰 면 + ink-200 `ring-1` + 반경 12. 「라벨 n/m단위」 14/700 + 숫자 action 파랑 · 6px 막대(selected-bg 바탕 + action-fill) · 안내 한 줄 13 ink-500 · 남은 일로 가는 `btn-link` 하나). 다 끝나면 그리지 않는다. 마킹된 장소 「내 의견」, 확정 탭 「일정」 | `ui/TaskProgress` |
 | 두 문장 이상 안내 글 | `Sentences` (문장마다 줄, 한 문장이면 그대로) | `ui/Sentences` |
 | 핑고 | `Pingo` (표정 `mood` · 고개 내밀기 `peek`) · 작은 아이콘 자리는 `PingoMark` | `ui/Pingo` |
 | 지도 위 핑고(3D, 끈 방향 8방향으로 걷기·오르내리기, 쉬면 졸기·잠들기, 새 조언 「!」) | `MapPingo` (`heading` · `wave` · `alert` · `idle`, 크기는 className). 쉬는 시간은 `features/agent/useIdleStage` | `ui/MapPingo` |
