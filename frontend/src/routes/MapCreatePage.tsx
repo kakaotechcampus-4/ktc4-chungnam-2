@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import { ChevronLeft } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import { createMapErrorMessage, tripReady, type TripDraft } from '@/features/maps/model'
+import { createMapErrorMessage, titleServerError, tripReady, type TripDraft } from '@/features/maps/model'
 import { useCreateMapMutation, useMapsQuery } from '@/features/maps/queries'
 import TripFields from '@/features/maps/TripFields'
 import EntryFrame from '@/ui/EntryFrame'
@@ -40,9 +40,10 @@ export default function MapCreatePage() {
         <h1 className="text-2xl font-bold text-ink-900">새 지도</h1>
       </header>
 
-      <TripFields value={draft} onChange={setDraft} maxDays={maxDays} />
+      <TripFields value={draft} onChange={setDraft} maxDays={maxDays} serverError={create.error} />
 
-      {create.error && <ErrorText message={createMapErrorMessage(create.error)} error={create.error} />}
+      {/* 제목 때문에 거절됐으면 이유는 제목 칸 아래에 있다. */}
+      {create.error && !titleServerError(create.error) && <ErrorText message={createMapErrorMessage(create.error)} error={create.error} />}
 
       <button
         type="submit"

@@ -11,7 +11,7 @@ import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
 import Sentences from '@/ui/Sentences'
 
-import { copyMapErrorMessage, deleteMapBody, mapChanges, tripReady, tripTooLongError, type MapHeaderView, type MemberView, type TripDraft } from './model'
+import { copyMapErrorMessage, deleteMapBody, mapChanges, titleServerError, tripReady, tripTooLongError, type MapHeaderView, type MemberView, type TripDraft } from './model'
 import { useCopyMapMutation, useDeleteMapMutation, useLeaveMapMutation, useMapsQuery, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
 import TripFields from './TripFields'
 
@@ -48,7 +48,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       }
     >
       <div className="pt-2">
-        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} maxDays={maxDays} />
+        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} maxDays={maxDays} serverError={update.error} />
       </div>
       {scheduleQuery.isError && (
         <div className="space-y-2">
@@ -59,7 +59,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
         </div>
       )}
       {dropped > 0 && <Notice>기간이 줄어 빠지는 날에 넣은 {dropped}곳은 확정된 장소로 돌아가요</Notice>}
-      {update.error && <ErrorText message={tripTooLongError(update.error) ?? '지도 정보를 고치지 못했어요'} error={update.error} />}
+      {update.error && !titleServerError(update.error) && <ErrorText message={tripTooLongError(update.error) ?? '지도 정보를 고치지 못했어요'} error={update.error} />}
     </ConfirmDialog>
   )
 }

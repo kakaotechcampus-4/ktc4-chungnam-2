@@ -353,7 +353,7 @@ components:
 | 좋음·반대·미확인·확정 리스트의 뜻(핀 상세 집계 줄 끝, 마킹된 장소 목록 머리) | `ReactionHelp` (「?」 글자 버튼 → `MenuPopover` 안 네 줄. 용어는 고정이라 뜻만 적는다) | `features/map/ReactionHelp` |
 | 값을 고치는 창(지도 정보·핀 메모·이름, #480) | `ConfirmDialog` + `children`에 입력칸, 확인 글자는 「저장」. 바뀐 게 없으면 저장을 끈다. 입력칸에서 Enter가 저장이다 | `ui/ConfirmDialog` |
 | 보상형 광고 자리(테스트 광고, #1039) | `TestAdWindow` (전체 화면 · 포커스 가두기 · 바깥을 눌러도 닫히지 않음. 응답의 초만큼 센 뒤 「보상 받고 닫기」(채움), ✕·Esc는 언제나 닫는다 — 다 보기 전이면 보상 없음). 띄우는 것은 `features/credits/rewardedAd`의 제공자다. 광고 버튼은 잔액 부족 `Notice` 안 `btn-outline btn-sm` + 고지 한 줄 | `ui/TestAdWindow` |
-| 지도 제목·지역·날짜 입력(만들기·수정) | `TripFields` | `features/maps/TripFields` |
+| 지도 제목·지역·날짜 입력(만들기·수정) | `TripFields` (제목을 지웠거나 띄어쓰기만 남기면, 또는 서버가 제목으로 거절하면 칸 아래 `FieldError`, #1536) | `features/maps/TripFields` |
 | 카카오 로그인 버튼 | `KakaoButton` (노랑 #FEE500, 문구는 `label`로만 바꾼다 — 게스트 전환은 「카카오로 계정 만들기」) | `features/auth/KakaoButton` |
 | 구글 로그인 버튼(#1514) | `GoogleButton` (흰 바탕 + ink-200 테두리 + 구글 「G」 로고, 카카오 버튼 바로 아래 같은 크기. 게스트 전환은 「Google로 계정 만들기」) | `features/auth/GoogleButton` |
 | 게스트에게 카카오·구글 계정 권하기(계정 줄 아래) | `GuestAccountNotice` (ink-50 면 + 한 줄 + `KakaoButton` + `GoogleButton`). 게스트 표시는 `tag tag-neutral` 「게스트」 | `features/auth/GuestAccountNotice` |
@@ -453,7 +453,7 @@ components:
 - **입구 카드(넓은 화면):** 로그인·계정 복구·새 지도·초대 받기는 `EntryFrame` 하나를 쓴다. 768px 이상은 종이(ink-50) 바탕 가운데 400px 흰 카드(ink-200 테두리, 반경 16, 안쪽 32/40)다(#602, #1269). 넓은 화면에서 버튼은 화면 맨 아래가 아니라 내용 바로 아래다.
 
 ### Inputs / Fields
-- **입력칸(`field` · `ui/TextField`):** 흰 바탕, ink-300 테두리, 반경 12, 높이 48, 글자 16이다. 글자가 있을 때만 오른쪽에 ✕(`ClearButton`)와 글자 수가 보인다. 여러 줄 입력(`ui/TextArea`)은 ✕가 오른쪽 위, 글자 수가 칸 아래 오른쪽이다. 글을 쓰는 칸에는 모두 ✕가 있다(검색창 포함). 포커스하면 테두리가 brand-500으로 바뀌고 2px 포커스 링이 붙는다. 날짜·여러 줄 입력도 같은 `field` 틀이다.
+- **입력칸(`field` · `ui/TextField`):** 흰 바탕, ink-300 테두리, 반경 12, 높이 48, 글자 16이다. 글자가 있을 때만 오른쪽에 ✕(`ClearButton`)와 글자 수가 보인다. ✕는 20 원에 ink-200 면, ink-500 ✕ 선이다 — 진한 원이 글자보다 눈에 띄어 연하게 바꿨다(#1536). 올리면 ink-300 면. 여러 줄 입력(`ui/TextArea`)은 ✕가 오른쪽 위, 글자 수가 칸 아래 오른쪽이다. 글을 쓰는 칸에는 모두 ✕가 있다(검색창 포함). 포커스하면 테두리가 brand-500으로 바뀌고 2px 포커스 링이 붙는다. 날짜·여러 줄 입력도 같은 `field` 틀이다.
 - **오류:** 칸(또는 칸 안 입력)에 `aria-invalid`를 켜면 warn-line 2px 테두리(안쪽 그림자로 한 겹 더해 크기는 그대로) + warn-bg 바탕이 된다. 문구는 칸 바로 아래 `FieldError`(`CircleAlert` 16 + 14/600 warn-text)이고 칸이 `aria-describedby`로 가리킨다. 화면 단위 실패 문구 `ErrorText`도 같은 기호 + 굵은 글자다. 주의색 글자만으로는 오류로 읽히지 않았다(#1447).
 - **지역 고르기(`RegionPicker`, #1511):** 고를 수 있는 시·도만 같은 폭 3열 `chip` 칸에 짧은 이름(「서울」·「강원(춘천)」)으로 둔다. 읽어 주는 이름은 정식 이름·범위·베타까지다. 베타 지역은 칸마다 붙이지 않고 아래 두 줄 「부산 · 대구 · 광주 · 강원은 베타예요. / 장소 정보가 아직 적을 수 있어요」(13 ink-500)다. 준비 중인 곳은 보이지 않는다(누를 수 없는 이름 목록이 고를 수 있는 곳을 가렸다). 저장과 요청은 정식 이름이다. 열린 곳이 열 곳을 넘으면 권역 제목으로 나누는 안을 다시 본다.
 

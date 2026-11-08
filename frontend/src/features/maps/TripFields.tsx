@@ -6,7 +6,7 @@ import TextField, { ClearButton } from '@/ui/TextField'
 import FieldError from '@/ui/FieldError'
 import Sentences from '@/ui/Sentences'
 
-import { tripDateError, tripEndMax, type TripDraft } from './model'
+import { titleServerError, tripDateError, tripEndMax, tripTitleError, type TripDraft } from './model'
 import RegionPicker from './RegionPicker'
 
 const TITLE_MAX = 100
@@ -20,22 +20,44 @@ export default function TripFields({
   onChange,
   regionClearable = true,
   maxDays,
+  serverError,
 }: {
   value: TripDraft
   onChange: (next: TripDraft) => void
   regionClearable?: boolean
+  /** 만들기·수정 요청의 실패. 제목 때문에 거절됐으면 제목 칸 아래에 이유를 둔다. */
+  serverError?: unknown
   /** 여행 기간 상한(일, `GET /maps`의 `trip_max_days`, #1371). 없으면(구버전 서버) 막지 않고 서버 검사에 맡긴다. */
   maxDays?: number
 }) {
   const [pickingRegion, setPickingRegion] = useState(false)
+  // 한 번이라도 글자를 넣었거나 고치는 중이면, 비우거나 띄어쓰기만 남겼을 때 이유를 알린다.
+  const [titleTouched, setTitleTouched] = useState(value.title !== '')
   const set = (patch: Partial<TripDraft>) => onChange({ ...value, ...patch })
   const dateError = tripDateError(value, maxDays)
+  const titleError = tripTitleError(value.title, titleTouched) ?? titleServerError(serverError)
 
   return (
     <>
       <Field label="여행 제목">
-        <TextField value={value.title} onChange={(title) => set({ title })} maxLength={TITLE_MAX} placeholder="예: 부산 1박 2일" clearLabel="제목 지우기" />
+        <TextField
+          value={value.title}
+          onChange={(title) => {
+            setTitleTouched(true)
+            set({ title })
+          }}
+          maxLength={TITLE_MAX}
+          placeholder="예: 부산 1박 2일"
+          clearLabel="제목 지우기"
+          describedBy={titleError ? 'title-error' : undefined}
+        />
       </Field>
+      {/* label 안에는 문단을 둘 수 없어 칸 묶음 밖에 두고 위로 당긴다(날짜 오류와 같다). */}
+      {titleError && (
+        <FieldError id="title-error" className="-mt-3.5 mb-5">
+          {titleError}
+        </FieldError>
+      )}
 
       <Field as="div" label={<>지역 <span className="font-normal text-ink-500">(선택)</span></>}>
         <div className="field">
