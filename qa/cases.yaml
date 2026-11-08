@@ -40,7 +40,7 @@
 - {id: B03, layer: api, area: invite, scenario: "나간 뒤 개수 재집계 후 수락", expect: "200", status: pass}
 - {id: B04, layer: api, area: recommend, scenario: "정식 계정이 31번째 추천(처음 30, 1번에 1, 횟수 상한은 #949에서 크레딧으로)", expect: "30번 202, 31번째 402 CREDIT_INSUFFICIENT + detail required=1·balance=0, 카테고리 섞어도 합산", status: pass}
 - {id: B05, layer: api, area: recommend, scenario: "다른 구성원의 크레딧은 독립", expect: "A 잔액이 0이어도 B는 202", status: pass}
-- {id: B06, layer: api, area: recommend, scenario: "반경 넓히기 상한 후 한 번 더", expect: "WIDEN_LIMIT", status: pass}
+- {id: B06, layer: api, area: recommend, scenario: "반경 넓히기 상한 후 한 번 더", expect: "readiness radius_max_m까지 넓힌 뒤 409 WIDEN_LIMIT(detail.default_radius_m = 상한)", status: pass}
 - {id: B07, layer: api, area: recommend, scenario: "결과 0개 run에서 넓히기→재시도", expect: "넓히기·다시 추천 202, 결과는 여전히 NO_RESULTS(funnel 있음), 잔액 그대로", status: pass}
 - {id: B08, layer: api, area: recommend, scenario: "execute 전에 result 조회", expect: "409 RUN_NOT_FINISHED", status: pass}
 
