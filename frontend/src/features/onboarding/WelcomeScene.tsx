@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { Search } from 'lucide-react'
+import { Coins, Lock, Search, Trash2 } from 'lucide-react'
 
 import Mark from '@/ui/Mark'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
@@ -8,18 +8,18 @@ import { PINGO_MARK } from '@/ui/pingoMark'
 
 import { usePhaseLoop } from './usePhaseLoop'
 
-export type SceneKind = 'pin' | 'reaction' | 'ai' | 'shortlist'
+export type SceneKind = 'pin' | 'reaction' | 'ai' | 'shortlist' | 'together' | 'invite' | 'safety' | 'credits' | 'login' | 'trash'
 
 /**
- * 첫 로그인 온보딩의 장면 — 연한 지도 판 위에서 핑고가 그 장의 기능을 직접 쓰는 모습을 되풀이한다(DESIGN.md Motion 「핑고 예외」).
+ * 첫 로그인 온보딩과 자주 묻는 질문(#1538)의 장면 — 연한 지도 판 위에서 핑고가 그 기능을 직접 쓰는 모습을 되풀이한다(DESIGN.md Motion 「핑고 예외」).
  * 장면은 몇 단계를 정해진 시간마다 돈다. 새로 나타나는 것만 등장 클래스로 한 번 나오고, 옮겨 가는 것은 transition 이다.
  * 움직임 줄이기면 마지막 단계에서 멈춘다. 뜻은 옆 제목·설명 글이 전하므로 장면은 스크린 리더에서 숨긴다.
  * 자리는 판에 대한 % 라서 판이 커지면(넓은 화면) 같이 커진다. 판은 4:3 이다.
  */
-export default function WelcomeScene({ kind }: { kind: SceneKind }) {
+export default function WelcomeScene({ kind, className = 'w-full' }: { kind: SceneKind; className?: string }) {
   const Scene = SCENES[kind]
   return (
-    <div aria-hidden="true" className="relative aspect-[4/3] w-full select-none overflow-hidden rounded-2xl bg-ink-100">
+    <div aria-hidden="true" className={`relative aspect-[4/3] select-none overflow-hidden rounded-2xl bg-ink-100 ${className}`}>
       {/* 지도 그림의 길(MapIllustration 과 같은 결). */}
       <svg viewBox="0 0 320 240" className="absolute inset-0 size-full">
         <path d="M0 176L320 112V130L0 194Z" fill="#fff" />
@@ -30,7 +30,18 @@ export default function WelcomeScene({ kind }: { kind: SceneKind }) {
   )
 }
 
-const SCENES: Record<SceneKind, () => ReactNode> = { pin: PinScene, reaction: ReactionScene, ai: AiScene, shortlist: ShortlistScene }
+const SCENES: Record<SceneKind, () => ReactNode> = {
+  pin: PinScene,
+  reaction: ReactionScene,
+  ai: AiScene,
+  shortlist: ShortlistScene,
+  together: TogetherScene,
+  invite: InviteScene,
+  safety: SafetyScene,
+  credits: CreditsScene,
+  login: LoginScene,
+  trash: TrashScene,
+}
 
 /** 판 위 한 점(% 좌표)에 놓는다. `anchor` 는 그 점에 올 자기 자리 — 핀은 끝(아래 가운데)이다. */
 function At({ x, y, anchor = 'bottom', className = '', style, children }: {
@@ -294,6 +305,223 @@ function ShortlistScene() {
         </div>
       </At>
       <PingoAt x={74} y={94} w={28} mood={confirmed ? 'relieved' : 'default'} />
+    </>
+  )
+}
+
+/** 구성원 동그라미(Avatar 와 같은 결 — ink-100 면 + 이니셜). 판 위라 흰 테두리로 띄운다. */
+function SceneFace({ name }: { name: string }) {
+  return <span className="flex size-7 items-center justify-center rounded-full border-2 border-white bg-ink-200 text-label font-bold text-ink-700">{name}</span>
+}
+
+/** 자주 묻는 질문 「어떤 서비스」 — ① 구성원 셋 → ②~④ 각자 핀을 하나씩 꽂음 → ⑤ 핀마다 좋음이 붙고 핑고가 반김. */
+const TOGETHER_PHASES = [600, 600, 600, 600, 1800]
+const TOGETHER_PINS: { x: number; y: number; who: string }[] = [
+  { x: 22, y: 48, who: '민' },
+  { x: 46, y: 70, who: '서' },
+  { x: 62, y: 40, who: '도' },
+]
+function TogetherScene() {
+  const phase = usePhaseLoop(TOGETHER_PHASES)
+  return (
+    <>
+      <At x={6} y={7} anchor="top-left">
+        <div className="flex -space-x-1.5">
+          {TOGETHER_PINS.map((p) => (
+            <SceneFace key={p.who} name={p.who} />
+          ))}
+        </div>
+      </At>
+      {TOGETHER_PINS.map((p, i) =>
+        phase > i ? (
+          <At key={p.who} x={p.x} y={p.y}>
+            <div className="enter-drop relative">
+              <ScenePin />
+              {phase === 4 && (
+                <span className="enter-pop absolute -right-3 -top-2 flex size-5 items-center justify-center rounded-full bg-white shadow-float">
+                  <Mark kind="like" size={11} />
+                </span>
+              )}
+            </div>
+          </At>
+        ) : null,
+      )}
+      <PingoAt x={84} y={94} w={26} mood={phase === 4 ? 'heart' : 'default'} />
+    </>
+  )
+}
+
+/** 「친구 초대」 — ① 「초대 링크 공유하기」 → ② 눌림 → ③ 단톡방 말풍선에 링크가 가고 친구들이 들어옴. */
+const INVITE_PHASES = [900, 500, 2000]
+function InviteScene() {
+  const phase = usePhaseLoop(INVITE_PHASES)
+  return (
+    <>
+      <At x={6} y={8} anchor="top-left" className="right-[6%]">
+        <span
+          className={`flex h-8 items-center justify-center rounded-xl text-xs font-bold text-white transition-[transform,background-color] duration-200 ease-out motion-reduce:transition-none ${
+            phase === 1 ? 'scale-95 bg-brand-700' : 'bg-brand-600'
+          }`}
+        >
+          초대 링크 공유하기
+        </span>
+      </At>
+      {phase === 2 && (
+        <>
+          <At x={8} y={36} anchor="top-left" className="w-[52%]">
+            <div className="enter-pop rounded-xl rounded-tl-sm bg-[#FEE500] px-2.5 py-1.5 text-label font-semibold text-ink-900 shadow-float">
+              우리 여행 지도 여기!
+              <span className="mt-0.5 block truncate font-normal text-ink-700">pingo…/invites/…</span>
+            </div>
+          </At>
+          <At x={8} y={66} anchor="top-left">
+            <div className="flex -space-x-1.5">
+              {['민', '서', '도'].map((n, i) => (
+                <span key={n} className="enter-pop" style={{ animationDelay: `${300 + i * 200}ms`, animationFillMode: 'backwards' }}>
+                  <SceneFace name={n} />
+                </span>
+              ))}
+            </div>
+          </At>
+        </>
+      )}
+      <PingoAt x={80} y={94} w={28} mood={phase === 2 ? 'excited' : 'welcome'} />
+    </>
+  )
+}
+
+/** 「알레르기」 — ① 후보 핀과 조건 줄 → ② 「모름」 줄 아래 「가게에 직접 확인해 주세요」 안내가 붙음. */
+const SAFETY_PHASES = [1000, 2200]
+function SafetyScene() {
+  const phase = usePhaseLoop(SAFETY_PHASES)
+  return (
+    <>
+      <At x={18} y={52}>
+        <SceneCandidatePin />
+      </At>
+      <At x={36} y={10} anchor="top-left" className="right-[6%]">
+        <div className={`${CARD} space-y-1 p-2 text-label font-semibold`}>
+          <p className="flex items-center gap-1 text-ink-900">
+            <Mark kind="check" size={11} /> 조용해요
+          </p>
+          <p className="flex items-center gap-1 text-ink-900">
+            <Mark kind="unknown" size={11} /> 견과류 알레르기
+          </p>
+          {phase === 1 && (
+            <p key="ask" className="enter-pop rounded-lg bg-[var(--warn-bg)] px-1.5 py-1 text-[var(--warn-text)]">
+              가게에 직접 확인해 주세요
+            </p>
+          )}
+        </div>
+      </At>
+      <PingoAt x={24} y={96} w={26} mood={phase === 1 ? 'alert' : 'thinking'} />
+    </>
+  )
+}
+
+/** 「크레딧」 — ① 「추천 받기」 옆 크레딧 → ② 누르면 크레딧 하나가 버튼으로 들어감 → ③ 후기를 쓰면 크레딧이 다시 들어옴. 숫자는 적지 않는다(정책 값). */
+const CREDITS_PHASES = [900, 800, 2000]
+function CreditsScene() {
+  const phase = usePhaseLoop(CREDITS_PHASES)
+  return (
+    <>
+      <At x={6} y={8} anchor="top-left" className="right-[6%]">
+        <div className="flex items-center gap-2">
+          <span
+            className={`flex h-8 flex-1 items-center justify-center rounded-xl text-xs font-bold text-white transition-[transform,background-color] duration-200 ease-out motion-reduce:transition-none ${
+              phase === 1 ? 'scale-95 bg-brand-700' : 'bg-brand-600'
+            }`}
+          >
+            추천 받기
+          </span>
+          <span className={`${CARD} flex h-8 items-center gap-1 px-2 text-label font-bold text-ink-700`}>
+            <Coins size={14} aria-hidden="true" className="text-[var(--pin-confirmed)]" /> 크레딧
+          </span>
+        </div>
+      </At>
+      {phase === 1 && (
+        <At x={80} y={18} anchor="center">
+          <span className="enter-fade block opacity-0 transition-transform duration-500 ease-in motion-reduce:transition-none" style={{ transform: 'translateX(-120px)' }}>
+            <Coins size={16} aria-hidden="true" className="text-[var(--pin-confirmed)]" />
+          </span>
+        </At>
+      )}
+      {phase === 2 && (
+        <At x={8} y={40} anchor="top-left" className="w-[56%]">
+          <div className={`${CARD} enter-pop p-2`}>
+            <p className="text-label font-bold text-ink-900">후기 쓰기</p>
+            <p className="mt-0.5 flex gap-0.5">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Mark key={i} kind="star" size={11} />
+              ))}
+            </p>
+            <span className="enter-pop mt-1 inline-flex items-center gap-0.5 rounded-full bg-[var(--confirmed-bg)] px-1.5 py-0.5 text-label font-bold text-[var(--pin-confirmed-mark)]" style={{ animationDelay: '500ms', animationFillMode: 'backwards' }}>
+              <Coins size={11} aria-hidden="true" /> 크레딧 받음
+            </span>
+          </div>
+        </At>
+      )}
+      <PingoAt x={82} y={94} w={26} mood={phase === 2 ? 'proud' : 'default'} />
+    </>
+  )
+}
+
+/** 「게스트」 — ① 잠긴 AI 추천과 로그인 버튼 둘(카카오·구글) → ② 하나를 누름 → ③ 잠금이 풀리고 핑고가 나옴. */
+const LOGIN_PHASES = [1000, 500, 2000]
+function LoginScene() {
+  const phase = usePhaseLoop(LOGIN_PHASES)
+  return (
+    <>
+      <At x={6} y={8} anchor="top-left">
+        <span className={`${CARD} flex h-8 items-center gap-1 px-2.5 text-label font-bold ${phase === 2 ? 'text-brand-600' : 'text-ink-500'}`}>
+          {phase === 2 ? <span className="enter-pop">AI 추천 열림</span> : <><Lock size={12} aria-hidden="true" /> AI 추천</>}
+        </span>
+      </At>
+      <At x={6} y={34} anchor="top-left" className="w-[56%]">
+        <div className="space-y-1.5">
+          <span
+            className={`flex h-7 items-center justify-center rounded-lg bg-[#FEE500] text-label font-bold text-ink-900 transition-transform duration-200 motion-reduce:transition-none ${phase === 1 ? 'scale-95' : ''}`}
+          >
+            카카오로 시작하기
+          </span>
+          <span className="flex h-7 items-center justify-center rounded-lg border border-ink-200 bg-white text-label font-bold text-ink-900">
+            Google로 시작하기
+          </span>
+        </div>
+      </At>
+      <PingoAt x={80} y={94} w={28} mood={phase === 2 ? 'excited' : 'curious'} />
+    </>
+  )
+}
+
+/** 「지운 핀」 — ① 지도의 핀 → ② 휴지통으로 들어감 → ③ 「삭제한 핀」에서 되돌리기 → ④ 핀이 제자리로 돌아옴. */
+const TRASH_PHASES = [800, 900, 900, 1500]
+function TrashScene() {
+  const phase = usePhaseLoop(TRASH_PHASES)
+  const inTrash = phase === 1 || phase === 2
+  return (
+    <>
+      <At x={84} y={86} anchor="center">
+        <span className={`${CARD} flex size-9 items-center justify-center text-ink-600`}>
+          <Trash2 size={18} aria-hidden="true" />
+        </span>
+      </At>
+      <At
+        x={inTrash ? 84 : 36}
+        y={inTrash ? 82 : 56}
+        className={`${phase === 1 || phase === 3 ? 'transition-[left,top,opacity] duration-500 ease-out' : ''} ${inTrash ? 'opacity-0' : ''} motion-reduce:transition-none`}
+      >
+        <ScenePin />
+      </At>
+      {phase === 2 && (
+        <At x={6} y={8} anchor="top-left" className="w-[58%]">
+          <div className={`${CARD} enter-pop flex items-center justify-between gap-1 px-2 py-1.5`}>
+            <span className="text-label font-bold text-ink-900">삭제한 핀</span>
+            <span className="rounded-md border border-brand-600 px-1.5 py-0.5 text-label font-bold text-brand-600">되돌리기</span>
+          </div>
+        </At>
+      )}
+      <PingoAt x={16} y={96} w={24} mood={phase === 3 ? 'relieved' : phase >= 1 ? 'flustered' : 'default'} />
     </>
   )
 }
