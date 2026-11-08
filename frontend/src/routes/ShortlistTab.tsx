@@ -173,6 +173,7 @@ export default function ShortlistTab() {
                     max={edit.dates[edit.dates.length - 1]}
                     onPick={setPutDay}
                     dayName={(d) => (edit.dates.includes(d) ? dayOrdinal(edit.dates.indexOf(d)) : undefined)}
+                    rangeWeeks
                     className="mx-auto w-full max-w-[19.25rem]"
                   />
                 </div>

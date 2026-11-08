@@ -101,7 +101,9 @@ const DAY_TONE: Record<number, { head: string; day: string }> = {
 
 /**
  * 한 달 달력. 칸에 붙는 `DatePicker`도, 화면에 바로 까는 곳(확정 탭 「넣을 날짜」)도 이것을 쓴다.
- * `min`·`max` 밖의 날은 회색 원으로 어둡게 두고 누를 수 없다. 달 넘기기도 그 범위 안에서만 된다.
+ * `min`·`max` 밖의 날은 원 없이 흐린 숫자만 남기고 누를 수 없다 — 회색 원을 칠하면 고를 수 있는 날보다 눈에 띄었다(PM 점검 #1554).
+ * 달 넘기기도 그 범위 안에서만 된다.
+ * `rangeWeeks`면 한 달 대신 `min`~`max`가 든 주만 그린다(여행 날짜를 고르는 곳 — 달 경계를 넘어도 이어서). 그때는 달 넘기기가 없다.
  * `autoFocus`면 처음에 커서 날로 초점을 옮긴다(달력 창을 열 때). 화면에 까는 곳은 끈다 — 탭을 열 때 초점을 뺏지 않는다.
  */
 export function Calendar({
@@ -111,6 +113,7 @@ export function Calendar({
   onPick,
   autoFocus = false,
   dayName,
+  rangeWeeks = false,
   className = 'w-[19.25rem]',
 }: {
   value: string
@@ -120,6 +123,8 @@ export function Calendar({
   autoFocus?: boolean
   /** 날 이름 뒤에 붙일 말(확정 탭의 「둘째 날」). */
   dayName?: (day: string) => string | undefined
+  /** `min`·`max`가 든 주만 그린다. 둘 다 있어야 켜진다. */
+  rangeWeeks?: boolean
   className?: string
 }) {
   const now = today()
@@ -133,11 +138,15 @@ export function Calendar({
     follow.current = false
   }, [cursor])
 
-  const [y, m] = parts(cursor)
-  const first = `${y}-${String(m).padStart(2, '0')}-01`
-  const length = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const weeksOnly = rangeWeeks && min && max ? { from: addDays(min, -weekday(min)), to: addDays(max, 6 - weekday(max)) } : null
+  const [y, m] = parts(weeksOnly ? min! : cursor)
+  const first = weeksOnly ? weeksOnly.from : `${y}-${String(m).padStart(2, '0')}-01`
+  const length = weeksOnly ? (ms(weeksOnly.to) - ms(weeksOnly.from)) / DAY_MS + 1 : new Date(Date.UTC(y, m, 0)).getUTCDate()
   const days = Array.from({ length }, (_, i) => addDays(first, i))
   const out = (day: string) => Boolean((min && day < min) || (max && day > max))
+  // 주만 그릴 때 달이 바뀌는 1일은 「11.1」처럼 달을 붙인다. 머리글은 「2026년 10월 – 11월」.
+  const [, endM] = parts(weeksOnly ? max! : cursor)
+  const title = weeksOnly && endM !== m ? `${y}년 ${m}월 – ${endM}월` : `${y}년 ${m}월`
   // 달 넘기기 버튼은 그 달 전체가 범위 밖이면 끈다.
   const prevOff = Boolean(min && addDays(first, -1) < min)
   const nextOff = Boolean(max && addDays(first, length) > max)
@@ -160,17 +169,21 @@ export function Calendar({
 
   return (
     <div className={className}>
-      <div className="mb-2 flex items-center justify-between">
-        <button type="button" aria-label="이전 달" disabled={prevOff} onClick={() => move(addMonths(cursor, -1))} className="btn-text flex size-11 items-center justify-center">
-          <ChevronLeft size={20} aria-hidden="true" />
-        </button>
-        <p aria-live="polite" className="text-base font-bold text-ink-900">
-          {y}년 {m}월
-        </p>
-        <button type="button" aria-label="다음 달" disabled={nextOff} onClick={() => move(addMonths(cursor, 1))} className="btn-text flex size-11 items-center justify-center">
-          <ChevronRight size={20} aria-hidden="true" />
-        </button>
-      </div>
+      {weeksOnly ? (
+        <p className="mb-1 text-center text-base font-bold text-ink-900">{title}</p>
+      ) : (
+        <div className="mb-2 flex items-center justify-between">
+          <button type="button" aria-label="이전 달" disabled={prevOff} onClick={() => move(addMonths(cursor, -1))} className="btn-text flex size-11 items-center justify-center">
+            <ChevronLeft size={20} aria-hidden="true" />
+          </button>
+          <p aria-live="polite" className="text-base font-bold text-ink-900">
+            {title}
+          </p>
+          <button type="button" aria-label="다음 달" disabled={nextOff} onClick={() => move(addMonths(cursor, 1))} className="btn-text flex size-11 items-center justify-center">
+            <ChevronRight size={20} aria-hidden="true" />
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-7 text-center text-xs font-semibold text-ink-500" aria-hidden="true">
         {WEEK.map((w, i) => (
           <span key={w} className={`py-1.5 ${DAY_TONE[i]?.head ?? ''}`}>{w}</span>
@@ -178,11 +191,11 @@ export function Calendar({
       </div>
       <div ref={grid} onKeyDown={onKey} className="grid grid-cols-7 gap-y-1">
         {/* 1일 앞의 빈칸 — 다른 달 날짜는 그리지 않는다. */}
-        {weekday(first) > 0 && <span style={{ gridColumn: `span ${weekday(first)}` }} />}
+        {!weeksOnly && weekday(first) > 0 && <span style={{ gridColumn: `span ${weekday(first)}` }} />}
         {days.map((day) => {
           const picked = day === value
           const off = out(day)
-          const d = parts(day)[2]
+          const [dy, dm, d] = parts(day)
           const tone = DAY_TONE[weekday(day)]?.day
           return (
             <button
@@ -193,21 +206,22 @@ export function Calendar({
               disabled={off}
               aria-pressed={picked}
               aria-current={day === now ? 'date' : undefined}
-              aria-label={[`${y}년 ${m}월 ${d}일 ${WEEK[weekday(day)]}요일`, dayName?.(day)].filter(Boolean).join(' ')}
+              aria-label={[`${dy}년 ${dm}월 ${d}일 ${WEEK[weekday(day)]}요일`, dayName?.(day)].filter(Boolean).join(' ')}
               onClick={() => onPick(day)}
               className={[
                 'mx-auto flex size-11 items-center justify-center rounded-full text-base transition-colors',
                 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--line-focus)]',
                 // 오늘은 테두리 한 줄 — 주말 면·고른 날 채움 어디에 와도 보인다.
                 day === now ? 'font-bold ring-1 ring-inset ring-[var(--action-fill)]' : '',
+                // 고를 수 없는 날은 면 없이 흐린 숫자만 — 고를 수 있는 날이 먼저 보인다.
                 off
-                  ? 'cursor-default bg-ink-50 text-ink-400'
+                  ? 'cursor-default text-ink-300'
                   : picked
                     ? 'bg-[var(--action-fill)] font-bold text-white'
                     : `press font-semibold ${tone ?? 'text-ink-900'}`,
               ].join(' ')}
             >
-              {d}
+              {weeksOnly && d === 1 && dm !== m ? `${dm}.${d}` : d}
             </button>
           )
         })}

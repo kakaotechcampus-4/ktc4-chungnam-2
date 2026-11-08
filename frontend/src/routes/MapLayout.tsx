@@ -108,6 +108,19 @@ export default function MapLayout() {
   const me = useMeQuery().data
   const myId = me?.id
   const myMaps = useMapsQuery().data?.items ?? []
+  const searchBox = useRef<HTMLDivElement>(null)
+  // 최근 검색 목록은 검색창·목록 밖을 누르면 닫는다. 지도는 눌러도 검색창 포커스를 빼앗지 않아(카카오맵이 터치를 먹는다)
+  // blur 만으로는 휴대폰에서 목록이 계속 떠 있었다(PM 점검 #1554).
+  useEffect(() => {
+    if (!searchFocused) return
+    const onDown = (e: PointerEvent) => {
+      if (searchBox.current?.contains(e.target as Node)) return
+      setSearchFocused(false)
+      document.getElementById('place-search')?.blur()
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [searchFocused])
   const recent = useRecentSearches(myId)
   // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
   // 받기 전(loadedPins 없음)에 떠나면 적지 않는다 — 빈 모습을 적으면 다음에 모든 핀이 새 핀으로 보인다.
@@ -188,6 +201,9 @@ export default function MapLayout() {
 
   function runSearch(q: string) {
     if (!q) return
+    // 찾기 시작하면 최근 검색 목록을 닫고 키보드를 내린다 — 결과 시트가 보이게.
+    setSearchFocused(false)
+    document.getElementById('place-search')?.blur()
     // 검색은 마킹 탭의 일이다. 다른 탭에서 검색해도 마킹 탭으로 가서 결과를 보여준다.
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
     const center = controller.current?.getCenter() ?? null
@@ -526,6 +542,7 @@ export default function MapLayout() {
           {/* 넓은 화면은 패널 안이라 그림자·흐림이 없다(그림자는 지도 위에 떠 있는 것에만). */}
           {/* 포커스가 검색창이나 최근 검색 목록 안에 있는 동안만 목록을 연다. Esc는 닫는다. */}
           <div
+            ref={searchBox}
             className="relative"
             onFocus={() => setSearchFocused(true)}
             onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setSearchFocused(false)}
