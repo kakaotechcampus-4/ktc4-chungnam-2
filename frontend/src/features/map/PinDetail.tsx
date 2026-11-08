@@ -20,10 +20,11 @@ import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import Sentences from '@/ui/Sentences'
+import UnknownName from '@/ui/UnknownName'
 
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
-import { asReactionType, FILTER_CATEGORIES, hasAiEvidence, inputExample, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
+import { asReactionType, authorName, FILTER_CATEGORIES, hasAiEvidence, inputExample, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
 import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
@@ -255,7 +256,7 @@ export function PinDetailBody({
       <div className="space-y-1">
         <p className="flex flex-wrap items-center gap-x-1 text-body text-ink-600">
           {pin.category}
-          <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : `${pin.created_by_display_name ?? '탈퇴한 구성원'}님이 찍은 핀`}</span>
+          <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : <UnknownName text={`${authorName(pin)}님이 찍은 핀`} />}</span>
           {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
           {(pin.place_url || pin.naver_url) && (
             <span className="ml-auto flex flex-wrap justify-end gap-x-3">
