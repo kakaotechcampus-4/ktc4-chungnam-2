@@ -1,39 +1,15 @@
 import type { PlaceSearchResultDto } from '@/features/search/model'
 import { categoryIconPath } from '@/ui/CategoryIcon'
-import { LIKE_PATH } from '@/ui/Mark'
-import { PIN_OUTLINE, PIN_PATH } from '@/ui/pinPath'
-import { PINGO_MARK } from '@/ui/pingoMark'
+import { pinGlyph } from '@/ui/pinGlyph'
 
 import { kindLabel, type Pin } from './model'
 
-type PinKind = Pin['kind']
 
 /**
- * 지도 위 핀은 모양 2가지다 — 색의 진하기는 **참여율**로 나타낸다.
- * - 일반·AI 추천: 진한 빨강 윤곽선(`--pin-outline`, 확정 핀과 같은 굵기 `PIN_OUTLINE`) + 속은 참여율만큼 회색→빨강(oklch 로 섞어야 중간이 탁해지지 않는다).
- *   빨강 테두리였을 땐 참여 100%에서 속과 같은 색이라 테두리가 사라졌다
- *   + 머리 가운데 진한 빨간 점. AI 추천은 「지도에 올리기」로 모두의 핀이 된 뒤라 일반 핀과 같게 그린다.
- *   올리기 전 후보만 핑고 핀으로 따로 그린다(createCandidateMarkerElement).
- * - 확정: 골드 채움 + 갈색 윤곽선 + 갈색 하트(좋음 하트 `LIKE_PATH`를 0.6배로). 참여율과 무관하다. 흰 테두리는 없앴다(#1355) — 골드는 어두운 타일에서도 밝고,
- *   밝은 땅 위는 갈색 윤곽선이 가른다(#299). 하트는 색을 못 가르는 사람에게 확정을 알린다(흑백이면 참여 50% 핀과 밝기가 같다).
- *   그림자는 없다 — 이름표처럼 윤곽선으로 가른다
- * 구성원별 색 구분은 없다(#26).
- */
-function shapeOf(kind: PinKind, ratio: number) {
-  if (kind === '확정') {
-    return { fill: 'var(--pin-confirmed)', stroke: 'var(--pin-confirmed-mark)', heart: true }
-  }
-  const fill = `color-mix(in oklch, var(--pin-fill-full) ${Math.round(ratio * 100)}%, var(--pin-fill-empty))`
-  return { fill, stroke: 'var(--pin-outline)', heart: false }
-}
-
-/**
- * var()·color-mix() 는 SVG 속성보다 style 에서 확실히 해석된다.
+ * 지도 위 핀 — 일반(올린 AI 추천 포함)·확정. 핀 그림은 `ui/pinGlyph` 한 곳에서 만든다(색의 진하기는 참여율, 구성원별 색 구분은 없다 #26).
  * fresh: 마지막으로 본 뒤 새로 생긴 핀·의견이 있는 핀(#1454) — 머리 오른쪽 위에 파란 점을 단다(목록 「새 핀」 태그와 같은 브랜드 파랑).
  */
 export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => void, fresh = false): HTMLElement {
-  const shape = shapeOf(pin.kind, ratio)
-
   const el = document.createElement('button')
   el.type = 'button'
   // 장소 이름은 setAttribute 로만 넣는다 — innerHTML 로 들어가면 이름이 마크업으로 해석된다.
@@ -42,9 +18,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
     'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
-      <path d="${PIN_PATH}" stroke-linejoin="round"
-            style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${PIN_OUTLINE}" />
-      ${shape.heart ? `<path d="${LIKE_PATH}" transform="translate(7.2 5.7) scale(.6)" style="fill:var(--pin-confirmed-heart)" />` : `<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`}
+      ${pinGlyph(pin.kind === '확정' ? { kind: 'confirmed' } : { kind: 'normal', ratio })}
     </svg>${
       fresh
         ? '<span data-new-dot aria-hidden="true" style="position:absolute;left:28px;top:3px;width:10px;height:10px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff"></span>'
@@ -110,17 +84,13 @@ export function createSearchGroupMarkerElement(names: string[], onClick: () => v
   return el
 }
 
-/** 핑고 얼굴(32×32 로고)을 물방울 머리(가운데 12,10) 안에 넣는 변환. */
-const MARK_IN_HEAD = 'translate(5.3 3.6) scale(0.42)'
-
 /**
  * 올리기 전 AI 후보(#843). 요청한 사람의 AI 추천 탭에서만 화면에 그린다 — 서버의 지도는 바꾸지 않는다(가드레일 1).
- * 핑고 핀: brand-600 물방울 + 흰 테두리 + 머리에 흰 핑고 얼굴(하단 AI 탭 활성 모양과 같은 「파랑 채움 + 흰 얼굴」).
+ * 핑고 핀(그림은 `ui/pinGlyph`의 candidate).
  * 카드와 같은 순위 숫자는 오른쪽 위 배지다. 「지도에 올리기」를 하면 일반 핀 모양의 핀이 된다.
  * 고른 후보는 한 번 튀어 커지고(pin-bounce) 핑고가 위에서 머리를 끌어안는다 — 몸은 MapCanvas 가 핀 뒤에, 손은 여기서 앞에 그린다.
  */
 export function createCandidateMarkerElement(c: { rank: number; name: string; selected?: boolean }, onClick: () => void): HTMLElement {
-  const { pin, hole, face, eyes } = PINGO_MARK
   const el = document.createElement('button')
   el.type = 'button'
   el.setAttribute('aria-label', `AI 추천 ${c.rank}위, ${c.name}`)
@@ -138,13 +108,7 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true" overflow="visible"
          style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))"${c.selected ? ' class="pin-bounce"' : ''}>
-      <path d="${PIN_PATH}" stroke-linejoin="round" style="fill:var(--brand-600);stroke:#fff;stroke-width:2" />
-      <g transform="${MARK_IN_HEAD}">
-        <path d="${pin}" fill="#fff" />
-        <circle cx="${hole.cx}" cy="${hole.cy}" r="${hole.r}" style="fill:var(--brand-600)" />
-        <rect x="${face.x}" y="${face.y}" width="${face.w}" height="${face.h}" rx="${face.rx}" fill="#fff" />
-        ${eyes.map((e) => `<ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" style="fill:var(--ink-900)" />`).join('')}
-      </g>
+      ${pinGlyph({ kind: 'candidate' })}
       ${hands}
     </svg>
     <span aria-hidden="true" style="position:absolute;left:${c.selected ? 30 : 25}px;top:${c.selected ? 12 : 0}px;min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;border-radius:8px;background:#fff;border:1.5px solid var(--brand-600);color:var(--brand-700);font:700 11px/13px var(--font-sans);text-align:center">${c.rank}</span>`
