@@ -3,7 +3,7 @@ import { Search } from 'lucide-react'
 
 import Mark from '@/ui/Mark'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
-import { PIN_PATH } from '@/ui/pinPath'
+import { PIN_OUTLINE, PIN_PATH } from '@/ui/pinPath'
 import { PINGO_MARK } from '@/ui/pingoMark'
 
 import { usePhaseLoop } from './usePhaseLoop'
@@ -60,7 +60,7 @@ function PingoAt({ x, y, w, mood }: { x: number; y: number; w: number; mood: Pin
   )
 }
 
-/** 지도 핀(pinMarker 와 같은 모양). 일반은 빨강 실선 + 진한 점, 확정은 골드 + 순서 번호. */
+/** 지도 핀(pinMarker 와 같은 모양). 일반은 빨강 속 + 진한 빨강 윤곽선 + 진한 점, 확정은 골드 + 순서 번호. */
 function ScenePin({ confirmed = false, n }: { confirmed?: boolean; n?: number }) {
   return (
     <svg viewBox="0 0 24 32" width="24" height="32" className="drop-shadow-[0_1px_2px_rgba(20,22,31,0.3)]">
@@ -68,8 +68,8 @@ function ScenePin({ confirmed = false, n }: { confirmed?: boolean; n?: number })
         d={PIN_PATH}
         strokeLinejoin="round"
         fill={confirmed ? 'var(--pin-confirmed)' : 'var(--pin-fill-full)'}
-        stroke={confirmed ? 'var(--pin-confirmed-mark)' : 'var(--pin-stroke)'}
-        strokeWidth={confirmed ? 1.5 : 2.5}
+        stroke={confirmed ? 'var(--pin-confirmed-mark)' : 'var(--pin-outline)'}
+        strokeWidth={PIN_OUTLINE}
       />
       {n != null ? (
         <text x="12" y="13.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="var(--pin-confirmed-mark)">

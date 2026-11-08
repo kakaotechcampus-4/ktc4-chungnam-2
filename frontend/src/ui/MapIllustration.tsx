@@ -1,4 +1,4 @@
-import { PIN_PATH } from './pinPath'
+import { PIN_OUTLINE, PIN_PATH } from './pinPath'
 
 /** 로그인·초대 화면의 작은 지도 그림(Figma 1·2절). 실제 지도가 아니라 장식이라 스크린 리더에서 숨긴다. */
 
@@ -8,11 +8,11 @@ export default function MapIllustration({ className = '' }: { className?: string
       <rect width="320" height="140" rx="12" fill="var(--ink-100)" />
       <path d="M0 98 L320 52 L320 66 L0 112 Z" fill="#fff" />
       <rect x="196" y="0" width="12" height="140" fill="#fff" />
-      <g transform="translate(70 30)"><path d={PIN_PATH} fill="var(--pin-fill-full)" stroke="var(--pin-stroke)" strokeWidth="2.5" /></g>
+      <g transform="translate(70 30)"><path d={PIN_PATH} fill="var(--pin-fill-full)" stroke="var(--pin-outline)" strokeWidth={PIN_OUTLINE} /></g>
       {/* AI 추천 핀 — 점선 + 회색 속(DESIGN.md 지도 핀). */}
-      <g transform="translate(112 52)"><path d={PIN_PATH} fill="var(--pin-fill-empty)" stroke="var(--pin-stroke)" strokeWidth="2.5" strokeDasharray="4 3" /></g>
+      <g transform="translate(112 52)"><path d={PIN_PATH} fill="var(--pin-fill-empty)" stroke="var(--pin-outline)" strokeWidth={PIN_OUTLINE} strokeDasharray="4 3" /></g>
       {/* 참여율 절반 — 지도 핀과 같은 oklch 섞기. */}
-      <g transform="translate(250 40)"><path d={PIN_PATH} style={{ fill: 'color-mix(in oklch, var(--pin-fill-full) 50%, var(--pin-fill-empty))' }} stroke="var(--pin-stroke)" strokeWidth="2.5" /></g>
+      <g transform="translate(250 40)"><path d={PIN_PATH} style={{ fill: 'color-mix(in oklch, var(--pin-fill-full) 50%, var(--pin-fill-empty))' }} stroke="var(--pin-outline)" strokeWidth={PIN_OUTLINE} /></g>
     </svg>
   )
 }
