@@ -20,6 +20,7 @@ import { closeSchedule, leaveScheduleTab, openSchedule, useDropHover, useSchedul
 import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
+import { Calendar } from '@/ui/DatePicker'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import Mark from '@/ui/Mark'
@@ -157,16 +158,20 @@ export default function ShortlistTab() {
           ) : (
             <>
               {day ? (
-                // 넣을 날을 먼저 고른다 — 동선 보기의 날짜 칩(「볼 날짜」)과 같은 모양이다.
-                <div role="group" aria-labelledby="put-day-label" className="flex flex-wrap items-center gap-2">
-                  <span id="put-day-label" className="text-xs text-ink-500">
+                // 넣을 날을 먼저 고른다 — 여행 날짜만 고를 수 있는 달력이다. 그 밖의 날은 어둡게 막는다.
+                <div role="group" aria-labelledby="put-day-label" className="rounded-xl border border-ink-200 bg-white p-3">
+                  <p id="put-day-label" className="mb-1 flex items-baseline justify-between gap-2 text-sm font-bold text-ink-900">
                     넣을 날짜
-                  </span>
-                  {edit.dates.map((d, i) => (
-                    <button key={d} type="button" aria-pressed={d === day} onClick={() => setPutDay(d)} className="chip">
-                      {dayOrdinal(i)}
-                    </button>
-                  ))}
+                    <span className="text-xs font-semibold text-[var(--selected-text)]">{dayOrdinal(edit.dates.indexOf(day))}</span>
+                  </p>
+                  <Calendar
+                    value={day}
+                    min={edit.dates[0]}
+                    max={edit.dates[edit.dates.length - 1]}
+                    onPick={setPutDay}
+                    dayName={(d) => (edit.dates.includes(d) ? dayOrdinal(edit.dates.indexOf(d)) : undefined)}
+                    className="mx-auto w-full max-w-[19.25rem]"
+                  />
                 </div>
               ) : (
                 <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>

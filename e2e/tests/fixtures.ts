@@ -34,6 +34,16 @@ function isoDate(daysFromToday: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/** 날짜 칸(`ui/DatePicker`)을 열어 그날을 누른다. 고를 날은 오늘 뒤라 달력은 「다음 달」로만 넘긴다. */
+async function pickDate(page: Page, label: string, day: string) {
+  await page.locator('label', { hasText: label }).locator('button[aria-haspopup]').click()
+  const calendar = page.getByRole('dialog', { name: '날짜 고르기' })
+  const [y, m, d] = day.split('-').map(Number)
+  const button = calendar.getByRole('button', { name: new RegExp(`^${y}년 ${m}월 ${d}일 `) })
+  for (let i = 0; i < 12 && !(await button.isVisible()); i++) await calendar.getByRole('button', { name: '다음 달' }).click()
+  await button.click()
+}
+
 export function mapIdOf(page: Page): string {
   return new URL(page.url()).pathname.split('/')[2]
 }
@@ -42,8 +52,8 @@ export function mapIdOf(page: Page): string {
 export async function createMap(page: Page, title: string) {
   await page.goto('/maps/new')
   await page.getByLabel('여행 제목').fill(title)
-  await page.getByLabel('시작일').fill(isoDate(30))
-  await page.getByLabel('종료일').fill(isoDate(31))
+  await pickDate(page, '시작일', isoDate(30))
+  await pickDate(page, '종료일', isoDate(31))
   await page.getByRole('button', { name: '지도 만들기' }).click()
   await page.getByRole('button', { name: '나중에 할게요' }).click()
 }

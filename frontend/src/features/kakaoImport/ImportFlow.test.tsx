@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import { MOCK_SAMPLE } from './__fixtures__/kakaotalkExport'
 import { useSheetStore } from '@/features/shell/sheetStore'
+import { pickDate } from '@/test/date'
 
 import ImportSheet, { ImportSheetHost } from './ImportSheet'
 import { closeImport, forgetImport, openImport, resetImport } from './queries'
@@ -54,14 +55,14 @@ function renderSheet() {
 const DAY = { from: '2026-11-02', to: '2026-11-02' }
 
 /** 종료일은 선택이라 라벨이 「종료일 (선택)」이다. `to`가 없으면 비워 둔다(끝까지 읽기). */
-function setRange(range: { from: string; to?: string }) {
-  fireEvent.change(screen.getByLabelText('시작일'), { target: { value: range.from } })
-  fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: range.to ?? '' } })
+async function setRange(range: { from: string; to?: string }) {
+  await pickDate(/^시작일/, range.from)
+  if (range.to) await pickDate(/^종료일/, range.to)
 }
 
 /** 기간을 고르고 대화 파일을 넣는다. `button`은 파일 고르는 창을 여는 버튼 이름 — 기간을 고르면 눌리는지 본다. */
 async function pickFile(text: string, button: string, range: { from: string; to?: string } = DAY) {
-  setRange(range)
+  await setRange(range)
   expect(screen.getByRole('button', { name: button })).toBeEnabled()
   await userEvent.upload(screen.getByLabelText('카톡 대화 파일'), new File([text], 'KakaoTalk_Chat.txt', { type: 'text/plain' }))
 }
@@ -130,18 +131,21 @@ describe('카톡 대화에서 핀 가져오기 — 네이버·공유 글 힌트�
 })
 
 describe('카톡 가져오기 — .txt 파일과 여행 얘기를 한 기간(#1139)', () => {
-  it('붙여넣기 칸은 없고, 시작일을 고르기 전에는 파일을 넣지 못한다 — 종료일은 선택이고 앞이면 안내', () => {
+  it('붙여넣기 칸은 없고, 시작일을 고르기 전에는 파일을 넣지 못한다 — 종료일은 선택이고 앞이면 안내', async () => {
     renderSheet()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     const button = screen.getByRole('button', { name: '대화 파일 넣기' })
+    const end = () => screen.getByLabelText(/^종료일/, { selector: 'button[aria-haspopup]' })
     expect(button).toBeDisabled()
-    expect(screen.getByLabelText(/^종료일/)).toHaveAccessibleDescription('종료일을 비우면 대화 끝까지 읽어요')
-    fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-11-02' } })
+    expect(end()).toHaveAccessibleDescription('종료일을 비우면 대화 끝까지 읽어요')
+    await pickDate(/^시작일/, '2026-11-01')
     expect(button).toBeEnabled()
-    fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: '2026-11-01' } })
+    await pickDate(/^종료일/, '2026-11-01')
+    // 종료일 달력은 시작일 앞을 막는다 — 앞서는 건 시작일을 뒤로 옮길 때뿐이다.
+    await pickDate(/^시작일/, '2026-11-02')
     expect(button).toBeDisabled()
-    expect(screen.getByLabelText(/^종료일/)).toHaveAccessibleDescription('종료일은 시작일과 같거나 뒤여야 해요')
-    fireEvent.change(screen.getByLabelText(/^종료일/), { target: { value: '2026-11-02' } })
+    expect(end()).toHaveAccessibleDescription('종료일은 시작일과 같거나 뒤여야 해요')
+    await userEvent.click(screen.getByRole('button', { name: '종료일 지우기' }))
     expect(button).toBeEnabled()
   })
 
@@ -192,7 +196,7 @@ describe('카톡 가져오기 — .txt 파일과 여행 얘기를 한 기간(#11
   it('.txt 가 아닌 파일은 읽지 않는다', async () => {
     const user = userEvent.setup({ applyAccept: false })
     renderSheet()
-    setRange(DAY)
+    await setRange(DAY)
     await user.upload(screen.getByLabelText('카톡 대화 파일'), new File([MOCK_SAMPLE], 'chat.csv', { type: 'text/csv' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('.txt 파일만 넣을 수 있어요')
     expect(screen.queryByText(/지도 링크 \d+개/)).not.toBeInTheDocument()
@@ -200,7 +204,7 @@ describe('카톡 가져오기 — .txt 파일과 여행 얘기를 한 기간(#11
   it('확장자가 .txt 가 아니면 형식이 text/plain 이어도 읽지 않는다 — 대문자 .TXT 는 받는다', async () => {
     const user = userEvent.setup({ applyAccept: false })
     renderSheet()
-    setRange(DAY)
+    await setRange(DAY)
     await user.upload(screen.getByLabelText('카톡 대화 파일'), new File([MOCK_SAMPLE], 'chat.csv', { type: 'text/plain' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('.txt 파일만 넣을 수 있어요')
     expect(screen.queryByText(/지도 링크 \d+개/)).not.toBeInTheDocument()

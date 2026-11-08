@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { EditMapDialog } from '@/features/maps/MapLifecycle'
 import type { MapHeaderView } from '@/features/maps/model'
+import { pickDate } from '@/test/date'
 import { wholeText } from '@/test/text'
 
 import SchedulePanel from './SchedulePanel'
@@ -95,11 +96,11 @@ describe('지도 정보 수정 — 빠지는 날의 일정 안내', () => {
     expect(screen.queryByText(/확정된 장소로 돌아가요/)).not.toBeInTheDocument()
 
     // 서버 일정이 화면에 도착한 뒤(받는 동안은 일정이 비어 있다) 빠지는 날을 만든다.
-    fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-11' } })
+    await pickDate(/^시작일/, '2026-10-11')
     expect(await screen.findByText('기간이 줄어 빠지는 날에 넣은 2곳은 확정된 장소로 돌아가요')).toBeInTheDocument()
 
     // 하루 늘리기만 하면 빠지는 날이 없다.
-    fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-09' } })
+    await pickDate(/^시작일/, '2026-10-09')
     expect(screen.queryByText(/확정된 장소로 돌아가요/)).not.toBeInTheDocument()
   })
 
@@ -113,7 +114,7 @@ describe('지도 정보 수정 — 빠지는 날의 일정 안내', () => {
     renderEdit()
     await waitFor(() => expect(gets).toHaveLength(1))
 
-    fireEvent.change(screen.getByLabelText('시작일'), { target: { value: '2026-10-11' } })
+    await pickDate(/^시작일/, '2026-10-11')
     await userEvent.click(await screen.findByRole('button', { name: '저장' }))
     await waitFor(() => expect(gets).toHaveLength(2))
     server.events.removeAllListeners()
