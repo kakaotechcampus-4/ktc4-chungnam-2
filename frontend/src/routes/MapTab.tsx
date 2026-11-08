@@ -6,9 +6,10 @@ import { useMeQuery } from '@/features/auth/queries'
 import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
+import TaskProgress from '@/ui/TaskProgress'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
-import { filterPins } from '@/features/map/model'
+import { filterPins, type Pin } from '@/features/map/model'
 import ReactionHelp from '@/features/map/ReactionHelp'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
 import NewSinceBanner from '@/features/map/NewSinceBanner'
@@ -169,6 +170,7 @@ export default function MapTab() {
           onDismiss={newSince.dismiss}
         />
       )}
+      {pins && filters.opinion !== 'none' && <MyOpinionProgress pins={pins} onShowLeft={() => setFilter('opinion', 'none')} />}
       {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} />}
     </TabSheet>
   )
@@ -188,5 +190,32 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
     >
       {what} 핀은 아직 없어요
     </EmptyState>
+  )
+}
+
+/**
+ * 「내 의견 3/5곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547). 남은 곳이 있을 때만 그린다.
+ * 확정된 핀은 의견을 안 남겨도 할 일로 보지 않는다(목록 카드의 「의견 남기기」와 같은 기준).
+ */
+export function MyOpinionProgress({ pins, onShowLeft }: { pins: Pin[]; onShowLeft: () => void }) {
+  const open = pins.filter((p) => p.kind !== '확정')
+  const done = open.filter((p) => p.my_reaction).length
+  const left = open.length - done
+  if (left === 0) return null
+  return (
+    <div className="mb-3">
+      <TaskProgress
+        label="내 의견"
+        done={done}
+        total={open.length}
+        unit="곳"
+        hint={`남은 ${left}곳에 의견을 남기면 AI 추천이 더 정확해져요`}
+        action={
+          <button type="button" onClick={onShowLeft} className="btn-link text-sm">
+            남은 곳 보기
+          </button>
+        }
+      />
+    </div>
   )
 }

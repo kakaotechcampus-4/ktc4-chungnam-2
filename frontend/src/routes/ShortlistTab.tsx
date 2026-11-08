@@ -25,6 +25,7 @@ import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import Mark from '@/ui/Mark'
 import Sentences from '@/ui/Sentences'
+import TaskProgress from '@/ui/TaskProgress'
 
 /**
  * 확정된 장소 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 위에서 날을 고른 뒤 줄의 「넣기」로 그날에 넣는다.
@@ -142,6 +143,7 @@ export default function ShortlistTab() {
           data-over={hover?.day === UNSET_DAY}
           className="drop-target space-y-3 rounded-xl pb-[100px] outline-offset-4"
         >
+          {edit.ready && !edit.error && <ScheduleProgress dates={edit.dates} days={edit.schedule.days} />}
           {edit.error ? (
             <div className="space-y-2">
               <ErrorText message="일정을 불러오지 못했어요" error={edit.error} />
@@ -194,4 +196,12 @@ export default function ShortlistTab() {
       )}
     </TabSheet>
   )
+}
+
+/** 「일정 2/3일」 — 여행 날짜 중 장소를 하나라도 넣은 날의 수(#1547). 빈 날이 있을 때만, 가장 앞의 빈 날을 알린다. */
+function ScheduleProgress({ dates, days }: { dates: string[]; days: Record<string, string[]> }) {
+  const filled = dates.filter((d) => (days[d]?.length ?? 0) > 0).length
+  const firstEmpty = dates.findIndex((d) => !(days[d]?.length ?? 0))
+  if (dates.length === 0 || firstEmpty === -1) return null
+  return <TaskProgress label="일정" done={filled} total={dates.length} unit="일" hint={`${dayOrdinal(firstEmpty)}이 비어 있어요`} />
 }
