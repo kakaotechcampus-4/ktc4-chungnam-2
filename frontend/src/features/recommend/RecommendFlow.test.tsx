@@ -284,7 +284,8 @@ describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안�
     expect(within(dialog).getByText('지도 가운데 반경 3km 안에서 찾아요')).toBeInTheDocument()
   })
 
-  it('「찾는 범위」에서 반경을 고르면 근처 정예 수를 그 반경으로 다시 세고, 확인 창과 추천 요청도 그 반경이다(#1416)', async () => {
+  /** 준비 판정·추천 요청에 실린 반경을 모은다. */
+  function watchRadius() {
     const readinessQuery: string[] = []
     const sent: unknown[] = []
     server.events.on('request:start', async ({ request }) => {
@@ -292,18 +293,27 @@ describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안�
       if (url.pathname === `/maps/${MAP}/recommend/readiness`) readinessQuery.push(url.search)
       if (request.method === 'POST' && url.pathname === `/maps/${MAP}/runs`) sent.push(await request.clone().json())
     })
-    await renderInShell(SEOUL)
-    const group = screen.getByRole('group', { name: '찾는 범위' })
-    // 고를 수 있는 값과 처음 값은 서버(목 서버 = docs/constraints.md 값)가 준다 — 처음 켜진 칩이 기본 반경이다.
-    const chips = within(group).getAllByRole('button')
-    expect(chips.length).toBeGreaterThan(1)
-    const first = chips.find((c) => c.getAttribute('aria-pressed') === 'true')!
-    const other = chips.find((c) => c !== first)!
+    return { readinessQuery, sent }
+  }
 
-    await userEvent.click(other)
-    expect(other).toHaveAttribute('aria-pressed', 'true')
-    const km = other.textContent!
-    const m = Number(km.replace('km', '')) * 1000
+  it('「찾는 범위」 칸에 km를 넣으면 근처 정예 수를 그 반경으로 다시 세고, 확인 창과 추천 요청도 그 반경이다(#1416)', async () => {
+    const { readinessQuery, sent } = watchRadius()
+    await renderInShell(SEOUL)
+    // 처음 값과 범위는 서버(목 서버 = docs/constraints.md 값)가 준다.
+    const slider = screen.getByRole('slider', { name: '찾는 범위' })
+    const min = Number(slider.getAttribute('aria-valuemin'))
+    const max = Number(slider.getAttribute('aria-valuemax'))
+    // 처음 값은 서버 기본 반경이고, 화면 읽기도 「기본」이라고 읽는다.
+    expect(slider).toHaveAttribute('aria-valuetext', expect.stringMatching(/km, 기본$/))
+    const m = Math.round((min + max) / 2 / 100) * 100 + 100 // 범위 가운데에서 한 칸, 100m 단위(눈금이 아닌 값)
+    const km = `${m / 1000}km`
+
+    // 값 글자를 누르면 km 칸이 열린다.
+    await userEvent.click(screen.getByRole('button', { name: /찾는 범위 직접 넣기/ }))
+    const input = screen.getByRole('spinbutton', { name: '찾는 범위' })
+    await userEvent.clear(input)
+    await userEvent.type(input, `${m / 1000}{Enter}`)
+    expect(slider).toHaveAttribute('aria-valuetext', km)
     await waitFor(() => expect(readinessQuery.at(-1)).toContain(`&radius_m=${m}`))
 
     await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
@@ -313,6 +323,27 @@ describe('추천 범위 — 지도 가운데 반경 원, 여행 지역 밖 안�
     await waitFor(() => expect(sent).toHaveLength(1))
     expect(sent[0]).toMatchObject({ category: '음식점', radius_m: m })
     await waitFor(() => expect(useAiStore.getState().runs[MAP]?.default_radius_m).toBe(m))
+    server.events.removeAllListeners()
+  })
+
+  it('키보드로는 0.1km씩 옮기고(눈금에 붙지 않는다), 손을 떼면 다시 센다. 범위 밖 km는 안내만 하고 바꾸지 않는다', async () => {
+    const { readinessQuery } = watchRadius()
+    await renderInShell(SEOUL)
+    const slider = screen.getByRole('slider', { name: '찾는 범위' })
+    const start = Number(slider.getAttribute('aria-valuenow'))
+    slider.focus()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(slider).toHaveAttribute('aria-valuenow', String(start + 100))
+    await waitFor(() => expect(readinessQuery.at(-1)).toContain(`&radius_m=${start + 100}`))
+
+    const max = Number(slider.getAttribute('aria-valuemax'))
+    // 값 글자를 누르면 km 칸이 열린다.
+    await userEvent.click(screen.getByRole('button', { name: /찾는 범위 직접 넣기/ }))
+    const input = screen.getByRole('spinbutton', { name: '찾는 범위' })
+    await userEvent.clear(input)
+    await userEvent.type(input, `${max / 1000 + 1}{Enter}`)
+    expect(screen.getByText(/사이로 넣어 주세요/)).toBeInTheDocument()
+    expect(slider).toHaveAttribute('aria-valuenow', String(start + 100))
     server.events.removeAllListeners()
   })
 

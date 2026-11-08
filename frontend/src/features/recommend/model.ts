@@ -135,14 +135,14 @@ export function readinessRadiusM(
   return r?.radius_m || null
 }
 
-/** 「찾는 범위」 칩 간격(m). 화면이 고르는 단위일 뿐이고 하한·상한·기본값은 서버 값이다(#1416). */
-const RADIUS_PICK_STEP_M = 1000
+/** 「찾는 범위」 눈금 간격(m). 화면이 고르는 단위일 뿐이고 하한·상한·기본값은 서버 값이다(#1416). */
+const RADIUS_MARK_STEP_M = 1000
 
-/** 「찾는 범위」에서 고를 수 있는 반경들 — 서버가 준 하한부터 상한까지 1km 간격, 기본값은 늘 들어간다. 하한·상한이 없으면(구버전 서버) 빈 목록이다. */
+/** 「찾는 범위」 눈금 — 서버가 준 하한부터 상한까지 1km 간격, 기본값과 상한은 늘 들어간다. 하한·상한이 없으면(구버전 서버) 빈 목록이다. */
 export function radiusOptions(r: ReadinessDto | undefined): number[] {
   if (!r?.radius_min_m || !r.radius_max_m) return []
   const out = new Set<number>()
-  for (let m = r.radius_min_m; m <= r.radius_max_m; m += RADIUS_PICK_STEP_M) out.add(m)
+  for (let m = r.radius_min_m; m <= r.radius_max_m; m += RADIUS_MARK_STEP_M) out.add(m)
   out.add(r.radius_max_m)
   if (r.radius_m) out.add(r.radius_m)
   return [...out].sort((a, b) => a - b)
@@ -330,3 +330,14 @@ export const summaryToRun = (r: RunSummaryDto): RecommendRunDto => ({
   default_radius_m: r.default_radius_m,
   next_default_radius_m: r.next_default_radius_m,
 })
+
+/**
+ * 「찾는 범위」 칸에 쓴 km 글자를 반경(m)으로 — step(m) 단위로 반올림한다(소수 첫째 자리면 100m).
+ * 숫자가 아니거나 서버가 준 하한·상한 밖이면 null(화면이 안내한다). 서버는 정수 m만 받는다(#1416).
+ */
+export function kmInputToM(text: string, min: number, max: number, step: number): number | null {
+  const km = Number(text.replace(',', '.'))
+  if (!text.trim() || !Number.isFinite(km)) return null
+  const m = Math.round((km * 1000) / step) * step
+  return m >= min && m <= max ? m : null
+}
