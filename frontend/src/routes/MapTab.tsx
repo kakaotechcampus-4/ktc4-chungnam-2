@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import { useMeQuery } from '@/features/auth/queries'
 import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
@@ -10,7 +11,9 @@ import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/feature
 import { filterPins } from '@/features/map/model'
 import ReactionHelp from '@/features/map/ReactionHelp'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
-import PinList from '@/features/map/PinList'
+import NewSinceBanner from '@/features/map/NewSinceBanner'
+import { newsLines, opinionCount, useNewSince } from '@/features/map/newSince'
+import PinList, { type CardNews } from '@/features/map/PinList'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import PinUnavailable from '@/features/map/PinUnavailable'
@@ -42,6 +45,14 @@ export default function MapTab() {
   const mapTitle = map?.title
   const memberCount = map?.memberCount ?? 0
   const members = useMembersQuery(mapId).data ?? []
+  // 마지막으로 본 뒤 새로 생긴 핀·의견(#1454). 지도 점(MapLayout)과 같은 기준을 본다.
+  const newSince = useNewSince(mapId, pins, useMeQuery().data?.id)
+  const cardNews = new Map<string, CardNews>()
+  for (const [id, n] of newSince.news) {
+    const pin = pins?.find((p) => p.id === id)
+    const nameOf = (r: { user_id: string; display_name?: string }) => members.find((m) => m.userId === r.user_id)?.name ?? r.display_name ?? '구성원'
+    cardNews.set(id, { newPin: n.newPin, lines: pin ? newsLines(n, nameOf, (chip) => newSince.chipLabel(pin.category, chip)) : [] })
+  }
   const { filters, setFilter, clear } = usePinFilters()
   const sorted = pins && filterPins(pins, filters, memberCount)
   // 순서는 필터·정렬을 바꾸거나 핀이 늘고 줄 때만 다시 매긴다. 의견 수만 바뀌었을 땐 그대로 둬서
@@ -150,7 +161,15 @@ export default function MapTab() {
       {pins && pins.length > 0 && shown?.length === 0 && filtered && (
         <FilterEmpty who={members.find((m) => m.userId === filters.createdBy)?.name} category={filters.category} onClear={clear} />
       )}
-      {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} />}
+      {newSince.since && pins && pins.length > 0 && (
+        <NewSinceBanner
+          since={newSince.since}
+          newPins={[...newSince.news.values()].filter((n) => n.newPin).length}
+          newOpinions={[...newSince.news.values()].reduce((sum, n) => sum + opinionCount(n), 0)}
+          onDismiss={newSince.dismiss}
+        />
+      )}
+      {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} />}
     </TabSheet>
   )
 }
