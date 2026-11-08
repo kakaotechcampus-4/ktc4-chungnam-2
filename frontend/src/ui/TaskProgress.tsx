@@ -25,7 +25,7 @@ export default function TaskProgress({
 }) {
   const percent = total > 0 ? Math.round((done / total) * 100) : 0
   return (
-    <section aria-label={`${label} 진행`} className="space-y-2 rounded-xl bg-white p-3 ring-1 ring-ink-200">
+    <section aria-label={`${label} 진행`} className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-ink-200">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-bold text-ink-900">
           {label}{' '}

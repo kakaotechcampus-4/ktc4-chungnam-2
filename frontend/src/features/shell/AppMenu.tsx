@@ -11,6 +11,8 @@ import FaqSheet from '@/features/help/FaqSheet'
 import Accordion from '@/ui/Accordion'
 import Wordmark from '@/ui/Wordmark'
 
+import ThemeControl from './ThemeControl'
+
 type Sheet = 'faq' | 'bug' | 'other' | 'withdraw' | 'logout' | null
 
 /**
@@ -41,7 +43,7 @@ export default function AppMenu({ mapId }: { mapId: string }) {
           <Dialog.Overlay className="enter-fade fixed inset-0 z-50 bg-scrim" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="fixed inset-y-3 left-3 z-50 flex w-[22rem] flex-col overflow-y-auto rounded-2xl bg-white shadow-float outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-left-4 motion-reduce:animate-none"
+            className="fixed inset-y-3 left-3 z-50 flex w-[22rem] flex-col overflow-y-auto rounded-2xl bg-surface shadow-float outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-left-4 motion-reduce:animate-none"
           >
             <Dialog.Title className="sr-only">메뉴</Dialog.Title>
             <div className="flex items-center justify-between px-6 pb-4 pt-6">
@@ -84,6 +86,8 @@ export default function AppMenu({ mapId }: { mapId: string }) {
                         id: 'settings',
                         title: '설정',
                         body: (
+                          <>
+                          <ThemeControl className="mb-3 mt-1" />
                           <ul className="space-y-0.5">
                             {TERMS.map((t) => (
                               <li key={t.to}>
@@ -98,6 +102,7 @@ export default function AppMenu({ mapId }: { mapId: string }) {
                               </button>
                             </li>
                           </ul>
+                          </>
                         ),
                       },
                     ]}
@@ -126,7 +131,7 @@ export default function AppMenu({ mapId }: { mapId: string }) {
 /** 메뉴 글자 줄 — 20 선 아이콘 + 16/500 글자, 높이 44. */
 function MenuRow({ icon, onClick, children }: { icon: ReactNode; onClick: () => void; children: ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className="flex min-h-11 w-full items-center gap-3 text-left text-base font-medium text-ink-900 hover:text-brand-600">
+    <button type="button" onClick={onClick} className="flex min-h-11 w-full items-center gap-3 text-left text-base font-medium text-ink-900 hover:text-link">
       <span className="text-ink-600">{icon}</span>
       {children}
     </button>

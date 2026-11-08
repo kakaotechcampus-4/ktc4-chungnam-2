@@ -162,7 +162,7 @@ export default function ShortlistTab() {
             <>
               {day ? (
                 // 넣을 날을 먼저 고른다 — 여행 날짜만 고를 수 있는 달력이다. 그 밖의 날은 어둡게 막는다.
-                <div role="group" aria-labelledby="put-day-label" className="rounded-xl border border-ink-200 bg-white p-3">
+                <div role="group" aria-labelledby="put-day-label" className="rounded-xl border border-ink-200 bg-surface p-3">
                   <p id="put-day-label" className="mb-1 flex items-baseline justify-between gap-2 text-sm font-bold text-ink-900">
                     넣을 날짜
                     <span className="text-xs font-semibold text-[var(--selected-text)]">{dayOrdinal(edit.dates.indexOf(day))}</span>

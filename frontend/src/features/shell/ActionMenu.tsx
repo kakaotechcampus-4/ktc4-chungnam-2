@@ -32,7 +32,7 @@ export default function ActionMenu({ label, items }: { label: string; items: Act
           align="end"
           sideOffset={4}
           collisionPadding={16}
-          className="z-50 min-w-44 rounded-xl border border-ink-200 bg-white p-1 shadow-float outline-none"
+          className="z-50 min-w-44 rounded-xl border border-ink-200 bg-surface p-1 shadow-float outline-none"
         >
           {items.map((item) => (
             <DropdownMenu.Item

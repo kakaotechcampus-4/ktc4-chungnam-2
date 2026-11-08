@@ -51,7 +51,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   return (
     // 넓은 화면에서는 패널 안 탭 아래를 채운다 — 위쪽 헤더·탭은 그대로 보인다(#338).
     <div
-      className={desktop ? 'relative flex min-h-0 flex-1 flex-col bg-white' : 'fixed inset-x-0 top-0 z-30 flex flex-col bg-white'}
+      className={desktop ? 'relative flex min-h-0 flex-1 flex-col bg-surface' : 'fixed inset-x-0 top-0 z-30 flex flex-col bg-surface'}
       style={desktop ? undefined : { bottom: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
     >
       <header className="flex items-center gap-2 border-b border-ink-100 px-4 py-3">

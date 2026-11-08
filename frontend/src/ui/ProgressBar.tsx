@@ -14,7 +14,7 @@ export default function ProgressBar({ label, value, max, className = '' }: { lab
     <div className={className}>
       <div className="mb-1 flex items-baseline justify-between gap-2 text-xs font-bold">
         <span id={id} className="text-ink-600">{label}</span>
-        <span aria-hidden="true" className="shrink-0 text-brand-600">{pct}%</span>
+        <span aria-hidden="true" className="shrink-0 text-link">{pct}%</span>
       </div>
       <div role="progressbar" aria-labelledby={id} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value} className="h-1.5 overflow-hidden rounded-full bg-ink-100">
         <div className="h-full rounded-full bg-[var(--action-fill)] transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${pct}%` }} />

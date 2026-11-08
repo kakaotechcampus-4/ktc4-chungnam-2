@@ -55,7 +55,7 @@ export function OnboardingBody({ mapId, kind, onDone }: { mapId: string; kind: O
       <ol className="mt-2 space-y-4">
         {STEPS[kind].map((step, i) => (
           <li key={i} className="flex gap-3 text-ink-900">
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-link">
               {i + 1}
             </span>
             <span className="break-keep">{typeof step === 'string' ? <Sentences text={step} /> : step}</span>

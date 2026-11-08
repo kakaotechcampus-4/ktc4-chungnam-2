@@ -156,7 +156,7 @@ export function LiveInfo({ pin }: { pin: Pin }) {
 function AiPinEvidence({ pin, members }: { pin: Pin; members: MemberView[] }) {
   return (
     <section aria-label="AI 추천 근거" className="mt-2 space-y-2 rounded-xl border-[1.5px] border-brand-300 bg-[var(--pingo-bg)] p-3">
-      <p className="text-xs font-bold text-brand-700">AI가 추천한 이유</p>
+      <p className="text-xs font-bold text-selected">AI가 추천한 이유</p>
       {pin.reason && <AiReason text={pin.reason} />}
       <AiChecks evidence={pin} />
       <AiFulfillment evidence={pin} members={members} />

@@ -197,6 +197,8 @@ components:
 
 **파랑은 할 일 규칙.** 초록·노랑·빨강은 반응의 뜻으로 이미 쓰고 있다. 그래서 "아직 의견을 안 남김" 같은 할 일 표시는 브랜드 파랑으로만 한다.
 
+**다크 모드(#1412).** 기본은 기기 설정(`prefers-color-scheme`)이고, 「화면 모드: 기기 설정 / 밝게 / 어둡게」로 고정할 수 있다(☰ 메뉴 「설정」, 휴대폰은 지도 정보·계정 시트, `ThemeControl`). 고른 값은 이 기기에만 남는다. 색은 `<html data-theme>` 하나로 갈리고 값은 `tokens.css` 맨 아래 다크 묶음 하나다. 참고는 네이버지도 다크 화면이다 — 바탕은 짙은 회색, 위에 뜬 카드·버튼은 한 단계 밝은 회색(#26282D), 글자는 흰색. 중립 램프를 뒤집고(면은 어둡게, 선과 글자는 밝게) 채움 파랑·핀·반응 색은 그대로 둔다. 파랑 글자는 `text-link`, 고른 칸 글자는 `text-selected`, 카드 면은 `bg-surface`로 쓴다 — `bg-white`·`text-brand-600`·`text-brand-700`을 화면에 새로 쓰지 않는다(밝은 화면에선 같은 색이라 다크에서만 틀린다). 핑고·지역 그림·온보딩 장면처럼 캐릭터·그림은 `keep-light`로 밝은 색 그대로다. 카카오 지도 그림은 다크 지도가 없어 뒤집어 어둡게 한다(`--map-tile-night`, 카카오 확인 FE 리드 2026-11-09). 지도 색을 입힌 카드는 다크에서 카드 면에 조금만 섞는다(`cardTint`).
+
 ## Typography
 
 **Body Font:** Pretendard Variable(dynamic subset, `src/index.css`). Figma 시안은 아직 Noto Sans KR이라 글자 폭이 조금 다르다.
@@ -366,6 +368,7 @@ components:
 | 크레딧 쓰는 AI 실행 전 확인(「추천받기」·「코스 짜기」, 쓸 크레딧 · 남은 크레딧, `note` 한 줄 — 추천은 찾는 범위) | `CreditConfirm` (`ConfirmDialog` + 회색 상자 두 줄) | `features/credits/CreditConfirm` |
 | 입구 화면 틀(좁으면 세로 띠, 768px 이상 가운데 카드) | `EntryFrame` | `ui/EntryFrame` |
 | 왼쪽 패널 옆에 붙는 패널(넓은 화면만, 딤 없음) | `SidePanel` | `features/shell/SidePanel` |
+| 화면 모드 고르기(기기 설정 · 밝게 · 어둡게, #1412) | `ThemeControl` (`SegmentedControl`) · 값과 적용은 `features/shell/theme` | `features/shell/ThemeControl` |
 | 버튼 아래 메뉴(넓은 화면 계정·지도 정보, 모든 화면의 뜻 설명 `ReactionHelp`) | `MenuPopover` (확인 창이 떠 있는 동안 열어 둠) | `features/shell/MenuPopover` |
 | 눌러서 펼쳐 보는 목록(자주 묻는 질문, ☰ 메뉴 「설정」) | `Accordion` (`list`: 줄마다 아래 선 · 제목 16/600 · 오른쪽 끝 ⌄ · 높이 52 이상, `menu`: 선 없이 제목 옆 ⌄) | `ui/Accordion` |
 | 넓은 화면 ☰ 메뉴(내 지도로 돌아가기 · 자주 묻는 질문 · 버그 신고하기 · 의견 보내기 · 설정) | `AppMenu` | `features/shell/AppMenu` |

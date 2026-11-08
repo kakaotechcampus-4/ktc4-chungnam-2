@@ -1,5 +1,7 @@
-/* 색의 단일 소스(docs/design/colors.md 5절). 값을 바꾸면 그 문서의 사본 표도 같이 고친다. */
-:root {
+/* 색의 단일 소스(docs/design/colors.md 5절). 값을 바꾸면 그 문서의 사본 표도 같이 고친다.
+   다크 모드(#1412)는 맨 아래 `:root[data-theme="dark"]` 한 묶음이다. 켜고 끄는 건 features/shell/theme.ts 가 <html data-theme> 로 정한다.
+   `.keep-light` 는 다크에서도 밝은 값을 쓰는 그림(핑고·지역 그림·온보딩 장면) — 아래 묶음을 그 자리에서 다시 풀어 밝은 값이 된다. */
+:root, .keep-light {
   /* ── 브랜드 · 파랑 227°(「핑고 결」, #1521) ──
      액션 파랑은 토스 파랑(215°)과 겹치지 않게 남보라 쪽으로 옮겼다. 300만 핑고 몸 하늘색(217°) 그대로다 — 캐릭터 색이라서. */
   --brand-50:  #F0F2FC;  --brand-100: #E2E6FA;
@@ -38,7 +40,7 @@
   --text-secondary: var(--ink-500);
   --text-muted:     var(--ink-400);
   --text-on-fill:   #FFFFFF;
-  --text-link:      var(--brand-600);
+  --text-link:      var(--brand-600);   /* 파랑 글자(링크·글자 버튼·고른 칸 글자). 채움 파랑과 나눠서 다크에서 밝힌다 */
 
   /* ── 선 ──────────────────────────────── */
   --line-hairline: var(--ink-200);
@@ -50,6 +52,7 @@
   --action-fill-hover:    var(--brand-700);
   --action-quiet-text:    var(--brand-600);
   --action-danger:        #D02A2A;
+  --action-danger-text:   #D02A2A;   /* 빨강 외곽선 버튼 글자. 다크에서는 채움 빨강보다 밝혀 4.5:1 을 맞춘다 */
   --action-disabled-bg:   var(--ink-100);
   --action-disabled-text: var(--ink-400);
   --action-fill-pressed:  var(--brand-800);
@@ -89,6 +92,10 @@
   --map-tile-brightness: 1.04;
   --map-tile-contrast:   0.92;
   --confirmed-bg:         #FFF6DB;   /* 「★ 확정 리스트에 넣기」 바탕 */
+  --confirmed-text:       var(--pin-confirmed-mark); /* 그 바탕 위 글자. 핀 윤곽선과 나눠서 다크에서 밝힌다 */
+  --map-card-tint:        100%;      /* 지도 색을 카드 면에 섞는 양(look.ts cardTint). 다크는 조금만 */
+  --map-dim:              #1A1C26;   /* AI 추천 탭 여행 지역 밖을 덮는 색(12%) */
+  --map-tile-night:       invert(0); /* 다크에서만 카카오 지도 그림을 뒤집는 필터(.map-base img). 밝을 땐 그대로 */
 
   /* AI 코스 날짜별 경로선(#683). 흰 바탕 대비 4.5:1 이상 — 번호 원 흰 글자와 알약 글자에 그대로 쓴다. 넷째 날부터 색이 돌고 선 모양이 갈라 준다 */
   --course-day-1: var(--brand-600);
@@ -100,4 +107,51 @@
   --reaction-adjust:  var(--warn-line);
   --reaction-against: #D02A2A;
   --reaction-unknown: var(--ink-400);
+}
+
+/* ── 다크 모드(#1412) ─────────────────────────────────────────────
+   참고는 네이버지도 다크 화면(2026-11-09 FE 리드 캡처): 지도 바탕 짙은 회색, 위에 뜬 버튼·칩은 거의 검정, 바닥 시트 #1E1F22, 글자 흰색.
+   중립 램프를 뒤집는다 — 면(50·100)은 어둡게, 선(200·300)과 글자(400~900)는 밝게. 채움 파랑(brand-500~800)·핀·반응 색은 그대로 둔다.
+   파랑 글자·확정·위험 글자처럼 채움과 같은 색을 쓰던 글자는 따로 밝힌 토큰으로 4.5:1 을 맞춘다.
+   ponytail: 값은 캡처를 눈으로 맞춘 것이다. 사용 후기에서 어둡다·밝다가 나오면 이 묶음만 고친다. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --brand-50:  #1D2338;  --brand-100: #263056;
+  --brand-200: #33407A;  --brand-300: #5B78E6;
+
+  --ink-50:  #1B1C20;  --ink-100: #141518;
+  --ink-200: #33363D;  --ink-300: #4A4E57;
+  --ink-400: #8E929E;  --ink-500: #A6AAB6;
+  --ink-600: #BBBFCA;  --ink-700: #D2D5DD;
+  --ink-900: #F2F3F6;
+
+  --good-bg: #10291F;  --good-line: #2FA878;  --good-text: #6FD3A6;
+  --warn-bg: #2E2311;  --warn-line: #E0962A;  --warn-text: #F2BA5E;
+  --bad-bg:  #34171A;  --bad-line:  #E5484D;  --bad-text:  #FF9393;
+
+  --surface-card:    #26282D;
+  --surface-overlay: #2A2C32;
+  --toast-bg:        rgba(58, 61, 70, 0.94);
+  --scrim:           rgba(0, 0, 0, 0.5);
+
+  --text-on-fill:   #FFFFFF;
+  --text-link:      #93A8F6;
+
+  --action-danger-text: #FF8A8A;
+  --press-hover:    rgba(255, 255, 255, 0.05);
+  --press-active:   rgba(255, 255, 255, 0.1);
+
+  --selected-text: #B4C2F8;
+  --day-sat-text:  #B4C2F8;   /* 토요일 글자 — 밝은 화면의 brand-700 은 어두운 면에서 읽히지 않는다 */
+  --pingo-bg:   #1A2436;
+  --pingo-text: #A9C2F7;
+  --pingo-outline: #4A4E57;
+
+  --pin-fill-empty: #E0E2EC;   /* 의견 없는 핀 속은 밝은 회색 그대로 — 어두운 지도에서 핀이 묻히지 않게 */
+  --confirmed-bg:   #2E2710;
+  --confirmed-text: #F5C84A;
+  --map-card-tint:  24%;
+
+  /* 카카오 지도 그림은 다크 지도가 없어 뒤집어 어둡게 한다(#1412, 카카오 확인 FE 리드 2026-11-09). 바다 파랑·공원 초록은 hue-rotate 로 돌려 남긴다 */
+  --map-tile-night: invert(0.9) hue-rotate(180deg) saturate(0.55) brightness(1) contrast(0.92);
 }

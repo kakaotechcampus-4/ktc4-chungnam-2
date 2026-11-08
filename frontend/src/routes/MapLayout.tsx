@@ -432,7 +432,7 @@ export default function MapLayout() {
         style={desktop ? { left: panelOpen ? PANEL_GAP : -panelW, width: panelW } : undefined}
         className={
           desktop
-            ? `fixed inset-y-3 z-30 flex flex-col overflow-hidden rounded-2xl bg-white shadow-float transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
+            ? `fixed inset-y-3 z-30 flex flex-col overflow-hidden rounded-2xl bg-surface shadow-float transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
                 panelOpen ? 'visible' : 'invisible'
               }`
             : 'contents'
@@ -476,7 +476,7 @@ export default function MapLayout() {
               <Link
                 to="/"
                 aria-label="내 지도 목록으로"
-                className="press pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-float"
+                className="press pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-surface text-ink-900 shadow-float"
               >
                 <ChevronLeft size={20} />
               </Link>
@@ -499,7 +499,7 @@ export default function MapLayout() {
                   <button
                     type="button"
                     aria-label={`지도 정보와 구성원 ${memberCount}명`}
-                    className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600 press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
+                    className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-surface px-2.5 text-sm font-bold text-link press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
                   >
                     <Users size={16} aria-hidden="true" />
                     {memberCount > 0 && memberCount}
@@ -513,7 +513,7 @@ export default function MapLayout() {
                   type="button"
                   aria-label={`지도 정보와 구성원 ${memberCount}명`}
                   onClick={() => openProfile(true)}
-                  className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
+                  className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-surface px-2.5 text-sm font-bold text-link shadow-float"
                 >
                   <Users size={16} aria-hidden="true" />
                   {memberCount > 0 && memberCount}
@@ -535,7 +535,7 @@ export default function MapLayout() {
               role="search"
               inert={!desktop && mapMoving}
               onSubmit={submitSearch}
-              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
+              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-surface px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
                 search.source ? 'border-brand-600' : 'border-ink-200'
               }${desktop ? '' : ` ${fade}`}`}
             >
@@ -551,7 +551,7 @@ export default function MapLayout() {
                 className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
               />
               {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
-              <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
+              <button type="submit" aria-label="검색" className="hit-44 text-link">
                 <Search size={20} />
               </button>
             </form>
@@ -589,7 +589,7 @@ export default function MapLayout() {
         {!desktop && (
           <nav
             style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
-            className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 items-end border-t border-ink-100 bg-white"
+            className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 items-end border-t border-ink-100 bg-surface"
           >
             {TABS.map((tab) => (
               <TabLink
@@ -611,7 +611,7 @@ export default function MapLayout() {
           style={{ left: cover }}
         >
           {/* 내 계정(카카오맵 오른쪽 위 원, #1538) — 이름 바꾸기·초대 링크·로그아웃. 지도 정보·구성원은 패널의 구성원 버튼이다. */}
-          <div className="pointer-events-auto absolute right-4 top-3 rounded-full bg-white shadow-float">
+          <div className="pointer-events-auto absolute right-4 top-3 rounded-full bg-surface shadow-float">
             <AccountMenu maps={myMaps} name={me?.display_name} />
           </div>
           <div className="absolute left-4 right-20 top-3 flex flex-col items-start gap-2">
@@ -667,7 +667,7 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
       to={to}
       end={end}
       className={({ isActive }) =>
-        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-link' : 'text-ink-500'}`
       }
     >
       {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 네 칸 높이를 맞춘다. */}
@@ -713,7 +713,7 @@ function PanelToggle({ open, onToggle }: { open: boolean; onToggle: () => void }
       onClick={onToggle}
       className="pointer-events-auto absolute left-0 top-1/2 flex h-14 w-11 -translate-y-1/2 items-center"
     >
-      <span className="press flex h-12 w-6 items-center justify-center rounded-r-lg border border-l-0 border-ink-200 bg-white text-ink-600 shadow-float">
+      <span className="press flex h-12 w-6 items-center justify-center rounded-r-lg border border-l-0 border-ink-200 bg-surface text-ink-600 shadow-float">
         {open ? <ChevronsLeft size={16} aria-hidden="true" /> : <ChevronsRight size={16} aria-hidden="true" />}
       </span>
     </button>

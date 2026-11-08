@@ -21,7 +21,7 @@ export default function RecentSearches({
   return (
     <div
       onMouseDown={(e) => e.preventDefault()}
-      className={`absolute inset-x-0 top-full z-30 mt-2 rounded-xl border border-ink-200 bg-white py-2 ${floating ? 'pointer-events-auto shadow-float' : ''}`}
+      className={`absolute inset-x-0 top-full z-30 mt-2 rounded-xl border border-ink-200 bg-surface py-2 ${floating ? 'pointer-events-auto shadow-float' : ''}`}
     >
       <div className="flex items-center justify-between px-4 pb-1">
         <h2 className="text-xs font-semibold text-ink-500">최근 검색</h2>

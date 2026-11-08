@@ -164,7 +164,7 @@ export function setPinLabel(el: HTMLElement, name: string, mode: 'quiet' | 'sele
   label.style.cssText =
     // 그림자 대신 윤곽선 1px — 옅게 깐 바탕 지도 위에서 경계가 또렷하다. 테두리만큼 안쪽 여백을 줄여 크기는 그대로다.
     'position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;padding:1px 7px;border-radius:8px;' +
-    'border:1px solid var(--ink-300);background:#fff;color:var(--ink-900);font-size:0.75rem;line-height:1.4;white-space:nowrap;pointer-events:none;' +
+    'border:1px solid var(--line-control);background:var(--surface-card);color:var(--text-primary);font-size:0.75rem;line-height:1.4;white-space:nowrap;pointer-events:none;' +
     (mode === 'selected' ? 'font-weight:700' : 'font-weight:600;max-width:8em;overflow:hidden;text-overflow:ellipsis')
   el.style.position = 'relative'
   el.appendChild(label)

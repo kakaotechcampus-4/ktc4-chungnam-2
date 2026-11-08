@@ -5,7 +5,7 @@ import Mark from '@/ui/Mark'
 import Sentences from '@/ui/Sentences'
 
 const CONFIRMED_MARK = (
-  <span className="text-[var(--pin-confirmed-mark)]">
+  <span className="text-[var(--confirmed-text)]">
     <Mark kind="star" size={14} />
   </span>
 )

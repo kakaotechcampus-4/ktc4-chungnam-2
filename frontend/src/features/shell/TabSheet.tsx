@@ -91,7 +91,7 @@ export function ConnectionBanner({
       ) : (
         <>
           <span className="flex-1">연결이 끊겼어요</span>
-          <button type="button" onClick={onReconnect} className="hit-44 font-bold text-brand-600">
+          <button type="button" onClick={onReconnect} className="hit-44 font-bold text-link">
             다시 연결
           </button>
         </>

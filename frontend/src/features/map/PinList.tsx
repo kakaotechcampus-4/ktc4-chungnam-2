@@ -73,7 +73,7 @@ function PinCard({
       : 'border border-ink-200'
   return (
     // 카테고리는 왼쪽 아이콘 칸으로 글자를 읽지 않고도 가른다(#1454). 지도 핀 모양은 그대로 둔다.
-    <button ref={ref} type="button" onClick={onSelect} className={`press flex w-full gap-3 rounded-xl bg-white p-3.5 text-left ${border}`}>
+    <button ref={ref} type="button" onClick={onSelect} className={`press flex w-full gap-3 rounded-xl bg-surface p-3.5 text-left ${border}`}>
       <CategoryIcon category={card.category} />
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
@@ -87,7 +87,7 @@ function PinCard({
             </span>
           )}
           {todo && (
-            <span className="shrink-0 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-600">의견 남기기</span>
+            <span className="shrink-0 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-link">의견 남기기</span>
           )}
         </div>
         <p className="mt-0.5 text-xs text-ink-500">{card.meta}</p>
@@ -111,7 +111,7 @@ function PinCard({
           })}
         </p>
         {news && news.lines.length > 0 && (
-          <ul className="mt-1.5 space-y-0.5 rounded-md bg-brand-50 px-2 py-1 text-xs text-brand-700">
+          <ul className="mt-1.5 space-y-0.5 rounded-md bg-brand-50 px-2 py-1 text-xs text-selected">
             {news.lines.map((line) => (
               <li key={line} className="break-keep">
                 새 의견 · {line}

@@ -58,7 +58,7 @@ export default function ConfirmDialog({
               if (!pending) onOk()
             }}
             // 입력칸이 많은 수정 창(지도 정보)이 낮은 화면에서 넘치면 창 안에서 스크롤한다.
-            className="enter-pop max-h-full w-full max-w-sm space-y-2 overflow-y-auto rounded-2xl bg-white p-5"
+            className="enter-pop max-h-full w-full max-w-sm space-y-2 overflow-y-auto rounded-2xl bg-surface p-5"
           >
             <AlertDialog.Title className="break-keep text-title font-bold text-ink-900">{title}</AlertDialog.Title>
             {detail && <div className="rounded-xl bg-ink-50 p-3 text-sm">{detail}</div>}

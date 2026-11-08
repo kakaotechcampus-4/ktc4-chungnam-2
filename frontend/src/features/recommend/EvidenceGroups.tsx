@@ -60,7 +60,7 @@ export default function EvidenceGroups({
     <li
       key={line.id}
       title={line.author_display_name ? `${line.author_display_name}의 조건` : undefined}
-      className={`flex items-center gap-1 rounded-full border bg-white py-1 pl-2.5 pr-1 text-body font-semibold text-ink-900 ${
+      className={`flex items-center gap-1 rounded-full border bg-surface py-1 pl-2.5 pr-1 text-body font-semibold text-ink-900 ${
         pending(line) ? 'border-dashed border-[var(--warn-line)]' : 'border-ink-200'
       }`}
     >
@@ -147,7 +147,7 @@ export default function EvidenceGroups({
             <li key={line.id} className="flex items-center gap-1 rounded-full border border-dashed border-ink-300 py-1 pl-2.5 pr-1 text-body text-ink-500">
               <span className="line-through">{evidenceLabel(line)}</span>
               {editable(line) && (
-                <button type="button" aria-label={`${evidenceLabel(line)} 다시 넣기`} onClick={() => toggle([line], true)} className="hit-44 text-brand-600">
+                <button type="button" aria-label={`${evidenceLabel(line)} 다시 넣기`} onClick={() => toggle([line], true)} className="hit-44 text-link">
                   <Undo2 size={14} />
                 </button>
               )}

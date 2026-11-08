@@ -13,7 +13,7 @@ export default function Switch({ checked, onChange, label, disabled }: { checked
       aria-label={label}
       className="hit-44 relative inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-ink-300 transition-colors duration-200 ease-out data-[state=checked]:bg-brand-600 disabled:opacity-50 motion-reduce:transition-none"
     >
-      <RadixSwitch.Thumb className="block size-5 translate-x-0.5 rounded-full bg-white transition-transform duration-200 ease-out data-[state=checked]:translate-x-[22px] motion-reduce:transition-none" />
+      <RadixSwitch.Thumb className="block size-5 translate-x-0.5 rounded-full bg-surface transition-transform duration-200 ease-out data-[state=checked]:translate-x-[22px] motion-reduce:transition-none" />
     </RadixSwitch.Root>
   )
 }

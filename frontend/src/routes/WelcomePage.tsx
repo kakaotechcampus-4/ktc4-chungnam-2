@@ -39,7 +39,7 @@ export default function WelcomePage() {
   }, [])
 
   return (
-    <div className="min-h-dvh bg-white md:flex md:items-center md:justify-center md:bg-ink-50 md:px-8 md:py-10">
+    <div className="min-h-dvh bg-surface md:flex md:items-center md:justify-center md:bg-ink-50 md:px-8 md:py-10">
       <main
         // 옆으로 미는 손가락은 이 화면이 받는다(세로 스크롤만 브라우저에 맡긴다).
         onPointerDown={(e) => (startX.current = e.clientX)}
@@ -51,7 +51,7 @@ export default function WelcomePage() {
           else if (dx >= SWIPE) go(step - 1)
         }}
         onPointerCancel={() => (startX.current = null)}
-        className="mx-auto flex min-h-dvh w-full max-w-[480px] touch-pan-y flex-col px-5 pb-6 pt-2 md:mx-0 md:min-h-0 md:max-w-[960px] md:rounded-2xl md:border md:border-ink-200 md:bg-white md:px-10 md:pb-10 md:pt-4"
+        className="mx-auto flex min-h-dvh w-full max-w-[480px] touch-pan-y flex-col px-5 pb-6 pt-2 md:mx-0 md:min-h-0 md:max-w-[960px] md:rounded-2xl md:border md:border-ink-200 md:bg-surface md:px-10 md:pb-10 md:pt-4"
       >
         <div className="flex h-11 items-center justify-between">
           {step > 0 ? (
@@ -77,7 +77,7 @@ export default function WelcomePage() {
           <div className="mt-8 flex flex-1 flex-col md:mt-0">
             {/* 장이 바뀌면 새로 그려 한 번 페이드한다(움직임 줄이기면 끈다). */}
             <section key={step} aria-live="polite" className="enter-fade flex flex-col items-center text-center md:items-start md:text-left">
-              <span className="flex size-8 items-center justify-center rounded-md bg-brand-50 text-brand-600">
+              <span className="flex size-8 items-center justify-center rounded-md bg-brand-50 text-link">
                 <Icon size={16} aria-hidden="true" />
               </span>
               <h1 className="mt-3 text-balance break-keep text-xl font-bold text-ink-900 md:text-2xl">{text}</h1>
