@@ -38,17 +38,20 @@ export default function ShortlistExport({ mapId }: { mapId: string }) {
     }, '파일을 받지 못했어요')
 
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-x-4 border-t border-ink-200 pt-3">
-      <span className="text-xs font-bold text-ink-600">내보내기</span>
-      <button type="button" disabled={busy} onClick={() => void copy()} className="btn-link text-sm">
-        글자로 복사
-      </button>
-      <button type="button" disabled={busy} onClick={() => void download('txt')} className="btn-link text-sm">
-        메모장 파일(.txt)
-      </button>
-      <button type="button" disabled={busy} onClick={() => void download('csv')} className="btn-link text-sm">
-        엑셀 파일(.csv)
-      </button>
+    // 라벨은 한 줄, 버튼은 그 아래 줄에 — 라벨 옆에 붙이면 좁은 화면에서 셋째 버튼이 라벨 아래로 밀려 시작선이 어긋났다(#1511).
+    <div className="mt-4 space-y-1 border-t border-ink-200 pt-3">
+      <p className="text-xs font-bold text-ink-600">내보내기</p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <button type="button" disabled={busy} onClick={() => void copy()} className="btn-link text-sm">
+          텍스트로 복사
+        </button>
+        <button type="button" disabled={busy} onClick={() => void download('txt')} className="btn-link text-sm">
+          텍스트 파일(.txt)
+        </button>
+        <button type="button" disabled={busy} onClick={() => void download('csv')} className="btn-link text-sm">
+          엑셀 파일(.csv)
+        </button>
+      </div>
     </div>
   )
 }
@@ -71,5 +74,6 @@ function saveFile(blob: Blob, name: string) {
   a.href = url
   a.download = name
   a.click()
-  URL.revokeObjectURL(url)
+  // Safari·iOS는 받기를 늦게 시작한다 — 바로 지우면 받기가 말없이 실패한다(FileSaver.js 와 같은 40초).
+  setTimeout(() => URL.revokeObjectURL(url), 40_000)
 }

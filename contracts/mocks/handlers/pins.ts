@@ -97,6 +97,7 @@ function createPin(mapId: string, body: CreatePinBody): Response {
       lng: own.lng,
       place_name: own.place_name,
       ...(own.place_source?.url ? { place_url: own.place_source.url } : {}),
+      naver_url: `https://map.naver.com/p/search/${encodeURIComponent(own.place_name)}`,   // #1513 이름 검색 링크
       created_by: ME_USER_ID,
       created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
       created_at: new Date().toISOString(),
@@ -183,13 +184,22 @@ export const pinsHandlers = [
       try { host = new URL(url).hostname; } catch { return { index, status: "error", error_code: "LINK_NOT_SUPPORTED" }; }
       const isGoogle = /(^|\.)google\.[a-z.]+$/.test(host) || host === "maps.app.goo.gl" || host === "goo.gl";
       const isKakao = host === "place.map.kakao.com" || host === "map.kakao.com" || host === "kko.to";
-      // 네이버 링크는 서버가 열지 않는다 — 힌트(상호명)가 있을 때만 받는다(#946)
-      const isNaver = /(^|\.)naver\.(com|me)$/.test(host) && !!hint?.name;
+      // 네이버: 서버가 naver.me 단축 링크를 한 번 따라가 번호만 읽는다(#1048). 번호표에 학습된 짝이 있으면 바로 matches
+      const isNaver = /(^|\.)naver\.(com|me)$/.test(host);
       if (!isGoogle && !isKakao && !isNaver) return { index, status: "error", error_code: "LINK_NOT_SUPPORTED" };
       let own: (typeof SEED_PLACES)[number] | undefined;
       let result: Record<string, unknown>;
       if (isNaver) {
-        result = { provider: "naver", matches: [], needs_search_query: false };
+        const code = new URL(url).pathname.split("/").filter(Boolean).pop() ?? "";
+        // 목 서버 시나리오: 코드가 `learned`로 시작하면 번호표에 이미 학습된 짝(첫 시드 장소)
+        own = code.startsWith("learned") ? SEED_PLACES.find((p) => isPinnable(p)) : undefined;
+        result = {
+          provider: "naver",
+          external_id: `naver:${code}`,
+          matches: own ? [{ ...own, pinnable: true }] : [],
+          ...(own ? { matched_by: "external_id" } : {}),
+          needs_search_query: !own,
+        };
       } else if (isKakao) {
         const id = url.match(/place\.map\.kakao\.com\/(\w[\w-]*)/)?.[1] ?? new URL(url).searchParams.get("itemId");
         if (!id) return { index, status: "error", error_code: "LINK_UNRESOLVED" };
@@ -212,6 +222,12 @@ export const pinsHandlers = [
         if (found.length === 1) {
           own = found[0];
           result = { ...result, matches: [{ ...own, pinnable: true }], matched_by: "hint", needs_search_query: false };
+        } else if (found.length === 0 && hint.address) {
+          // #1047 — 이름은 안 맞아도 같은 도로명주소(건물번호까지)에 영업 중인 곳이 정확히 하나면 사람이 확인할 후보로(자동 확정 아님)
+          const roadKey = (a: string) => a.replace(/^\S+\s/, "").replace(/[,(].*$/, "").replace(/\s+(지하|\d+층).*$/, "").replace(/\s/g, "");
+          const key = roadKey(hint.address);
+          const sameAddr = SEED_PLACES.filter((p) => isPinnable(p) && key !== "" && roadKey(p.address ?? "") === key);
+          if (sameAddr.length === 1) result = { ...result, address_candidates: [{ ...sameAddr[0], pinnable: true }] };
         }
       }
       if (result.matches && (result.matches as unknown[]).length > 0 && !result.matched_by) result = { ...result, matched_by: "link" };
@@ -282,6 +298,7 @@ export const pinsHandlers = [
     pin.lng = own.lng;
     pin.place_name = own.place_name;
     if (own.place_source?.url) pin.place_url = own.place_source.url;
+    pin.naver_url = `https://map.naver.com/p/search/${encodeURIComponent(own.place_name)}`;
     delete pin.kakao_place_id;
     delete pin.search_query;
     (pin as any)._place_id = own.place_id;

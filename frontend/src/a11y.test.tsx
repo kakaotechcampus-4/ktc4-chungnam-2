@@ -52,10 +52,10 @@ describe('#959', () => {
         <Toaster controlsVisible={false} />
       </>,
     )
-    act(() => showToast('의견을 거뒀어요', { label: '되돌리기', onClick: () => {} }))
+    act(() => showToast('의견을 취소했어요', { label: '되돌리기', onClick: () => {} }))
     act(() => screen.getByRole('button', { name: '되돌리기' }).focus())
     act(() => vi.advanceTimersByTime(10_000))
-    expect(screen.getByRole('status')).toHaveTextContent('의견을 거뒀어요')
+    expect(screen.getByRole('status')).toHaveTextContent('의견을 취소했어요')
 
     act(() => screen.getByRole('button', { name: '밖' }).focus())
     act(() => vi.advanceTimersByTime(10_000))

@@ -7,7 +7,6 @@ URL·링크 좌표·장소 이름은 응답과 로그 어디에도 남기지 않
 import logging
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
@@ -37,44 +36,47 @@ def check_link_preview_rate(user_id: str, url_count: int) -> None:
         raise AppError("RATE_LIMITED")
 
 
-def _is_naver_link(url: str) -> bool:
-    try:
-        host = (urlsplit(url).hostname or "").lower().rstrip(".")
-    except ValueError:
-        return False
-    return host == "naver.me" or host == "naver.com" or host.endswith(".naver.com")
-
-
-def _match_by_hint(hint: LinkHint | None) -> list:
+def _match_by_hint(hint: LinkHint | None, external_id: str | None) -> list:
     """상호명 + 주소로 자체 DB 짝(#946). 주소가 없으면 부르지 않는다(places도 빈 목록). 실패는 짝 없음 — 상호명·주소는 남기지 않는다."""
     if hint is None or not hint.name or not hint.address:
         return []
     try:
-        return places_api.match_by_name_address(hint.name, hint.address, db=None)
+        return places_api.match_by_name_address(hint.name, hint.address, external_id=external_id, db=None)
     except Exception as exc:   # noqa: BLE001 — 힌트는 덤이다. 메시지에 힌트가 실릴 수 있어 타입만 남긴다
         log.warning("link-preview 힌트 짝 찾기 실패(%s)", type(exc).__name__)
         return []
 
 
-def _parse_one(url: str, hint: LinkHint | None = None) -> LinkParseResult:
-    """링크 해석 + 힌트 짝(#946). 링크로 짝이 없거나 네이버 링크일 때만 힌트를 쓴다. 네이버 링크는 서버가 열지 않고,
-    상호명 힌트가 있을 때만 provider=naver로 받는다(없으면 LINK_NOT_SUPPORTED 그대로)."""
+def _address_candidates(hint: LinkHint | None) -> list:
+    """같은 주소에 영업 중인 한 곳(#1047) — 이름이 달라도 「이 장소가 맞나요?」로 사람이 확인할 후보다(자동 확정 아님, 가드레일 2·4).
+    matches가 비었을 때만 부른다. 주소만 쓴다. 실패는 후보 없음 — 주소는 남기지 않는다."""
+    if hint is None or not hint.address:
+        return []
     try:
-        result = places_api.parse_link(url, db=None)   # 스레드마다 자체 세션(places가 연다)
-    except AppError as exc:
-        if exc.code != "LINK_NOT_SUPPORTED" or hint is None or not hint.name or not _is_naver_link(url):
-            raise
-        result = LinkParseResult(provider="naver", matches=[], needs_search_query=True)
-    if result.matches:
-        return result.model_copy(update={"matched_by": "link"})
-    matches = _match_by_hint(hint)
+        return list(places_api.match_address_candidates(hint.address, db=None))[:3]
+    except Exception as exc:   # noqa: BLE001 — 후보는 덤이다. 메시지에 주소가 실릴 수 있어 타입만 남긴다
+        log.warning("link-preview 주소 후보 찾기 실패(%s)", type(exc).__name__)
+        return []
+
+
+def _parse_one(url: str, hint: LinkHint | None = None) -> LinkParseResult:
+    """places의 링크 해석 → 힌트 짝(#946·#1048) → 같은 주소 후보(#1047) 순."""
+    result = places_api.parse_link(url, db=None)   # 스레드마다 자체 세션(places가 연다)
+    if result.matches:   # places가 번호표로 채웠으면(matched_by=external_id) 덮어쓰지 않는다
+        return result if result.matched_by else result.model_copy(update={"matched_by": "link"})
+    matches = _match_by_hint(hint, result.external_id)
     if matches:
         return result.model_copy(update={"matches": matches, "matched_by": "hint", "needs_search_query": False})
-    return result
+    if result.address_candidates:   # places가 구글 이름 속 주소로 이미 채웠다
+        return result
+    candidates = _address_candidates(hint)
+    return result.model_copy(update={"address_candidates": candidates}) if candidates else result
 
 
 def _already_pinned_pin_id(db: Session, map_id: str, result: LinkParseResult) -> str | None:
     """그 링크의 장소가 이 지도에 이미 핀으로 있으면 그 핀 id — #569와 같은 기준(pins.service의 판정 재사용)."""
+    if not result.matches and result.address_candidates:
+        return None   # 주소 후보는 사람이 확정하기 전이라 링크 항목에 「이미 있음」을 붙이지 않는다
     place_ids: list[str] = []
     for match in result.matches:
         if match.place_id.startswith("own:"):

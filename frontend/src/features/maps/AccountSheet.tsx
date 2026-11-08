@@ -12,6 +12,7 @@ import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import Avatar from '@/ui/Avatar'
+import Sentences from '@/ui/Sentences'
 
 import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
@@ -69,18 +70,35 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   function copyLink(map: MapView) {
-    invite.mutate(map.id, {
-      onSuccess: async ({ url }) => {
-        try {
-          await navigator.clipboard.writeText(url)
-          setCopiedId(map.id)
-          showToast(`${map.title} 초대 링크를 복사했어요`)
-        } catch (err) {
-          console.error('[account] 링크 복사 실패', err)
-          showToast('링크를 복사하지 못했어요. 지도 안 프로필에서 공유해 주세요')
-        }
+    if (invite.isPending) return
+    let linkFailed = false
+    const url = invite.mutateAsync(map.id).then(
+      (r) => r.url,
+      (err: unknown) => {
+        linkFailed = true
+        throw err
       },
-    })
+    )
+    // 클립보드 쓰기가 먼저 거절되면 아래 Blob 약속을 아무도 받지 않는다 — 처리되지 않은 거절로 남지 않게.
+    url.catch(() => {})
+    // Safari 는 누른 그 순간에 클립보드에 쓰기 시작해야 한다 — 링크를 받은 뒤 쓰면 늘 거절했다.
+    // 그래서 아직 오지 않은 링크(Promise)를 담은 ClipboardItem 을 바로 넘긴다. 없는 브라우저는 받은 뒤 글자로 쓴다.
+    const copied =
+      typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write
+        ? navigator.clipboard.write([new ClipboardItem({ 'text/plain': url.then((u) => new Blob([u], { type: 'text/plain' })) })])
+        : url.then((u) => navigator.clipboard.writeText(u))
+    copied.then(
+      () => {
+        setCopiedId(map.id)
+        showToast(`${map.title} 초대 링크를 복사했어요`)
+      },
+      (err) => {
+        // 링크를 못 만든 것은 아래 오류 줄이 알린다.
+        if (linkFailed) return
+        console.error('[account] 링크 복사 실패', err)
+        showToast('링크를 복사하지 못했어요. 지도에 들어가 지도 정보에서 공유해 보세요')
+      },
+    )
   }
 
   return (
@@ -103,7 +121,9 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
       {maps.length > 0 && (
         <>
           <h2 className="text-sm font-bold text-ink-900">지도 초대 링크</h2>
-          <p className="mb-2 text-xs text-ink-500">지도마다 링크가 따로 있어요. 복사해서 단톡방에 보내 주세요</p>
+          <p className="mb-2 text-xs text-ink-500">
+            <Sentences text="지도마다 링크가 따로 있어요. 복사해서 단톡방에 보내 주세요" />
+          </p>
           <ul className="space-y-2">
             {maps.map((map) => (
               <li key={map.id} className="flex items-center justify-between gap-2 rounded-xl bg-ink-50 px-3 py-2.5">
@@ -111,10 +131,11 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
                 <button
                   type="button"
                   onClick={() => copyLink(map)}
-                  disabled={invite.isPending && invite.variables === map.id}
+                  // 한 요청을 여러 줄이 같이 쓰니, 기다리는 동안은 모든 줄을 막는다(앞 줄의 결과가 사라지지 않게).
+                  disabled={invite.isPending}
                   className="btn-outline btn-sm"
                 >
-                  {copiedId === map.id ? '✓ 복사됨' : <><Share size={14} aria-hidden="true" /> 링크 복사</>}
+                  {copiedId === map.id ? '복사됨' : <><Share size={14} aria-hidden="true" /> 링크 복사</>}
                 </button>
               </li>
             ))}

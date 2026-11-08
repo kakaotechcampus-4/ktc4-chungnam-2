@@ -79,7 +79,7 @@ def _info(place_id, *, name="가게", address="서울특별시 성동구 연무�
 
 
 def _search(query):
-    return {"query": query, "url": places_api.kakao_search_url(query)}
+    return {"query": query, "url": places_api.kakao_search_url(query), "naver_url": places_api.naver_search_url(query)}
 
 
 def _set_region_label(db_session, label, *, map_id="map_1"):
@@ -99,10 +99,34 @@ def test_readiness_counts_curated_within_widen_limit_of_default_region(db_sessio
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=places)
 
-    assert readiness[CATEGORY] == {"ready": True, "answered_count": 1, "required_count": 1, "curated_nearby": 4}
+    assert readiness[CATEGORY] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000, "curated_nearby": 4}
     [[circle]] = places.curated_circles
     assert (circle.anchor_lat, circle.anchor_lng) == (pytest.approx(37.5), pytest.approx(127.0))
-    assert circle.radius_m == core.radius_m_for_walk_min(core.WIDEN_LIMIT_MIN)   # 기본 반경 × 넓히기 상한 배율
+    assert circle.radius_m == core.WIDEN_LIMIT_M   # 기본 반경 × 넓히기 상한 배율
+
+
+def test_readiness_with_center_counts_around_that_point_not_the_pins_1331(db_session):
+    """center가 있으면 그 점 한 곳의 원이다(run 생성과 같은 기준). 핀 위치는 쓰지 않고, ready·answered_count는 그대로다."""
+    _make_members(db_session, user_ids=["user_1"])
+    pin = _make_pin(db_session, category=CATEGORY, lat=37.5, lng=127.0)
+    _react(db_session, pin, user_id="user_1")
+    places = _Places(curated=7)
+
+    readiness = flows.get_readiness(db_session, map_id="map_1", place_search=places, center=(35.1, 129.0))
+
+    assert readiness[CATEGORY] == {"ready": True, "answered_count": 1, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000, "curated_nearby": 7}
+    [[circle]] = places.curated_circles[:1]
+    assert (circle.anchor_lat, circle.anchor_lng) == (pytest.approx(35.1), pytest.approx(129.0))
+    assert circle.radius_m == core.WIDEN_LIMIT_M
+    without = flows.get_readiness(db_session, map_id="map_1", place_search=_Places(curated=7))
+    assert {c: (v["ready"], v["answered_count"]) for c, v in without.items()} ==         {c: (v["ready"], v["answered_count"]) for c, v in readiness.items()}
+
+
+def test_readiness_with_center_counts_even_without_an_opinion_pin_1331(db_session):
+    """중심은 점 하나라 의견 핀이 없어도 센다. ready는 거짓 그대로다."""
+    _make_members(db_session, user_ids=["user_1"])
+    readiness = flows.get_readiness(db_session, map_id="map_1", place_search=_Places(curated=3), center=(35.1, 129.0))
+    assert readiness[CATEGORY]["ready"] is False and readiness[CATEGORY]["curated_nearby"] == 3
 
 
 def test_readiness_without_curated_gives_search_link_with_pin_area(db_session):
@@ -124,7 +148,7 @@ def test_readiness_without_opinion_pin_has_neither(db_session):
 
     readiness = flows.get_readiness(db_session, map_id="map_1", place_search=places)
 
-    assert readiness[CATEGORY] == {"ready": False, "answered_count": 0, "required_count": 1}
+    assert readiness[CATEGORY] == {"ready": False, "answered_count": 0, "required_count": 1, "radius_m": 3000, "radius_min_m": 2000, "radius_max_m": 5000}
     assert places.curated_circles == []
 
 
@@ -199,7 +223,7 @@ def test_no_results_detail_carries_funnel_and_search_link(db_session):
 
     assert exc_info.value.code == "NO_RESULTS"
     assert exc_info.value.detail == {
-        "funnel": [{"label": "반경 밖 제거", "removed_count": 2}],
+        "funnel": [{"key": "radius", "label": "반경 밖 제거", "removed_count": 2}],
         "external_search": _search(f"춘천 {CATEGORY_WORD}"),
     }
 
@@ -242,3 +266,22 @@ def test_place_search_gateways_expose_places_and_curated_count():
     circle = Circle(anchor_lat=37.5, anchor_lng=127.0, radius_m=2400)
     assert dev.count_curated(category=CATEGORY, circles=[circle]) == len(dev.search_nearby(category=CATEGORY, circles=[circle]))
     assert dev.get_places([str(uuid.uuid4())]) == {}
+
+
+def test_result_and_no_results_funnel_entries_carry_stage_key_and_null_for_old_labels(db_session):
+    """#1146 — 결과 200과 0곳 404 모두 깔때기 항목에 FUNNEL_STAGES 키가 붙고, 표에 없는 옛 라벨은 null이다."""
+    run, _rows = _done_run(db_session, candidates=1)
+    run.last_funnel = [{"label": label, "removed_count": 1} for _key, label in core.FUNNEL_STAGES] + [
+        {"label": "옛 라벨", "removed_count": 0}
+    ]
+    expected = [key for key, _label in core.FUNNEL_STAGES] + [None]
+
+    result = flows.get_result(db_session, run_id=str(run.id), principal=AUTHOR, place_search=_Places())
+    assert [e.key for e in result.funnel] == expected
+
+    for row in _rows:
+        db_session.delete(row)
+    db_session.flush()
+    with pytest.raises(AppError) as exc_info:
+        flows.get_result(db_session, run_id=str(run.id), principal=AUTHOR, place_search=_Places())
+    assert [e["key"] for e in exc_info.value.detail["funnel"]] == expected

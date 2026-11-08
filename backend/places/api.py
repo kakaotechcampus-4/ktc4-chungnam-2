@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -157,8 +160,8 @@ _Stage = tuple[int, tuple[float | None, float | None], float | None]   # (계층
 
 
 def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
-    """계약의 순서(docs/api-spec.yaml /places/search 정렬 규칙)를 그대로 내는 읽기 순서.
-    좌표가 있으면 지역 구역(30km 안)의 모든 계층이 먼 구역보다 먼저다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
+    """30km 안만 읽는 순서.
+    좌표가 있으면 지역 구역(30km 안)만 읽는다. 계층 2(부분 일치)는 가까운 순이라 가까운 띠(3km)를 먼저 읽고
     모자랄 때만 다음으로 가도 결과가 같다(가까운 띠의 장소가 어차피 더 앞이다). 다음은 계층 3 한 번으로 부분 일치(3km 밖)와
     주소 일치를 일치 정도 순으로 얻는다 — 비싼 전체 훑기를 구역마다 한 번만 한다. 계층 1은 인덱스라 띠를 나누지 않는다."""
     if near is None:
@@ -166,13 +169,12 @@ def _search_stages(near: tuple[float, float] | None) -> list[_Stage]:
     close, region = repository.NEAR_RADIUS_M, repository.REGION_RADIUS_M
     return [
         (TIER_NAME_PREFIX, (None, region), None), (TIER_NAME_PART, (None, close), None), (TIER_REST, (None, region), close),
-        (TIER_NAME_PREFIX, (region, None), None), (TIER_REST, (region, None), None),
     ]
 
 
 def search_own_for_query(query: str, near: tuple[float, float] | None, limit: int, *, db: Session | None = None) -> list[OwnSearchHit]:
     """장소 검색(#822, #835)의 자체 DB 몫. 이름 일치 정도 계층(완전·앞부분 > 부분 > 주소만) 순으로, 좌표가 있으면 지역 구역(30km 안)을
-    먼저, 먼 구역은 limit에 못 미칠 때만 읽는다(_search_stages). 각 단계 안은 가까운 순 → 정예. 핀으로 만들 수 있는 곳만
+    조회한다(_search_stages). 각 단계 안은 가까운 순 → 정예. 핀으로 만들 수 있는 곳만
     pinnable=True로 최대 limit곳. 단계마다 핀 가능한 곳이 모이거나 후보가 바닥날 때까지(최대 _SEARCH_MAX_PAGES 페이지) 이어 읽는다.
     카카오 값을 쓰지 않는다. 읽기 전용."""
     hits: list[OwnSearchHit] = []
@@ -201,7 +203,7 @@ def _to_search_result(r: repository.NearestRow) -> PlaceSearchResult:
     return PlaceSearchResult(
         place_id=f"own:{r.place_id}", place_name=r.name[:100], lat=r.lat, lng=r.lng, category=r.category,
         address=r.address[:200] if r.address else None,
-        place_source=PlaceSourceInfo(provider=r.source), pinnable=True,
+        place_source=PlaceSourceInfo(provider=r.source, url=core.place_link(r.name, r.address, r.kakao_place_url)), pinnable=True,
     )
 
 
@@ -239,9 +241,51 @@ def neighborhood(address: str | None) -> str | None:
     return core.neighborhood(address)
 
 
+def sido(address: str | None) -> str | None:
+    """주소의 시·도를 짧은 이름 하나로("서울특별시 …"와 "서울 …"은 둘 다 "서울"). 못 찾으면 None. 순수 함수.
+    이름 표는 places.core.sido 설명에 있다 — 광주·전남은 2026 통합으로 "전남광주" 한 값이다(#1059)."""
+    return core.sido(address)
+
+
+SIDO_AT_RADIUS_M = 10_000.0   # 경계 표가 비었을 때 sido_at이 장소를 찾는 반경. 이 안에 주소 있는 자체 DB 장소가 없으면 None
+_SIDO_AT_FETCH = 5            # 가장 가까운 곳의 주소가 비어도 다음 곳으로 정하도록 조금 더 읽는다
+
+
+def sido_at(lat: float, lng: float, *, db: Session | None = None) -> str | None:
+    """좌표의 시·도(sido와 같은 짧은 이름, #1385). 시·도 경계 표(sido_boundaries)가 적재돼 있으면 **경계가 먼저**다 — 경계 안이면 그 시·도,
+    장소 데이터가 없는 곳(제주 등)도 판정된다. 경계에 안 들면(간소화 경계가 빠뜨린 해안·매립지·작은 섬, 바다, 국외) 10km 안에서 가장 가까운
+    영업 중 자체 DB 장소 주소의 시·도로 한 번 더 정한다(경계 근처에서는 건너편 장소가 더 가까우면 틀리는 근사). 표가 비어 있어도 같은 방식이다.
+    둘 다 못 정하면 None — 부르는 쪽은 None이면 거르지 않는다(#1059). 읽기 전용, 좌표를 남기지 않는다."""
+    with _session(db) as s:
+        by_boundary = repository.sido_by_boundary(s, lat, lng)
+        if by_boundary is not None:
+            return by_boundary
+        rows = repository.find_nearby_own(s, lat, lng, SIDO_AT_RADIUS_M, _SIDO_AT_FETCH)
+    return next((v for v in (core.sido(r.address) for r in rows) if v), None)
+
+
+def circle_outside_region(lat: float, lng: float, radius_m: float, sido: str, *, db: Session | None = None) -> bool | None:
+    """중심 (lat, lng), 반경 radius_m(m)의 원 **전체**가 그 시·도 밖이면 True(걸치기만 해도 False). sido는 sido·sido_at이
+    돌려주는 짧은 이름("서울", "전남광주"). 경계 표가 비었거나 그 시·도의 경계를 모르면 None — 막지 않는다는 뜻이다.
+    원은 geography로 만든다(위도마다 다른 경도 거리를 반영). 읽기 전용, 좌표를 남기지 않는다. recommend의 OUTSIDE_TRIP_REGION 판정이 부른다."""
+    with _session(db) as s:
+        return repository.circle_outside_sido(s, lat, lng, radius_m, sido)
+
+
 def kakao_search_url(query: str) -> str:
     """카카오맵 검색 링크 "https://map.kakao.com/link/search/" + URL 인코딩한 검색어. 이 형식을 다른 곳에서 다시 적지 않는다."""
     return core.kakao_search_url(query)
+
+
+def naver_search_url(query: str) -> str:
+    """네이버 지도 검색 링크 "https://map.naver.com/p/search/" + URL 인코딩한 검색어(#1513). 형식을 다른 곳에서 다시 적지 않는다."""
+    return core.naver_search_url(query)
+
+
+def naver_place_link(name: str | None, address: str | None) -> str | None:
+    """장소 하나의 「네이버 지도에서 보기」 링크: "{이름} {동네}" 검색 링크, 이름이 없으면 None(#1513).
+    recommend·pins·ads가 place_link 옆에 붙인다."""
+    return core.naver_place_link(name, address)
 
 
 def place_link(place: PlaceInfo) -> str | None:
@@ -322,16 +366,86 @@ def own_places_by_kakao_id(kakao_place_id: str, *, db: Session | None = None) ->
         return repository.find_by_kakao_place_id(s, kakao_place_id)
 
 
-def match_by_name_address(name: str, address: str | None, *, db: Session | None = None) -> list[PlaceSearchResult]:
+def match_by_name_address(name: str, address: str | None, *, external_id: str | None = None, db: Session | None = None) -> list[PlaceSearchResult]:
     """공유 글의 상호명·주소로 자체 DB 짝 찾기(#946). 짝이 하나로 확실할 때만 1개를, 아니면 빈 목록(가드레일 2 — 체인점·동명·주소 어긋남).
     **주소가 있어야 하고 주소가 같다고 확인된 장소만** 확정한다(주소 없음·비교 불가는 빈 목록 — 후보가 하나뿐이어도 같은 점포라는 근거가 못 된다).
     분류는 음식점·카페·관광지 모두. 규칙은 matching(이름 점수·주소 일치·모호하면 거절)을 그대로 쓰고 후보는 name_norm 인덱스로 좁힌다.
-    주소는 짝 찾기에만 쓴다 — 상호명·주소를 로그·예외에 남기지 않고 저장하지 않는다. 읽기 전용. 응답 모양은 링크 해석의 matches와 같다."""
+    `external_id`(링크에서 읽은 `kakao:…`·`naver:…` 번호)를 함께 주면 서버가 스스로 확정한 짝을 번호표에 source='hint'로 기록한다(#1048) —
+    다음 사람은 같은 링크로 한 번에 찍힌다. 이때만 쓰기가 있고(호출 쪽 트랜잭션에 참여, 커밋하지 않는다) 번호 형식이 틀리면 기록만 건너뛴다.
+    주소는 짝 찾기에만 쓴다 — 상호명·주소·번호를 로그·예외에 남기지 않고 저장하지 않는다. 응답 모양은 링크 해석의 matches와 같다."""
     if not name or not name.strip():
         return []
     with _session(db) as s:
         candidates = repository.find_by_name_hint(s, name)
-    return [_to_link_match(c) for c in matching.pick_hint_match(name, address, candidates)]
+        picked = matching.pick_hint_match(name, address, candidates)
+        if picked and external_id:
+            m = _EXTERNAL_ID.fullmatch(external_id)
+            if m is not None:
+                repository.upsert_external_id(s, m.group(1), external_id, picked[0].place_id, "hint", None)
+        return _link_matches(s, picked)
+
+
+_EXTERNAL_ID = re.compile(r"(kakao|naver):\d{1,20}")
+
+
+def _check_external_id(provider: str, external_id: str) -> None:
+    m = _EXTERNAL_ID.fullmatch(external_id or "")
+    if m is None or m.group(1) != provider:
+        raise ValueError("번호 형식이 provider와 맞지 않는다")   # 번호 자체는 메시지에 싣지 않는다
+
+
+def voter_hash(user_id: str) -> str:
+    """번호표 표(`record_external_id(source='user', voter_hash=…)`·`purge_external_id_votes`)에 쓰는 사용자 id의 단방향 해시(#1048).
+    HMAC-SHA256 hex 64자 — 키는 SESSION_SECRET에서 용도 문자열로 파생하므로 키 자체는 어디에도 나가지 않고, 같은 사용자는 늘 같은 값이다
+    (계정당 한 표, 탈퇴 정리가 같은 값으로 지운다). 해시도 로그·응답에 싣지 않는다. SESSION_SECRET을 바꾸면 기존 표와 이어지지 않는다
+    (그 전 표는 탈퇴 정리로 지워지지 않고 남는다 — 표만이고 사용자와 이어 줄 수 없다)."""
+    key = hmac.new(settings.session_secret.encode("utf-8"), b"places.external_id_votes.v1", hashlib.sha256).digest()
+    return hmac.new(key, user_id.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def record_external_id(provider: str, external_id: str, place_id: str, *, source: str, voter_hash: str | None = None,
+                       db: Session | None = None) -> None:
+    """카카오·네이버 장소 번호 → 자체 DB 장소 짝을 번호표에 기록한다(#1048). 번호만 저장한다 — 이름·좌표·주소는 저장하지 않는다(#53).
+    source='hint'(서버가 상호명·주소로 스스로 확정)는 즉시 신뢰, source='user'(사람이 고른 짝)는 voter_hash(사용자 id의 단방향 해시)당 한 표이고
+    서로 다른 2표가 쌓여야 parse_link가 자동 매칭에 쓴다. 같은 번호가 다른 장소에 이어지면 충돌이라 둘 다 자동 매칭에서 빠진다.
+    provider·번호·source가 잘못됐거나 user인데 voter_hash가 없으면 ValueError, 없는 place_id면 KeyError — 호출 쪽(pins)이 핀 생성을 막지 않고 넘긴다.
+    커밋하지 않는다(db를 넘기면 호출 쪽 트랜잭션에 참여)."""
+    if provider not in ("kakao", "naver") or source not in ("hint", "user") or (source == "user" and not voter_hash):
+        raise ValueError("provider·source·voter_hash가 계약에 맞지 않는다")
+    _check_external_id(provider, external_id)
+    with _session(db) as s:
+        repository.upsert_external_id(s, provider, external_id, place_id, source, voter_hash)
+
+
+def purge_external_id_votes(voter_hash: str, *, db: Session | None = None) -> int:
+    """탈퇴한 사용자의 번호표 표를 지운다(#1048, auth의 탈퇴 7일 뒤 정리가 부른다). 번호표 행은 공용 데이터라 남긴다. 멱등 — 지운 표 수."""
+    if not voter_hash:
+        return 0
+    with _session(db) as s:
+        return repository.purge_external_id_votes(s, voter_hash)
+
+
+def own_places_by_external_id(external_id: str, *, db: Session | None = None) -> list[Candidate]:
+    """번호표가 가리키는 자체 DB 장소(#1048). 신뢰된 단일 행이고 그 장소가 영업 중일 때만 한 곳, 아니면 빈 목록(충돌·표 부족·폐업·번호표에 없음).
+    번호 형식이 아니면 빈 목록. 읽기 전용."""
+    m = _EXTERNAL_ID.fullmatch(external_id or "")
+    if m is None:
+        return []
+    with _session(db) as s:
+        place_id = core.trusted_external_place(repository.external_id_rows(s, m.group(1), external_id))
+        return repository.find_open_by_ids(s, [place_id]) if place_id else []
+
+
+def match_address_candidates(address: str, *, db: Session | None = None) -> list[PlaceSearchResult]:
+    """이름이 안 맞아도 같은 도로명주소(건물번호까지)에 영업 중인 음식점·카페·관광지가 **정확히 한 곳**이면 그 하나(#1047).
+    자동 확정이 아니라 사람이 「이 장소가 맞나요?」로 확인할 후보다(가드레일 2·4). 같은 주소에 둘 이상(다중 입점 건물)이거나 주소를 비교할 수
+    없으면(도로명주소가 아님·건물번호 없음) 빈 목록. 주소는 짝 찾기에만 쓰고 저장·로그하지 않는다. 읽기 전용. 응답 모양은 matches와 같다."""
+    term = matching.address_search_term(address or "")
+    if term is None:
+        return []
+    with _session(db) as s:
+        candidates = repository.find_by_address_term(s, term)
+        return _link_matches(s, matching.pick_address_candidate(address, candidates))
 
 
 def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
@@ -350,22 +464,57 @@ def parse_link(url: str, *, db: Session | None = None) -> LinkParseResult:
         raise AppError("LINK_UNRESOLVED" if shortened else "LINK_NOT_SUPPORTED")
 
     if parsed.provider == "kakao":
-        found = own_places_by_kakao_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES]
+        matches = _link_matches(db, own_places_by_kakao_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES])
+        matched_by = None   # 카카오 ID로 기록된 장소는 「링크가 가리키는 장소」 — 호출 쪽(pins)이 link로 표시한다
+        if not matches:   # 번호표에서 이어진 짝(#1048) — places.kakao_place_id 조회와 합친다
+            matches = _link_matches(db, own_places_by_external_id(parsed.kakao_place_id, db=db)[: matching.LINK_MAX_MATCHES])
+            matched_by = "external_id" if matches else None
         result = LinkParseResult(
-            provider="kakao", kakao_place_id=parsed.kakao_place_id,
-            matches=[_to_link_match(c) for c in found], needs_search_query=not found,
+            provider="kakao", kakao_place_id=parsed.kakao_place_id, external_id=parsed.kakao_place_id, matched_by=matched_by,
+            matches=matches, needs_search_query=not matches,
+        )
+    elif parsed.provider == "naver":
+        # 번호뿐인 링크 — 이름·좌표를 모르니 번호표로만 찾는다(#1048). 없으면 호출 쪽이 힌트(상호명·주소)나 검색으로 잇는다
+        matches = _link_matches(db, own_places_by_external_id(parsed.external_id, db=db)[: matching.LINK_MAX_MATCHES])
+        result = LinkParseResult(
+            provider="naver", external_id=parsed.external_id, matched_by="external_id" if matches else None,
+            matches=matches, needs_search_query=not matches,
         )
     else:
         found = []
+        address_candidates = None
+        split = matching.split_address_and_name(parsed.name_hint or "")
+        if split is not None:   # 구글 이름이 「주소 + 상호」면 힌트 경로로(#1047) — 좌표 없이 상호명·주소로 짝을 찾는다
+            hinted = match_by_name_address(split[1], split[0], db=db)
+            if hinted:
+                result = LinkParseResult(provider="google", name_hint=parsed.name_hint, matches=hinted, matched_by="hint", needs_search_query=False)
+                log.info("places.link provider=google matches=%d", len(hinted))
+                return result
+            address_candidates = match_address_candidates(split[0], db=db) or None   # 이름은 안 맞아도 같은 주소의 한 곳 — 사람이 확인할 후보
         if parsed.lat is not None and parsed.lng is not None:
             near = own_places_near(parsed.lat, parsed.lng, matching.LINK_MATCH_RADIUS_M, matching.MAX_CANDIDATES, db=db)
             found = matching.pick_link_matches(parsed.name_hint, near)
+        matches = _link_matches(db, found)
         result = LinkParseResult(
             provider="google", name_hint=parsed.name_hint,
-            matches=[_to_link_match(c) for c in found], needs_search_query=False,
+            matches=matches, needs_search_query=False,
+            address_candidates=None if matches else address_candidates,
         )
     log.info("places.link provider=%s matches=%d", result.provider, len(result.matches))
     return result
+
+
+def _pinnable_candidates(db: Session | None, candidates: Sequence[Candidate]) -> list[Candidate]:
+    """링크 해석이 내보낼 장소 중 핀 생성이 받아 줄 곳만(#815). 핀 생성은 matches의 place_id·이름·좌표·분류를 힌트로 `places.api.match_place`를
+    부르므로 **같은 함수를 같은 힌트로** 미리 불러 거절될 곳(반경 안의 동명 점포 등)을 뺀다 — 「핀 찍기」가 활성인데 PLACE_NOT_SUPPORTED가
+    나지 않게. 거절된 곳은 matches에 없으니 호출 쪽이 실시간 핀 경로로 보낸다. 링크당 최대 5곳이라 곳마다 한 번씩 부른다.
+    (FE가 핀 생성에 주소를 보내기 시작해도(#839) 주소 없이 통과하는 곳만 내보낸다 — 검색 pinnable_flags의 보수적 기준과 같다.)"""
+    return [c for c in candidates
+            if match_place(PlaceHint(c.kakao_place_id or f"own:{c.place_id}", c.name[:100], c.lat, c.lng, c.category), db=db) is not None]
+
+
+def _link_matches(db: Session | None, candidates: Sequence[Candidate]) -> list[PlaceSearchResult]:
+    return [_to_link_match(c) for c in _pinnable_candidates(db, candidates)]
 
 
 def _to_link_match(c: Candidate) -> PlaceSearchResult:
@@ -374,4 +523,5 @@ def _to_link_match(c: Candidate) -> PlaceSearchResult:
         place_id=c.kakao_place_id or f"own:{c.place_id}",
         place_name=c.name[:100], lat=c.lat, lng=c.lng, category=c.category,
         address=c.address[:200] if c.address else None, pinnable=True,
+        place_source=PlaceSourceInfo(provider=c.source, url=core.place_link(c.name, c.address, c.kakao_place_url)),
     )

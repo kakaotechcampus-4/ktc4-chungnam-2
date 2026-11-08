@@ -1,0 +1,86 @@
+name: e2e
+
+# 핵심 흐름 브라우저 E2E(#1281): 지도 만들기 → 구성원 참여 → 핀 → 🚫 사유 → 추천 받기 → 「지도에 올리기」를 실제 백엔드와 실제 화면 빌드로 돈다.
+# 서버 기동, 마이그레이션, 시드는 e2e/playwright.config.ts와 e2e/global-setup.ts가 한다. 모델은 스텁, 장소는 시드한 정예만, 카카오 지도 키는 없다.
+# 아직 필수 검사가 아니다 — 몇 주 흔들리지 않으면 필수로 올린다(#1281). 실패하면 trace와 스크린샷을 아티팩트로 남긴다.
+# PR에서는 항상 시작하고 관련 파일이 안 바뀌었으면 job을 건너뛴다(backend-test와 같은 방식).
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+    paths: ["backend/**", "frontend/**", "contracts/**", "e2e/**", "docs/api-spec.yaml", ".github/workflows/e2e.yml"]
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ github.event_name == 'push' || steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            run:
+              - "backend/**"
+              - "frontend/**"
+              - "contracts/**"
+              - "e2e/**"
+              - "docs/api-spec.yaml"
+              - ".github/workflows/e2e.yml"
+
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5   # backend-test와 같다(#916)
+        env:
+          POSTGRES_USER: pingo
+          POSTGRES_PASSWORD: pingo
+          POSTGRES_DB: pingo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pingo"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://pingo:pingo@localhost:5432/pingo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: backend/.python-version
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - run: pip install -r backend/requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            contracts/package-lock.json
+            frontend/package-lock.json
+            e2e/package-lock.json
+      # frontend 가 ../contracts 의 타입·목 서버를 경로로 불러온다(frontend-test와 같다)
+      - run: npm ci
+        working-directory: contracts
+      - run: npm ci
+        working-directory: frontend
+      - run: npm ci
+        working-directory: e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - run: npx playwright test
+        working-directory: e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7

@@ -13,11 +13,14 @@ cd contracts && npm run gen:types   # docs/api-spec.yaml → contracts/src/types
 
 ## 2. 목 서버
 
-`contracts/mocks/`에 `msw`(Mock Service Worker) 핸들러가 `docs/api-spec.yaml`의 24개 경로 전부를 커버한다. 정적 픽스처가 아니라 **상태를 가진 인메모리 스토어**라 핀 찍기→반응→추천→게시→확정 흐름을 실제로 조작할 수 있다. 시나리오는 5개:
+`contracts/mocks/`에 `msw`(Mock Service Worker) 핸들러가 `docs/api-spec.yaml`의 경로 전부(2026-11-03 기준 72개)를 커버한다. 정적 픽스처가 아니라 **상태를 가진 인메모리 스토어**라 핀 찍기→반응→추천→게시→확정 흐름을 실제로 조작할 수 있다. 시나리오는 5개:
 
 - `empty` — 6절 "핀이 하나도 없음"
 - `happy-path`(기본값) — 기획안 6절 핵심 시나리오 그대로(로그인→핀→반응→추천→근거→게시→확정)
 - `no-results` / `region-conflict` / `credits-empty` — `docs/errors.md`의 각 코드(`credits-empty`는 잔액 0, 402 `CREDIT_INSUFFICIENT`)
+- `guest` — 내가 게스트(지도 만들기·추천·코스·크레딧·후기 쓰기는 403 `GUEST_NOT_ALLOWED`, #472)
+- `withdrawn-relogin` — 탈퇴한 계정으로 다시 로그인(복구 기간 7일 안이라 선택 화면으로, #855)
+- `credits-full` — 잔액이 상한(30)이라 후기를 써도 크레딧을 받지 않는다(#981)
 
 프론트는 이 목 서버를 백엔드 대신 두고 개발한다. 실제 API가 준비되면 `worker.start()` 두 줄만 지우면 된다. `contracts/mocks/smoke.test.ts`가 6절 전체 흐름 + 4개 에러 시나리오를 자동 검증한다.
 
@@ -27,7 +30,7 @@ cd contracts && npm run gen:types   # docs/api-spec.yaml → contracts/src/types
 cd contracts
 npm run lint:spec    # @redocly/cli lint docs/api-spec.yaml — 스펙 자체의 문법·스타일 검증
 npm run typecheck    # tsc --noEmit — 핸들러가 생성된 타입과 어긋나지 않는지
-npm test             # vitest — smoke.test.ts
+npm test             # vitest — smoke.test.ts, checks/deprecated-fields.test.ts(화면이 deprecated 필드를 쓰는지, 4절 5번)
 ```
 백엔드 구현체는 별도로 계약 테스트(스펙과 실제 응답 스키마 비교)를 CI에 둔다 — `docs/architecture.md` 6절.
 
@@ -37,6 +40,14 @@ npm test             # vitest — smoke.test.ts
 2. `docs/CHANGELOG-api.md`에 변경 내용·영향받는 엔드포인트·이유 기록
 3. 프론트 담당자에게 즉시 통보 (변경 내용 + 마이그레이션 필요 여부)
 4. 타입 재생성, 목 핸들러 갱신
+5. 필드를 새 필드로 대체하면 옛 필드는 바로 지우지 않고 `deprecated: true`를 단다. 생성 타입에 `@deprecated`가 붙어 에디터가 줄을 긋는다. 화면이 아직 옛 필드를 쓰면 옮길 FE 이슈를 열고 아래 표에 적는다. 화면이 다 옮기면 그 PR에서 표의 줄을 지우고, 서버의 옛 필드는 그 뒤에 지운다(#1467).
+
+### 화면이 아직 쓰는 deprecated 필드
+
+`contracts/checks/deprecated-fields.test.ts`가 지킨다. 스펙에서 `deprecated`인 필드를 `frontend/src`가 쓰는데 이 표에 없으면 실패하고, 표에 있는데 화면이 더는 쓰지 않거나 스펙에서 deprecated가 아니면 실패한다. 표는 비어 가는 것이 정상이다. #1385에서 칸을 m로 바꾸고도 화면이 옛 칸으로 반경을 안내한 이유다(멘토 리뷰).
+
+| 필드 | FE 이슈 | 대신 쓸 것 |
+|---|---|---|
 
 **서브 디렉토리 Claude Code는 이 스펙을 읽기만 한다.** 구현 중 스펙이 부족하거나 잘못됐다고 판단되면 스펙을 직접 고치지 말고 루트에 보고한다 — `CLAUDE.md` 역할 분리 원칙.
 
@@ -51,7 +62,7 @@ npm test             # vitest — smoke.test.ts
 
 **백엔드** (`backend/`)
 ```bash
-docker-compose up -d                  # PostgreSQL+PostGIS, Redis
+docker-compose up -d                  # PostgreSQL+PostGIS
 cp .env.example .env                  # 없으면. 값은 커밋하지 않는다
 python -m alembic upgrade head        # 마이그레이션 체인이 head 하나여야 한다
 # 자체 장소 DB 적재(한 번, 약 5분) — 파일은 저장소 밖에 둔다(.gitignore). 안 하면 검색·핀·추천이 모두 빈다. 윈도는 먼저 `PYTHONUTF8=1`

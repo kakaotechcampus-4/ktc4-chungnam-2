@@ -39,7 +39,7 @@ export default function MapControls({
 
   useEffect(() => {
     if (docked || !onCrampedChange) return
-    const sheet = ref.current?.closest('section')
+    const sheet = ref.current?.closest('main')
     const header = document.querySelector('[data-map-header]')
     if (!sheet || !header) return
     // 숨겨진 동안에도 잰다 — 버튼 자리가 아니라 시트 윗변과 상단 UI 아래끝 사이를 본다.
@@ -130,7 +130,7 @@ function ControlButton({
       // 길게 눌러 설명만 본 경우엔 동작하지 않는다.
       onClick={() => !longPressed.current && onPress()}
       style={{ width: CONTROLS.size, height: CONTROLS.size }}
-      className={`relative flex items-center justify-center first:rounded-t-xl last:rounded-b-xl ${
+      className={`press relative flex items-center justify-center first:rounded-t-xl last:rounded-b-xl ${
         divider ? 'border-t border-ink-100' : ''
       } ${active ? 'bg-brand-50 text-brand-600' : 'text-brand-600'}`}
     >

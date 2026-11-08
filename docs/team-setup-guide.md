@@ -1,10 +1,11 @@
-# 팀원용 설치·실행 설명서 — 내 컴퓨터에서 핀고 켜기
+# 내 컴퓨터에서 핀고 켜기 (팀원용 설치 설명서)
 
-> 개발을 잘 몰라도 **위에서부터 복사해서 붙여 넣으면** 됩니다. 명령어는 모두 **Windows PowerShell** 기준입니다.
-> 켠 뒤에 무엇을 눌러 보여 줄지는 `docs/demo-guide.md`(시연 대본)에 있습니다. 이 문서는 **"켜는 데까지"** 입니다.
+개발을 잘 몰라도 위에서부터 명령을 복사해 붙여 넣으면 됩니다. 명령은 모두 Windows PowerShell 기준입니다.
+이 문서는 켜는 데까지만 다룹니다. 켠 뒤에 무엇을 눌러 보여 줄지는 `docs/demo-guide.md`(시연 대본)에 있습니다.
 
-**걸리는 시간**: 처음 한 번 약 40~60분(설치·데이터 넣기 포함). 그다음부터는 켜는 데 3분.
-**꼭 알아 둘 것**: 서버와 데이터베이스는 **각자 내 컴퓨터 안에서만** 돌아갑니다. 다른 사람 컴퓨터와 연결되지 않으니, 같이 보려면 **한 컴퓨터에서** 브라우저 창을 나눠 쓰세요.
+처음 한 번은 설치와 데이터 넣기까지 40~60분쯤 걸리고, 그다음부터는 3분이면 켭니다.
+
+서버와 데이터베이스는 각자 자기 컴퓨터 안에서만 돌아갑니다. 다른 사람 컴퓨터와 연결되지 않으니, 같이 보려면 한 컴퓨터에서 브라우저 창을 나눠 쓰세요.
 
 ---
 
@@ -14,40 +15,44 @@
 
 | 프로그램 | 받는 곳 | 확인하는 명령 (PowerShell) | 이렇게 나오면 OK |
 |---|---|---|---|
-| **Docker Desktop** | https://www.docker.com/products/docker-desktop | `docker --version` | `Docker version 2x...` |
-| **Python 3.12** | https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe (3.12의 마지막 윈도 설치 파일) | `python --version` | `Python 3.12.10` |
-| **Node.js 20 이상** | https://nodejs.org (LTS) | `node --version` | `v20` 이상 |
-| **Git** | https://git-scm.com | `git --version` | `git version 2...` |
+| Docker Desktop | https://www.docker.com/products/docker-desktop | `docker --version` | `Docker version 2x...` |
+| Python 3.12 | https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe (3.12의 마지막 윈도 설치 파일) | `python --version` | `Python 3.12.10` |
+| Node.js 20 이상 | https://nodejs.org (LTS) | `node --version` | `v20` 이상 |
+| Git | https://git-scm.com | `git --version` | `git version 2...` |
 
-> ❗ **Python 3.13·3.14는 안 됩니다.** 서버 부품 두 개(`psycopg2-binary`, `pyproj`)가 3.12까지만 설치 파일이 있어서 5-1에서 설치가 실패합니다. 3.10·3.11도 설치는 되지만, 실제 서버와 자동 검사(CI)가 3.12라 **3.12를 쓰세요**.
-> 💡 다른 버전이 이미 깔려 있으면 3.12를 하나 더 설치하고, 이 문서의 `python`을 전부 `py -3.12`로 바꿔 쓰세요(예: `py -3.12 -m pip install -r requirements.txt`).
-> 💡 Python을 설치할 때 **"Add python.exe to PATH"** 체크박스를 꼭 켜세요. 안 켜면 `python` 명령이 안 먹습니다.
-> 💡 설치한 뒤에는 **PowerShell 창을 새로 열어야** 명령이 인식됩니다.
+**Python 3.13, 3.14는 안 됩니다.** 서버 부품 두 개(`psycopg2-binary`, `pyproj`)가 3.12까지만 설치 파일이 있어서 5-1에서 설치가 실패합니다.
+3.10, 3.11도 설치는 되지만 실제 서버와 자동 검사(CI)가 3.12라서 3.12를 쓰세요.
+
+다른 버전이 이미 깔려 있으면 3.12를 하나 더 설치하고, 이 문서의 `python`을 전부 `py -3.12`로 바꿔 쓰면 됩니다(예: `py -3.12 -m pip install -r requirements-dev.txt`).
+
+Python을 설치할 때 "Add python.exe to PATH"를 꼭 체크하세요. 체크하지 않으면 `python` 명령이 먹지 않습니다.
+설치가 끝나면 PowerShell 창을 새로 열어야 명령이 인식됩니다.
 
 ### 1-2. 키 5개를 팀 리드에게 받으세요
 
-서버가 카카오와 AI에 접속하려면 키가 필요합니다. **팀 리드(백엔드 리더)에게 개인 메시지로** 받으세요.
+서버가 카카오와 AI에 접속하려면 키가 필요합니다. 팀 리드(백엔드 리더)에게 개인 메시지로 받으세요.
 
 | 이름 | 무엇에 쓰나 | 어디에 넣나 |
 |---|---|---|
-| 카카오 **REST API 키** | 카카오 로그인 + 장소 검색 | 3절 `KAKAO_CLIENT_ID` |
-| 카카오 **Client Secret** | 카카오 로그인 확인 | 3절 `KAKAO_CLIENT_SECRET` |
-| 엘리스 **주소**(BASE URL) | AI 서버 주소 | 3절 `ELICE_ML_API_BASE_URL` |
-| 엘리스 **키** | AI가 사람 말을 조건으로 정리 | 3절 `ELICE_ML_API_KEY` |
-| 카카오 **JavaScript 키** | 지도 그리기 | 4절 `VITE_KAKAO_MAP_KEY` |
+| 카카오 REST API 키 | 카카오 로그인 + 장소 검색 | 3절 `KAKAO_CLIENT_ID` |
+| 카카오 Client Secret | 카카오 로그인 확인 | 3절 `KAKAO_CLIENT_SECRET` |
+| AI 주소(BASE URL, `https://api.openai.com/v1`) | OpenAI 서버 주소 | 3절 `ELICE_ML_API_BASE_URL` |
+| OpenAI 키 | AI가 사람 말을 조건으로 정리(2026-11-02부터 엘리스가 아니라 OpenAI 프로젝트 키) | 3절 `ELICE_ML_API_KEY` |
+| 카카오 JavaScript 키 | 지도 그리기 | 4절 `VITE_KAKAO_MAP_KEY` |
 
-> 🔒 **이 키들은 절대 공개하지 마세요.** 깃허브·디스코드 공개 채널·스크린샷·이슈에 붙이면 안 됩니다. 아래 `.env` 파일은 깃이 자동으로 무시하니 거기에만 적으세요.
+**이 키들은 절대 공개하면 안 됩니다.** 깃허브, 디스코드 공개 채널, 스크린샷, 이슈 어디에도 붙이지 마세요.
+아래에서 만드는 `.env` 파일은 깃이 알아서 무시하니 키는 거기에만 적으세요.
 
 ### 1-3. 가게 데이터 폴더를 받으세요
 
-아래 폴더를 팀 리드(또는 데이터 담당)에게 받아 **저장소 밖**(예: `C:\Users\내이름\Downloads\`)에 두세요. 저장소는 공개라서 이 파일은 깃에 올리지 않습니다.
+아래 폴더를 팀 리드(또는 데이터 담당)에게 받아 저장소 밖(예: `C:\Users\내이름\Downloads\`)에 두세요. 저장소가 공개라서 이 파일은 깃에 올리지 않습니다.
 
 | 폴더 | 들어 있는 것 |
 |---|---|
-| `정예DB_서울_공유_2026-10-25` | 서울 음식점·카페·관광지 목록과 라벨, 영업시간, 인허가 가게(필수) |
-| `정예DB_타지역_공유_2026-10-25` | 대전·춘천·광주·대구·부산(선택, v2) |
+| `정예DB_final_2026-11-04_서울` | 서울 음식점·카페·관광지 목록과 라벨, 영업시간, 인허가 가게(필수) |
+| `정예DB_final_2026-11-04_타지역` | 대전·춘천·광주·대구·부산(선택, v2) |
 
-예전 폴더(`식당카페_라벨_2026-10-02`, `음식점_1013` 등)는 더 쓰지 않습니다. 이 폴더로 넣으세요(5-4).
+예전 폴더(`식당카페_라벨_2026-10-02`, `음식점_1013` 등)는 이제 쓰지 않습니다. 위 폴더로 넣으세요(5-4).
 
 ---
 
@@ -61,12 +66,13 @@ git checkout develop
 git pull
 ```
 
-> ✅ `Already up to date.` 또는 받아 오는 글이 나오면 성공입니다. 이제 `pingo` 폴더 안에 `backend`, `frontend`, `docs` 폴더가 있습니다.
-> ❓ 로그인 창이 뜨면 깃허브 계정으로 로그인하세요. 권한 오류가 나면 팀 리드에게 저장소 초대를 요청하세요.
+`Already up to date.`나 파일을 받아 오는 글이 나오면 성공입니다. 이제 `pingo` 폴더 안에 `backend`, `frontend`, `docs` 폴더가 있습니다.
+
+로그인 창이 뜨면 깃허브 계정으로 로그인하세요. 권한 오류가 나면 팀 리드에게 저장소 초대를 부탁하세요.
 
 ---
 
-## 3. 백엔드(서버) 설정 — `.env` 파일 만들기
+## 3. 백엔드(서버) 설정: `.env` 파일 만들기
 
 ```powershell
 cd backend
@@ -74,27 +80,28 @@ Copy-Item env.demo.example .env
 notepad .env
 ```
 
-메모장에 파일이 열립니다. 아래 **4줄**의 `=` **바로 뒤에** 받은 값을 붙여 넣고 저장하세요. 나머지 줄은 그대로 둡니다.
+메모장에 파일이 열리면 아래 4줄의 `=` 바로 뒤에 받은 값을 붙여 넣고 저장하세요. 나머지 줄은 그대로 둡니다.
 
 ```
 KAKAO_CLIENT_ID=여기에_REST_API_키
 KAKAO_CLIENT_SECRET=여기에_Client_Secret
-ELICE_ML_API_BASE_URL=여기에_엘리스_주소
-ELICE_ML_API_KEY=여기에_엘리스_키
+ELICE_ML_API_BASE_URL=https://api.openai.com/v1
+ELICE_ML_API_KEY=여기에_OpenAI_키
 ```
 
-(`.env`에서 채울 곳은 이 4줄뿐입니다. 지도 키는 4절 프론트에서 넣습니다.)
+`.env`에서 채울 곳은 이 4줄뿐입니다. 지도 키는 4절에서 프론트 쪽에 넣습니다.
 
-**이것만 지키세요**
-- `=` 앞뒤에 **공백을 넣지 마세요.** (`KAKAO_CLIENT_ID= abc` ✗ → `KAKAO_CLIENT_ID=abc` ✓)
-- 값에 **따옴표를 붙이지 마세요.**
-- 값 뒤에 `# 설명` 같은 **주석을 붙이지 마세요.** 주석은 항상 별도의 줄에 쓰세요.
-- 키를 **채팅창에 붙인 채로 복사**하면 앞뒤에 공백이 따라오기도 합니다. 붙여 넣은 뒤 `=` 바로 뒤에 글자가 붙어 있는지 눈으로 확인하세요.
-- `.env`를 고치면 **서버를 껐다 다시 켜야** 적용됩니다.
+값을 넣을 때 자주 틀리는 것들입니다.
+
+- `=` 앞뒤에 공백을 넣지 마세요. `KAKAO_CLIENT_ID= abc`는 틀리고 `KAKAO_CLIENT_ID=abc`가 맞습니다.
+- 값에 따옴표를 붙이지 마세요.
+- 값 뒤에 `# 설명` 같은 주석을 달지 마세요. 주석은 따로 한 줄에 씁니다.
+- 채팅창에서 키를 복사하면 앞뒤에 공백이 딸려 오기도 합니다. 붙여 넣은 뒤 `=` 바로 뒤에 글자가 붙어 있는지 눈으로 확인하세요.
+- `.env`를 고친 뒤에는 서버를 껐다 켜야 적용됩니다.
 
 ---
 
-## 4. 프론트(화면) 설정 — `.env.local` 파일 만들기
+## 4. 프론트(화면) 설정: `.env.local` 파일 만들기
 
 ```powershell
 cd ..\frontend
@@ -102,9 +109,9 @@ Copy-Item env.demo.example .env.local
 notepad .env.local
 ```
 
-`VITE_KAKAO_MAP_KEY=` 뒤에 받은 **카카오 JavaScript 키**를 붙여 넣고 저장하세요. `VITE_API_BASE_URL=http://localhost:8000` 줄은 그대로 둡니다.
+`VITE_KAKAO_MAP_KEY=` 뒤에 받은 카카오 JavaScript 키를 붙여 넣고 저장하세요. `VITE_API_BASE_URL=http://localhost:8000` 줄은 그대로 둡니다.
 
-> ⚠️ **백엔드 `.env`를 프론트에 복사하지 마세요.** 프론트가 읽는 값은 위 두 개뿐이고(`VITE_`로 시작), 백엔드 `.env`에는 데이터베이스 주소·시크릿 같은 비밀이 들어 있어서 복사하면 위험만 늘어납니다.
+백엔드 `.env`를 프론트에 복사하지는 마세요. 프론트가 읽는 값은 `VITE_`로 시작하는 위 두 개뿐이고, 백엔드 `.env`에는 데이터베이스 주소나 시크릿 같은 비밀이 들어 있어서 복사하면 위험만 늘어납니다.
 
 ---
 
@@ -114,18 +121,18 @@ notepad .env.local
 
 ```powershell
 cd ..\backend
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 ### 5-2. 데이터베이스 켜기
 
-**먼저 Docker Desktop 프로그램을 실행해 두세요**(고래 아이콘이 초록색이 될 때까지). 그다음:
+Docker Desktop을 먼저 실행해 두세요. 고래 아이콘이 초록색이 되면 아래 명령을 칩니다.
 
 ```powershell
 docker compose up -d
 ```
 
-> ✅ `Container backend-db-1 Started` 같은 줄이 나오면 성공입니다. 처음엔 이미지를 받느라 1~2분 걸립니다.
+`Container backend-db-1 Started` 같은 줄이 나오면 성공입니다. 처음에는 이미지를 받느라 1~2분 걸립니다.
 
 ### 5-3. 표(테이블) 만들기
 
@@ -133,15 +140,16 @@ docker compose up -d
 python -m alembic upgrade head
 ```
 
-> ✅ 빨간 `Error`나 `Traceback` 없이 끝나면 성공입니다. 마지막 `Running upgrade ...` 줄의 번호는 코드가 바뀔 때마다 늘어납니다.
+빨간 `Error`나 `Traceback` 없이 끝나면 성공입니다. 마지막 `Running upgrade ...` 줄의 번호는 코드가 바뀔 때마다 늘어납니다.
 
 ### 5-4. 가게 데이터 넣기 (서울 정예 약 5분)
 
-첫 줄의 `C:\경로` 부분을 **1-3에서 받은 `정예DB_서울_공유_2026-10-25` 폴더가 있는 실제 경로**로 바꾸세요. 경로에 한글이나 공백이 있어도 따옴표 안에 그대로 두면 됩니다. **위에서부터 순서대로** 넣습니다.
+`$S = ` 줄의 `C:\경로` 부분을 1-3에서 받은 `정예DB_final_2026-11-04_서울` 폴더가 있는 실제 경로로 바꾸세요. 경로에 한글이나 공백이 있어도 따옴표 안에 그대로 두면 됩니다.
+명령은 위에서부터 순서대로 실행합니다.
 
 ```powershell
 $env:PYTHONUTF8=1
-$S = "C:\경로\정예DB_서울_공유_2026-10-25\정예DB_공유_2026-10-25\서울"
+$S = "C:\경로\정예DB_final_2026-11-04_서울\서울"
 # 1) 서울 정예: 음식점 → 카페 → 관광지 순서
 python -m places.load restaurants --authoritative --file "$S\음식점\final_restaurant_places_hotspot.csv" --labels "$S\음식점\seoul_restaurant_labels_hotspot.json"
 python -m places.load cafes --authoritative --file "$S\카페\cafe_seoul_curated.csv" --labels "$S\카페\cafe_seoul_curated_labels.json"
@@ -152,13 +160,18 @@ python -m places.load place-hours --file "$S\카페\cafe_seoul_curated_labels.js
 python -m places.load place-hours --file "$S\관광지\tourist_seoul_closed_days.json"
 ```
 
-> ✅ 명령마다 `DB: 신규 ...` 줄이 나오고, 끝에 `[curated] 분류별 정예 / 정예 아님` 표가 나오면 성공입니다. 좌표가 없는 가게는 자동으로 건너뛰니 파일 행 수보다 조금 적은 게 정상입니다.
-> ❗ **`--authoritative`를 빼지 마세요.** 빼면 사람이 조사한 가게로 표시되지 않아서 AI 추천 후보에서 빠집니다.
-> ❗ 관광지 라벨은 `.json`이 아니라 **`.csv`** 파일을 넣습니다. json을 넣으면 라벨이 전부 건너뛰어집니다.
-> 💡 먼저 연습해 보고 싶으면 명령 맨 끝에 `--dry-run`을 붙이세요. 실제로는 넣지 않고 결과만 보여 줍니다.
-> 💡 인허가 가게(서울 음식점·카페 약 10만 곳)는 선택입니다. 넣으면 검색에서 핀으로 찍히는 가게가 늘지만 오래 걸립니다. 다른 지역(v2)도 선택입니다. 넣는 순서는 루트의 `deploy_rules.md` "장소 데이터 적재"에 있습니다.
+명령마다 `DB: 신규 ...` 줄이 나오고, 끝에 `[curated] 분류별 정예 / 정예 아님` 표가 나오면 성공입니다. 좌표가 없는 가게는 알아서 건너뛰기 때문에 파일 행 수보다 조금 적게 들어가는 게 정상입니다.
 
-**예전 데이터(10/2, 10/13 폴더)를 넣었던 컴퓨터라면** 위 명령 전에 데이터베이스를 새로 만드세요. 그냥 덮어 넣으면 새 데이터에서 빠진 가게가 그대로 남습니다. 내 컴퓨터의 시연 데이터(지도, 핀, 계정)도 함께 지워집니다.
+**`--authoritative`는 빼면 안 됩니다.** 빼면 사람이 조사한 가게로 표시되지 않아서 AI 추천 후보에서 빠집니다.
+관광지 라벨은 `.json`이 아니라 `.csv` 파일을 넣습니다. json을 넣으면 라벨이 전부 건너뛰어집니다.
+
+먼저 연습해 보고 싶으면 명령 맨 끝에 `--dry-run`을 붙이세요. 실제로 넣지 않고 결과만 보여 줍니다.
+
+인허가 가게(서울 음식점과 카페 약 10만 곳)는 넣지 않아도 됩니다. 넣으면 검색에서 핀으로 찍히는 가게가 늘지만 오래 걸립니다. 다른 지역(v2)도 선택입니다.
+넣는 순서는 루트의 `deploy_rules.md` "장소 데이터 적재"에 있습니다.
+
+예전 데이터(10/2, 10/13 폴더)를 넣었던 컴퓨터라면 위 명령 전에 데이터베이스를 새로 만드세요. 그냥 덮어 넣으면 새 데이터에서 빠진 가게가 그대로 남습니다.
+이때 내 컴퓨터의 시연 데이터(지도, 핀, 계정)도 같이 지워집니다.
 
 ```powershell
 docker exec backend-db-1 psql -U pingo -d postgres -c "DROP DATABASE pingo" -c "CREATE DATABASE pingo OWNER pingo"
@@ -174,11 +187,11 @@ npm install
 
 ---
 
-## 6. 켜기 — 터미널 2개
+## 6. 켜기: 터미널 2개
 
-시연할 때마다 이 두 개를 켭니다. **PowerShell 창을 2개** 여세요.
+시연할 때마다 PowerShell 창을 두 개 열어서 하나는 서버, 하나는 화면을 켭니다.
 
-**터미널 ① 서버** (`backend` 폴더에서!)
+터미널 ① 서버 (`backend` 폴더에서)
 
 ```powershell
 cd $HOME\Desktop\pingo\backend
@@ -186,29 +199,30 @@ docker compose up -d
 python -m uvicorn main:asgi_app --port 8000
 ```
 
-> ✅ `Application startup complete.`가 나오면 켜진 것입니다. **이 창은 닫지 마세요.**
-> ❗ 폴더가 `pingo`가 아니라 **`pingo\backend`** 여야 합니다. 아니면 `Could not import module "main"` 오류가 납니다.
+`Application startup complete.`가 나오면 켜진 것입니다. 이 창은 닫지 마세요.
 
-**터미널 ② 화면**
+`pingo`가 아니라 `pingo\backend` 폴더에서 켜야 합니다. 다른 폴더에서 켜면 `Could not import module "main"` 오류가 납니다.
+
+터미널 ② 화면
 
 ```powershell
 cd $HOME\Desktop\pingo\frontend
 npm run dev
 ```
 
-> ✅ `Local: http://localhost:5173/`가 나오면 켜진 것입니다.
+`Local: http://localhost:5173/`가 나오면 켜진 것입니다.
 
 ---
 
 ## 7. 잘 켜졌는지 확인
 
-1. 브라우저에서 `http://localhost:8000/health` → `{"status":"ok"}`가 보이면 서버 OK.
-2. 브라우저에서 **`http://localhost:5173`** (꼭 `localhost`로!) → **핑고핑고** 화면과 노란 **「카카오로 시작하기」** 버튼이 보이면 화면 OK.
-3. 버튼을 눌러 **내 카카오 계정으로 로그인** → 동의 화면에서 **동의** → **내 지도** 목록이 나오면 전부 성공입니다. 🎉
+1. 브라우저에서 `http://localhost:8000/health`를 열어 `{"status":"ok"}`가 보이면 서버는 됐습니다.
+2. 브라우저에서 `http://localhost:5173`을 엽니다(꼭 `localhost`로). 핑고핑고 화면과 노란 '카카오로 시작하기' 버튼이 보이면 화면도 됐습니다.
+3. 버튼을 눌러 내 카카오 계정으로 로그인하고 동의 화면에서 동의합니다. 내 지도 목록이 나오면 전부 성공입니다.
 
-> ⚠️ 주소를 `127.0.0.1`로 열면 로그인이 풀려 버립니다. 항상 **`localhost`**로 여세요.
+주소를 `127.0.0.1`로 열면 로그인이 풀려 버립니다. 항상 `localhost`로 여세요.
 
-이제 `docs/demo-guide.md`의 **장면 1~6**을 따라 시연해 보세요.
+이제 `docs/demo-guide.md`의 장면 1~6을 따라 시연해 보세요.
 
 ---
 
@@ -220,15 +234,15 @@ npm run dev
 | `failed to connect to the docker API` | Docker Desktop이 꺼져 있다 | Docker Desktop을 실행하고 초록색이 될 때까지 기다린 뒤 다시 |
 | 서버가 안 켜지고 `ConfigError` | `backend\.env`가 없거나 `PINGO_ENV=dev`가 없다 | 3절을 다시 한다(`.env`가 `backend` 폴더 안에 있어야 한다) |
 | `relation "..." does not exist` | 표를 아직 안 만들었다 | `python -m alembic upgrade head` |
-| 5-1에서 `pg_config executable not found`나 `proj executable not found` | Python이 3.13 이상이다 | 1-1대로 3.12를 깔고 `py -3.12 -m pip install -r requirements.txt` |
+| 5-1에서 `pg_config executable not found`나 `proj executable not found` | Python이 3.13 이상이다 | 1-1대로 3.12를 깔고 `py -3.12 -m pip install -r requirements-dev.txt` |
 | `address already in use` | 8000(또는 5173) 포트를 다른 프로그램이 쓴다 | 이전에 켠 서버 창을 닫거나, `netstat -ano \| findstr :8000`으로 찾아 종료 |
 | 로그인 버튼을 누르면 카카오 오류 `KOE010` | `KAKAO_CLIENT_SECRET`이 비었거나 틀렸다(앞뒤 공백 포함) | `.env`의 시크릿을 다시 확인하고 서버를 껐다 켠다 |
-| 카카오 오류 `KOE101`·`KOE004` | `KAKAO_CLIENT_ID`가 틀렸거나 앱의 카카오 로그인이 꺼져 있다 | 키를 다시 확인하고, 계속되면 팀 리드에게 알린다 |
-| 로그인 후 「로그인하지 못했어요」 | 위 카카오 오류 중 하나이거나 내 계정 문제 | 서버 창의 `kakao login failed: reason=...` 한 줄을 팀 리드에게 보여 준다 |
-| 지도가 회색이거나 「지도를 불러오지 못했어요」 | 지도 키가 없다 | `frontend\.env.local`의 `VITE_KAKAO_MAP_KEY`를 확인하고 **`npm run dev`를 껐다 켠다** |
-| 장소 검색이 「쓸 수 없어요」 | `KAKAO_CLIENT_ID`가 비었거나 틀렸다 | `.env`를 확인하고 서버를 껐다 켠다 |
-| 추천이 실패하거나 AI가 안 읽는다 | 엘리스 키가 틀렸거나 만료됐다(서버 창에 `401`) | 팀 리드에게 새 키를 받는다 |
-| 핀이 안 찍히고 「아직 지원하지 않는 장소예요」 | 우리 데이터에 없는 가게다 | 정상입니다. `docs/demo-guide.md` 장면 3의 가게를 **이름 그대로** 검색한다 |
+| 카카오 오류 `KOE101`, `KOE004` | `KAKAO_CLIENT_ID`가 틀렸거나 앱의 카카오 로그인이 꺼져 있다 | 키를 다시 확인하고, 계속되면 팀 리드에게 알린다 |
+| 로그인 후 "로그인하지 못했어요" | 위 카카오 오류 중 하나이거나 내 계정 문제 | 서버 창의 `kakao login failed: reason=...` 한 줄을 팀 리드에게 보여 준다 |
+| 지도가 회색이거나 "지도를 불러오지 못했어요" | 지도 키가 없다 | `frontend\.env.local`의 `VITE_KAKAO_MAP_KEY`를 확인하고 `npm run dev`를 껐다 켠다 |
+| 장소 검색이 "쓸 수 없어요" | `KAKAO_CLIENT_ID`가 비었거나 틀렸다 | `.env`를 확인하고 서버를 껐다 켠다 |
+| 추천이 실패하거나 AI가 안 읽는다 | AI 키가 틀렸거나 지워졌다(서버 창에 `401`) | 팀 리드에게 새 키를 받는다 |
+| 핀이 안 찍히고 "아직 지원하지 않는 장소예요" | 우리 데이터에 없는 가게다 | 정상입니다. `docs/demo-guide.md` 장면 3의 가게를 이름 그대로 검색한다 |
 | 아무것도 없는데 `.env` 수정이 안 먹는다 | 서버가 옛 설정으로 돌고 있다 | 서버 창에서 `Ctrl + C`로 끄고 다시 켠다 |
 
 ---
@@ -244,7 +258,7 @@ git pull
 cd frontend
 npm install
 cd ..\backend
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 python -m alembic upgrade head
 ```
 
@@ -252,10 +266,10 @@ python -m alembic upgrade head
 
 ---
 
-## 10. 끝낼 때 / 지켜야 할 것
+## 10. 끝낼 때와 지켜야 할 것
 
 - 터미널 ①, ②에서 `Ctrl + C`로 서버와 화면을 끕니다.
-- 데이터베이스를 끄려면 `backend` 폴더에서 `docker compose stop`(데이터는 남습니다).
-- ⚠️ **`docker compose down -v`는 쓰지 마세요.** 데이터가 전부 지워져서 5-4를 다시 해야 합니다.
-- **`.env`와 `.env.local`은 절대 깃에 올리지 마세요.** 올리기 전에 `git status`를 눌러서 이 두 파일이 목록에 **없는지** 확인하세요(깃이 무시하도록 설정돼 있어 정상이면 안 보입니다).
-- 키가 새어 나갔다고 의심되면 바로 팀 리드에게 알려서 키를 새로 발급받으세요.
+- 데이터베이스는 `backend` 폴더에서 `docker compose stop`으로 끕니다. 데이터는 남습니다.
+- **`docker compose down -v`는 쓰지 마세요.** 데이터가 전부 지워져서 5-4를 다시 해야 합니다.
+- `.env`와 `.env.local`은 절대 깃에 올리지 마세요. 올리기 전에 `git status`를 쳐서 이 두 파일이 목록에 없는지 확인하면 됩니다. 깃이 무시하도록 설정돼 있어서 정상이면 보이지 않습니다.
+- 키가 새어 나간 것 같으면 바로 팀 리드에게 알려서 새로 발급받으세요.

@@ -100,8 +100,8 @@ class RealPlaceFactsGateway:
     def get_facts(self, place_ids: Sequence[str]) -> Mapping[str, Sequence[FactLabel]]:
         return places_api.get_facts(list(place_ids), db=self._db)
 
-    def get_week_open_status(self, place_ids: Sequence[str]) -> Mapping[str, Mapping[int, str]]:
-        return places_api.get_week_open_status(list(place_ids), db=self._db)
+    def get_open_status_on_weekdays(self, place_ids: Sequence[str], weekdays: Sequence[int]) -> Mapping[str, str]:
+        return places_api.get_open_status_on_weekdays(list(place_ids), weekdays, db=self._db)
 
 
 def _real_place_search_gateway() -> PlaceSearchGateway:

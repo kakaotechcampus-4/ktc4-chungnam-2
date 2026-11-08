@@ -63,7 +63,7 @@ def stat_date(now: datetime) -> date:
     return kst_date(now)
 
 
-def to_item(ad: ActiveAd, place: Mapping[str, Any], *, on_map: bool) -> dict:
+def to_item(ad: ActiveAd, place: Mapping[str, Any], *, on_map: bool, naver_url: str | None = None) -> dict:
     """api-spec Ad 모양. memo와 집계 값은 넣지 않는다. place_url은 places에 기록된 kakao_place_url뿐이다(#53)."""
     address = place.get("address")
     return {
@@ -76,6 +76,7 @@ def to_item(ad: ActiveAd, place: Mapping[str, Any], *, on_map: bool) -> dict:
             "lat": place["lat"],
             "lng": place["lng"],
             "place_url": place.get("kakao_place_url"),
+            "naver_url": naver_url,   # 만드는 곳은 places.api.naver_place_link 한 곳(#1513)
         },
         "on_map": on_map,
     }

@@ -2,7 +2,7 @@
 절차(core.choose_run_advice)를 지나간다. 모델은 없다.
 
 run은 recommend 모듈 테스트(test_run_reads_api.py)와 같은 판이다: 카페 반경 1000m, 근거 줄 셋(다른 구성원의 「붐빔」, 요청자
-본인의 「넓은 곳」, 요청자 본인의 조건 없는 글). 장소는 판마다 고른다 — 기본 판은 단계마다 한 곳씩만 빠져 뚜렷한 탈락이 없고,
+본인의 「접근 가능」, 요청자 본인의 조건 없는 글). 장소는 판마다 고른다 — 기본 판은 단계마다 한 곳씩만 빠져 뚜렷한 탈락이 없고,
 SOFT는 실격 조건, RADIUS는 반경, EXHAUSTED는 이미 제안한 곳이 뚜렷하게(ADVICE_CLEAR_DROP 이상) 많다. 결과는 ok 한 곳이라
 조언 대상이다. 장소 검색과 라벨은 recommend.deps를 대역으로 바꾼다.
 """
@@ -28,6 +28,7 @@ from common.database import get_db_session, session_scope
 from common.errors import AppError
 from places.schemas import FactLabel
 from recommend import api as recommend_api
+from recommend import core as recommend_core
 from recommend import deps as recommend_deps
 from recommend import flows as recommend_flows
 from recommend import service as recommend_service
@@ -61,7 +62,7 @@ MORE = [_at("ok2"), _at("ok3")]
 
 
 def _facts(place_id):
-    return {"is_crowded_large": place_id.startswith("crowded"), "spacious": not place_id.startswith("narrow")}
+    return {"is_crowded_large": place_id.startswith("crowded"), "accessible": not place_id.startswith("narrow")}
 
 
 class FakePlaceSearch:
@@ -69,7 +70,7 @@ class FakePlaceSearch:
         self.places = places
 
     def search_nearby(self, *, category, circles):
-        return self.places
+        return [p for p in self.places if recommend_core.is_within_any_region(p.lat, p.lng, circles)]
 
     def get_places(self, place_ids):
         return {}
@@ -113,11 +114,12 @@ def said(advice) -> list[str]:
     return [line.segments[0].text for line in advice.advice]
 
 
-def make_run(world, map_id, *, execute=True, walk=15, requester="u1", vague=True) -> str:
+def make_run(world, map_id, *, execute=True, radius_m=3000, requester="u1", vague=True) -> str:
     """조언 대상 판. execute=False면 근거 수집 중인 run이다. 이미 제안한 곳은 proposed로 시작하는 장소 전부다."""
     with world.factory() as db:
         run = RecommendRun(map_id=map_id, category="카페", requested_by=world.uid(requester),
-                           status="collecting_evidence", default_radius_walk_min=walk)
+                           status="collecting_evidence", default_radius_m=radius_m,
+                           default_radius_walk_min=round(radius_m / 80))
         db.add(run)
         db.flush()
         db.add(Region(run_id=run.id, signature="sig", label="기본 반경", center_lat=35.0, center_lng=129.0,
@@ -125,7 +127,7 @@ def make_run(world, map_id, *, execute=True, walk=15, requester="u1", vague=True
         line = {"source": "reaction", "badge": "required"}
         lines = [
             line | {"author_id": world.uid("u2"), "text": OTHER_TEXT, "fact_key": "is_crowded_large", "wants": None},
-            line | {"author_id": world.uid(requester), "text": OWN_TEXT, "fact_key": "spacious", "wants": True},
+            line | {"author_id": world.uid(requester), "text": OWN_TEXT, "fact_key": "accessible", "wants": True},
         ]
         if vague:
             lines.append(line | {"author_id": world.uid(requester), "text": VAGUE_TEXT})
@@ -182,7 +184,7 @@ def test_soft_relax_button_only_for_own_line_and_nothing_private_is_said_or_stor
     assert advice.kind == "soft_relax"
     assert said(advice) == [   # 다른 구성원 줄(6곳)이 더 많이 걸렀어도 본인 줄(5곳)을 말하고 버튼은 본인 줄에만
         f"「{labels['is_crowded_large']}」 조건을 빼면 6곳이 더 남아요.",
-        f"「{labels['spacious']} 원함」 조건을 빼면 5곳이 더 남아요.",
+        f"「{labels['accessible']} 원함」 조건을 빼면 5곳이 더 남아요.",
     ]
     assert [a.model_dump(mode="json") for a in advice.actions] == [{
         "index": 0, "type": "open_evidence", "label": "근거 확인에서 빼 보기",
@@ -209,12 +211,12 @@ def test_radius_says_what_one_press_of_the_button_gives(world, map_id, places):
     ]
     [row] = advice_runs(world, map_id)
     [sim] = [c for c in row.tool_calls if c["name"] == "simulate_filter"]
-    assert sim["args"] == {"radius_factor": 20 / 15, "disable_line_ids": []}   # 버튼 한 번의 배율 하나만
+    assert sim["args"] == {"radius_factor": 4000 / 3000, "disable_line_ids": []}   # 버튼 한 번의 배율 하나만
 
 
 def test_no_widen_when_the_run_is_already_at_the_limit(world, map_id, places):
     places.places = RADIUS
-    run_id = make_run(world, map_id, walk=30, vague=False)
+    run_id = make_run(world, map_id, radius_m=5000, vague=False)
 
     assert advise(world, run_id) is None
     assert advice_rows(world, run_id)[0].kind is None
@@ -264,7 +266,79 @@ def test_advice_is_logged_as_run_advice_without_the_model(world, map_id, places)
         assert service.load_history(db, map_id, world.now).model_runs_today == 0   # 9절: 지도 상한에 세지 않는다
 
 
-# ---------------------------------------------------------------- run당 1회 (17절 13)
+# ---------------------------------------------------------------- 결과 상태당 1회, run당 한 행을 덮는다 (#1103, 17절 13)
+
+
+def change_result(world, run_id, action):
+    with world.factory() as db:
+        action(db, run_id=run_id, place_search=recommend_deps.get_place_search_gateway(),
+               place_facts=recommend_deps.get_place_facts_gateway())
+        db.commit()
+
+
+def test_widen_refreshes_empty_advice_even_when_result_count_is_unchanged(world, map_id, places, monkeypatch):
+    # 처음에는 반경 밖의 실격 장소. 넓혀도 결과는 1곳이지만 실격 탈락이 늘어 조언이 생긴다.
+    places.places = [_at("ok"), *_many("narrow", 6, lat=35.0135, lng=129.0)]
+    run_id = make_run(world, map_id, vague=False)
+    assert advise(world, run_id) is None
+    with monkeypatch.context() as m:
+        m.setattr(core, "choose_run_advice", _forbid)
+        assert advise(world, run_id) is None
+
+    change_result(world, run_id, recommend_flows.widen_run)
+    refreshed = advise(world, run_id)
+    assert refreshed.kind == "soft_relax"
+    assert "6곳" in said(refreshed)[0]
+    with world.factory() as db:
+        assert recommend_api.get_run_meta(db, run_id=run_id)["result_count"] == 1
+    assert len(advice_rows(world, run_id)) == 1   # run당 한 행 — 결과가 바뀌면 그 행을 덮는다
+    monkeypatch.setattr(core, "choose_run_advice", _forbid)
+    monkeypatch.setattr(recommend_api, "simulate_filter", _forbid)
+    assert advise(world, run_id) == refreshed
+    assert len(advice_runs(world, map_id)) == 2
+
+
+def test_widen_to_three_results_does_not_return_previous_radius_advice(world, map_id, places):
+    places.places = RADIUS
+    run_id = make_run(world, map_id)
+    assert advise(world, run_id).kind == "radius"
+    change_result(world, run_id, recommend_flows.widen_run)
+    assert advise(world, run_id) is None
+    assert len(advice_rows(world, run_id)) == 1
+
+
+@pytest.mark.parametrize("initial_advice", [False, True])
+def test_retry_refreshes_advice_and_repeated_reads_are_stable(world, map_id, places, monkeypatch, initial_advice):
+    places.places = EXHAUSTED if initial_advice else [_at("ok"), *_many("proposed", 4)]
+    run_id = make_run(world, map_id, vague=False)
+    first = advise(world, run_id)
+    assert (first.kind if first else None) == ("exhausted" if initial_advice else None)
+
+    change_result(world, run_id, recommend_flows.retry_run)
+    refreshed = advise(world, run_id)
+    assert refreshed.kind == "exhausted"
+    assert said(refreshed) == [f"이미 보여 줬거나 거절한 {7 if initial_advice else 5}곳은 다시 추천하지 않아요."]
+    assert len(advice_rows(world, run_id)) == 1
+    monkeypatch.setattr(core, "choose_run_advice", _forbid)
+    assert advise(world, run_id) == refreshed
+    assert len(advice_runs(world, map_id)) == 2
+
+
+@pytest.mark.parametrize("kind", [None, "exhausted"])
+def test_legacy_cache_is_rebuilt_once(world, map_id, places, monkeypatch, kind):
+    places.places = SOFT
+    run_id = make_run(world, map_id)
+    with world.factory() as db:
+        db.add(AgentRunAdvice(run_id=uuid.UUID(run_id), state_key="", map_id=map_id,
+                              kind=kind, claims=[], advice=[], actions=[], created_at=world.now))
+        db.commit()
+    refreshed = advise(world, run_id)
+    assert refreshed.kind == "soft_relax"
+    assert [r.state_key for r in advice_rows(world, run_id)] != [""]   # 옛 행을 덮었다
+    assert len(advice_rows(world, run_id)) == 1
+    monkeypatch.setattr(core, "choose_run_advice", _forbid)
+    assert advise(world, run_id) == refreshed
+    assert len(advice_runs(world, map_id)) == 1
 
 def test_second_request_returns_the_stored_advice_without_recomputing(world, map_id, monkeypatch):
     run_id = make_run(world, map_id)

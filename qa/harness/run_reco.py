@@ -8,6 +8,11 @@ import time
 import uuid
 
 sys.path.insert(0, ".")
+if len(sys.argv) > 1 and sys.argv[1] == "--readonly-1253":
+    from readonly_1253 import run_readonly
+    run_readonly()
+    sys.exit(0)
+
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
@@ -15,7 +20,9 @@ from auth.testing import ensure_users, session_cookie
 from common import database
 from main import app
 
-R = {"춘천": (37.8813, 127.7298), "성수": (37.5446, 127.0557), "홍대": (37.5563, 126.9236), "종로": (37.5704, 126.9922)}
+R = {"춘천": (37.8813, 127.7298), "성수": (37.5446, 127.0557), "홍대": (37.5563, 126.9236), "종로": (37.5704, 126.9922),
+     "강남": (37.4979, 127.0276), "서면": (35.1577, 129.0596), "해운대": (35.1587, 129.1604), "동성로": (35.8693, 128.5956),
+     "둔산": (36.3504, 127.3845), "충장로": (35.1480, 126.9150)}
 
 
 def pick(cat, center, fact=None, fact_val=True, name_like=None, skip=0, extra_sql=""):
@@ -191,7 +198,7 @@ def run(s):
     for i, pins in enumerate(s["users"]):
         for (name, *_), rtype, reason in pins:
             print(f"   사용자{i} {'♥' if rtype=='like' else '🚫'} {name} — \"{reason}\"")
-    run_r = a.post(f"/maps/{mid}/runs", json={"category": s["category"]})
+    run_r = a.post(f"/maps/{mid}/runs", json={"category": s["category"], "center": {"lat": lat, "lng": lng}})   # 지도 중심(#1331)
     assert run_r.status_code == 202, run_r.text
     rid = run_r.json()["id"]
     if s["extra"]:

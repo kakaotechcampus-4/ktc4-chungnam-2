@@ -25,6 +25,11 @@ export type User = Schemas["User"];
 export type AgentSettings = Schemas["AgentSettings"];
 export type AgentSuggestion = Schemas["AgentSuggestion"];
 export type AgentSummary = Schemas["AgentSummary"];
+/** 지도 현황 문단(#1152). */
+export type AgentMapStatus = Schemas["AgentMapStatus"];
+/** 살펴본 상태(#1297). notice는 제안이 없고 모드가 켜져 있을 때만 응답에 실린다(handlers/agent.ts). */
+export type AgentObservation = Schemas["AgentObservation"];
+export type AgentTracking = Schemas["AgentTracking"];
 export type RunAdvice = Schemas["RunAdvice"];
 /** 추천 탭 광고(docs/ads.md, #642). on_map은 응답 때 계산한다. */
 export type Ad = Schemas["Ad"];
@@ -45,8 +50,10 @@ export interface CourseRunMock {
   id: string;
   map_id: string;
   status: "queued" | "running" | "done" | "failed";
+  mode: "plan" | "fill" | "review"; // #1237 — 요청 때 일정 상태로 정해진다
   outcome: "solved" | "solved_with_checks" | "unresolved" | "timeout" | null;
   failure_code: "INTERRUPTED" | "ENGINE_ERROR" | null;
+  headline: string | null;
   goals: { id: string; kind: string; label: string; met: boolean | null }[];
   unmatched: string[];
   steps: { stage: string; role: "해석" | "지휘" | "계산" | "검증" | "결정"; by: "ai" | "code" | "human"; by_detail: string | null; text: string }[];
@@ -55,6 +62,17 @@ export interface CourseRunMock {
     slots: { pin_id: string; order: number; needs_check: boolean }[];
     legs: { from_pin_id: string; to_pin_id: string; mode: "walk" | "transit"; approx_minutes: number }[];
   }[];
+  fixes: {
+    id: string;
+    kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal" | "unassigned";
+    strength: "hard" | "soft";
+    text: string;
+    moves: { pin_id: string; from_date: string | null; to_date: string }[];
+    resolved_text: string | null;
+    remaining_text: string | null;
+    not_fixed_reason: string | null;
+  }[];
+  checked: { kind: "closed" | "travel" | "member" | "condition" | "goal" | "cluster" | "meal"; text: string }[];
   violations: { kind: "closed" | "travel" | "member"; text: string }[];
   checks: { pin_id: string; text: string }[];
   excluded: { pin_id: string; reason: "NO_COORDINATES" | "OVER_LIMIT"; text: string }[];
@@ -67,7 +85,7 @@ export interface CourseRunEntity {
   run: CourseRunMock;
   requested_by: string;
   polls: number; // GET 횟수 — 첫 GET은 running(단계 2개), 둘째는 running(5개), 셋째부터 done(진행 화면의 폴링을 흉내)
-  snapshot_pin_ids: string[];
+  snapshot_version: string; // 요청 때 일정 version(ShortlistSchedule.version) — 지금과 다르면 stale(#1237)
 }
 
 /** 장소 후기(#432). place_key는 목 서버가 places.id 대신 쓰는 값(자체 DB 핀의 이름@좌표, handlers/credits.ts). */
@@ -108,10 +126,11 @@ export interface StoreState {
   runs: Record<string, RecommendRun>; // runId -> run
   runRequestedBy: Record<string, string>; // runId -> user_id (run 요청자 기록)
   appliedEvidence: Record<string, unknown[]>; // runId -> 마지막 실행이 실제로 쓴 근거 줄(#845 스냅샷)
-  idempotencyKeys: Record<string, { runId: string; mapId: string; category: string; execute: boolean }>; // 요청자:키 -> 첫 요청(#811 Idempotency-Key)
+  idempotencyKeys: Record<string, { runId: string; mapId: string; category: string; execute: boolean; center?: string }>; // 요청자:키 -> 첫 요청(#811 Idempotency-Key)
   pendingLogin: { display_name: string; withdrawn_at: string } | null; // #855 선택 대기 중인 탈퇴 계정(카카오 콜백이 ?login_pending=withdrawn_account로 돌려보낸 상태)
   forceNoResults: boolean; // #1015 시나리오 no-results: 새 run의 첫 실행이 후보 0곳이다(그러면 크레딧을 돌려준다)
   trashedMaps: Record<string, { map: StoreState["maps"][string]; members: StoreState["members"][string]; deleted_at: string }>; // #464 삭제한 지도(30일 안 복구)
+  mapCovers: Record<string, { data: ArrayBuffer; content_type: string; updated_at: number }>; // mapId -> 올린 대표 이미지(#1445, updated_at은 초). 지도를 지워도 남는다(복구)
   pinTrash: Record<string, { pin: Pin; reactions: Reaction[]; deleted_at: string; deleted_by: string; was_confirmed: boolean }>; // #864 지운 핀(30일 안 복구), pinId ->
   lastNewCount: Record<string, number>; // runId -> 마지막 실행이 새로 찾은 후보 수(#845, 그 뒤 게시해도 안 바뀐다)
   candidates: Record<string, Candidate[]>; // runId -> candidates
@@ -122,6 +141,9 @@ export interface StoreState {
   agentSettings: Record<string, AgentSettings>; // mapId -> 모드. 없으면 켜짐(기본값)
   agentSuggestions: Record<string, AgentSuggestionEntity>; // suggestionId -> 제안
   agentSummaries: Record<string, AgentSummary[]>; // mapId -> 카테고리별 우리 조건 요약
+  agentStatus: Record<string, AgentMapStatus>; // mapId -> 지도 현황 문단(#1152). 없으면 null
+  agentObservation: Record<string, AgentObservation>; // mapId -> 마지막 관찰 시각과 최근 관찰의 안내 문구(#1297). 없으면 관찰 전
+  agentTracking: Record<string, AgentTracking[]>; // mapId -> 지켜보는 막힌 곳(#1345). 없으면 빈 목록
   runAdvice: Record<string, RunAdvice | null>; // runId -> 추천 막힘 조언. null이면 204
   courseRuns: Record<string, CourseRunEntity>; // runId -> AI 코스 run(#334)
   ads: Ad[]; // 진행 중인 광고(#642, 목 서버는 기간과 active를 따지지 않는다)
@@ -131,6 +153,8 @@ export interface StoreState {
   feedback: { id: string; user_id: string; message: string; category: string; map_id?: string; created_at: string }[]; // #10
   credits: Record<string, number>; // user_id -> 잔액(#432). 없으면 처음 지급량(handlers/credits.ts INITIAL_CREDITS)
   creditRefs: string[]; // 원장 ref_id — 같은 실행·같은 장소 후기 보상을 두 번 하지 않는다
+  adProvider: "fake" | "adsense" | "gpt" | null; // 광고 보고 충전(#1037) 제공자. null이면 꺼짐
+  adSessions: Record<string, { id: string; user_id: string; issued_at: number; claimed_at?: number; credited?: number }>; // id -> 광고 세션(issued_at은 ms)
   reviews: Record<string, ReviewEntity>; // reviewId -> 후기
   reviewReports: Record<string, string[]>; // reviewId -> 신고한 user_id
 }
@@ -152,6 +176,7 @@ function emptyState(): StoreState {
     lastNewCount: {},
     forceNoResults: false,
     trashedMaps: {},
+    mapCovers: {},
     pinTrash: {},
     idempotencyKeys: {},
     pendingLogin: null,
@@ -163,6 +188,9 @@ function emptyState(): StoreState {
     agentSettings: {},
     agentSuggestions: {},
     agentSummaries: {},
+    agentStatus: {},
+    agentObservation: {},
+    agentTracking: {},
     runAdvice: {},
     courseRuns: {},
     ads: [],
@@ -172,6 +200,8 @@ function emptyState(): StoreState {
     feedback: [],
     credits: {},
     creditRefs: [],
+    adProvider: null,
+    adSessions: {},
     reviews: {},
     reviewReports: {},
   };

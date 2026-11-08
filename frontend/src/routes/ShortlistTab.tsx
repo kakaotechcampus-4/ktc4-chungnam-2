@@ -1,35 +1,36 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { ExternalLink } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import CourseMapLegend from '@/features/course/CourseMapLegend'
-import CourseSheet from '@/features/course/CourseSheet'
+import { dayOrdinal } from '@/features/course/model'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import { useEnrichPin } from '@/features/map/livePlaces'
-import type { Pin } from '@/features/map/model'
+import ReactionHelp from '@/features/map/ReactionHelp'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
-import { KAKAO_ROUTE_MAX, kakaoDirectionsUrl, move, routeSummary, type RouteDto, type ShortlistItemDto } from '@/features/shortlist/model'
-import {
-  useAddToShortlistMutation,
-  useRemoveFromShortlistMutation,
-  useReorderShortlistMutation,
-  useRouteMutation,
-  useRouteQuery,
-  useShortlistQuery,
-} from '@/features/shortlist/queries'
+import { useIsDesktop } from '@/features/shell/useIsDesktop'
+import DayRoute from '@/features/shortlist/DayRoute'
+import { useShortlistQuery } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
+import { scheduledIds, UNSET_DAY } from '@/features/shortlist/schedule'
+import { closeSchedule, leaveScheduleTab, openSchedule, useDropHover, useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
-import { josa } from '@/ui/josa'
+import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
+import Mark from '@/ui/Mark'
+import Sentences from '@/ui/Sentences'
 
-/** 확정된 장소 탭(Figma 7절). 동선은 순서만 — 몇 시에 어디는 정하지 않는다(범위 밖). */
+/**
+ * 확정된 장소 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 위에서 날을 고른 뒤 줄의 「넣기」로 그날에 넣는다.
+ * 순서와 동선은 일정이 정한다 — 「동선 보기」를 켜면 본문이 그날 일정(`DayRoute`)이 되고 지도에 그날 순서대로 선이 그어진다.
+ * 넓은 화면은 「일정 짜기」 패널(`SchedulePanelHost`)을 옆에 열어 끌어 넣는다. 몇 시에 어디는 정하지 않는다(범위 밖).
+ * 일정은 서버에 있어 구성원이 함께 본다(#1172).
+ */
 export default function ShortlistTab() {
   const { mapId } = useShell()
   const shortlist = useShortlistQuery(mapId)
@@ -37,19 +38,24 @@ export default function ShortlistTab() {
   const members = useMembersQuery(mapId).data ?? []
   const routeOn = useRouteStore((s) => s.on)
   const setRouteOn = useRouteStore((s) => s.set)
-  const route = useRouteQuery(mapId, routeOn)
-  const calc = useRouteMutation(mapId)
-  const remove = useRemoveFromShortlistMutation(mapId)
-  const add = useAddToShortlistMutation(mapId)
-  const reorder = useReorderShortlistMutation(mapId)
   const [params, setParams] = useSearchParams()
-  const [courseOpen, setCourseOpen] = useState(false)
   const enrich = useEnrichPin()
+  const edit = useScheduleEdit(mapId)
+  const hover = useDropHover()
+  const desktop = useIsDesktop()
+  const scheduleOpen = useScheduleOpen(mapId)
+  const [putDay, setPutDay] = useState<string | null>(null)
+
+  // 확정 탭을 떠나면 「일정 짜기」 패널을 닫는다.
+  useEffect(() => () => leaveScheduleTab(), [mapId])
+
   // 확정 리스트 항목의 핀은 핀 목록 밖에서 온다 — 실시간 핀(#382)의 이름·좌표를 같은 값으로 얹는다.
-  const items = (shortlist.data ?? []).map((i) => ({ ...i, pin: enrich(i.pin) }))
-  // 서버는 좌표를 모르는 실시간 핀을 동선에서 뺀다 — 동선 계산 대상은 그 밖의 항목이다.
-  const routable = items.filter((i) => i.pin.source !== 'live').length
-  const hasLive = routable < items.length
+  const all = (shortlist.data ?? []).map((i) => ({ ...i, pin: enrich(i.pin) }))
+  const inSchedule = scheduledIds(edit.schedule)
+  // 리스트는 일정에 아직 넣지 않은 곳이다. 넣은 곳은 「동선 보기」(그날 일정)와 「일정 짜기」 패널에 있다.
+  const items = all.filter((i) => !inSchedule.has(i.pin.id))
+  const scheduled = all.length - items.length
+  const day = putDay && edit.dates.includes(putDay) ? putDay : edit.dates[0]
   const openPin = pins.find((p) => p.id === params.get('pin'))
 
   const setOpenPin = (pinId: string | null) => {
@@ -59,35 +65,9 @@ export default function ShortlistTab() {
     setParams(next)
   }
 
-  // 동선 보기가 켜진 채로 확정 리스트가 바뀌면 남은 곳끼리 다시 긋는다(Figma '동선 보기 · 해제 후').
-  // 서버는 스스로 다시 계산하지 않는다(#30) — 켜 둔 사람의 화면이 다시 부른다.
-  // 항목 구성(id 목록)과 토글이 바뀔 때만 다시 계산한다 — 순서만 바꾼 건 동선과 무관하다(#30).
-  const itemKey = items.map((i) => i.id).sort().join(',')
-  const { mutate: recalc } = calc
-  useEffect(() => {
-    if (routeOn && routable >= 2) recalc()
-  }, [routeOn, itemKey, routable, recalc])
-
   function toggleRoute() {
-    if (!routeOn && routable < 2) return showToast(hasLive ? '위치를 아는 장소가 2곳부터 동선을 보여 줘요' : '2곳부터 동선을 보여 줘요')
+    if (!routeOn && scheduled === 0) return showToast('장소를 날짜별 일정에 넣으면 동선을 확인할 수 있어요')
     setRouteOn(!routeOn)
-  }
-
-  function openCourse() {
-    if (routable < 2) return showToast('위치를 아는 장소가 2곳부터 코스를 짤 수 있어요')
-    setCourseOpen(true)
-  }
-
-  function removeItem(item: ShortlistItemDto) {
-    const name = item.pin.place_name ?? '이 장소'
-    remove.mutate(item.id, {
-      onSuccess: () =>
-        showToast(`${name}${josa(name, '을', '를')} 확정 리스트에서 뺐어요`, {
-          label: '되돌리기',
-          onClick: () => add.mutate(item.pin.id, { onError: () => showToast('되돌리지 못했어요') }),
-        }),
-      onError: () => showToast('확정 리스트에서 빼지 못했어요'),
-    })
   }
 
   if (openPin) {
@@ -102,47 +82,45 @@ export default function ShortlistTab() {
     )
   }
 
-  const subtitle =
-    routeOn && route.data?.length
-      ? `${routeSummary(route.data)} (직선거리 기준)`
-      : `${items.length}곳${items.length ? ' · 동선 순서대로 보여요' : ''}`
+  const subtitle = shortlist.isPending || (!routeOn && !edit.ready && !edit.error)
+    ? '불러오는 중…'
+    : routeOn
+      ? '일정에 넣은 순서대로 보여요'
+      : scheduled > 0
+        ? `일정에 넣을 곳 ${items.length}곳, 넣은 곳 ${scheduled}곳`
+        : `${items.length}곳`
 
   return (
     <TabSheet
       tab="shortlist"
       header={
-        <>
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <SheetTitle>확정된 장소 모아보기</SheetTitle>
-              <p className="mt-0.5 text-xs text-ink-500">{shortlist.isPending ? '불러오는 중…' : subtitle}</p>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <SheetTitle>확정된 장소 모아보기</SheetTitle>
+            <div className="mt-0.5 flex items-center gap-1">
+              <p className="text-xs text-ink-500">{subtitle}</p>
+              {/* 확정 리스트·일정·동선 보기가 무엇인지(멘토 리뷰 #1401, #1484). */}
+              {all.length > 0 && <ReactionHelp on="shortlist" />}
             </div>
-            {items.length > 0 && (
-              <div className="flex shrink-0 gap-2">
-                {/* 2곳 미만이면 비활성으로 보이되 누르면 이유를 토스트로 알린다(동선 보기와 같다). */}
-                <button type="button" aria-disabled={routable < 2} onClick={openCourse} className="chip">
-                  AI 코스 짜기
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={routeOn}
-                  aria-disabled={!routeOn && routable < 2}
-                  onClick={toggleRoute}
-                  className="chip"
-                >
-                  동선 보기{routeOn && ' ✓'}
-                </button>
-              </div>
-            )}
           </div>
-          <CourseMapLegend mapId={mapId} />
-        </>
+          {all.length > 0 && (
+            <div className="flex shrink-0 gap-2">
+              {/* AI 코스 짜기는 따로 탭이다(「AI 코스」). 「일정 짜기」 패널은 넓은 화면에만 있다 — 휴대폰은 줄의 「넣기」로 넣고 동선 보기로 고친다. */}
+              <button type="button" aria-pressed={routeOn} aria-disabled={!routeOn && scheduled === 0} onClick={toggleRoute} className="chip">
+                동선 보기{routeOn && <Mark kind="check" size={14} />}
+              </button>
+              {desktop && (
+                // 다시 누르면 닫힌다(패널의 ✕·Esc와 같다).
+                <button type="button" aria-pressed={scheduleOpen} onClick={() => (scheduleOpen ? closeSchedule() : openSchedule(mapId))} className="chip">
+                  일정 짜기
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       }
     >
       {shortlist.error && <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />}
-      {calc.error && <ErrorText message="동선을 계산하지 못했어요" error={calc.error} />}
-      {routeOn && hasLive && <p className="text-xs text-ink-500">장소 정보가 없는 핀은 위치를 몰라 동선에서 빠졌어요</p>}
-      {routeOn && route.data && <DirectionsLinks routes={route.data} pins={pins} />}
       {shortlist.data?.length === 0 && (
         <EmptyState
           title="아직 확정된 장소가 없어요"
@@ -152,47 +130,63 @@ export default function ShortlistTab() {
             </Link>
           }
         >
-          마킹된 장소에서 「확정 리스트에 넣기」를 누르면 여기 모여요.
-          <br />
-          2곳 이상이면 동선도 볼 수 있어요
+          가기로 결정한 장소들이 이곳에 모여요. 마킹된 장소에서 확정 리스트에 넣어 보세요.
         </EmptyState>
       )}
-      {items.length > 0 && (
-        <ShortlistList
-          items={items}
-          onOpen={setOpenPin}
-          onRemove={removeItem}
-          onReorder={(from, to) => {
-            const name = items[from].pin.place_name ?? '이 장소'
-            reorder.mutate(move(items, from, to), {
-              // 화면을 보지 않는 사람에게 옮긴 결과를 알림 영역(토스트)으로 알린다(#959).
-              onSuccess: () => showToast(`${name}${josa(name, '을', '를')} ${to + 1}번째로 옮겼어요`),
-              onError: () => showToast('순서를 바꾸지 못했어요'),
-            })
-          }}
-        />
+      {all.length > 0 && routeOn && <DayRoute mapId={mapId} onOpen={setOpenPin} />}
+      {all.length > 0 && !routeOn && (
+        // 리스트 자리도 끌어 놓을 칸이다 — 「일정 짜기」 패널의 줄을 여기에 놓으면 일정에서 빠진다.
+        <div
+          data-day={UNSET_DAY}
+          data-over={hover?.day === UNSET_DAY}
+          className="drop-target space-y-3 rounded-xl pb-[100px] outline-offset-4"
+        >
+          {edit.error ? (
+            <div className="space-y-2">
+              <ErrorText message="일정을 불러오지 못했어요" error={edit.error} />
+              <button type="button" onClick={edit.retry} className="btn-outline btn-sm">
+                다시 불러오기
+              </button>
+            </div>
+          ) : !edit.ready ? (
+            <p className="text-sm text-ink-500">일정을 불러오는 중…</p>
+          ) : items.length === 0 ? (
+            <p className="break-keep text-sm text-ink-500">
+              <Sentences text="모든 장소를 일정에 넣었어요. 동선 보기로 날짜별 경로를 확인해 보세요." />
+            </p>
+          ) : (
+            <>
+              {day ? (
+                // 넣을 날을 먼저 고른다 — 동선 보기의 날짜 칩(「볼 날짜」)과 같은 모양이다.
+                <div role="group" aria-labelledby="put-day-label" className="flex flex-wrap items-center gap-2">
+                  <span id="put-day-label" className="text-xs text-ink-500">
+                    넣을 날짜
+                  </span>
+                  {edit.dates.map((d, i) => (
+                    <button key={d} type="button" aria-pressed={d === day} onClick={() => setPutDay(d)} className="chip">
+                      {dayOrdinal(i)}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
+              )}
+              <ShortlistList
+                items={items}
+                dayLabel={day ? dayOrdinal(edit.dates.indexOf(day)) : ''}
+                onPut={day ? (item) => edit.put([item.pin.id], [item.pin.place_name ?? '이 장소'], day) : undefined}
+                onOpen={setOpenPin}
+                onDrop={
+                  desktop && scheduleOpen
+                    ? (item, spot) => spot.day !== UNSET_DAY && edit.put([item.pin.id], [item.pin.place_name ?? '이 장소'], spot.day, spot.index)
+                    : undefined
+                }
+              />
+            </>
+          )}
+          <ShortlistExport mapId={mapId} />
+        </div>
       )}
-      {items.length > 0 && <ShortlistExport mapId={mapId} />}
-      {courseOpen && <CourseSheet mapId={mapId} onClose={() => setCourseOpen(false)} />}
     </TabSheet>
-  )
-}
-
-/** 동선을 켜면 지역마다 「카카오맵에서 길찾기」. 앱 안 WebView 는 카카오 약관상 안 돼서 새 창이다. */
-function DirectionsLinks({ routes, pins }: { routes: RouteDto[]; pins: Pin[] }) {
-  const links = routes.flatMap((r) => {
-    const url = kakaoDirectionsUrl(r, pins)
-    return url ? [{ url, label: routes.length > 1 ? `${r.region_label} 길찾기` : '카카오맵에서 길찾기', cut: r.ordered_pin_ids.length > KAKAO_ROUTE_MAX }] : []
-  })
-  if (links.length === 0) return null
-  return (
-    <div className="mb-2 flex flex-wrap items-center gap-x-4">
-      {links.map((l) => (
-        <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="btn-link text-sm">
-          {l.label} <ExternalLink size={14} aria-hidden="true" />
-          {l.cut && <span className="font-normal text-ink-500"> · 앞 {KAKAO_ROUTE_MAX}곳</span>}
-        </a>
-      ))}
-    </div>
   )
 }

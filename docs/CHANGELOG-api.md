@@ -2,6 +2,294 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-08, 구글 로그인 — `GET /auth/google/login`, `GET /auth/google/callback` (#1514)
+
+- **새 엔드포인트 둘**: 카카오 로그인과 같은 흐름(state 쿠키, 항상 302, 게스트 전환 합치기, 탈퇴 계정 선택)이다. state 쿠키는 `google_oauth_state`(경로 `/auth/google`).
+- **받는 정보**: 요청 범위 `openid profile` — 구글 사용자 번호(`sub`)와 이름. 이메일은 받지 않는다(기획안 개인정보 표). 로그인 수단은 `user_identities.provider = 'google'`로 남는다(스키마 변경 없음, #694).
+- **`login_error` 값 둘 추가**: `google_failed`(구글 토큰 교환·사용자 정보 실패), `google_unavailable`(그 환경에 구글 키가 없음 — 시작 경로가 구글로 보내지 않고 바로 돌려보낸다). 기존 값은 그대로다.
+- **같은 사람의 카카오 계정과 잇지 않는다**: 처음 쓰는 구글 계정은 새 계정이다. 게스트가 구글로 전환하면 카카오와 같이 게스트 계정에 붙거나 기록을 옮긴다.
+- **설정**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`(비어 있어도 서버는 뜬다). 운영·스테이징은 https이고 FE와 같은 호스트, 카카오 콜백과 같은 `/auth` 아래여야 서버가 뜬다(탈퇴 계정 선택 쿠키가 그 경로에 실린다).
+- 목 서버: `/auth/google/login`은 카카오처럼 로그인된 진입점으로 보낸다. 타입 재생성 필요(`npm run gen:types`).
+
+## 2026-11-08, 네이버 지도 검색 링크 — `ExternalSearch.naver_url`, `Pin`·`Candidate`·`AdPlace`의 `naver_url` (#1513)
+
+- 카카오맵 링크가 있는 자리마다 네이버 지도 검색 링크를 함께 준다(멘토 리뷰 #816, #1487). **늘리기만 한다** — 선택 필드 넷을 더했고 `url`·`place_url`은 그대로다(상위 호환).
+- **`ExternalSearch.naver_url`**: `https://map.naver.com/p/search/{검색어}`. 검색어는 `url`과 같다. `GET /places/external-search`, 추천 결과의 `external_search`, readiness가 모두 같은 규칙이다. #902에서 말한 링크 목록 필드 대신 형제 필드로 했다(외부 서비스가 둘뿐).
+- **`Pin.naver_url`, `Candidate.naver_url`, `AdPlace.naver_url`**: `{장소 이름} {동네}` 네이버 지도 검색 링크. 이름이 없으면 필드가 없다(Ad는 null). 실시간 핀(`source: live`)은 이름을 저장하지 않아 없다.
+- 길찾기 링크는 카카오만이다(네이버는 장소 번호가 있어야 한다). 네이버 장소 번호는 모으지 않는다.
+- 만드는 곳은 `places/core.py`의 `naver_search_url`·`naver_place_link` 한 곳이고 다른 모듈은 `places.api`로 받는다. 스키마(DB) 변경 없음.
+- 목 서버: 위 응답마다 `naver_url`을 싣는다. 타입 재생성 필요(`npm run gen:types`).
+
+## 2026-11-07, `default_radius_walk_min`을 deprecated로 표시, 화면이 쓰는 deprecated 필드 검사 (#1467)
+
+- **`RecommendRun.default_radius_walk_min`** 에 `deprecated: true`를 달았다. 값과 응답은 그대로다(서버는 계속 내린다). 생성 타입에 `@deprecated`가 붙는다. #1385에서 반경을 m로 바꿀 때 글로만 "곧 없앤다"로 적어서 화면이 반경 넓히기 확인 창에 옛 칸(도보 분)과 +5분 계산을 계속 썼다(멘토 리뷰).
+- 화면은 `default_radius_m`, `next_default_radius_m`(넓히면 바뀔 반경, 상한이면 `null`)으로 옮긴다 — FE #1468.
+- **검사**: `contracts/checks/deprecated-fields.test.ts`. 스펙에서 deprecated인 속성·파라미터를 `frontend/src`가 쓰면 `docs/openapi-workflow.md` 「화면이 아직 쓰는 deprecated 필드」 표에 FE 이슈와 함께 있어야 통과한다. 표는 비어 가야 한다. 필드를 대체할 때의 절차는 같은 문서 4절 5번.
+
+## 2026-11-06, 지도 복사 — `POST /maps/{mapId}/copy`, `Permissions.can_copy`, 권한 `map.copy` (#1446)
+
+- **새 엔드포인트 `POST /maps/{mapId}/copy`(방장만)**: 본문 없음. 201과 새 지도(`Map`, 요청자 기준 — 복사한 사람이 혼자 방장)를 돌려준다. 방장이 아닌 구성원은 403 `FORBIDDEN`, 비구성원·없는·삭제된 지도는 404.
+- **옮기는 것**: 날짜, 지역(이름·중심), 색, 올린 대표 이미지(새 지도 주소의 `cover_url`), 지우지 않은 공개 핀. 핀은 장소(자체 DB 장소, 실시간 핀이면 카카오 장소 ID·검색어)·카테고리·메모를 옮기고 찍은 사람은 복사한 사람이다. 확정 핀·AI 추천 핀도 **일반 핀**(`kind: 일반`)이 된다 — AI 근거(조건별 충족·구성원 충족 집계·출처)는 원래 지도의 구성원 기준이라 옮기지 않는다.
+- **옮기지 않는 것**: 반응, 구성원, 확정 리스트와 일정, 추천·코스 기록, 계획 보조 에이전트, 초대 링크, 알림. 이벤트도 보내지 않는다.
+- **제목**: `원래 제목 (n)`. 원래 제목 끝의 ` (k)` 하나를 떼고 붙인다. n은 1부터, 복사한 사람이 구성원인 지도(삭제된 지도 제외)에 같은 제목이 없는 가장 작은 수. 100자를 넘으면 원래 제목 쪽을 자른다.
+- **제한**: 지도 만들기와 같다 — 게스트 403 `GUEST_NOT_ALLOWED`, 내 지도가 상한이면 409 `MAP_LIMIT`(`detail: { limit, count }`). 여행 기간 상한(`TRIP_TOO_LONG`)은 보지 않는다 — 날짜를 그대로 옮긴다.
+- **`Permissions.can_copy`**(map 전용, 상위 호환 선택 필드): 방장만 true. 화면은 `my_role` 대신 이 값으로 「복사」 메뉴를 그린다. `docs/permissions.md` owner에 `map.copy`.
+- 스키마 변경 없음(새 열·테이블 없음, 사용자 id 열도 없다). 서버는 `maps.service.copy_map`과 `pins.api.copy_pins_to_map`.
+- 목 서버: 같은 규칙(방장만, 제목 번호, 색·이미지·공개 핀 복사, 상한, 게스트), 지도 응답의 `can_copy`. 타입 재생성 필요(`npm run gen:types`).
+
+## 2026-11-06, 지도 대표 이미지와 색 — `Map.color`·`cover_url`·`owner_display_name`, `PUT·DELETE·GET /maps/{mapId}/cover`, 422 `COVER_INVALID` (#1445)
+
+- 지도마다 대표 이미지와 색을 둔다. 둘 다 지도 단위라 모든 구성원이 같은 것을 보고, 바꾸는 것은 방장만이다(`map.settings.edit`, `PATCH /maps/{mapId}`와 같다).
+- **`Map`에 선택 필드 셋(상위 호환, `required` 아님).** 목록(`GET /maps`)과 상세·수정·복구·수락 등 `Map`을 돌려주는 모든 응답에 채운다.
+  - `color`: 방장이 고른 색 `#RRGGBB`. 고르지 않았으면 키가 없다.
+  - `cover_url`: 올린 이미지 주소, API 기준 상대 경로 `/maps/{id}/cover?v=<갱신 시각(마이크로초)>`. 올린 이미지가 없으면 키가 없다 — 화면이 지역 기본 이미지를 그린다(서버는 기본 이미지를 저장하지 않는다).
+  - `owner_display_name`: 지금 방장의 표시 이름(memberships.role 기준, 탈퇴했으면 「탈퇴한 구성원」). 초대받은 지도 카드의 「○○님의 지도」용.
+- **`PATCH /maps/{mapId}`** 에 `color`(`^#[0-9A-Fa-f]{6}$` 또는 `null`). **`null`은 색 지우기**(고르지 않은 상태로)다 — 다른 필드는 지금처럼 null이면 422다. 형식이 틀리면 422 `VALIDATION_ERROR`.
+- **새 엔드포인트 셋**
+  - `PUT /maps/{mapId}/cover`(방장만): 본문은 이미지 바이트 그대로, `Content-Type`은 `image/webp`·`image/jpeg`·`image/png`. 크기 상한 512KiB. 브라우저가 긴 변 1200px 이하 WebP로 줄여 올린다. 응답은 `Map`.
+  - `DELETE /maps/{mapId}/cover`(방장만): 지운다. 없어도 200(멱등). 응답은 `Map`.
+  - `GET /maps/{mapId}/cover`(구성원 누구나): 이미지 바이트, `Cache-Control: private, max-age=31536000, immutable`. 로그인 쿠키로 인증해 `<img src>`에 `cover_url`을 API 주소 뒤에 붙여 그대로 쓴다. 없으면 404.
+- **새 오류 422 `COVER_INVALID`**(`docs/errors.md`): 형식이 셋 밖이거나(파일 앞부분도 본다) 크기가 상한을 넘음. `detail: { limit_bytes, types }` — 화면은 이 값으로 안내하고 숫자를 적지 않는다.
+- 이미지는 Postgres `map_covers`에 둔다(S3 없음, 인프라 미정 #1203). 지도를 삭제해도 남고 정리 작업이 함께 지운다. `map.updated` 이벤트에는 색과 이미지를 싣지 않는다 — 다른 구성원은 다음에 지도를 다시 받을 때 본다.
+- data-model: `maps.color`, `map_covers` 테이블(마이그레이션 `0068_map_cover_color`).
+- 목 서버: 지도 응답의 세 칸, `PATCH` 색, 이미지 올리기·지우기·받기(메모리에 보관). 시드 지도는 색·이미지가 없다. 타입 재생성 필요(`npm run gen:types`).
+
+## 2026-11-05, 추천 반경을 사용자가 2~5km에서 정해 보낸다 — `radius_m` (#1416)
+
+- **`POST /maps/{mapId}/runs`** 요청에 선택 필드 `radius_m: integer`(2000 이상 5000 이하)를 더했다. 상위 호환 — 없으면 기본 3000(지금 동작). 범위 밖이거나 정수가 아니면 422 `VALIDATION_ERROR`. 값이 있으면 후보를 찾는 원의 반경, `OUTSIDE_TRIP_REGION` 판정의 반경, 저장되는 `default_radius_m`이 이 값이다. 반경 넓히기는 이 값에서 +1000m씩, 상한 5000m(그대로). 멱등 판정에 이 값이 들어간다(같은 키로 다른 반경은 409 `IDEMPOTENCY_CONFLICT`. 기본값 3000을 명시한 요청은 생략한 요청과 같은 요청이다. 반경 없는 요청은 이전과 같다).
+- **`GET /maps/{mapId}/recommend/readiness`** 에 선택 쿼리 `radius_m`(같은 범위)을 더했다 — 「근처 정예 수」를 그 반경으로 센다. 응답 `Readiness`에 선택 필드 `radius_min_m`(2000)·`radius_max_m`(5000)을 더했다. 기존 `radius_m`은 **기본값**(3000) 그대로다. 화면은 이 세 값으로 범위를 정하고 코드에 숫자를 적지 않는다.
+- **타입 공유**: FE와 서버가 같은 형식을 쓰도록 `contracts/src/types/api.d.ts`가 재생성된다. `radius_m`은 정수(`number`)이고 범위는 계약의 `minimum`·`maximum`이다.
+- 사용자가 반경을 고르는 방법(슬라이더 등)은 서버가 모른다. 서버는 화면이 넘기는 정수 하나만 받는다.
+- 목 서버는 같은 범위를 검사하고(422), 고른 반경에서 `default_radius_m`·`next_default_radius_m`을 낸다. 서버 구현은 backend/recommend 후속(#1416).
+
+## 2026-11-05, `POST /maps/{mapId}/runs` — `center` 필수로 (#1331)
+
+- 요청 본문의 `center: {lat, lng}`가 **필수**가 됐다(`required: [category, center]`, `null` 불가). 서버는 PR #1351부터 `center`가 없거나 null이면 422 `VALIDATION_ERROR`로 거절하고 있었고, FE가 「추천받기」에 `center`를 보내기 시작해서(PR #1366) 계약을 서버와 맞춘다. 요청·응답의 나머지는 그대로다.
+- 서버가 `center`가 없는 옛 요청을 거절하는 것은 이미 배포돼 있다. 옛 run의 다시 추천·넓히기는 저장된 값으로 계속 동작한다.
+- 목 서버는 `center`를 필수로 막지 않는다(FE 단위 테스트가 지도 셸 밖에서 돌아 `center`가 없다).
+
+## 2026-11-05, 추천 기본 반경 3km 통일(미터로 재정의)·여행 지역 밖 오류·반경 칸 4종 (#1385, #1370, #1164)
+
+- **동작 변경(정책)**: 추천 기본 반경이 **모든 카테고리 3,000m**로 통일된다(전: 음식점·카페 도보 15분, 관광지 25분). 「반경 넓히기」는 유지하되 **미터로 재정의**한다 — 기본 3,000m, 1회 +1,000m, 상한 5,000m(모든 카테고리 같다). 상한을 넘으면 409 `WIDEN_LIMIT`(기존). 사용자 결정 2026-11-05. 값은 `docs/constraints.md`의 「반경 넓히기 상수」.
+- **새 오류 422 `OUTSIDE_TRIP_REGION`**(`POST /maps/{mapId}/runs`): 요청 `center` 기준 반경 3km 원 **전체**가 그 지도의 여행 지역(시·도) 밖이면 거절한다. 걸치기만 하면 막지 않고, 지도에 여행 지역이 없으면 막지 않는다. `detail`은 `{ region_label }`. 크레딧·모델·run 모두 쓰지 않는다. 지역 경계 판정은 서버(places)가 시·도 경계 데이터로 한다. 화면 문구는 「여행 지역 밖이에요」 + 「여행 지역으로 가기」(`docs/errors.md`).
+- **새 선택 필드 4종(상위 호환, `required` 아님)**
+  - `Readiness.radius_m`: 그 카테고리의 기본 추천 반경(m), 지금 3000. 화면이 run 만들기 전에 원을 그린다(정책 값은 응답으로).
+  - `RecommendRun.default_radius_m`: 현재 기본 반경(m). 넓히면 +1000씩, 상한 5000. `RecommendRun.next_default_radius_m`: 넓히면 바뀔 반경, 이미 상한이면 `null`(#1370).
+  - `RunSummary.default_radius_m`·`next_default_radius_m`: 지난 추천에서도 같은 값(#1164).
+- `default_radius_walk_min`은 **호환용**으로 남기고 곧 없앤다 — 화면은 `default_radius_m`를 쓴다. 폐기된 `WIDEN_LIMIT_MIN`·도보 분 설명은 `POST /runs/{runId}/widen`·`WidenLimit` 응답·`curated_nearby` 설명에서 미터 기준으로 고쳤다.
+- 서버 구현은 `backend/recommend`(`core.py` 상수, 응답 칸)·`backend/places`(지역 경계 판정, `OUTSIDE_TRIP_REGION`, `common/errors.py`) 후속. `docs/data-model.md`의 `default_radius_walk_min` 컬럼은 서버 PR에서 정리한다.
+- 목 서버: readiness `radius_m: 3000`, run·widen·`RunSummary`의 `default_radius_m`·`next_default_radius_m`(5000이면 widen 409 `WIDEN_LIMIT`), run 생성에서 `center`가 부산(35.1587, 129.1604)이고 지도가 서울이면 422 `OUTSIDE_TRIP_REGION`. 타입 재생성 필요 — FE는 `npm run gen:types`.
+
+## 2026-11-05, 여행 기간 상한 90일과 방장 권한 칸 두 개 — `MapList.trip_max_days`, `Permissions.can_manage_invites`·`can_transfer_owner`, 422 `TRIP_TOO_LONG` (#1371, #1154)
+
+- 모두 **상위 호환 선택 필드**다. 서버 구현은 backend/maps 후속이라 그 전까지 실서버는 보내지 않는다(없으면 FE는 지금처럼 동작).
+- `MapList.trip_max_days`(integer): 여행 기간 상한 일수, 시작일·종료일 포함, 지금 **90**(2026-11-04 FE 리드 결정). 화면은 이 값으로 날짜 칸의 고를 수 있는 끝을 막는다. 숫자는 화면에 적지 않는다.
+- 새 오류 코드 422 `TRIP_TOO_LONG`(`detail: { limit }`, `docs/errors.md`): `POST /maps`와 `PATCH /maps/{mapId}`에서 기간이 `trip_max_days`를 넘을 때. PATCH는 **날짜를 바꾸는 요청에서만** 검사하고, 제목·지역만 고치는 것은 막지 않는다(이미 90일을 넘는 지도의 제목 수정은 허용). 화면 문구는 「여행 기간은 최대 N일까지 정할 수 있어요」(N은 `detail.limit`).
+- `Permissions.can_manage_invites`(map 전용, `invite.revoke`, #467)와 `can_transfer_owner`(map 전용, `owner.transfer`, #468): 방장만 true. FE는 `my_role === 'owner'` 판정 대신 이 값으로 「초대 링크 관리」·「방장 넘기기」 버튼을 그린다.
+- 목 서버: `GET /maps`에 `trip_max_days: 90`, `POST /maps`·`PATCH /maps/{mapId}`의 `TRIP_TOO_LONG`, 지도 응답 `permissions`의 두 칸(방장이면 true). 타입 재생성 필요(`npm run gen:types`).
+
+## 2026-11-04, `GET /maps/{mapId}/recommend/readiness` — 선택 쿼리 `center_lat`·`center_lng` 추가 (#1331)
+
+- 지도 중심 앵커 추천이 기존 핀 기반 위치 기준을 **run 생성에서 대체**한다(#1331, 사용자 결정 2026-11-04). 이 요청에는 상위 호환 선택 쿼리를 더했다: `center_lat`·`center_lng`(함께, 위도 33~39·경도 124~132). 있으면 `curated_nearby`를 run 생성의 `center`와 같은 기준(그 점 한 곳의 원)으로 센다. 없으면 지금처럼 그 카테고리 핀들이 앵커다.
+- 하나만 보내거나 범위 밖이면 422 `VALIDATION_ERROR`. 응답 모양은 그대로다. `ready`·`answered_count`(의견 핀 수)는 위치와 무관하다.
+- FE: 추천 시작 화면이 readiness를 부를 때 run 생성에 보낼 중심과 같은 값을 보내면 「근처 정예 수」가 실제 추천 범위와 일치한다. 안 보내도 동작한다.
+- 정책: `POST /maps/{mapId}/runs`의 `center`는 **필수가 된다** — 계약 필수화는 FE가 `center`를 보내기 시작한 뒤에 별도 PR로 한다(그때까지 선택). 중심이 없는 호출(readiness·미리 돌려 보기·AI 조언)에서만 기존 핀 기반 로직이 남는다. 교체 전 로직 보존: 태그 `legacy/recommend-pin-anchor`.
+
+## 2026-11-04, 「핑고 AI 조언」이 AI 추천·AI 코스를 엮는다 — `AgentAction.type`에 `open_pin`·`open_course`, `AgentDiagnosis`에 `schedule` (#1356)
+
+- 결정 #1356 「엔진은 도구로, 실행은 버튼으로」(`docs/agent-v2.md` 6.10)
+  - 조언이 AI 코스 엔진으로 미확정 핀을 확정 일정에 끼워 보고(모델 도구 `try_in_schedule`), 사람이 넣은 일정을 코스 점검과 같은 판정으로 본다.
+  - 실제 AI 추천과 AI 코스는 사람이 누르는 버튼으로 넘긴다.
+- `AgentAction.type`(그리고 `AgentTried.action_type`)에 두 값을 더했다. **enum 값 추가 — FE는 모르는 type을 지금처럼 「바뀌었어요」로 처리하고 있어 깨지지 않는다.**
+  - `open_pin`: 지도 탭에서 `params.pin_ids[0]` 핀 카드를 연다. 확정은 사람이 한다. 카테고리 공백 제안에 나온다.
+  - `open_course`: AI 코스 짜기를 시작한다 — 확정 탭에서 손으로 누를 때와 같은 `POST /maps/{mapId}/courses`(크레딧 1, 게스트·잔액 부족은 그 API의 오류 그대로). 일정 점검 제안에만 나온다.
+- `AgentDiagnosis`에 `schedule`(일정 점검): 확정 일정에 쉬는 날 방문이나 이동 과다가 있을 때. 코드 유형이고 `category`는 null이다. 버튼은 `open_course` 하나다.
+- 카테고리 공백은 지도에 그 카테고리 핀이 있으면 모델 진단이 된다. 응답 모양은 같고, 작업 기록에 조사 줄(「AI 코스 엔진으로 핀 2개를 일정에 끼워 봤어요」)이 붙는다.
+- data-model: `agent_suggestions.diagnosis`에 `'schedule'`
+- 목 서버: 시나리오 `agent-linked`(카테고리 공백 + `open_pin`), `agent-schedule`(일정 점검 + `open_course`)
+- FE 구현 이슈 #1359, 서버 #1357, 지시문 #1358
+
+## 2026-11-04, 「핑고 AI 조언」 막힌 곳 후속 관찰과 충돌 선언 — `AgentSuggestion.attempt`·`tried`, `AgentState.tracking` (#1345)
+
+- 결정 #1345: 수락한 제안을 막힌 곳 하나로 보고 풀렸는지 서버가 매 관찰마다 본다. 그대로면 이미 해 본 것과 다른 방법(다음 방법), 그래도 그대로면 해 본 것을 남기는 충돌 선언이다(`docs/agent-v2.md` 6.9).
+- 모두 **선택 필드, 상위 호환**이다. 서버 구현(#1346) 전에는 없다.
+- `AgentSuggestion.attempt`(0·1·2): 0 첫 제안, 1 다음 방법, 2 충돌 선언. 충돌 선언은 `actions`가 빈 목록이다(버튼 없음). 없으면 0으로 본다.
+- `AgentSuggestion.tried[]`(`AgentTried` {`action_type`, `label`, `accepted_at`}): 이 막힌 곳에서 이미 해 본 것(수락한 앞 제안의 버튼), 오래된 것부터. 누가 눌렀는지와 추천 결과는 싣지 않는다.
+- `AgentState.tracking[]`(`AgentTracking` {`suggestion_id`, `diagnosis`, `category`, `status`, `text`, `since`, `tried`}): 핑고가 지켜보는 막힌 곳, 최근 48시간.
+  - `status`: watching(수락 뒤 지켜보는 중), resolved(풀림), declared(충돌 선언을 냄)
+  - `text`는 서버 고정 문구다. 경과 시간은 FE가 `since`로 그린다.
+  - 지금 활성 제안인 막힌 곳과 닫기·만료로 끝난 것은 들어가지 않는다.
+- `WorkStep.stage`에 「후속 확인」(감지 다음, attempt ≥ 1)을 더했다. 이벤트 타입은 그대로다. 풀림은 GET 상태로만 보이고, 후속 제안과 충돌 선언은 지금처럼 `agent.suggested`다.
+- data-model: `agent_suggestions`에 `attempt`, `followup_of`, `followup` 세 칸(사용자 id 열 아님).
+- 목 서버: 지도 `map_1`의 tracking에 지켜보는 중 하나와 풀림 하나, 지도 `map_2`의 활성 제안이 충돌 선언(attempt 2)이다.
+- FE 구현 이슈 #1348: 「지켜보는 중」 줄, 후속 제안 카드(「두 번째 방법」, 해 본 것), 충돌 선언 카드.
+
+## 2026-11-04, 「핑고 AI 조언」 버튼에서 「핀 보기」 빼기, 웹 확인은 「모름」 줄마다 (#1317)
+
+- 스키마는 그대로다(`AgentAction.type` enum도 그대로). 서버가 내리는 값만 바뀐다.
+- 정체·갈림 제안의 버튼은 「{카테고리} 추천 받기」(`open_recommend`) 또는 「{카테고리} 검색」(`search_place`) 하나다. 카테고리 공백도 버튼 하나다. 이 셋에서 `show_pins`는 더 오지 않는다. 반응 공백의 「미확인 핀 보기」(`show_pins`)는 그대로다.
+- `AgentFactLine.web`: 전에는 제안마다 첫 「모름」 줄 하나에만 왔다. 이제 value가 unknown인 줄마다 올 수 있다(줄이 많아야 2개라 많아야 두 줄). 모양은 그대로다.
+- `AgentSuggestion.steps`: 웹 확인 줄이 줄마다 하나씩, 많아야 두 줄이다.
+- FE: 바꿀 것 없음. `show_pins` 처리는 반응 공백 때문에 남겨 둔다. 서버 구현은 #1318(PR #1320), 지시문은 #1319(PR #1338).
+
+## 2026-11-04, `POST /maps/{mapId}/runs` — 선택 필드 `center`(지도 중심에서 추천) 추가 (#1331)
+
+- 요청 본문에 선택 필드 `center: {lat, lng} | null`을 더했다. **상위 호환** — 없으면 지금 동작(그 카테고리 핀들이 앵커)이다.
+- 있으면 그 run의 앵커는 이 점 하나다: 후보를 찾는 원의 중심(카테고리 기본 반경, 넓히기도 같은 점에서), 동점 거리 비교, 지도 여행 지역이 없을 때의 시·도 판정. 시작 조건(그 카테고리 의견 핀 1곳 이상, 미충족 409 `NOT_READY`)·크레딧·멱등·결과 가시성은 그대로다. 서버가 중심을 run에 저장해 `retry`·`widen`이 같은 점을 쓰고, 응답에 좌표는 없다.
+- 새 에러: **422 `VALIDATION_ERROR`** — `center`가 위도 33~39·경도 124~132 밖이거나 시·도를 정할 수 없는 곳. 멱등키의 요청 동일성에 `center`가 들어간다(같은 키로 다른 중심은 409 `IDEMPOTENCY_CONFLICT`).
+- FE 사용: 카테고리 버튼(「여기서 음식점」 등)을 누른 순간 보이는 영역의 중심(모바일은 하단 시트에 가린 부분을 뺀 중심)을 `center`로 보낸다. 시작 조건 미충족 안내 문구는 FE가 만든다: 「장소 핀을 찍고 최소 1개의 의사 표시(♥ 또는 🚫)를 해야 추천 기능이 시작돼요」. 정본 이슈 #1331.
+- 목 서버는 범위 밖 `center`에 422를 내고 키의 동일성에 `center`를 포함한다. 서버 구현은 backend/recommend 후속이다.
+
+## 2026-11-04, `CourseRun`에 일정 기준 모드와 고칠 점 카드 추가, stale는 일정 version 기준으로 (#1237)
+
+- 결정(#1237, 2026-11-04): AI 코스 버튼은 하나이고 확정 리스트의 일정 상태에 따라 하는 일이 다르다. 서버가 요청 때 정하고 응답의 `mode`로 알려 준다 — `plan`(날짜에 넣은 장소 없음, 짜기) · `fill`(일부만 넣음, 남은 곳 채우기) · `review`(다 넣음, 점검과 최소 수정). 사람이 날짜에 넣은 장소는 AI가 바꾸지 않고, 일정은 사람이 카드마다 「반영」을 누를 때만 바뀐다.
+- `CourseRun`에 필수 칸 4개를 더했다: `mode`, `headline`(결과 화면 머리 문구, 모드별 서버 템플릿, 진행 중·failed는 null), `fixes[]`(고칠 점 카드), `checked[]`(점검했고 문제 없는 항목 — 「괜찮아요」). `plan`은 `fixes`·`checked`가 빈 배열이다. 새 스키마는 `CourseFix`, `CourseMove`, `CourseChecked`다.
+- `CourseFix`: `id`, `kind`(`closed`·`travel`·`member`·`condition`·`goal`·`cluster`·`meal`·`unassigned` — `member`는 요청 때 넣은 구성원 도보 상한 위반으로 기존 `CourseViolation.kind`와 같고 hard, `condition`은 우리 조건 요약에서 온 목표와 어긋남으로 soft), `strength`(`hard`·`soft`), `text`(문제 문장), `moves[]`(`{pin_id, from_date, to_date}` — 날 맞바꾸기는 두 날의 모든 장소, 1곳 옮기기는 1개, 2곳 맞바꾸기는 2개, `from_date` null은 아직 날짜에 안 넣은 장소), `resolved_text`(풀리는 것), `remaining_text`(남는 것), `not_fixed_reason`(고치지 않은 이유). 고치지 않기로 한 카드는 `moves`가 비고 `not_fixed_reason`만 있다. 반영은 서버 API가 아니다 — FE가 `GET /maps/{mapId}/shortlist/schedule`로 지금 일정을 읽어 `moves`대로 옮기고 같은 응답의 `version`과 함께 `PUT`으로 저장한다. 그동안 일정이 바뀌어 409 `SHORTLIST_STALE`이 오면 「일정이 바뀌었어요」 + 「다시 점검」이다. 날 맞바꾸기에서 첫날·마지막 날을 빼지 않는다(도착·출발 데이터가 없다).
+- `CourseRun.stale`: 요청 때 저장한 일정 `version`과 지금 `version`이 다르면 true다(이전에는 확정 핀 집합만 비교). 장소를 더하거나 빼도, 날짜나 순서를 옮겨도, 여행 기간이 바뀌어도 true다. 화면 문구는 「일정이 바뀌었어요」(기존 「확정 리스트가 바뀌었어요」). `POST /maps/{mapId}/courses` 요약에도 모드를 적었다.
+- 요청·에러 코드는 그대로다. 크레딧은 모드와 상관없이 코스 1번에 1이다.
+- FE: `CourseRun`의 새 칸은 필수라 목 서버가 모든 run에 싣는다. 목 서버는 확정 리스트의 일정 상태로 모드를 정하고(`contracts/mocks/handlers/course.ts`), review는 날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1 카드를 예시로 낸다. 카드를 반영해 일정 PUT을 하면 목 서버의 코스는 stale이 된다.
+- 구현 이슈: 서버 backend/agent/course #1321, 화면 frontend #1322. 서버 구현 전에는 실서버 응답에 `mode`, `headline`, `fixes`, `checked`가 모두 없을 수 있다(계약 테스트 `KNOWN_COURSE_DRIFT`에 #1321로 적었고 구현 PR이 지운다) — FE가 먼저 붙으면 `mode`가 없을 때 plan으로, `fixes`·`checked`가 없을 때 빈 배열로 그린다.
+
+## 2026-11-04, 「핑고 AI 조언」 작업 기록(`AgentSuggestion.steps`)과 살펴본 상태(`AgentState.observation`) (#1297)
+
+- `AgentSuggestion`에 선택 필드 `steps: WorkStep[]`를 더했다. 이 제안을 만들 때 핑고가 거친 단계(감지 → 순위 → 조사 → 미리 찾기 → 우리 데이터 → 웹 확인 → 검증 → 재확인, 있는 것만)다. 문장은 서버 고정 문구와 숫자뿐이고 사유 글·핀 이름·URL은 없다. `agent.suggested` 페이로드에도 같은 값이 실린다. 정본 설명은 `docs/agent-v2.md` 11.3.
+- AI 코스의 작업 기록과 같은 모양이라 스키마를 `WorkStep`으로 옮기고 `CourseStep`은 그것을 가리킨다. **`CourseStep` 이름과 모양은 그대로라 코스 화면은 바꿀 것이 없다.** `role` enum도 그대로다(조언의 단계는 계산·결정·지휘·검증 중 하나).
+- `AgentState`에 선택 필드 `observation: AgentObservation {checked_at, notice}`를 더했다. `checked_at`은 마지막 관찰 시각(관찰 전이면 null), `notice`는 지금 제안이 없을 때 그 이유를 말하는 서버 고정 문구다(진단 실패, 검증에서 걸러짐, 그날 진단 횟수를 다 씀, 여행이 끝남). 제안이 있거나 모드가 꺼져 있으면 null, 낼 제안이 없었을 뿐이어도 null이다. 이벤트로 갱신하지 않고 시트를 열 때 받는다. #1072의 「장애를 따로 보여 주지 않는다」 결정을 바꿨다(`docs/agent-v2.md` 21.3).
+- 둘 다 상위 호환이다 — 서버 구현 전에는 필드가 없고, FE는 없거나 빈 목록이면 자리를 두지 않는다. 테이블 변경은 없다(렌더 때 `agent_runs`와 `agent_cursors`에서 읽는다).
+- 목 서버: 시드 제안(카테고리 공백)에 감지·순위·재확인 세 줄, 지도 `map_1`에 `observation`(시드는 제안이 있어 notice가 null). `store.agentObservation[mapId].notice`를 넣고 제안을 닫으면 문구가 실린다.
+- FE 할 일(구현 이슈): 제안 카드 아래 「핑고가 한 일 보기」 토글(코스 `WorkLog`의 줄을 공용으로), 「핑고가 n분 전에 지도를 살펴봤어요」, 제안이 없을 때 notice 한 줄, 추천 막힘 조언 500이면 「조언을 불러오지 못했어요」.
+- 서버 구현은 backend/agent 이슈.
+
+## 2026-11-03, AI 코스 작업 기록 단계와 목표 설명을 지금 서버에 맞춤 (#1131, #1243)
+
+- `CourseStep.stage` 설명을 서버가 실제로 내는 값으로 바꿨다: 찾기·옮겨 보기·비교·결정·가정을 더하고 질문·답을 뺐다(#1131에서 되묻기를 없앴다). 값은 자유 문자열 그대로라 응답 모양은 바뀌지 않는다. 화면은 모르는 값이 와도 깨지지 않게 그린다(#1243).
+- `CourseStep.role`의 결정 설명을 「사람의 답 또는 기본값」에서 「코드가 고르거나 가정을 세움」으로 바꿨다.
+- `CourseRun.goals` 설명에 지도 근거 목표를 적었다: 요청이 없어도 우리 조건 요약과 야경 라벨로 목표가 생기고, label 끝에 「(지도에서 세운 목표)」가 붙는다(#1131). 「요청이 없으면 빈 배열」은 틀린 설명이었다.
+- 목 서버의 코스 작업 기록을 실서버 흐름(찾기 → 옮겨 보기 → 결정 → 짜기 → 비교 → 끝 → 가정 → 결과, 14줄)으로 바꿨다. 진행 중 조회의 줄 수(2개, 5개)는 그대로다.
+
+## 2026-11-04, `shortlist.changed(reordered)`는 요청 한 번에 하나 (#1274)
+
+- 페이로드 모양은 그대로다. **동작이 바뀐다**: 순서 바꾸기(`PUT /maps/{mapId}/shortlist/order`)와 일정 저장(`PUT /maps/{mapId}/shortlist/schedule`)이 항목마다 내던 `reordered` 이벤트를 요청 한 번에 하나만 낸다. `item`은 첫 항목이다. 확정된 장소가 없으면 내지 않는다.
+- FE 영향 없음 — 이벤트를 받으면 `docs/events.md` 표대로 확정 리스트를 다시 받고 `item`은 쓰지 않는다. 항목마다 내면 확정 20곳에 구성원마다 다시 받기가 최대 40번 시작됐다.
+
+## 2026-11-03, `EvidenceLine.filters_candidates` 추가 — 후보를 빼는 줄과 순위만 바꾸는 줄 구분 (#1260)
+
+- 근거 줄(`EvidenceLine`, 이 필드는 `applied_evidence` 스냅샷에도 같은 모양으로 실린다)에 선택 필드 `filters_candidates: boolean | null`을 더했다. 상위 호환이다 — 없으면 FE는 기존 칸 구분을 쓴다.
+- 값: `true` = 확인된 값이 방향과 다르면 후보에서 뺀다(붐비는 대형, 접근성 필요 조건). `false` = 후보는 두고 순위만 바꾼다(취향 조건, #1253). `enforced=false`인 줄은 `null`. 서버가 `evidence_line_use`의 effect(`filter`/`score`)를 그대로 내려 준다.
+- FE 사용: 「꼭 지켜야 하는 조건」 칸은 `filters_candidates=true`인 줄, 「피하고 싶어요 — 순위를 낮춰요」 칸은 `badge=required`·`wants=false`·`filters_candidates=false`인 줄(줄 이름은 「{fact_label} 줄이기」). 정본 이슈 #1260.
+- 서버 구현은 backend/recommend 후속 작업, 목 서버는 줄을 만드는 곳이 모두 `enforced=false`라 값이 필요 없어 그대로다.
+
+## 2026-11-03, 취향 반대 사유는 후보를 빼지 않고 순위만 낮춘다 (#1253)
+
+- 요청·응답 모양과 enum은 바뀌지 않았다. **동작이 바뀐다**: 🚫 사유가 매운맛·기름진 메뉴·음식 종류 같은 취향 조건(soft 키)을 피하는 것이어도 그 후보를 목록에서 빼지 않고, 같은 사유를 낸 사람마다 3점씩 순위를 낮춘다(한 사람은 한 번). 라벨이 모름이면 감점도 없다.
+- 후보를 계속 빼는 것은 붐비는 대형(카페·관광지, hard)과 **접근성 필요 조건**(`accessible`, 휠체어·유모차로 갈 수 없다고 확인된 곳 — 칩과 직접 쓴 글 모두)이다. 모름은 통과하고 「확인 필요」가 붙는다. 알러지·재료는 그대로 화면 안내만 한다.
+- `EvidenceLine.enforced`·`not_enforced_reason` 값의 의미는 그대로다. 취향 반대 줄도 `enforced=true`(순위에 쓰임)로 나온다. 깔때기의 「실격」 수는 이 줄들 때문에 줄지 않고 통과 수가 늘어난다.
+- FE 영향: 「꼭 지켜야 하는 조건」 칸에 오른 취향 반대 줄의 문구(「매운맛 전문 제외」 등)가 실제 동작(순위만 낮춤)과 어긋난다. 문구·칸 구분 정정은 FE 후속 이슈로 다룬다.
+- 정책 문서: `docs/constraints.md`(PR #1257), `최종기획안.md`(이 변경). 구현: PR #1258.
+
+## 2026-11-03, `GET /places/search` — 좌표가 있으면 30km 안만 돌려준다 (#1251)
+
+- 사용자 결정(2026-11-03): 「현재 지도 기준」은 요청 `lat`·`lng` 중심 30km 고정이다. 줌·화면 영역 파라미터는 추가하지 않는다(요청 모양 변화 없음).
+- 응답 동작이 바뀐다: `lat`·`lng`가 있으면 **30km 밖의 자체 DB 장소와 카카오 결과는 나오지 않는다.** 순서는 ① 30km 안 우리 DB 장소 ② 30km 안 우리 DB에 없는 곳(`pinnable=false`). 이전에는 30km 밖 자체 DB 장소가 뒤에 이어졌다. 좌표가 없으면 이전과 같다.
+- 목 서버(`contracts/mocks/handlers/places.ts`)는 30km 밖을 거르지 않고 정렬만 가까운 순으로 한다(시드 장소가 지역을 넘나드는 FE 테스트가 있어서). 서버 구현은 #1251(backend/places, PR #1256).
+- FE 영향: 줌 아웃한 화면의 먼 장소가 검색에 안 나온다(범위는 지도 중심 기준 30km). 요청·응답 타입은 그대로다.
+
+## 2026-11-03, `POST /maps` 응답 403·422와 `created_by` 반복 쿼리 명시 (#1197)
+
+- `POST /maps`에 **403 `GUEST_NOT_ALLOWED`**(게스트는 지도를 만들 수 없다 — 서버가 이미 그렇게 응답한다)와 **422**(제목 길이, 종료일이 시작일보다 앞, 지역 필드 누락)를 응답 표에 더했다. 동작은 그대로이고 명세가 빠뜨린 것을 적었다. `PATCH /maps/{mapId}`의 422와 같은 문장이다.
+- `GET /maps/{mapId}/pins`의 `created_by`는 반복해서 보낸다(`?created_by=a&created_by=b`)고 `style: form`, `explode: true`로 명시했다(OpenAPI 기본값과 같아 동작 변화 없음, 목 서버가 지원하는 방식이다).
+- 옛 문서 PR #81(403 응답 커버리지)의 나머지는 **더하지 않는다**: 핀 생성·반응·확정 리스트 넣기/빼기는 모든 구성원이 가진 액션이라 구성원에게 403이 나올 수 없고(비구성원은 404), 명세 머리말도 엔드포인트 고유의 에러만 적는다.
+
+## 2026-11-03, `servers` 설명의 옛 배포 표기 정정 (#1227)
+
+- `servers[0].description`의 「배포 시 Cloud Run URL로 교체」를 「배포 시 운영 도메인으로 교체」로 고쳤다(배포가 AWS 서버 1대의 Docker Compose로 바뀌었다, `deploy_rules.md`). 설명 문장만 바뀌었고 계약·동작은 그대로다. `servers`는 생성 타입에 나오지 않아 `api.d.ts`는 바뀌지 않는다.
+
+## 2026-11-03, 확정 장소 날짜별 일정 (#1172)
+
+- `GET /maps/{mapId}/shortlist/schedule`은 여행 기간, version과 확정 항목을 반환한다.
+- `PUT /maps/{mapId}/shortlist/schedule`은 모든 항목을 날짜 또는 미배정 그룹에 정확히 한 번씩 배정한다. version 충돌은 `SHORTLIST_STALE`이다.
+- 날짜 배정이 있으면 기존 전체 정렬은 `SHORTLIST_SCHEDULED`를 반환한다. 여행 기간이 줄어 범위 밖이 된 항목은 기존 미배정 목록 뒤에 날짜별 기존 순서대로 붙인다.
+- TXT와 CSV 내보내기에 날짜별 일정과 미배정을 반영한다.
+
+## 2026-11-03, 핀 복구의 403·404 정리 (#1013)
+
+- `POST /pins/{pinId}/restore`: 없는 핀·삭제되지 않은 핀·30일이 지나 정리된 핀은 404, **삭제된 핀을 찍은 사람도 방장도 아닌 구성원이 부르면 404**(존재를 숨긴다), 403은 `pin.restore` 액션이 없는 역할일 때만이다. 문장만 명확히 했고 응답 모양은 그대로다. 화면은 휴지통 목록에 보이는 핀만 복구 버튼을 그리므로 일반 흐름에서는 이 오류를 보지 않는다.
+
+## 2026-11-03, 카톡 대화 파일과 날짜 범위 (#1139)
+
+- 카톡 가져오기 입력을 .txt 파일과 여행 이야기를 한 시작일·종료일로 바꾸기로 했다. 양끝 날짜를 포함해 브라우저에서 링크와 공유 글 힌트를 추출한다. 화면 구현은 PR #1141에서 진행 중이다.
+- 대화 원문과 날짜는 서버에 보내거나 저장하지 않는다. `link-preview` 요청 계약은 기존 `urls`와 선택 `hints` 그대로다.
+
+## 2026-11-03, `AgentFactLine.value` 값에 따옴표 — 값은 그대로 (#1168)
+
+- `enum: [yes, no, unknown]`을 `["yes", "no", "unknown"]`로 고쳤다. 주고받는 값(문자열 "yes"·"no"·"unknown")은 바뀌지 않는다.
+- 이유: YAML 1.1로 읽는 파이썬 계약 검사(PyYAML)가 따옴표 없는 yes/no를 참거짓으로 읽어, 서버가 보내는 "yes"를 스펙 위반으로 봤다. TS 타입 생성(openapi-typescript)은 원래 문자열로 읽어 FE 타입은 그대로다.
+
+## 2026-11-03, 에이전트 웹 확인 — `AgentFactLine.web` (#1152 ④)
+
+- `AgentFactLine`에 선택 필드 `web`(`AgentWebCheck` {`status`: found·not_found·paused, `notice`, `statements`[{`text`, `source_url`, `source_name`}] 많아야 2개, `checked_at`})을 더했다. 우리 데이터가 「모름」인 줄 하나에, 모델이 웹을 읽고 출처와 함께 옮긴 문장이다(`docs/agent-v2.md` 6.8). `agent.suggested` 페이로드에도 실린다.
+- 화면: found면 「AI 웹 요약 · 확인되지 않음」 + 문장 + 출처 링크(새 탭). not_found·paused면 서버가 보낸 `notice` 글 그대로. FE는 문구를 적지 않는다.
+- 이유: #1152 — 사실을 몰라 못 정하는 곳에서 우리 데이터가 모를 때 웹에 적힌 내용을 출처와 함께 보인다. 검증된 claim만 화면에 낸다는 원칙(agent-v2 2절 3번)의 예외라 「확인되지 않음」을 붙인다.
+- 하위호환: 선택 필드다. 서버 구현(#1216) 전에는 없고, 확인이 실패해도 없다. 목 서버 시드 제안은 카테고리 공백이라 `facts`가 비어 있어 그대로다.
+- 서버: llm·agent(#1216). FE: #1217.
+
+## 2026-11-03, 에이전트 지도 현황 문단과 우리 데이터 확인 — `AgentState.status`, `AgentSuggestion.facts` (#1152)
+
+- `AgentState`에 선택 필드 `status`(`AgentMapStatus` {`paragraph`, `updated_at`} 또는 null)를 더했다. 핑고 AI 조언 시트 맨 위에 보일 지도 현황 문단이다. 칸은 코드가 계산하고 모델이 판단과 문장을 맡으며, 서버가 사실과 모순인 판단을 거른다(`docs/agent-v2.md` 8.2).
+- `AgentSuggestion`에 선택 필드 `facts`(`AgentFactLine[]`, 많아야 2개)를 더했다. 갈림·정체가 사실 다툼일 때 그 핀 장소의 라벨을 서버가 고정 문구로 렌더한 줄이다(`value`: yes·no·unknown, `segments`는 AgentAdviceLine과 같은 조각, 6.6). `agent.suggested` 페이로드(AgentSuggestion)에도 실린다.
+- 이유: #1152 — 갈림·정체 제안이 「무엇부터 볼지」와 「사실을 몰라 못 정하는 곳」을 함께 보이게 한다.
+- 하위호환: 둘 다 선택 필드다. 서버 구현(#1168) 전에는 실서버가 보내지 않는다 — FE는 없으면 칸을 그리지 않는다. 목 서버는 시드 지도에 `status`를 보내고 시드 제안의 `facts`는 빈 목록이다.
+- 서버: agent·llm(#1168). FE: #1169.
+
+## 2026-11-03, 깔때기 항목에 단계 `key` (#1146)
+
+- `RecommendResult.funnel[]`과 `NO_RESULTS` 404의 `detail.funnel[]` 항목에 선택 필드 `key`를 더했다. 값은 `pool`·`radius`·`closed`·`disqualify`·`excluded`·`ranking`이고, 단계 표에 없는 옛 라벨로 저장된 깔때기는 null이다. `label`은 그대로 화면 문구다.
+- 이유: 화면이 「이미 제안·거절됨」 단계를 찾아 안내 문구를 바꿔야 한다(#1142). 라벨 글자 비교는 #751이 없앤 방식이다.
+- 하위호환: 선택 필드라 기존 FE는 무시해도 된다. 서버 구현(recommend) 전에는 실서버가 `key`를 보내지 않는다 — FE는 `key`가 없으면 지금 동작을 유지한다. 목 서버는 `key`를 보낸다.
+- 서버: recommend(#1146 — `core.keyed_funnel`을 응답에도 쓴다). FE: #1142.
+
+## 2026-11-02, 추천 조언 캐시를 결과 상태별로 저장 (#1103)
+
+- `GET /runs/{runId}/advice`의 요청·응답 구조는 그대로다. 넓히기·다시 추천으로 반경, 깔때기, 결과 수, 조언에 쓰이는 근거 줄이 바뀌면 조언도 다시 계산한다. 같은 상태를 재조회하면 저장된 조언(빈 조언 포함)을 돌려준다.
+- 내부 저장: `agent_run_advice`에 `state_key` 칸을 더한다(expand, 마이그레이션 `0057_agent_advice_state_key`). 기본키는 `run_id` 그대로라 이전 서버도 새 스키마에서 돈다. 결과가 바뀌면 그 행을 새 상태의 조언으로 덮는다(옛 행은 빈 키라 다음 조회에 한 번 다시 만든다). 상태 키 정본은 `agent.core.advice_state_key`다(반경, 다시 추천 횟수 `attempt_no`, 깔때기, 근거 줄). 이를 위해 `recommend.api.get_run_meta`가 `attempt_no`를 더 돌려준다.
+- FE: 넓히기·다시 추천 뒤 기존 advice 조회를 그대로 사용한다.
+
+## 2026-11-02, 깔때기 「반경 밖 제거」에 다른 시·도 장소 포함 — 설명 문구만 (#1055)
+
+- 추천 후보는 모든 카테고리에서 여행 지역과 같은 시·도 안만이다(PR #1069). 빠진 장소는 새 단계 없이 「반경 밖 제거」로 센다.
+- `RecommendResult.funnel` 설명에 한 문장을 더했다. 응답·요청 구조와 단계 목록은 그대로다.
+- FE: 바꿀 것 없음(깔때기는 받은 표를 그대로 그린다).
+
+## 2026-11-02, 관광지 반경 넓히기 상수 — 기본 25분·상한 45분, 설명 문구만 (#1055)
+
+사용자 결정(2026-11-02): 관광지는 반경 안 후보가 적어 기본 원을 넓게 시작한다. 근거는 9차 시험(`docs/constraints.md` 「반경 넓히기 상수」 절).
+
+- **응답·요청 구조는 그대로다.** 바뀐 것은 값과 설명 문구뿐이다: `POST /runs/{runId}/widen` 설명, `WIDEN_LIMIT` 409 설명, `RecommendReadiness.curated_nearby`, `RecommendRun.default_radius_walk_min`.
+- 값: 음식점·카페 기본 15분·상한 30분(그대로), **관광지 기본 25분·상한 45분**. 1회 확대폭은 5분 그대로.
+- FE: 응답의 `default_radius_walk_min`·`widen_limit_walk_min`을 그대로 쓰면 바꿀 것이 없다. 화면에 15·30 숫자를 적어 둔 곳이 있으면 응답 값으로 바꾼다.
+- 서버: recommend(#1055, PR #1060). 점수 규칙의 확인된 거짓 감점도 같은 이슈지만 API에는 보이지 않는다(`docs/constraints.md` 점수 절).
+
+## 2026-11-02 (카톡 가져오기), 번호→장소 번호표·같은 주소 후보·네이버 링크 (#1047·#1048)
+
+사용자 결정(2026-11-02): 「카톡으로 핀 깔기」는 복잡도를 감수하고 사용자 편의를 우선한다. 실제 카톡 공유 글로 시험한 결과를 반영한다(#1019).
+
+- **`LinkParseResult`**: `matched_by`에 `external_id`(번호표로 찾음) 추가, 선택 필드 `external_id`(링크에서 읽은 카카오·네이버 번호), 선택 필드 `address_candidates`(같은 주소의 단일 점포, 사람이 확인하는 후보 — 자동 확정 아님). `provider: naver`의 뜻이 바뀐다: 이제 서버가 `naver.me` 단축 링크를 한 번 따라가 번호를 읽는다(페이지 본문은 열지 않는다).
+- **`PinCreateSearch.link_ref`**(선택, `{provider: kakao|naver, external_id}`): link-preview 응답의 값을 핀 생성에 그대로 돌려 보낸다. 핀에 저장되지 않고 서버의 번호표 학습에만 쓰인다(서로 다른 사용자 2명이 같은 짝을 확인하면 자동 매칭).
+- **`POST /maps/{mapId}/pins/link-preview` 설명**: 실제 공유 글 모양(네이버·카카오·구글)과 4단 해결 순서를 적었다. 서버가 힌트로 스스로 확정한 짝은 번호표에 캐시한다.
+- 하위호환: 새 응답 필드는 모두 선택이라 기존 FE는 무시해도 된다. `link_ref`는 선택 요청 필드.
+- 서버: places(#1047 주소 후보·지점 접미사·구글 이름 속 주소 분리, #1048 번호표·`naver.me`), pins(`link_ref` 기록 호출). 그 전까지 실서버는 새 필드를 보내지 않고 `link_ref`는 무시한다. 목 서버는 새 시나리오를 낸다.
+- FE: #1046(공유 글 읽기·4단 해결·네이버 링크). 새 필드 없이도 구현 가능하다.
+
+## 2026-11-02, 광고 보고 크레딧 충전 — `CreditBalance.ad`, 광고 세션 열기·받기 (#1037)
+
+명세 `docs/credits-reviews.md` 3.7절, 결정 #432(2026-11-02 코멘트). 크레딧이 바닥나면 보상형 광고를 끝까지 보고 10을 받는다(상한 30까지, 사람당 KST 하루 3번, 연 뒤 7초).
+
+- `CreditBalance.ad`(필수, `CreditAd { available, reward, used_today, daily_max, provider, unit_id }`). 화면은 `available`만 본다.
+- `POST /credits/ad-sessions`(201 `AdSession { ad_session_id, claim_after_s }`, 받지 않은 세션은 이어 받는다), `POST /credits/ad-sessions/{adSessionId}/claim`(200 `AdClaim { credited, balance }`, 멱등).
+- 오류 `AD_REWARD_UNAVAILABLE`(409, `reason`), `AD_REWARD_LIMIT`(429, `limit`), `AD_REWARD_INVALID`(409, `reason`, `retry_after_s`).
+- 목 서버: `ad` 블록(기본 `provider: "fake"`), 두 경로. 광고가 열리는 모습은 시나리오 `credits-empty`(잔액 0). 받기 전 7초를 지킨다.
+- 서버 구현 전까지 두 경로와 세 오류 코드, `/credits/me`의 `ad`는 알려진 목록에 #1038로 있다. 화면은 #1039.
+
 ## 2026-11-01 (다섯 번째), 후기 화면의 크레딧 문구를 한 줄로 (#982)
 
 계약은 그대로다. 화면 문구만 정한다(`docs/credits-reviews.md` 5절 「화면 문구」): 새 후기 작성 시트에 「후기를 작성하면 {review_reward} 크레딧이 충전돼요」 한 줄만 두고(잔액이 `max_balance` 이상이면 숨긴다 — #985 검수), 고치기·삭제·저장 토스트에는 크레딧 얘기를 넣지 않는다. 받은 양을 보여 주려고 `ReviewSaved.credited`를 화면에 쓰지 않아도 된다(필드는 그대로 내린다).

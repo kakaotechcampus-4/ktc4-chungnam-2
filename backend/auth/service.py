@@ -1,5 +1,5 @@
 """
-셸 — DB·카카오 HTTP 호출만 여기 둔다. 판정 로직(토큰 서명/검증, 표시 이름 추출)은
+셸 — DB·카카오·구글 HTTP 호출만 여기 둔다. 판정 로직(토큰 서명/검증, 표시 이름 추출)은
 auth/core.py(순수 함수)에 있다(docs/code-quality.md 기능형 코어/명령형 셸 분리).
 
 각 함수는 커밋하지 않는다 — common.database.get_db(session_scope)가 요청당 한 번 커밋한다
@@ -28,6 +28,7 @@ from llm import api as llm_api
 from maps import api as maps_api
 from notifications import api as notifications_api
 from pins import api as pins_api
+from places import api as places_api
 from recommend import api as recommend_api
 from reviews import api as reviews_api
 from shortlist import api as shortlist_api
@@ -36,37 +37,53 @@ logger = logging.getLogger(__name__)
 
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_URL = "https://kapi.kakao.com/v2/user/me"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 _HTTP_TIMEOUT_SECONDS = 5.0
 _MAX_RESTORE_WAIT_SECONDS = 2.0   # 복구가 다음 초를 기다리는 상한(보통 1초 미만)
 
 
-class KakaoApiError(AppError):
-    """카카오 토큰 교환·프로필 조회가 실패했다 — 상태 코드, 네트워크 오류, 응답 모양이 기대와 다른 경우 모두.
-    콜백이 `login_error=kakao_failed`로 돌려보내려고 다른 AppError(탈퇴 계정 등)와 구분한다.
-    응답 본문·토큰은 메시지·detail·로그 어디에도 넣지 않는다 — 실패 종류(`reason`)만."""
+class OAuthProviderError(AppError):
+    """로그인 제공자(카카오·구글)의 토큰 교환·프로필 조회가 실패했다 — 상태 코드, 네트워크 오류, 응답 모양이 기대와 다른 경우 모두.
+    콜백이 `login_error={provider}_failed`로 돌려보내려고 다른 AppError(탈퇴 계정 등)와 구분한다.
+    응답 본문·토큰은 메시지·detail·로그 어디에도 넣지 않는다 — 실패 종류(`reason`)와 상태 코드만."""
 
-    def __init__(self, message: str, *, reason: str, kakao_status: int | None = None):
+    provider = ""
+
+    def __init__(self, message: str, *, reason: str, status: int | None = None):
         detail = {"reason": reason}
-        if kakao_status is not None:
-            detail["kakao_status"] = kakao_status
+        if status is not None:
+            detail[f"{self.provider}_status"] = status
         super().__init__("UNAUTHORIZED", message, detail=detail)
 
 
-def _kakao_request(send, *, message: str) -> dict:
-    """카카오 HTTP 호출 한 번 — 200이 아니거나, 연결에 실패하거나, JSON 객체가 아니면 KakaoApiError."""
+class KakaoApiError(OAuthProviderError):
+    provider = "kakao"
+
+
+class GoogleApiError(OAuthProviderError):
+    provider = "google"
+
+
+def _provider_request(send, *, message: str, error: type[OAuthProviderError]) -> dict:
+    """제공자 HTTP 호출 한 번 — 200이 아니거나, 연결에 실패하거나, JSON 객체가 아니면 `error`."""
     try:
         resp = send()
     except httpx.HTTPError as exc:
-        raise KakaoApiError(message, reason=type(exc).__name__) from None   # 요청 URL·헤더가 든 예외 본문은 버린다
+        raise error(message, reason=type(exc).__name__) from None   # 요청 URL·헤더가 든 예외 본문은 버린다
     if resp.status_code != 200:
-        raise KakaoApiError(message, reason="http_status", kakao_status=resp.status_code)
+        raise error(message, reason="http_status", status=resp.status_code)
     try:
         body = resp.json()
     except ValueError:
-        raise KakaoApiError(message, reason="invalid_json") from None
+        raise error(message, reason="invalid_json") from None
     if not isinstance(body, dict):
-        raise KakaoApiError(message, reason="unexpected_shape")
+        raise error(message, reason="unexpected_shape")
     return body
+
+
+def _kakao_request(send, *, message: str) -> dict:
+    return _provider_request(send, message=message, error=KakaoApiError)
 
 
 def _exchange_kakao_code(code: str) -> str:
@@ -223,6 +240,52 @@ def login_guest_with_kakao_code(db: Session, *, code: str, guest_user_id: str) -
     )
 
 
+def _google_identity(code: str) -> tuple[str, str]:
+    """인가 코드 → (구글 사용자 번호 sub, 표시 이름). 받는 범위는 `openid profile`뿐이다(core.GOOGLE_SCOPE)."""
+    message = "구글 인증에 실패했습니다"
+    body = _provider_request(
+        lambda: httpx.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": settings.google_redirect_uri,
+                "code": code,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=_HTTP_TIMEOUT_SECONDS,
+        ),
+        message=message, error=GoogleApiError,
+    )
+    token = body.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise GoogleApiError(message, reason="missing_access_token")
+    profile = _provider_request(
+        lambda: httpx.get(
+            GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {token}"}, timeout=_HTTP_TIMEOUT_SECONDS,
+        ),
+        message="구글 사용자 정보를 가져오지 못했습니다", error=GoogleApiError,
+    )
+    sub = profile.get("sub")
+    if not isinstance(sub, str) or not sub:
+        raise GoogleApiError("구글 사용자 정보를 가져오지 못했습니다", reason="missing_user_id")
+    return sub, core.display_name_from_google_profile(profile)
+
+
+def login_with_google_code(db: Session, *, code: str) -> User:
+    provider_user_id, display_name = _google_identity(code)
+    return find_or_create_user(db, provider="google", provider_user_id=provider_user_id, display_name=display_name)
+
+
+def login_guest_with_google_code(db: Session, *, code: str, guest_user_id: str) -> tuple[User, bool | None]:
+    """게스트 세션으로 시작한 구글 로그인 — 카카오와 같은 합치기(#560, #694, #1514)."""
+    provider_user_id, display_name = _google_identity(code)
+    return claim_guest(
+        db, guest_user_id=guest_user_id, provider="google", provider_user_id=provider_user_id, display_name=display_name,
+    )
+
+
 def create_qa_user(db: Session, *, display_name: str) -> User:
     """스테이징 전용 QA 로그인(#788) — 부를 때마다 새 사용자와 로그인 수단(provider='qa', 새 uuid)을 만든다.
     수단이 있으니 게스트가 아니다. 카카오 첫 로그인과 같은 생성 경로를 쓴다."""
@@ -318,12 +381,15 @@ def purge_withdrawn_user(db: Session, *, user_id: str) -> None:
     guest_invite_token 비움. users 행은 남긴다(다른 모듈의 created_by가 이 id를 가리킨다). 멱등이다.
     다른 모듈에 복사된 이름의 비식별화는 따로 부른다(데이터 모델 「탈퇴 후 7일 정리 대상」). 커밋하지 않는다.
     남의 알림에 복사된 이 사람의 이름도 여기서 「탈퇴한 구성원」으로 다시 만든다(notifications.api.anonymize_actor, #857).
+    외부 장소 번호표에 남긴 그 사람의 확인 표도 여기서 지운다(places.api.purge_external_id_votes, #1062).
     크레딧 계정·원장도 여기서 지운다 — 탈퇴 때 지우면 되살린 계정이 처음 지급량으로 다시 시작한다(#948,
     docs/credits-reviews.md 6절). 「새 계정으로 시작」(restart_account)도 이 함수를 거친다."""
     withdrawn = select(User.id).where(User.id == user_id, User.deleted_at.is_not(None))   # 살아 있는 계정은 건드리지 않는다
     if db.execute(withdrawn).first() is not None:
         credits_api.delete_by_user(db, user_id=user_id)
         notifications_api.anonymize_actor(db, user_id=user_id)   # 남의 알림에 복사된 행위자 이름(#857)
+        # 외부 장소 번호표 확인 표(#1062) — 복구 기간에는 남기고 여기서만 지운다. 공용 번호표 행은 남는다. 해시는 로그에 남기지 않는다
+        places_api.purge_external_id_votes(places_api.voter_hash(user_id), db=db)
     db.execute(delete(UserIdentity).where(UserIdentity.user_id.in_(withdrawn)))
     db.execute(
         update(User).where(User.id.in_(withdrawn)).values(
@@ -464,10 +530,10 @@ def restart_account(db: Session, *, claims: core.PendingClaims) -> User:
     return db.get(User, new.id)
 
 
-def purge_inactive_guests(db: Session, *, now: datetime, older_than_days: int) -> int:
-    """마지막으로 쓴 지 older_than_days일이 지난 게스트를 일반 탈퇴와 같은 규칙으로 지운다(withdraw_user).
+def purge_inactive_guests(db: Session, *, now: datetime) -> int:
+    """마지막으로 쓴 지 core.GUEST_INACTIVE_DAYS일이 지난 게스트를 일반 탈퇴와 같은 규칙으로 지운다(withdraw_user).
     last_seen_at이 없으면 created_at 기준. 이미 탈퇴한 계정은 건너뛴다. 지운 수를 돌려준다."""
-    cutoff = now - timedelta(days=older_than_days)
+    cutoff = now - timedelta(days=core.GUEST_INACTIVE_DAYS)
     ids = db.execute(
         select(User.id).where(
             User.is_guest, User.deleted_at.is_(None),

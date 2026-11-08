@@ -1,6 +1,7 @@
 """광고 엔드포인트 2개 — 실제 앱, 실제 멤버십, 실제 places로 HTTP를 두드린다(docs/ads.md 11절 10·11·13·15번, 7절 오류).
 요청 세션은 db_session(롤백)으로 바꿔 끼운다."""
 
+from urllib.parse import quote
 import random
 from datetime import timedelta
 
@@ -58,7 +59,8 @@ def test_get_ads_returns_contract_shape_without_memo_or_counts_and_no_store(worl
     assert body == {"ads": [{"ad_id": ad_id, "on_map": False, "place": {
         "place_id": place, "name": "온도 커피", "category": "카페", "address": "서울 성동구 성수동",
         "lat": pytest.approx(SEONGSU[0]), "lng": pytest.approx(SEONGSU[1]),
-        "place_url": "https://place.map.kakao.com/5"}}]}
+        "place_url": "https://place.map.kakao.com/5",
+        "naver_url": "https://map.naver.com/p/search/" + quote("온도 커피 성동구", safe="")}}]}
     text = r.text                                                                     # 11
     for leaked in ("memo", "광고주 A 비밀 메모", "served_count", "click_count", "starts_at", "ends_at", "active"):
         assert leaked not in text

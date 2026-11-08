@@ -47,6 +47,7 @@ class State:
     goals: tuple[Goal, ...] = ()                               # 요청 목표(명세 8.2). 강한 기준선의 비교에 들어간다
     priority: tuple[str, ...] = ()                             # 목표 id 순서(앞이 더 중요). 비면 goals 순서
     strict_priority: bool = False                              # True면 맨 앞 목표를 목표 수보다 먼저 본다(집중 후보)
+    home: Course = ()                                          # 사람이 정한 일정(점검 중일 때만). 옮긴 장소 수의 기준 — 비면 0으로 센다
     plan: tuple[str, ...] = ()
     lessons: tuple[str, ...] = ()
 
@@ -56,17 +57,23 @@ class State:
 
 def initial_state(
     trip: Trip, hours: Hours, course: Optional[Course] = None, goals: tuple[Goal, ...] = (),
+    locks: Optional[Mapping[str, str]] = None,
 ) -> State:
-    """course를 안 주면 초안 배치로 시작한다. 테스트는 정해진 코스로 시작할 수 있다."""
-    course = course if course is not None else core.draft_course(trip)
+    """course를 안 주면 초안 배치로 시작한다(locks가 있으면 그 장소는 그 날). 테스트는 정해진 코스로 시작할 수 있다.
+    locks는 사람이 일정에 넣은 장소다 — 시작 코스가 이미 어기고 있으면 ValueError."""
+    locks = dict(locks or {})
+    course = course if course is not None else core.draft_course(trip, locks)
     _check_course(trip, course)
+    for place, day in locks.items():
+        if core.day_alias(core.locate(course, place)[0]) != day:
+            raise ValueError(f"{place}는 {day}에 고정인데 코스가 다른 날에 둔다")
     # 여행 날짜 전부의 휴무를 이미 아는 장소는 get_opening_hours가 새로 알려 줄 게 없다 — 처음부터 조회 끝으로 둔다.
     # 서비스에서는 시작 스냅샷이 DB의 휴무를 이미 담으므로, 스냅샷에 모르는 날이 남은 곳도 조회가 새 정보를 주지 못한다(같은 DB를 읽는다).
     # 그 경우는 첫 조회가 확인해 주므로 여기서는 "다 아는 곳"만 표시한다.
     known = frozenset(p.alias for p in trip.places if all(core.status_on(hours, p.alias, d) != "unknown" for d in trip.days))
     return State(
         trip=trip, hours=hours, course=course, looked_up=known, goals=goals,
-        violations=core.find_violations(trip, course, hours),
+        violations=core.find_violations(trip, course, hours), locks=locks,
         history=(Commit(0, course),),
     )
 

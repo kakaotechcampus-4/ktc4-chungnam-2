@@ -2,7 +2,7 @@ import { afterAll, beforeAll, afterEach, describe, expect, it } from "vitest";
 import { server } from "./node";
 import { resetScenario } from "./scenarios";
 import { ME_USER_ID, store } from "./store";
-import { MAP_LIMIT } from "./handlers/maps";
+import { MAP_LIMIT, copyTitle } from "./handlers/maps";
 import { SEED_BALANCE } from "./seed";
 
 const BASE = "https://api.pingo.example.com";
@@ -179,6 +179,86 @@ describe("핀 휴지통(#864)", () => {
   });
 });
 
+describe("지도 색과 대표 이미지(#1445)", () => {
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20]);
+  const putCover = (body: BodyInit, type: string) =>
+    fetch(`${BASE}/maps/map_1/cover`, { method: "PUT", body, headers: { "Content-Type": type } });
+
+  it("시드 지도는 색·이미지가 없고 방장 이름이 있다. 색은 바꾸고 null로 지운다", async () => {
+    const map = await (await fetch(`${BASE}/maps/map_1`)).json();
+    expect(map.color).toBeUndefined();
+    expect(map.cover_url).toBeUndefined();
+    expect(map.owner_display_name).toBe("황경");
+    const patch = (body: object) => fetch(`${BASE}/maps/map_1`, { method: "PATCH", body: JSON.stringify(body) });
+    expect((await (await patch({ color: "#3D7BF5" })).json()).color).toBe("#3D7BF5");
+    expect((await patch({ color: "blue" })).status).toBe(422);
+    expect((await patch({ title: null })).status).toBe(422);
+    expect((await (await patch({ color: null })).json()).color).toBeUndefined();
+  });
+
+  it("올린 이미지를 cover_url로 받고, 지우면 404. 형식이 틀리면 422 COVER_INVALID(detail에 상한)", async () => {
+    const put = await putCover(webp, "image/webp");
+    expect(put.status).toBe(200);
+    const { cover_url: url } = await put.json();
+    expect(url).toMatch(/^\/maps\/map_1\/cover\?v=\d+$/);
+    const got = await fetch(`${BASE}${url}`);
+    expect(got.headers.get("content-type")).toBe("image/webp");
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(webp);
+    expect((await (await fetch(`${BASE}/maps`)).json()).items.find((m: { id: string }) => m.id === "map_1").cover_url).toBe(url);
+
+    const bad = await putCover(webp, "image/png");
+    expect(bad.status).toBe(422);
+    expect((await bad.json()).detail).toEqual({ limit_bytes: 524288, types: ["image/webp", "image/jpeg", "image/png"] });
+
+    const deleted = await fetch(`${BASE}/maps/map_1/cover`, { method: "DELETE" });
+    expect((await deleted.json()).cover_url).toBeUndefined();
+    expect((await fetch(`${BASE}/maps/map_1/cover`)).status).toBe(404);
+  });
+});
+
+describe("지도 복사(#1446)", () => {
+  const copy = (mapId = "map_1") => fetch(`${BASE}/maps/${mapId}/copy`, { method: "POST" });
+
+  it("방장이 복사하면 제목 (n)·날짜·색·이미지·공개 핀을 옮기고, 반응·구성원·확정 리스트는 옮기지 않는다", async () => {
+    store.maps["map_1"].color = "#3D7BF5";
+    const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+    await fetch(`${BASE}/maps/map_1/cover`, { method: "PUT", body: webp, headers: { "Content-Type": "image/webp" } });
+    const source = store.maps["map_1"];
+    const sourcePins = Object.values(store.pins).filter((p) => p.map_id === "map_1" && p.visibility === "public");
+
+    const res = await copy();
+    expect(res.status).toBe(201);
+    const map = await res.json();
+    expect(map.title).toBe(`${source.title} (1)`);
+    expect([map.start_date, map.end_date, map.region, map.color]).toEqual([source.start_date, source.end_date, source.region, "#3D7BF5"]);
+    expect(map.cover_url).toMatch(new RegExp(`^/maps/${map.id}/cover\\?v=\\d+$`));
+    expect(map.my_role).toBe("owner");
+    expect(map.permissions.can_copy).toBe(true);
+    expect([map.member_count, map.confirmed_count, map.pin_count]).toEqual([1, 0, sourcePins.length]);
+
+    const pins = await (await fetch(`${BASE}/maps/${map.id}/pins`)).json();
+    expect(pins.every((p: { kind: string; created_by: string; reaction_summary: { like: number; against: number } }) =>
+      p.kind === "일반" && p.created_by === ME_USER_ID && p.reaction_summary.like + p.reaction_summary.against === 0)).toBe(true);
+
+    // 복사본을 또 복사해도 끝의 (k)를 떼고 다음 빈 번호
+    expect((await (await copy(map.id)).json()).title).toBe(`${source.title} (2)`);
+  });
+
+  it("구성원은 403, 비구성원은 404, 상한이면 409 MAP_LIMIT", async () => {
+    store.members["map_1"].forEach((m) => { m.role = m.user_id === ME_USER_ID ? "member" : m.role; });
+    store.members["map_1"].find((m) => m.user_id === "u_2")!.role = "owner";
+    expect((await copy()).status).toBe(403);
+    expect((await copy("map_nope")).status).toBe(404);
+    store.members["map_1"].forEach((m) => { m.role = m.user_id === ME_USER_ID ? "owner" : "member"; });
+    while (Object.keys(store.maps).filter((id) => store.members[id]?.some((m) => m.user_id === ME_USER_ID)).length < MAP_LIMIT) {
+      await fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "채우기", start_date: "2026-10-10", end_date: "2026-10-12" }) });
+    }
+    const full = await copy();
+    expect(full.status).toBe(409);
+    expect((await full.json()).detail.limit).toBe(MAP_LIMIT);
+  });
+});
+
 describe("에러 시나리오", () => {
   it("evidence-limit — 「+」는 선호로 붙고, 한 번에 글 5개, run 하나에 글 10개까지(#707)", async () => {
     const run = await fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점" }) }).then((r) => r.json());
@@ -342,11 +422,28 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
 
   it("지도 응답에 요청자 기준 permissions가 붙고, 상세에서만 next_owner가 온다", async () => {
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: true, can_edit: true, can_manage_invites: true, can_transfer_owner: true, can_copy: true });
     expect(detail.next_owner.user_id).toBe("u_2");
     const list = (await (await fetch(`${BASE}/maps`)).json()).items;
     expect(list[0].permissions.can_delete).toBe(true);
     expect(list[0].next_owner).toBeUndefined();
+  });
+
+  it("#1371 GET /maps에 trip_max_days 90, 90일 초과 기간은 만들기·날짜 수정에서 422 TRIP_TOO_LONG", async () => {
+    expect((await (await fetch(`${BASE}/maps`)).json()).trip_max_days).toBe(90);
+    const create = (end: string) => fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify({ title: "긴 여행", start_date: "2026-01-01", end_date: end }) });
+    expect((await create("2026-03-31")).status).toBe(201); // 90일(포함)
+    const tooLong = await create("2026-04-01"); // 91일
+    expect(tooLong.status).toBe(422);
+    const err = await tooLong.json();
+    expect(err.code).toBe("TRIP_TOO_LONG");
+    expect(err.detail).toEqual({ limit: 90 });
+    const patch = (b: object) => fetch(`${BASE}/maps/map_1`, { method: "PATCH", body: JSON.stringify(b) });
+    const start = store.maps["map_1"].start_date;
+    expect((await patch({ end_date: "2099-01-01" })).status).toBe(422);
+    store.maps["map_1"].end_date = "2099-01-01"; // 이미 90일을 넘는 지도
+    store.maps["map_1"].start_date = start;
+    expect((await patch({ title: "제목만" })).status).toBe(200); // 제목만 고치는 것은 막지 않는다
   });
 
   it("방장이 나가면 다음 사람이 방장이 되고 member.left에 실린다", async () => {
@@ -361,7 +458,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
   it("넘길 사람이 없는 방장은 409 OWNER_CANNOT_LEAVE, can_leave=false", async () => {
     store.members["map_1"] = store.members["map_1"].filter((m) => m.user_id === "u_me");
     const detail = await (await fetch(`${BASE}/maps/map_1`)).json();
-    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true });
+    expect(detail.permissions).toEqual({ can_delete: true, can_leave: false, can_edit: true, can_manage_invites: true, can_transfer_owner: true, can_copy: true });
     const r = await fetch(`${BASE}/maps/map_1/members/me`, { method: "DELETE" });
     expect(r.status).toBe(409);
     expect((await r.json()).code).toBe("OWNER_CANNOT_LEAVE");
@@ -375,7 +472,7 @@ describe("#369 — 지도 삭제, 나가기, 방장 위임", () => {
     expect((await fetch(`${BASE}/maps/map_1`, { method: "DELETE" })).status).toBe(204);
     expect((await fetch(`${BASE}/maps/map_1`)).status).toBe(404);
     expect((await (await fetch(`${BASE}/invites/${invite.token}/accept`, { method: "POST" })).json()).code).toBe("INVITE_NOT_FOUND");
-    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT });
+    expect(await (await fetch(`${BASE}/maps`)).json()).toEqual({ items: [], limit: MAP_LIMIT, trip_max_days: 90 });
   });
 });
 
@@ -607,7 +704,7 @@ describe("#469·#471 — 지난 추천 기록, 확정 리스트 내보내기", (
     const bytes = new Uint8Array(await csv.clone().arrayBuffer());
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // 엑셀에서 한글이 깨지지 않게 UTF-8 BOM (fetch의 text()는 BOM을 벗기므로 바이트로 본다)
     const body = await csv.text();
-    expect(body.split(/\r?\n/)[0]).toBe("순서,이름,분류,링크,메모");
+    expect(body.split(/\r?\n/)[0]).toBe("날짜,순서,이름,분류,링크,메모");
     expect(body).toContain('"여기, 맛있대"'); // 쉼표가 든 칸은 따옴표로 감싼다
 
     expect((await fetch(`${BASE}/maps/map_1/shortlist/export?format=pdf`)).status).toBe(422);
@@ -636,7 +733,8 @@ describe("#9 — 카톡 대화에서 뽑은 링크 미리보기·핀 일괄 생�
     expect(items[0]).toMatchObject({ status: "ok", result: { provider: "google", name_hint: "해운대 밀면" } });
     expect(items[0].result.matches[0].place_name).toBe("해운대 밀면");
     expect(items[1].result.matches[0].place_name).toBe("해운대 바다 카페");
-    expect(items[2]).toMatchObject({ status: "error", error_code: "LINK_NOT_SUPPORTED" });
+    // #1048 — 네이버 링크도 받는다: 번호(external_id)만 읽고 matches는 번호표에 학습된 짝이 있을 때만
+    expect(items[2]).toMatchObject({ status: "ok", result: { provider: "naver", external_id: "naver:1", matches: [], needs_search_query: true } });
     expect(items[3].result).toMatchObject({ needs_search_query: true, kakao_place_id: "kakao:mock-6", matches: [] }); // 자체 DB에 없다
     expect(items[4].result.matches).toEqual([]); // 구글 링크인데 짝 없음 — 화면이 name_hint로 검색을 잇는다
     // 링크의 좌표·원문은 돌려주지 않는다(matches의 좌표는 자체 DB 장소의 값)
@@ -662,7 +760,7 @@ describe("#9 — 카톡 대화에서 뽑은 링크 미리보기·핀 일괄 생�
     expect(items[0].result.matches[0].place_name).toBe("해운대 밀면");
     expect(items[1]).toMatchObject({ status: "ok", result: { provider: "naver", matches: [] } });
     expect(items[1].result).not.toHaveProperty("matched_by");
-    expect(items[2]).toMatchObject({ status: "error", error_code: "LINK_NOT_SUPPORTED" });
+    expect(items[2]).toMatchObject({ status: "ok", result: { provider: "naver", matches: [], needs_search_query: true } }); // #1048 네이버는 힌트 없이도 번호를 읽는다
     expect(items[3].result).toMatchObject({ provider: "google", matched_by: "hint" });
     expect(items[3].result.matches[0].place_name).toBe("해운대 바다 카페");
     // hints 길이가 urls와 다르면 422, 빈 배열은 허용
@@ -670,6 +768,26 @@ describe("#9 — 카톡 대화에서 뽑은 링크 미리보기·핀 일괄 생�
     expect((await send("/maps/map_1/pins/link-preview", "POST", { urls: [googleLink("해운대 밀면")], hints: [] })).status).toBe(200);
     // 응답에 힌트(상호명·주소)를 되돌리지 않는다(짝을 찾은 장소의 값만)
     expect(JSON.stringify(items[1])).not.toContain("역삼");
+  });
+
+  it("link-preview(#1047·#1048): 번호표에 학습된 네이버 링크는 matches(external_id), 이름이 달라도 주소가 같은 한 곳은 address_candidates(자동 확정 아님)", async () => {
+    const r = await send("/maps/map_1/pins/link-preview", "POST", {
+      urls: ["https://naver.me/learned1", "https://naver.me/FvTH6o34", "https://naver.me/IDkVeMFP"],
+      hints: [null, { name: "법인명과 전혀 다른 간판", address: "부산 해운대구 우동" }, { name: "없는 가게", address: "대전 중구 어딘가 999" }],
+    });
+    expect(r.status).toBe(200);
+    const { items } = await r.json();
+    expect(items[0].result).toMatchObject({ provider: "naver", external_id: "naver:learned1", matched_by: "external_id", needs_search_query: false });
+    expect(items[0].result.matches).toHaveLength(1);
+    // 같은 주소의 단일 점포는 후보로만 — matches는 비어 있고 matched_by도 없다
+    expect(items[1].result.matches).toEqual([]);
+    expect(items[1].result).not.toHaveProperty("matched_by");
+    expect(items[1].result.address_candidates).toHaveLength(1);
+    expect(items[1].result.address_candidates[0].pinnable).toBe(true);
+    // 주소가 같은 곳이 없으면 후보도 없다(지어내지 않는다)
+    expect(items[2].result).not.toHaveProperty("address_candidates");
+    // 응답에 힌트를 되돌리지 않는다
+    expect(JSON.stringify(items)).not.toContain("어딘가");
   });
 
   it("link-preview: 이미 지도에 있는 장소는 already_pinned_pin_id, 빈 목록·10개 초과·없는 지도는 에러", async () => {
@@ -740,6 +858,14 @@ describe("#472 — 게스트 참여", () => {
     const again = await fetch(`${BASE}/auth/kakao/callback?code=x&state=y`, { redirect: "manual" });
     expect(again.headers.get("location")).toBe("/"); // 게스트가 아니면 쿼리가 붙지 않는다
     resetScenario("happy-path");
+  });
+
+  it("구글 로그인(#1514)도 카카오와 같이 진입점으로 돌아온다", async () => {
+    const start = await fetch(`${BASE}/auth/google/login`, { redirect: "manual" });
+    expect(start.status).toBe(302);
+    expect(start.headers.get("location")).toBe("/");
+    const back = await fetch(`${BASE}/auth/google/callback?code=x&state=y`, { redirect: "manual" });
+    expect(back.headers.get("location")).toBe("/");
   });
 
   it("게스트 시나리오: 지도 만들기는 403 GUEST_NOT_ALLOWED, 그 밖의 구성원 행동은 된다", async () => {
@@ -912,19 +1038,106 @@ describe("FE 스펙 갭 (2026-09-30, #154·#155)", () => {
     expect(bad.status).toBe(422);
   });
 
-  it("반경 넓히기는 +5분씩, 도보 30분 상한에서 409 WIDEN_LIMIT", async () => {
+  it("반경 넓히기는 +1000m씩, 5000m 상한에서 409 WIDEN_LIMIT (#1385)", async () => {
     resetScenario("region-conflict");
     const runId = "run_region_conflict";
     const radii: number[] = [];
-    for (let i = 0; i < 3; i++) {
+    const nexts: Array<number | null> = [];
+    for (let i = 0; i < 2; i++) {
       const res = await post(`/runs/${runId}/widen`);
       expect(res.status).toBe(202);
-      radii.push((await res.json()).default_radius_walk_min);
+      const body = await res.json();
+      radii.push(body.default_radius_m);
+      nexts.push(body.next_default_radius_m);
     }
-    expect(radii).toEqual([20, 25, 30]);
+    expect(radii).toEqual([4000, 5000]);
+    expect(nexts).toEqual([5000, null]); // #1370 상한이면 null
     const over = await post(`/runs/${runId}/widen`);
     expect(over.status).toBe(409);
     expect((await over.json()).code).toBe("WIDEN_LIMIT");
+  });
+});
+
+describe("#1385·#1370·#1164 — 추천 반경(m)과 여행 지역 밖 오류", () => {
+  const createRun = (body: object) => fetch(`${BASE}/maps/map_1/runs`, { method: "POST", body: JSON.stringify({ category: "음식점", execute: true, ...body }) });
+
+  it("readiness가 카테고리별 기본 반경 radius_m: 3000을 준다", async () => {
+    resetScenario("happy-path");
+    const res = await fetch(`${BASE}/maps/map_1/recommend/readiness`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body["음식점"].radius_m).toBe(3000);
+    expect(body["관광지"].radius_m).toBe(3000);
+  });
+
+  it("run 생성은 default_radius_m 3000·next 4000을 주고, 지난 추천(RunSummary)에도 같은 칸이 있다", async () => {
+    resetScenario("happy-path");
+    const res = await createRun({});
+    expect(res.status).toBe(202);
+    const run = await res.json();
+    expect(run.default_radius_m).toBe(3000);
+    expect(run.next_default_radius_m).toBe(4000);
+    const widened = await (await fetch(`${BASE}/runs/${run.id}/widen`, { method: "POST" })).json();
+    expect(widened.default_radius_m).toBe(4000);
+    const list = await (await fetch(`${BASE}/maps/map_1/runs`)).json();
+    const mine = list.find((r: { id: string }) => r.id === run.id);
+    expect(mine.default_radius_m).toBe(4000);
+    expect(mine.next_default_radius_m).toBe(5000);
+  });
+
+  it("radius_m: 2000~5000 정수만 받는다 — 경계 통과, 범위 밖·소수·문자열은 422(#1416)", async () => {
+    resetScenario("happy-path");
+    for (const ok of [2000, 5000]) {
+      const res = await createRun({ radius_m: ok } as never);
+      expect(res.status).toBe(202);
+    }
+    for (const bad of [1999, 5001, 2500.5, "3000", null, true]) {
+      const res = await createRun({ radius_m: bad } as never);
+      expect(res.status).toBe(422);
+      expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("고른 반경이 run의 default_radius_m이 되고 넓히기는 거기서 +1000, 5000이면 next는 null(#1416)", async () => {
+    resetScenario("happy-path");
+    const low = await (await createRun({ radius_m: 2000 } as never)).json();
+    expect(low.default_radius_m).toBe(2000);
+    expect(low.next_default_radius_m).toBe(3000);
+    const high = await (await createRun({ radius_m: 5000 } as never)).json();
+    expect(high.default_radius_m).toBe(5000);
+    expect(high.next_default_radius_m).toBeNull();
+  });
+
+  it("readiness: radius_min_m 2000·radius_max_m 5000·radius_m 3000, 쿼리 radius_m은 2000~5000 정수 문자열만(#1416)", async () => {
+    resetScenario("happy-path");
+    const ok = await fetch(`${BASE}/maps/map_1/recommend/readiness?center_lat=37.5&center_lng=127&radius_m=2500`);
+    expect(ok.status).toBe(200);
+    const card = (await ok.json())["음식점"];
+    expect([card.radius_m, card.radius_min_m, card.radius_max_m]).toEqual([3000, 2000, 5000]);
+    for (const bad of ["1999", "5001", "2500.5", "abc"]) {
+      const res = await fetch(`${BASE}/maps/map_1/recommend/readiness?center_lat=37.5&center_lng=127&radius_m=${bad}`);
+      expect(res.status).toBe(422);
+    }
+  });
+
+  it("지도가 서울이고 center가 부산이면 422 OUTSIDE_TRIP_REGION — detail.region_label, 크레딧을 쓰지 않는다", async () => {
+    resetScenario("happy-path");
+    store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };
+    const before = (await (await fetch(`${BASE}/credits/me`)).json()).balance;
+    const res = await createRun({ center: { lat: 35.1587, lng: 129.1604 } });
+    expect(res.status).toBe(422);
+    const err = await res.json();
+    expect(err.code).toBe("OUTSIDE_TRIP_REGION");
+    expect(err.detail).toEqual({ region_label: "서울" });
+    expect((await (await fetch(`${BASE}/credits/me`)).json()).balance).toBe(before);
+  });
+
+  it("지도에 여행 지역이 없거나 center가 지역 안이면 막지 않는다", async () => {
+    resetScenario("happy-path");
+    delete store.maps.map_1.region;
+    expect((await createRun({ center: { lat: 35.1587, lng: 129.1604 } })).status).toBe(202);
+    store.maps.map_1.region = { label: "서울", lat: 37.5665, lng: 126.978 };
+    expect((await createRun({ center: { lat: 37.5665, lng: 126.978 } })).status).toBe(202);
   });
 });
 
@@ -937,6 +1150,7 @@ describe("#902 — GET /places/external-search (장소 검색 결과 없음의 �
     expect(await res.json()).toEqual({
       query: "성수 칼국수 & 수제비",
       url: "https://map.kakao.com/link/search/" + encodeURIComponent("성수 칼국수 & 수제비"),
+      naver_url: "https://map.naver.com/p/search/" + encodeURIComponent("성수 칼국수 & 수제비"),
     });
   });
 
@@ -1260,6 +1474,8 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     expect(state.summaries[0].category).toBe("음식점");
     expect(state.summaries[0].not_filtered.notices[0]).toContain("가게에 직접 확인");
     expect(state.active_suggestion.claims).toBeUndefined(); // 서버 내부 값은 싣지 않는다
+    expect(state.status.paragraph).toContain("부터 보면 좋겠어요"); // 지도 현황 문단(#1152)
+    expect(state.active_suggestion.facts).toEqual([]); // 우리 데이터 확인은 사실 다툼에만(#1152)
   });
 
   it("열람하면 점이 꺼지고, 열람은 멱등이다", async () => {
@@ -1314,6 +1530,67 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
 
     store.runRequestedBy["run_no_results"] = "u_2";
     expect((await fetch(`${BASE}/runs/run_no_results/advice`)).status).toBe(403);
+  });
+
+  it("#1297 작업 기록: 제안에 WorkStep 모양의 단계가 붙고, 코드 유형은 감지로 시작해 재확인으로 끝난다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    const steps = state.active_suggestion.steps;
+    expect(steps.map((s: { stage: string }) => s.stage)).toEqual(["감지", "순위", "재확인"]);
+    for (const s of steps) expect(Object.keys(s).sort()).toEqual(["by", "by_detail", "role", "stage", "text"]);
+  });
+
+  it("#1297 살펴본 상태: 제안이 있으면 안내 문구가 없고, 제안이 없을 때만 최근 관찰의 문구가 실린다", async () => {
+    const notice = "이번에는 지도를 끝까지 살펴보지 못했어요. 새 활동이 생기면 다시 볼게요";
+    store.agentObservation["map_1"] = { checked_at: "2026-10-15T00:00:00.000Z", notice };
+    const withSuggestion = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(withSuggestion.observation).toEqual({ checked_at: "2026-10-15T00:00:00.000Z", notice: null });
+
+    await fetch(`${BASE}/agent/suggestions/sug_1/dismiss`, { method: "POST" });
+    const quiet = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(quiet.observation.notice).toBe(notice);
+
+    await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(off.observation.notice).toBeNull(); // 모드가 꺼져 있으면 스위치만 보인다
+  });
+
+  it("#1345 지켜보는 막힌 곳: 첫 제안은 attempt 0이고, tracking은 서버 문구와 since를 싣고, 모드를 끄면 빈 목록이다", async () => {
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(state.active_suggestion.attempt).toBe(0);
+    expect(state.active_suggestion.tried).toEqual([]);
+    expect(state.tracking.map((t: { status: string }) => t.status)).toEqual(["watching", "resolved"]);
+    for (const t of state.tracking) {
+      expect(Object.keys(t).sort()).toEqual(["category", "diagnosis", "since", "status", "suggestion_id", "text", "tried"]);
+      expect(t.text).not.toMatch(/\d/); // 경과 시간은 FE가 since로 그린다
+    }
+
+    await fetch(`${BASE}/maps/map_1/agent/settings`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+    const off = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(off.tracking).toEqual([]);
+  });
+
+  it("#1356 엮기: open_pin은 핀 하나, open_course는 일정 점검에만 — 수락하면 동작만 돌려준다", async () => {
+    resetScenario("agent-linked");
+    const linked = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(linked.active_suggestion.actions).toEqual([{ index: 0, type: "open_pin", label: "이 핀 보기", params: { pin_ids: ["pin_3"] } }]);
+
+    resetScenario("agent-schedule");
+    const sched = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    expect(sched.active_suggestion.diagnosis).toBe("schedule");
+    expect(sched.active_suggestion.actions.map((a: { type: string }) => a.type)).toEqual(["open_course"]);
+    const res = await fetch(`${BASE}/agent/suggestions/sug_1/accept`, { method: "POST", body: JSON.stringify({ action_index: 0 }) });
+    expect(res.status).toBe(200);
+  });
+
+  it("#1345 충돌 선언(시나리오 agent-declared): attempt 2, 버튼 없음, 해 본 것 두 줄, 후속 확인 단계", async () => {
+    resetScenario("agent-declared");
+    const state = await fetch(`${BASE}/maps/map_1/agent`).then((r) => r.json());
+    const s = state.active_suggestion;
+    expect(s.attempt).toBe(2);
+    expect(s.actions).toEqual([]);
+    expect(s.tried.map((t: { action_type: string }) => t.action_type)).toEqual(["open_recommend", "search_place"]);
+    expect(s.steps.map((x: { stage: string }) => x.stage)).toContain("후속 확인");
+    expect(state.tracking.map((t: { suggestion_id: string }) => t.suggestion_id)).not.toContain("sug_watch"); // 활성 제안인 막힌 곳은 tracking에 없다
   });
 });
 
@@ -1410,7 +1687,8 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const placed = done.days.flatMap((d: { slots: { pin_id: string }[] }) => d.slots.map((s) => s.pin_id));
     expect(placed.sort()).toEqual(["pin_1", "pin_2"]);
     expect(done.checks.length).toBe(2);
-    expect(done.steps.length).toBe(7);
+    expect(done.steps.length).toBe(14);
+    expect(done.steps.map((s: { stage: string }) => s.stage)).toEqual(expect.arrayContaining(["찾기", "옮겨 보기", "결정", "비교", "끝", "가정"])); // 진행 화면 줄 색·단계 막대(#1243)
     expect(done.stale).toBe(false);
 
     await confirm("pin_3");
@@ -1464,6 +1742,96 @@ describe("#334 AI 코스 짜기 — 목 서버 계약 (#580 결정 전 초안)",
     const res = await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" });
     expect(res.status).toBe(202);
     expect((await fetch(`${BASE}/credits/me`).then((r) => r.json())).balance).toBe(SEED_BALANCE - 6);
+  });
+});
+
+describe("#1237 AI 코스 — 일정 상태에 따라 plan·fill·review", () => {
+  const confirm = (pinId: string) =>
+    fetch(`${BASE}/maps/map_1/shortlist`, { method: "POST", body: JSON.stringify({ pin_id: pinId }) });
+  const schedule = () => fetch(`${BASE}/maps/map_1/shortlist/schedule`).then((r) => r.json());
+  /** 날짜 → 핀 id 목록으로 일정을 저장한다(나머지는 미배정). */
+  async function setSchedule(byDate: Record<string, string[]>) {
+    const cur = await schedule();
+    const itemOf = (pinId: string) => cur.items.find((i: { pin: { id: string } }) => i.pin.id === pinId).id as string;
+    const placed = Object.values(byDate).flat();
+    const rest = cur.items.map((i: { pin: { id: string } }) => i.pin.id).filter((id: string) => !placed.includes(id));
+    const groups = [...Object.entries(byDate).map(([date, pins]) => ({ date, item_ids: pins.map(itemOf) })), ...(rest.length ? [{ date: null, item_ids: rest.map(itemOf) }] : [])];
+    const res = await fetch(`${BASE}/maps/map_1/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: cur.version, groups }) });
+    expect(res.status).toBe(200);
+  }
+  async function runDone() {
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" })).json();
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    return (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+  }
+  const [d1, d2] = [store.maps["map_1"].start_date, store.maps["map_1"].end_date];
+
+  it("일정이 비어 있으면 plan — fixes·checked는 빈 배열이고 진행 중에는 headline이 null이다", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    const { course_run_id } = await (await fetch(`${BASE}/maps/map_1/courses`, { method: "POST" })).json();
+    const running = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(running.mode).toBe("plan");
+    expect(running.headline).toBeNull();
+    expect(running.fixes).toEqual([]);
+    await fetch(`${BASE}/course-runs/${course_run_id}`);
+    const final = await (await fetch(`${BASE}/course-runs/${course_run_id}`)).json();
+    expect(final.mode).toBe("plan");
+    expect(final.headline).toEqual(expect.any(String));
+    expect(final.fixes).toEqual([]);
+    expect(final.checked).toEqual([]);
+  });
+
+  it("일부만 넣었으면 fill — 넣은 장소는 그 날에 그대로, 미배정마다 「넣기」 카드(from_date null)", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    await setSchedule({ [d1]: ["pin_1"] });
+    const done = await runDone();
+    expect(done.mode).toBe("fill");
+    expect(done.days.find((d: { date: string }) => d.date === d1).slots[0].pin_id).toBe("pin_1");
+    expect(done.fixes).toHaveLength(2);
+    for (const fix of done.fixes) {
+      expect(fix.kind).toBe("unassigned");
+      expect(fix.strength).toBe("soft");
+      expect(fix.moves).toHaveLength(1);
+      expect(fix.moves[0].from_date).toBeNull();
+      expect(["pin_2", "pin_3"]).toContain(fix.moves[0].pin_id);
+    }
+    expect(done.steps.map((s: { stage: string }) => s.stage)).toContain("고정");
+  });
+
+  it("모두 넣었으면 review — 고칠 점 카드(날 맞바꾸기 1·1곳 옮기기 1·고치지 않음 1)와 괜찮은 항목", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await confirm("pin_3");
+    await setSchedule({ [d1]: ["pin_1"], [d2]: ["pin_2", "pin_3"] });
+    const done = await runDone();
+    expect(done.mode).toBe("review");
+    expect(done.days.find((d: { date: string }) => d.date === d1).slots.map((s: { pin_id: string }) => s.pin_id)).toEqual(["pin_1"]);
+    const [swap, move, skipped] = done.fixes;
+    expect(swap.strength).toBe("hard");
+    expect(swap.moves.map((m: { pin_id: string }) => m.pin_id).sort()).toEqual(["pin_1", "pin_2", "pin_3"]); // 두 날을 통째로
+    expect(swap.moves.find((m: { pin_id: string }) => m.pin_id === "pin_1")).toEqual({ pin_id: "pin_1", from_date: d1, to_date: d2 });
+    expect(move.moves).toHaveLength(1);
+    expect(move.moves[0].to_date).not.toBe(move.moves[0].from_date);
+    expect(skipped.moves).toEqual([]);
+    expect(skipped.not_fixed_reason).toEqual(expect.any(String));
+    expect(skipped.resolved_text).toBeNull();
+    expect(done.checked.map((c: { kind: string }) => c.kind)).toEqual(["member", "condition", "goal", "cluster"]);
+    expect(done.headline).toContain("고칠 점 3개");
+  });
+
+  it("일정이 바뀌면 stale — 날짜만 옮겨도(장소는 그대로) 낡은 코스가 된다", async () => {
+    await confirm("pin_1");
+    await confirm("pin_2");
+    await setSchedule({ [d1]: ["pin_1"], [d2]: ["pin_2"] });
+    const done = await runDone();
+    expect(done.stale).toBe(false);
+    await setSchedule({ [d1]: ["pin_2"], [d2]: ["pin_1"] });
+    const latest = await (await fetch(`${BASE}/maps/map_1/courses/latest`)).json();
+    expect(latest.stale).toBe(true);
   });
 });
 
@@ -1719,7 +2087,10 @@ describe("#432 — 크레딧", () => {
 
   it("새 계정은 30이고 가격표·후기 보상·잔액 상한을 응답으로 내린다", async () => {
     delete store.credits[ME_USER_ID]; // 행이 없는 새 계정
-    expect(await credits().then((r) => r.json())).toEqual({ balance: 30, max_balance: 30, prices: { recommend_run: 1, course: 1 }, review_reward: 10 });
+    expect(await credits().then((r) => r.json())).toEqual({
+      balance: 30, max_balance: 30, prices: { recommend_run: 1, course: 1 }, review_reward: 10,
+      ad: { available: false, reward: 10, used_today: 0, daily_max: 3, provider: "fake", unit_id: null },
+    });
   });
 
   it("추천 받기는 1을 쓰고, 같은 Idempotency-Key 재전송과 다시 추천은 더 쓰지 않는다", async () => {
@@ -1830,5 +2201,123 @@ describe("#432 — 장소 후기", () => {
     expect((await reviews()).status).toBe(200);
     expect((await put({ rating: 5, body: "좋아요" })).status).toBe(403);
     expect((await fetch(`${BASE}/reviews/review_1/reports`, { method: "POST" })).status).toBe(403);
+  });
+});
+
+describe("#1037 — 광고 보고 충전", () => {
+  const me = () => fetch(`${BASE}/credits/me`).then((r) => r.json());
+  const open = () => fetch(`${BASE}/credits/ad-sessions`, { method: "POST" });
+  const claim = (id: string) => fetch(`${BASE}/credits/ad-sessions/${id}/claim`, { method: "POST" });
+  const age = (id: string, seconds: number) => { store.adSessions[id].issued_at -= seconds * 1000; }; // 연 시각을 앞으로 당긴다
+
+  it("잔액이 있으면 available false, 열기는 409 not_needed. 광고가 꺼져 있으면 409 off", async () => {
+    expect((await me()).ad.available).toBe(false);
+    const res = await open();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "AD_REWARD_UNAVAILABLE", detail: { reason: "not_needed" } });
+    resetScenario("credits-empty");
+    store.adProvider = null;
+    expect((await me()).ad).toMatchObject({ available: false, provider: null });
+    expect(await (await open()).json()).toMatchObject({ code: "AD_REWARD_UNAVAILABLE", detail: { reason: "off" } });
+  });
+
+  it("잔액 0 — 열고, 7초 전에는 too_early, 지나면 10을 받고, 다시 받아도 같은 값", async () => {
+    resetScenario("credits-empty");
+    expect((await me()).ad.available).toBe(true);
+    const opened = await open();
+    expect(opened.status).toBe(201);
+    const { ad_session_id: id, claim_after_s } = await opened.json();
+    expect(claim_after_s).toBe(7);
+    const early = await claim(id);
+    expect(early.status).toBe(409);
+    expect((await early.json()).detail).toMatchObject({ reason: "too_early" });
+    age(id, 8);
+    expect(await (await claim(id)).json()).toEqual({ credited: 10, balance: 10 });
+    expect(await (await claim(id)).json()).toEqual({ credited: 10, balance: 10 });
+    expect((await me()).ad).toMatchObject({ available: false, used_today: 1 });
+  });
+
+  it("받지 않은 세션은 다시 열어도 같은 id이고, 하루 3번을 열면 4번째는 429(detail.limit)", async () => {
+    resetScenario("credits-empty");
+    const first = await (await open()).json();
+    expect((await (await open()).json()).ad_session_id).toBe(first.ad_session_id);
+    expect((await me()).ad.used_today).toBe(1);
+    // 시각을 옮기지 않고 받은 것으로만 표시한다(잔액은 그대로 0) — 자정 근처에 돌려도 하루 경계가 흔들리지 않게
+    const markClaimed = () => { for (const s of Object.values(store.adSessions)) s.claimed_at ??= Date.now(); };
+    markClaimed();
+    await open();
+    markClaimed();
+    await open();
+    markClaimed();
+    const fourth = await open();
+    expect(fourth.status).toBe(429);
+    expect(await fourth.json()).toMatchObject({ code: "AD_REWARD_LIMIT", detail: { limit: 3 } });
+  });
+
+  it("연 지 15분이 지나면 expired", async () => {
+    resetScenario("credits-empty");
+    const { ad_session_id: id } = await (await open()).json();
+    age(id, 901);
+    expect((await (await claim(id)).json()).detail).toEqual({ reason: "expired" });
+  });
+
+  it("남의 세션은 404, 게스트는 열기·받기 403", async () => {
+    resetScenario("credits-empty");
+    expect((await claim("00000000-0000-0000-0000-000000000000")).status).toBe(404);
+    resetScenario("guest");
+    expect((await open()).status).toBe(403);
+    expect((await claim("00000000-0000-0000-0000-000000000000")).status).toBe(403);
+  });
+});
+
+describe("확정 일정 (#1172)", () => {
+  it("날짜 배정과 충돌을 확인한다", async () => {
+    const url = `${BASE}/maps/map_1/shortlist/schedule`;
+    const before = await (await fetch(url)).json();
+    const groups = [{ date: before.start_date, item_ids: before.items.map((i: {id: string}) => i.id) }];
+    const saved = await fetch(url, { method: "PUT", body: JSON.stringify({ version: before.version, groups }) });
+    expect(saved.status).toBe(200);
+    const stale = await fetch(url, { method: "PUT", body: JSON.stringify({ version: "stale", groups }) });
+    expect(stale.status).toBe(409);
+  });
+});
+
+describe("여행 기간 변경과 확정 일정 (#1172)", () => {
+  it("범위 밖 항목을 기존 미배정 뒤에 날짜별 순서로 보존한다", async () => {
+    const base = `${BASE}/maps/map_1`;
+    await fetch(base, { method: "PATCH", body: JSON.stringify({ start_date: "2026-11-01", end_date: "2026-11-05" }) });
+    const items = await Promise.all(["pin_1", "pin_2", "pin_3"].map(pin_id => fetch(`${base}/shortlist`, { method: "POST", body: JSON.stringify({ pin_id }) }).then(r => r.json())));
+    const original = await (await fetch(`${base}/shortlist/schedule`)).json();
+    const groups = [{ date: null, item_ids: [items[0].id] }, { date: "2026-11-04", item_ids: [items[2].id, items[1].id] }];
+    expect((await fetch(`${base}/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: original.version, groups }) })).status).toBe(200);
+    const stale = await fetch(`${base}/shortlist/schedule`, { method: "PUT", body: JSON.stringify({ version: original.version, groups }) });
+    expect((await stale.json()).message).toBe("확정 리스트가 변경되었습니다");
+    const order = await fetch(`${base}/shortlist/order`, { method: "PUT", body: JSON.stringify({ item_ids: items.map(i => i.id) }) });
+    expect((await order.json()).message).toBe("날짜별 일정을 사용 중입니다");
+    expect((await fetch(base, { method: "PATCH", body: JSON.stringify({ end_date: "2026-11-02" }) })).status).toBe(200);
+    const result = await (await fetch(`${base}/shortlist/schedule`)).json();
+    expect(result.items.map((i: { id: string }) => i.id)).toEqual([items[0].id, items[2].id, items[1].id]);
+    expect(result.items.every((i: { scheduled_date: string | null }) => i.scheduled_date === null)).toBe(true);
+  });
+});
+
+describe("지도 만들기 응답(#1197)", () => {
+  it("종료일이 시작일보다 앞이면 422, 게스트는 403 GUEST_NOT_ALLOWED", async () => {
+    const post = (body: object) => fetch(`${BASE}/maps`, { method: "POST", body: JSON.stringify(body) });
+    const bad = await post({ title: "거꾸로", start_date: "2026-11-05", end_date: "2026-11-01" });
+    expect(bad.status).toBe(422);
+    expect((await bad.json()).code).toBe("VALIDATION_ERROR");
+
+    store.users[ME_USER_ID].is_guest = true;
+    const guest = await post({ title: "게스트", start_date: "2026-11-01", end_date: "2026-11-02" });
+    expect(guest.status).toBe(403);
+    expect((await guest.json()).code).toBe("GUEST_NOT_ALLOWED");
+  });
+});
+
+describe("복사본 제목은 서버 maps.core.copy_title과 같다(#1446)", () => {
+  it("코드 포인트 단위로 자르고 유니코드 숫자 꼬리도 뗀다", () => {
+    expect(copyTitle("🌊".repeat(100), new Set())).toBe("🌊".repeat(96) + " (1)");
+    expect(copyTitle("부산 여행 (２)", new Set())).toBe("부산 여행 (1)");
   });
 });

@@ -132,6 +132,8 @@ def open_status_on_weekdays(week_status: Mapping[int, str] | None, weekdays: Seq
 
 KAKAO_SEARCH_URL = "https://map.kakao.com/link/search/"   # 이 형식은 kakao_search_url 한 곳에서만 쓴다
 
+NAVER_SEARCH_URL = "https://map.naver.com/p/search/"   # 이 형식은 naver_search_url 한 곳에서만 쓴다(#1513)
+
 _SIDO_SUFFIXES = ("특별시", "광역시", "특별자치시", "특별자치도", "도")
 _SIDO_SHORT = frozenset({"서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
                          "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"})
@@ -167,6 +169,42 @@ def neighborhood(address: str | None) -> str | None:
     return " ".join(parts) or None
 
 
+# 접미사를 뗀 긴 이름 → 짧은 이름. 광주와 전남은 2026 통합(전남광주통합특별시)으로 한 값이다(#1059)
+_SIDO_STEMS = {"충청북": "충북", "충청남": "충남", "전라북": "전북", "전라남": "전남", "경상북": "경북", "경상남": "경남",
+               "전남광주통합": "전남"}
+_SIDO_MERGED = {"광주": "전남광주", "전남": "전남광주"}
+
+
+def sido(address: str | None) -> str | None:
+    """주소 첫 낱말의 시·도를 짧은 이름 하나로. 시·도로 시작하지 않거나 주소가 없으면 None(#1059).
+
+    | 주소의 첫 낱말 | 값 |
+    |---|---|
+    | 서울특별시, 서울시, 서울 | 서울 |
+    | 부산·대구·인천·대전·울산광역시(또는 짧은 이름) | 부산·대구·인천·대전·울산 |
+    | 세종특별자치시, 세종 | 세종 |
+    | 경기도, 경기 | 경기 |
+    | 강원특별자치도, 강원도, 강원 | 강원 |
+    | 충청북도·충청남도, 충북·충남 | 충북·충남 |
+    | 전북특별자치도, 전라북도, 전북 | 전북 |
+    | 경상북도·경상남도, 경북·경남 | 경북·경남 |
+    | 제주특별자치도, 제주도, 제주 | 제주 |
+    | 전남광주통합특별시, 광주광역시, 전라남도, 광주, 전남 | 전남광주(2026 통합) |
+    """
+    tokens = address.split() if address else []
+    if not tokens:
+        return None
+    stem = tokens[0]
+    for suffix in (*_SIDO_SUFFIXES, "시"):   # "서울시" 같은 줄임도 받는다. 표에 없는 시("수원시")는 아래에서 None
+        if stem.endswith(suffix) and len(stem) > len(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    stem = _SIDO_STEMS.get(stem, stem)
+    if stem not in _SIDO_SHORT:
+        return None
+    return _SIDO_MERGED.get(stem, stem)
+
+
 def kakao_search_url(query: str) -> str:
     """카카오맵 검색 링크. 검색어는 통째로 URL 인코딩한다(공백 → %20)."""
     return KAKAO_SEARCH_URL + quote(query, safe="")
@@ -177,8 +215,40 @@ def place_link(name: str | None, address: str | None, kakao_place_url: str | Non
     동네가 없으면 이름만, 이름이 없으면 None."""
     if kakao_place_url:
         return kakao_place_url
+    query = place_search_query(name, address)
+    return kakao_search_url(query) if query else None
+
+
+def place_search_query(name: str | None, address: str | None) -> str | None:
+    """장소 하나를 밖에서 찾는 검색어 "{이름} {동네}"(동네가 없으면 이름만), 이름이 없으면 None. 카카오·네이버 링크가 같이 쓴다."""
     name = (name or "").strip()
     if not name:
         return None
     area = neighborhood(address)
-    return kakao_search_url(f"{name} {area}" if area else name)
+    return f"{name} {area}" if area else name
+
+
+def naver_search_url(query: str) -> str:
+    """네이버 지도 검색 링크. 검색어와 인코딩은 카카오 검색 링크와 같다(#1513)."""
+    return NAVER_SEARCH_URL + quote(query, safe="")
+
+
+def naver_place_link(name: str | None, address: str | None) -> str | None:
+    """장소 하나의 「네이버 지도에서 보기」 링크. "{이름} {동네}" 검색 링크(동네가 없으면 이름만), 이름이 없으면 None.
+    네이버 장소 번호는 모으지 않아 늘 검색 링크다(#1513)."""
+    query = place_search_query(name, address)
+    return naver_search_url(query) if query else None
+
+
+# ---- 번호표 신뢰 규칙(#1048) ----
+
+EXTERNAL_ID_USER_VOTES = 2   # 'user' 짝이 자동 매칭에 쓰이려면 서로 다른 사용자 표가 이만큼 필요하다
+
+
+def trusted_external_place(rows: list[tuple[str, str, int]]) -> str | None:
+    """번호 하나의 번호표 행들 [(place_id, source, 표 수)] 중 자동 매칭에 쓸 장소 id. 행이 정확히 하나이고 서버가 스스로 확정했거나
+    ('hint') 서로 다른 사용자 표가 EXTERNAL_ID_USER_VOTES 이상일 때만. 같은 번호가 서로 다른 장소에 이어진 행이 둘 이상이면 충돌이라 None."""
+    if len(rows) != 1:
+        return None
+    place_id, source, votes = rows[0]
+    return place_id if source == "hint" or votes >= EXTERNAL_ID_USER_VOTES else None

@@ -10,11 +10,20 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, get_args
+from urllib.parse import parse_qs, urlsplit
 
 Environment = Literal["dev", "test", "staging", "prod"]
 # 운영과 같은 기동 가드와 엄격한 기본값을 받는 환경. staging은 실제 사용자가 없는 시험 서버다(#788, deploy_rules.md「스테이징」).
 _STRICT_ENVIRONMENTS = ("staging", "prod")
+# SESSION_SECRET 최소 길이(#1210). 세션·state 토큰은 HMAC-SHA256으로 서명한다. 키가 해시 출력(32바이트)보다 짧으면 키 공간이
+# 서명 강도를 깎는다(RFC 2104 권고). `openssl rand -hex 32`(64자)가 보통의 생성법이라 그 절반을 바닥으로 잡는다.
+MIN_SESSION_SECRET_LEN = 32
+# DB URL의 sslmode 중 TLS를 요구하는 값. disable·allow·prefer는 평문으로 붙을 수 있다.
+_TLS_SSLMODES = ("require", "verify-ca", "verify-full")
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
 AdapterMode = Literal["dev", "real"]
+# 광고 보고 충전의 광고 제공자(docs/credits-reviews.md 3.7, #1038). ""은 끔. fake는 테스트 광고 창이라 운영에서 막는다.
+CreditAdProvider = Literal["", "fake", "adsense", "gpt"]
 
 PLACE_SOURCE_NAMES = ("kakao", "naver")
 _PORTS = ("places", "llm")
@@ -114,6 +123,10 @@ class Settings:
     kakao_client_id: str = ""
     kakao_client_secret: str = ""
     kakao_redirect_uri: str = ""
+    # 구글 로그인(#1514). 카카오와 달리 비어 있어도 된다 — 비어 있으면 로그인 시작이 화면으로 「준비 중」을 돌려보낸다.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
     # FE 오리진의 정본(루트 확정, 2026-09-23) — maps의 "초대 링크 URL" 갭과 auth의 로그인
     # 리다이렉트 갭이 같은 원인(FE 오리진을 몰라 백엔드 자신의 주소로 대체)이라 여기 하나로
     # 합쳤다. dev 기본값은 Vite 개발 서버 주소. prod·staging은 빈 값이면 아래 __post_init__이 막는다.
@@ -131,6 +144,11 @@ class Settings:
     llm_price_input_krw_per_m: float = 141.0
     llm_price_cached_input_krw_per_m: float = 14.0
     llm_price_output_krw_per_m: float = 708.0
+    # 웹 검색 1번의 요금(원, #1216). 웹 확인(agent-v2 6.8)의 llm_calls.cost_krw에 web_searches × 이 값을 더한다. $10 / 1,000번 기준
+    llm_price_web_search_krw: float = 14.0
+    # 서비스 일일 예산(원, KST 하루, 환경마다, #1152 결정, docs/agent-v2.md 19절). 그날 llm_calls 비용 합계가 이 값 이상이면 웹 확인(④)만
+    # 부르지 않는다(확인은 llm.api.web_check 한 곳, #1216). 0이면 웹 확인이 늘 쉰다 — 웹 확인을 끄는 설정은 이것 하나다.
+    llm_daily_budget_krw: float = 3000.0
     # 로그 레벨(LOG_LEVEL). main.py가 logging.basicConfig에 넘긴다(#390).
     log_level: str = "INFO"
     # places 실시간 연결(#34a) — 지도 API 키 2종. 기본값 ""는 위 kakao_*와 같은 이유(dev에서 키 없이도
@@ -152,19 +170,24 @@ class Settings:
     # 스테이징 전용 QA 로그인(POST /auth/qa-login, #788)의 비밀값. staging에서 값이 있을 때만 그 경로가 붙는다(qa_login_enabled).
     # prod에 값이 있으면 아래 __post_init__이 서버를 세운다.
     qa_login_secret: str = ""
+    # 광고 보고 충전(docs/credits-reviews.md 3.7, #1038). 서버는 두 값을 GET /credits/me의 ad로 그대로 내리고 광고 단위를
+    # 검증하지 않는다. 비어 있으면 광고 충전이 꺼진다. prod에서 fake면 아래 __post_init__이 서버를 세운다.
+    credit_ad_provider: CreditAdProvider = ""
+    credit_ad_unit_id: str = ""
     # DB 커넥션 풀(#810). 기본값은 SQLAlchemy 기본(풀 5 + 넘침 10 = 프로세스당 최대 15, 재활용 없음)과 같다.
     # 연결 수 계산은 deploy_rules.md「DB 연결 수」. pre_ping은 DB 컨테이너가 다시 뜬 뒤 끊긴 연결을 쓰지 않게 기본으로 켠다.
     db_pool_size: int = 5
     db_max_overflow: int = 10
     db_pool_pre_ping: bool = True
     db_pool_recycle_s: int = -1          # 초. 음수면 연결을 재활용하지 않는다
-    # 세션·state 쿠키의 Secure(#810). 설정 정의만 끝났고 실제 쿠키에 Secure를 거는 일은 auth 후속이다
-    # (auth/router.py의 set_cookie 두 곳이 아직 secure=settings.is_prod다). from_env는 staging·prod에서 참,
+    # auth의 세션·state·선택 대기 쿠키가 함께 쓰는 Secure(#810). from_env는 staging·prod에서 참,
     # 그 밖에서 거짓을 기본으로 준다. 직접 만든 Settings의 기본값은 안전한 쪽(참)이다.
     cookie_secure: bool = True
 
     def __post_init__(self) -> None:
         # 잘못된 Settings는 애초에 "만들어질 수 없다" — 호출 순서에 기대지 않는 게 핵심이다.
+        # 환경 로딩과 직접 생성 모두 같은 키를 실제 places 어댑터에 넘긴다(#810).
+        object.__setattr__(self, "kakao_rest_api_key", self.kakao_rest_api_key.strip() or self.kakao_client_id.strip())
         if self.environment not in get_args(Environment):
             raise ConfigError(f"PINGO_ENV={self.environment!r} — {'|'.join(get_args(Environment))} 중 하나여야 한다")
         unknown_sources = [n for n in self.places_sources if n not in PLACE_SOURCE_NAMES]
@@ -172,6 +195,10 @@ class Settings:
             raise ConfigError(f"PLACES_SOURCES에 모르는 소스가 있다: {unknown_sources} — {PLACE_SOURCE_NAMES} 중에서 고른다")
         if self.environment == "prod" and self.qa_login_secret:
             raise ConfigError("prod에 QA_LOGIN_SECRET이 있다 — 스테이징 전용이다(#788). 운영 환경 변수에서 지운다")
+        if self.credit_ad_provider not in get_args(CreditAdProvider):
+            raise ConfigError(f"CREDIT_AD_PROVIDER={self.credit_ad_provider!r} — 비우거나 fake|adsense|gpt 중 하나여야 한다")
+        if self.environment == "prod" and self.credit_ad_provider == "fake":
+            raise ConfigError("prod에 CREDIT_AD_PROVIDER=fake가 있다 — 테스트 광고 창이다(#1038). 운영에서는 비우거나 실제 제공자를 쓴다")
         # 풀 값은 환경과 무관하게 막는다. 0과 음수는 SQLAlchemy에서 연결 무제한이라 DB max_connections를 넘길 수 있다(#810).
         # 무제한은 허용하지 않는다 — deploy_rules.md「DB 연결 수」의 계산식이 상한을 전제로 한다.
         if self.db_pool_size < 1:
@@ -206,19 +233,64 @@ class Settings:
             raise ConfigError(f"{env}에서 CORS_ALLOW_ORIGINS가 비어있다 — FE 도메인을 명시한다")
         if self.session_secret in ("", "change-me-before-deploy"):
             raise ConfigError(f"{env}에서 SESSION_SECRET이 기본값이다")
+        if len(self.session_secret) < MIN_SESSION_SECRET_LEN:
+            raise ConfigError(f"{env}에서 SESSION_SECRET이 너무 짧다 — {MIN_SESSION_SECRET_LEN}자 이상이어야 한다")
         if not self.frontend_base_url:
             raise ConfigError(f"{env}에서 FRONTEND_BASE_URL이 비어있다 — 초대 링크·로그인 리다이렉트가 백엔드 자신의 주소로 샌다")
+        self._check_transport_guards(env)
         # 외부 키는 실제 모드일 때만 필요하다. 비어 있으면 첫 호출에서야 실패하니 기동에서 막는다(#810).
-        needed = {
-            "places": ("KAKAO_CLIENT_ID", "KAKAO_CLIENT_SECRET", "KAKAO_REDIRECT_URI"),
-            "llm": ("ELICE_ML_API_BASE_URL", "ELICE_ML_API_KEY"),
-        }
+        # places.api.build_sources가 선택한 소스에 넘기는 키만 검사한다. OAuth 키는 장소 검색의 의존성이 아니다.
+        needed = {"llm": ("ELICE_ML_API_BASE_URL", "ELICE_ML_API_KEY")}
+        if self.places_mode == "real":
+            if "kakao" in self.places_sources and not self.kakao_rest_api_key.strip():
+                raise ConfigError(f"{env}에서 PLACES_MODE=real인데 KAKAO_REST_API_KEY이(가) 비어있다 (KAKAO_CLIENT_ID 폴백 가능)")
+            if "naver" in self.places_sources:
+                needed["places"] = ("NAVER_SEARCH_CLIENT_ID", "NAVER_SEARCH_CLIENT_SECRET")
         for port, names in needed.items():
             if getattr(self, f"{port}_mode") != "real":
                 continue
             missing = [n for n in names if not getattr(self, n.lower()).strip()]   # 공백만 있는 값도 빈 값이다
             if missing:
                 raise ConfigError(f"{env}에서 {port.upper()}_MODE=real인데 {', '.join(missing)}이(가) 비어있다")
+
+    def _check_transport_guards(self, env: str) -> None:
+        """쿠키·DB·OAuth 주소의 전송 보안(#1210). 오류 문장에는 항목 이름과 이유만 쓰고 값은 싣지 않는다 — URL에 비밀번호가 있다."""
+        if not self.cookie_secure:
+            raise ConfigError(f"{env}에서 COOKIE_SECURE=0 이다 — 세션 쿠키가 평문 HTTP로도 나간다. 켠다")
+        try:
+            db = urlsplit(self.database_url)
+            db_host = (db.hostname or "").lower()
+            sslmodes = parse_qs(db.query).get("sslmode", [])
+        except ValueError:
+            raise ConfigError(f"{env}에서 DATABASE_URL을 해석할 수 없다") from None
+        if db_host not in _LOOPBACK_HOSTS and (not sslmodes or sslmodes[-1] not in _TLS_SSLMODES):
+            raise ConfigError(
+                f"{env}에서 DATABASE_URL이 TLS를 요구하지 않는다 — sslmode={'|'.join(_TLS_SSLMODES)} 중 하나를 붙인다"
+            )
+        try:
+            front = urlsplit(self.frontend_base_url)
+            front_host = front.hostname
+        except ValueError:
+            raise ConfigError(f"{env}에서 FRONTEND_BASE_URL을 해석할 수 없다") from None
+        if front.scheme != "https" or not front_host:
+            raise ConfigError(f"{env}에서 FRONTEND_BASE_URL이 https 주소가 아니다")
+        auth_parents = set()
+        for name, value in (("KAKAO_REDIRECT_URI", self.kakao_redirect_uri), ("GOOGLE_REDIRECT_URI", self.google_redirect_uri)):
+            if not value:   # 비어 있으면 로그인 시도 때 실패한다(기존 동작) — 여기서는 있는 값만 검사한다
+                continue
+            try:
+                redirect = urlsplit(value)
+                redirect_host = redirect.hostname
+            except ValueError:
+                raise ConfigError(f"{env}에서 {name}를 해석할 수 없다") from None
+            if redirect.scheme != "https" or not redirect_host:
+                raise ConfigError(f"{env}에서 {name}가 https 주소가 아니다")
+            if redirect_host != front_host:
+                raise ConfigError(f"{env}에서 {name}와 FRONTEND_BASE_URL의 호스트가 다르다 — 로그인 쿠키가 FE로 가지 않는다")
+            # `.../auth/{제공자}/callback`의 `.../auth` — 탈퇴 계정 선택 쿠키가 이 경로에 실린다(auth.core.pending_cookie_path)
+            auth_parents.add(redirect.path.rsplit("/", 2)[0])
+        if len(auth_parents) > 1:
+            raise ConfigError(f"{env}에서 KAKAO_REDIRECT_URI와 GOOGLE_REDIRECT_URI가 같은 /auth 아래가 아니다")
 
     @property
     def is_prod(self) -> bool:
@@ -258,14 +330,19 @@ class Settings:
             kakao_client_id=_env("KAKAO_CLIENT_ID", ""),
             kakao_client_secret=_env("KAKAO_CLIENT_SECRET", ""),
             kakao_redirect_uri=_env("KAKAO_REDIRECT_URI", ""),
+            google_client_id=_env("GOOGLE_CLIENT_ID", ""),
+            google_client_secret=_env("GOOGLE_CLIENT_SECRET", ""),
+            google_redirect_uri=_env("GOOGLE_REDIRECT_URI", ""),
             elice_ml_api_base_url=_env("ELICE_ML_API_BASE_URL", ""),
             elice_ml_api_key=_env("ELICE_ML_API_KEY", ""),
             llm_model=_env("LLM_MODEL", "gpt-6-luna"),
             llm_price_input_krw_per_m=_float("LLM_PRICE_INPUT_KRW_PER_M", 141.0),
             llm_price_cached_input_krw_per_m=_float("LLM_PRICE_CACHED_INPUT_KRW_PER_M", 14.0),
             llm_price_output_krw_per_m=_float("LLM_PRICE_OUTPUT_KRW_PER_M", 708.0),
+            llm_price_web_search_krw=_float("LLM_PRICE_WEB_SEARCH_KRW", 14.0),
+            llm_daily_budget_krw=_float("LLM_DAILY_BUDGET_KRW", 3000.0),
             log_level=_log_level(),
-            kakao_rest_api_key=_env("KAKAO_REST_API_KEY", "") or _env("KAKAO_CLIENT_ID", ""),
+            kakao_rest_api_key=_env("KAKAO_REST_API_KEY", ""),
             naver_search_client_id=_env("NAVER_SEARCH_CLIENT_ID", ""),
             naver_search_client_secret=_env("NAVER_SEARCH_CLIENT_SECRET", ""),
             places_sources=tuple(n.strip() for n in _env("PLACES_SOURCES", "kakao").split(",") if n.strip()),
@@ -276,6 +353,8 @@ class Settings:
             feedback_per_hour=_int("FEEDBACK_PER_HOUR", 10),
             agent_loop_in_process=_env("AGENT_LOOP_IN_PROCESS", "0").lower() in ("1", "true"),
             qa_login_secret=_env("QA_LOGIN_SECRET", ""),
+            credit_ad_provider=_env("CREDIT_AD_PROVIDER", ""),  # type: ignore[arg-type]
+            credit_ad_unit_id=_env("CREDIT_AD_UNIT_ID", ""),
             db_pool_size=_int("DB_POOL_SIZE", 5),
             db_max_overflow=_int("DB_MAX_OVERFLOW", 10),
             db_pool_pre_ping=_bool("DB_POOL_PRE_PING", True),

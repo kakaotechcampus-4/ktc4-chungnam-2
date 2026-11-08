@@ -134,9 +134,45 @@
     }
   body {
     @apply bg-background text-foreground;
+    /* 단계 클래스가 없는 글자(입력칸 16px 등)도 같은 자간·행간을 따른다. */
+    letter-spacing: -0.01em;
+    line-height: 1.4;
+    /* 한글은 낱말(어절) 단위로 줄을 바꾼다. 띄어쓰기 없는 긴 글자(링크 등)만 넘칠 때 끊는다(#1511). */
+    word-break: keep-all;
+    overflow-wrap: break-word;
+    }
+  /* 문단 끝줄에 낱말 하나만 남지 않게(#1511). 두 문장 이상은 ui/Sentences 가 문장마다 줄을 바꾼다. */
+  p, li, dd {
+    text-wrap: pretty;
+    }
+  /* 가운데 정렬 글과 짧은 안내 글(text-xs·text-label)은 줄 길이를 고르게 — 「…확정 리스트에 먼저 / 담아 보세요」처럼 끝말만 가운데 떨어지지 않게(#1511). */
+  :where(.text-center) :is(p, li, dd),
+  p.text-center,
+  p:is(.text-xs, .text-label) {
+    text-wrap: balance;
+    }
+  /* 제목은 낱말 단위로 끊고 줄 길이를 고르게(#1511). 가운데 정렬 제목이 「…있어 / 요」처럼 한 글자만 남지 않게. */
+  h1, h2, h3 {
+    text-wrap: balance;
+    word-break: keep-all;
     }
   html {
     @apply font-sans;
+    }
+  /* 누를 수 있는 것은 손가락 커서(DESIGN.md 「상태」). Tailwind v4 preflight가 button을 기본 화살표로 두어서 덮는다(#1024).
+     aria-disabled 칩은 눌러서 이유를 토스트로 알리니 pointer 그대로다. */
+  button:not(:disabled),
+  [role='button'],
+  [role='switch'],
+  [role='menuitem'],
+  [role='option'],
+  [role='tab'],
+  [role='radio'],
+  [role='checkbox'],
+  summary,
+  select:not(:disabled),
+  label:has(input[type='checkbox']:not(:disabled), input[type='radio']:not(:disabled)) {
+    cursor: pointer;
     }
 }
 /* 보이는 원은 32px 그대로 두고 누르는 영역만 44px로 넓힌다(PRODUCT.md 접근성 — 터치 44px). */
@@ -168,26 +204,110 @@
     }
 }
 
+/* 누르는 면(DESIGN.md 「상태」, #1024). 버튼인 카드·줄·지도 위 원 버튼에 붙인다.
+   바탕색 위에 잉크를 얇게 덮어서 흰 카드·파란 후보 카드·지도 버튼 어디서든 같은 정도로 보인다.
+   올림은 마우스 기기에서만(hover: hover), 눌림은 터치에서도 보인다. 눌림이 올림을 이기게 뒤에 둔다.
+   transition 은 두지 않는다 — 누름 반응은 바로 보여야 하고, 같은 요소의 transition-opacity 같은 것을 덮지 않게. */
+@utility press {
+    @media (hover: hover) {
+        &:not(:disabled):hover {
+            background-image: linear-gradient(var(--press-hover), var(--press-hover));
+        }
+    }
+    &:not(:disabled):active {
+        background-image: linear-gradient(var(--press-active), var(--press-active));
+    }
+}
+
 /* 홈 표시줄 높이. 데스크톱·안드로이드는 0. */
 @utility pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* 글자 단계·그림자(DESIGN.md Typography · Elevation). Tailwind 기본에 없는 단계만 이름을 붙인다.
-   24 text-2xl · 20 text-xl · 17 text-title · 16 text-base · 14 text-sm · 13 text-body · 12 text-xs · 11 text-label.
+   24 text-2xl · 20 text-xl · 17 text-title · 16 text-base · 14 text-sm · 13 text-body · 13 text-xs(#1447 전 12) · 11 text-label.
    text-lg(18)·text-[…] 같은 단계 밖 크기는 쓰지 않는다. */
 @theme {
+    /* 12px 회색 안내 글이 작아 읽기 어려웠다(#1447) — xs 를 13px 로 올린다. body(13)와 굵기·색으로 가른다. */
+    --text-xs: 0.8125rem;
     --text-title: 1.0625rem;
     --text-body: 0.8125rem;
     --text-label: 0.6875rem;
+    /* 행간·자간(DESIGN.md Typography 「행간·자간」, #1511). 한글은 기본 자간 0이 성글어 보여 줄인다 —
+       17px 이상 제목은 -2%, 그 아래는 -1%(작은 글자에 -2%면 받침 많은 글자끼리 붙어 보인다). 행간은 Tailwind 기본(1.4~1.5)보다 조인다. */
+    --text-2xl--line-height: 1.3;
+    --text-2xl--letter-spacing: -0.02em;
+    --text-xl--line-height: 1.3;
+    --text-xl--letter-spacing: -0.02em;
+    --text-title--line-height: 1.3;
+    --text-title--letter-spacing: -0.02em;
+    --text-base--line-height: 1.4;
+    --text-base--letter-spacing: -0.01em;
+    --text-sm--line-height: 1.4;
+    --text-sm--letter-spacing: -0.01em;
+    --text-body--line-height: 1.4;
+    --text-body--letter-spacing: -0.01em;
+    --text-xs--line-height: 1.35;
+    --text-xs--letter-spacing: -0.01em;
+    --text-label--line-height: 1.3;
+    --text-label--letter-spacing: -0.01em;
     /* 지도 위에 떠 있는 것(지도 버튼·검색창·상단 원·칩)과 바텀시트 윗변. 목록·카드에는 그림자가 없다. */
-    --shadow-float: 0 2px 8px rgba(20, 22, 31, 0.12);
-    --shadow-sheet: 0 -2px 12px rgba(20, 22, 31, 0.08);
+    --shadow-float: 0 2px 8px rgba(26, 28, 38, 0.12);
+    --shadow-sheet: 0 -2px 12px rgba(26, 28, 38, 0.08);
     /* 핑고 움직임(Pingo.tsx, DESIGN.md Motion 「핑고 예외」). 찾는 중엔 들썩이고, 로딩엔 뒤뚱뒤뚱 걷는다(몸 기우뚱 + 발 번갈아). */
     --animate-pingo-bob: pingo-bob 1.2s ease-in-out infinite;
     --animate-pingo-waddle: pingo-waddle 600ms ease-in-out infinite;
     --animate-pingo-step: pingo-step 600ms ease-in-out infinite;
     --animate-pingo-flutter: pingo-flutter 700ms ease-in-out infinite;
+    --animate-pingo-drift: pingo-drift 4s ease-in-out infinite;
+    --animate-pingo-twinkle: pingo-twinkle 2.1s ease-in-out infinite;
+    /* 지도 위 3D 핑고 걷기(MapPingo, #1433) — 걸음마다 들썩이고, 측면 걷기 그림 1·2·3·2 를 0.15초씩 바꾼다. */
+    --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
+    --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
+    --animate-pingo-frame-b: pingo-frame-b 600ms step-end infinite;
+    /* 위·아래(대각선 포함)는 걸음마다(0.3초) 몸이 한 번 오르거나 내려간다. 뒷모습은 한 장이고 걸음마다 좌우로 4° 기운다
+       — 뒤집은 뒷모습을 번갈아 쓰면 명암이 걸음마다 좌우로 바뀌었다. */
+    --animate-pingo-climb: pingo-climb 300ms ease-out infinite;
+    --animate-pingo-descend: pingo-descend 300ms ease-out infinite;
+    --animate-pingo-sway: pingo-sway 600ms ease-in-out infinite;
+    /* 5분 쉬면 졸고(꾸벅) 이어서 잔다(숨쉬기 + 머리 위로 떠오르는 z). 상태 표시라 깰 때까지 반복한다(DESIGN.md 「핑고 예외」). */
+    --animate-pingo-nod: pingo-nod 2.4s ease-in-out infinite;
+    --animate-pingo-breathe: pingo-breathe 3s ease-in-out infinite;
+    --animate-pingo-snore: pingo-snore 2.4s ease-out infinite;
+    @keyframes pingo-climb {
+        0%, 100% { transform: translateY(0); }
+        45% { transform: translateY(-7%); }
+    }
+    @keyframes pingo-descend {
+        0%, 100% { transform: translateY(0); }
+        45% { transform: translateY(7%); }
+    }
+    @keyframes pingo-frame-a {
+        0% { opacity: 1; }
+        25%, 100% { opacity: 0; }
+    }
+    @keyframes pingo-sway {
+        0%, 100% { transform: rotate(-4deg); }
+        50% { transform: rotate(4deg); }
+    }
+    @keyframes pingo-nod {
+        0%, 55%, 100% { transform: translateY(0) rotate(0); }
+        70% { transform: translateY(3%) rotate(-3deg); }
+        80% { transform: translateY(1%) rotate(-1deg); }
+    }
+    @keyframes pingo-breathe {
+        0%, 100% { transform: scale(1, 1); }
+        50% { transform: scale(1.02, 1.035); }
+    }
+    @keyframes pingo-snore {
+        0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+        25% { opacity: 1; }
+        100% { opacity: 0; transform: translate(-3px, -10px) scale(1); }
+    }
+    @keyframes pingo-frame-b {
+        0%, 50%, 100% { opacity: 0; }
+        25%, 75% { opacity: 1; }
+    }
     @keyframes pingo-bob {
         50% { transform: translateY(-2px) rotate(-3deg); }
     }
@@ -199,6 +319,15 @@
     @keyframes pingo-flutter {
         50% { transform: scaleX(0.92) skewY(4deg); }
     }
+    /* 우주 유영 — 천천히 떠올랐다 가라앉으며 좌우로 기운다. */
+    @keyframes pingo-drift {
+        0%, 100% { transform: translate(-1px, 1px) rotate(-8deg); }
+        50% { transform: translate(1px, -4px) rotate(8deg); }
+    }
+    @keyframes pingo-twinkle {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.25; }
+    }
     @keyframes pingo-step {
         0%, 100% { transform: translateY(-3px); }
         50% { transform: translateY(0); }
@@ -209,46 +338,48 @@
    - 버튼 = 색 하나(btn-primary·outline·neutral·confirm·danger·danger-outline) + 크기 하나(btn-lg·md·sm).
      높이·글자 크기·반경을 그 자리에서 덧쓰지 않는다. 폭(w-full 등)과 바깥 여백만 쓰는 곳에서 준다.
    - 글자 버튼은 btn-text(조용한 회색) · btn-link(파랑 동작) — 누르는 영역 44px 포함.
-   components 층이라 크기 클래스가 색 클래스의 반경을 이긴다(btn-sm 은 8). */
+   components 층이라 크기 클래스가 색 클래스의 반경을 이긴다(btn-sm 은 8).
+   - 상태(#1024): 채움 버튼은 올리면 한 단계, 누르면 두 단계 진해진다. 흰 바탕 버튼·칩은 press 로 잉크를 덮는다.
+     누르면 98%로 살짝 눌린다(동작 줄이기면 색만). 글자 버튼은 글자색이 진해지고 btn-link 는 밑줄이 생긴다. */
 @layer components {
     .btn-primary {
-        @apply rounded-xl bg-brand-600 font-bold text-white disabled:bg-ink-100 disabled:text-ink-400;
+        @apply rounded-xl bg-brand-600 font-bold text-white transition-colors not-disabled:hover:bg-[var(--action-fill-hover)] not-disabled:active:bg-[var(--action-fill-pressed)] disabled:bg-ink-100 disabled:text-ink-400;
     }
     .btn-outline {
-        @apply rounded-xl border border-brand-600 bg-white font-bold text-brand-600 disabled:border-ink-300 disabled:text-ink-400;
+        @apply press rounded-xl border border-brand-600 bg-white font-bold text-brand-600 disabled:border-ink-300 disabled:text-ink-400;
     }
     /* 취소·로그아웃·나가기 같은 중립 동작. */
     .btn-neutral {
-        @apply rounded-xl border border-ink-300 bg-white font-bold text-ink-900 disabled:text-ink-400;
+        @apply press rounded-xl border border-ink-300 bg-white font-bold text-ink-900 disabled:text-ink-400;
     }
     /* 「★ 확정 리스트에 넣기」 전용(확정 골드). 상태 표시 「✓ 확정됨」도 같은 모양으로 둬서 바뀔 때 자리가 안 움직인다. */
     .btn-confirm {
-        @apply rounded-xl border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50;
+        @apply press rounded-xl border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50;
     }
     /* 되돌릴 수 없는 동작만 빨강이다. 확인 창의 마지막 버튼은 채움, 그 창을 여는 버튼은 외곽선. */
     .btn-danger {
-        @apply rounded-xl bg-[var(--action-danger)] font-bold text-white disabled:bg-ink-100 disabled:text-ink-400;
+        @apply rounded-xl bg-[var(--action-danger)] font-bold text-white transition-colors not-disabled:hover:bg-[var(--action-danger-hover)] not-disabled:active:bg-[var(--action-danger-hover)] disabled:bg-ink-100 disabled:text-ink-400;
     }
     .btn-danger-outline {
-        @apply rounded-xl border border-[var(--action-danger)] bg-white font-bold text-[var(--action-danger)];
+        @apply press rounded-xl border border-[var(--action-danger)] bg-white font-bold text-[var(--action-danger)];
     }
 
     /* 크기. lg = 화면·시트 맨 아래 주 버튼 줄(52), md = 확인 창·내용 중간·빈 화면(44), sm = 카드·줄 안(32 + 누르는 영역 44). */
     .btn-lg {
-        @apply inline-flex h-13 items-center justify-center gap-1.5 px-4 text-base;
+        @apply inline-flex h-13 items-center justify-center gap-1.5 px-4 text-base motion-safe:not-disabled:active:scale-[0.98];
     }
     .btn-md {
-        @apply inline-flex h-11 items-center justify-center gap-1.5 px-4 text-sm;
+        @apply inline-flex h-11 items-center justify-center gap-1.5 px-4 text-sm motion-safe:not-disabled:active:scale-[0.98];
     }
     .btn-sm {
-        @apply hit-y-44 inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md px-3 text-sm;
+        @apply hit-y-44 inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md px-3 text-sm motion-safe:not-disabled:active:scale-[0.98];
     }
 
     .btn-text {
-        @apply hit-44 font-medium text-ink-500 disabled:opacity-50;
+        @apply hit-44 font-medium text-ink-500 transition-colors not-disabled:hover:text-ink-700 not-disabled:active:text-ink-900 disabled:opacity-50;
     }
     .btn-link {
-        @apply hit-44 inline-flex items-center gap-0.5 font-bold text-brand-600 disabled:opacity-50;
+        @apply hit-44 inline-flex items-center gap-0.5 font-bold text-brand-600 underline-offset-2 transition-colors not-disabled:hover:text-brand-700 not-disabled:hover:underline not-disabled:active:text-[var(--action-fill-pressed)] disabled:opacity-50;
     }
 
     /* 태그 — 누를 수 없는 짧은 표시(방장·지역·AI·준비 완료·조건 체크). 반경 6, 12/600. 색은 tag-* 하나. */
@@ -278,7 +409,7 @@
     /* 칩 — 누르는 알약(카테고리·지역·사유·동선 보기). 켜짐은 aria-pressed 로 정하고 채우지 않는다.
        반대 사유는 chip-against 를 더해 켜짐을 반대 세트로 칠한다(#299 — 파랑으로 켜지 않는다). */
     .chip {
-        @apply hit-y-44 inline-flex shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-body text-ink-700 disabled:bg-ink-50 disabled:text-ink-500 aria-disabled:bg-ink-50 aria-disabled:text-ink-500;
+        @apply press hit-y-44 inline-flex shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-body text-ink-700 not-disabled:not-aria-pressed:hover:border-ink-300 disabled:bg-ink-50 disabled:text-ink-500 aria-disabled:bg-ink-50 aria-disabled:text-ink-500;
         &[aria-pressed='true'] {
             @apply border-brand-600 bg-brand-100 font-semibold text-brand-700;
         }
@@ -287,11 +418,30 @@
         @apply border-[var(--bad-line)] bg-[var(--bad-bg)] font-bold text-[var(--bad-text)];
     }
 
+    /* 끌어 놓을 칸(확정 탭 일정의 날짜 칸·확정 리스트) — 끄는 줄이 위에 오면(data-over) action-fill 점선 테두리. */
+    .drop-target[data-over='true'] {
+        @apply outline-2 outline-dashed outline-[var(--action-fill)];
+    }
+    /* 끄는 동안(html[data-schedule-drag], useScheduleDrag) 놓을 수 있는 칸은 처음부터 ink-300 점선이다.
+       놓을 수 없는 곳(지도, 리스트 줄을 끌 때의 리스트 자리)은 --scrim을 절반 세기로 덮는다. */
+    html[data-schedule-drag] .drop-target:not([data-over='true']) {
+        @apply outline-2 outline-dashed outline-ink-300;
+    }
+    html[data-schedule-drag] .map-base,
+    html[data-schedule-drag='list'] .drop-target[data-day='unset'] {
+        @apply relative outline-none;
+    }
+    html[data-schedule-drag] .map-base::after,
+    html[data-schedule-drag='list'] .drop-target[data-day='unset']::after {
+        @apply pointer-events-none absolute inset-0 z-[1000] rounded-[inherit] bg-scrim opacity-50 content-[''];
+    }
+
     /* 입력칸 틀 — 안에 input 하나와 ✕·글자 수·동작 글자를 둔다. 글자는 16px(아이폰이 확대하지 않는 크기). */
     .field {
         @apply flex min-h-12 items-center gap-2 rounded-xl border border-ink-300 bg-white px-3.5 text-base focus-within:border-[var(--line-focus)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--line-focus)];
-        &[aria-invalid='true'] {
-            @apply border-[var(--warn-line)];
+        /* 잘못 넣은 칸 — 테두리 2px(안쪽 그림자로 한 겹 더해 칸 크기는 그대로) + 주의색 바탕(#1447). */
+        &[aria-invalid='true'], &:has([aria-invalid='true']) {
+            @apply border-[var(--warn-line)] bg-[var(--warn-bg)] shadow-[inset_0_0_0_1px_var(--warn-line)];
         }
     }
 }
@@ -341,6 +491,20 @@
     .pingo-hands {
         animation: enter-fade 150ms cubic-bezier(0, 0, 0.2, 1) 200ms backwards;
     }
+    /* 휴지통으로 끄는 핀(#1012). 집혀 있는 동안 끝을 붙든 채 좌우로 떤다 — "지금 옮기는 중" 상태 표시라 0.5초 상한 밖(DESIGN Motion 예외). */
+    .pin-wobble {
+        transform-origin: 50% 100%;
+        animation: pin-wobble 150ms ease-in-out infinite alternate;
+    }
+    /* 휴지통 뚜껑(TrashDropZone). 핀이 위에 오면 왼쪽 끝을 붙든 채 열리고, 핀이 들어가면 닫힌다. */
+    .trash-lid {
+        transform-box: view-box;
+        transform-origin: 3px 6px;
+        transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .trash-lid[data-open='true'] {
+        transform: translateY(-1px) rotate(-28deg);
+    }
     @media (prefers-reduced-motion: reduce) {
         .enter-fade,
         .enter-pop,
@@ -349,10 +513,20 @@
         .pin-bounce,
         .pingo-rise,
         .pingo-sink,
-        .pingo-hands {
+        .pingo-hands,
+        .pin-wobble {
             animation: none;
         }
+        .trash-lid,
+        .trash-lid[data-open='true'] {
+            transition: none;
+            transform: none;
+        }
     }
+}
+@keyframes pin-wobble {
+    from { transform: rotate(-4deg); }
+    to { transform: rotate(4deg); }
 }
 @keyframes enter-fade {
     from { opacity: 0; }

@@ -8,6 +8,7 @@ import SheetTitle from '@/ui/SheetTitle'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
 import { filterPins } from '@/features/map/model'
+import ReactionHelp from '@/features/map/ReactionHelp'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
 import PinList from '@/features/map/PinList'
 import { usePinFilters } from '@/features/map/usePinFilters'
@@ -32,7 +33,7 @@ import { useIsDesktop } from '@/features/shell/useIsDesktop'
 export default function MapTab() {
   const { mapId } = useShell()
   const { selectedPinId, selectPin } = usePinSelection()
-  const { data: pins, isPending, error } = usePinsQuery(mapId)
+  const { data: pins, isPending, error, refetch } = usePinsQuery(mapId)
   const counts = useCountsQuery(mapId).data
   const setStage = useSheetStore((s) => s.setStage)
   const stage = useSheetStore((s) => s.stages.map)
@@ -122,18 +123,29 @@ export default function MapTab() {
           {/* 넓은 화면은 단계가 없고 칩이 지도 영역 왼쪽 위에 있다(#338). */}
           {stage === 3 && !desktop && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
           {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
-          <p className="mt-2 text-xs text-ink-500">
-            {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
-            {counts && counts.members_total > 0 && (
-              <span className="font-bold text-ink-600"> · {counts.members_with_opinion}/{counts.members_total}명이 의견을 남겼어요</span>
-            )}
-          </p>
+          <div className="mt-2 flex items-center gap-1">
+            <p className="text-xs text-ink-500">
+              {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
+              {counts && counts.members_total > 0 && (
+                <span className="font-bold text-ink-600">, {counts.members_total}명 중 {counts.members_with_opinion}명이 의견을 남겼어요</span>
+              )}
+            </p>
+            {/* 목록 줄의 ♥·반대·? 표시가 무엇인지(#1030). */}
+            {pins && pins.length > 0 && <ReactionHelp />}
+          </div>
         </>
       }
     >
       {unavailable && <PinUnavailable onClose={() => selectPin(null)} />}
       {isPending && <CardSkeleton />}
-      {error && <ErrorText message="핀을 불러오지 못했어요" error={error} />}
+      {error && (
+        <div className="space-y-2">
+          <ErrorText message="핀을 불러오지 못했어요" error={error} />
+          <button type="button" onClick={() => void refetch()} className="btn-outline btn-sm">
+            다시 불러오기
+          </button>
+        </div>
+      )}
       {pins?.length === 0 && <EmptyMap />}
       {pins && pins.length > 0 && shown?.length === 0 && filtered && (
         <FilterEmpty who={members.find((m) => m.userId === filters.createdBy)?.name} category={filters.category} onClear={clear} />
@@ -148,7 +160,7 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
   const what = [who && `${who}님이 올린`, category].filter(Boolean).join(' ')
   return (
     <EmptyState
-      title="필터에 걸리는 핀이 없어요"
+      title="필터에 맞는 핀이 없어요"
       action={
         <button type="button" onClick={onClear} className="btn-outline btn-md">
           필터 해제

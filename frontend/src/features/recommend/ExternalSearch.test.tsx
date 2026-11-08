@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { ApiError } from '@/api'
+import { wholeText } from '@/test/text'
 
 import { createRun, fetchResult } from './api'
 import { noResultsExternalSearch, type RecommendRunDto } from './model'
@@ -49,6 +50,11 @@ function expectExternalLink(query: string) {
   expect(link).toHaveAttribute('target', '_blank')
   expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   expect(screen.getByText(`검색어 ‘${query}’`)).toBeInTheDocument()
+  // #1513 — 네이버 지도 링크가 바로 뒤에, 같은 검색어로
+  const naver = screen.getByRole('link', { name: /네이버 지도에서 찾아보기/ })
+  expect(naver).toHaveAttribute('href', `https://map.naver.com/p/search/${encodeURIComponent(query)}`)
+  expect(naver).toHaveAttribute('target', '_blank')
+  expect(naver).toHaveAttribute('rel', 'noopener noreferrer')
 }
 
 describe('카카오맵에서 더 찾아보기(#798)', () => {
@@ -56,7 +62,7 @@ describe('카카오맵에서 더 찾아보기(#798)', () => {
     await fetch(`${BASE}/maps/map_1`, { method: 'PATCH', body: JSON.stringify({ region: { label: '춘천시', lat: 37.88, lng: 127.73 } }) })
     renderWithClient(<ReadinessBody mapId="map_1" />)
 
-    expect(await screen.findByText('이 지역은 아직 핑고 추천 장소가 없어요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('보고 있는 곳 주변에는 아직 추천할 장소가 없어요'))).toBeInTheDocument()
     expectExternalLink('춘천시 맛집')
     expect(screen.getByRole('button', { name: '음식점 추천받기' })).toBeEnabled()
   })
@@ -87,6 +93,8 @@ describe('카카오맵에서 더 찾아보기(#798)', () => {
     expect(screen.queryByRole('link', { name: /카카오맵에서 더 찾아보기/ })).not.toBeInTheDocument()
     const cardLinks = screen.getAllByRole('link', { name: '카카오맵에서 보기' })
     expect(cardLinks.map((a) => a.getAttribute('href'))).toEqual(result.candidates.map((c) => c.place_url))
+    const naverLinks = screen.getAllByRole('link', { name: '네이버 지도에서 보기' })   // #1513
+    expect(naverLinks.map((a) => a.getAttribute('href'))).toEqual(result.candidates.map((c) => c.naver_url))
     view.unmount()
 
     // 후보가 적은 결과 — 링크는 0곳 응답이 준 실제 목 링크를 싣는다.

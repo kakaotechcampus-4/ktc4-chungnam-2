@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from agent import deps, flows, tools
+from agent import constants, deps, flows, tools
 from agent.models import AgentCursor, AgentRun, AgentSuggestion
 from agent.schemas import AgentCallFailed, AgentReply, AgentUsage, DiagnosisOutput
 from agent.schemas import AgentSuggestion as AgentSuggestionSchema
@@ -51,6 +51,7 @@ class FakeGateway:
         self._diagnosis_usage = diagnosis_usage or AgentUsage()
         self.calls: list[str] = []
         self.inputs: list[dict] = []
+        self.status_inputs: list[dict] = []
 
     def __getattr__(self, name):
         if name.startswith("_"):
@@ -80,6 +81,11 @@ class FakeGateway:
 
     def structure(self, raw):
         return llm_api.plan_evidence(raw, planner=llm_api.passthrough_planner)
+
+    def status(self, cells):
+        """관찰 끝의 지도 현황 문단(#1168) — 고정 응답 스텁. 진단 호출 목록(calls)에는 남기지 않는다(test_flows_status.py가 본다)."""
+        self.status_inputs.append(cells)
+        return llm_api.agent_status(cells, planner=llm_api.fixed_status_planner)
 
 
 def observe(world, map_id, gateway):
@@ -176,7 +182,7 @@ def test_split_diagnosis_is_verified_and_saved(world, factory):
     assert [s["diagnosis"] for s in run.signals] == ["stall", "split"]
     assert (run.priority["final_order"], run.priority["rule_hits"]) == (["s2", "s1"], ["affected_members"])
     assert run.verification["established"] is True and run.verification["claims"]["removed"] == []
-    assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_reasons"]   # 갈림도 미리 센다(#1317)
     [(type_, payload)] = suggestion_events(world, map_id)   # 모델 유형도 노출(#582)
     assert (type_, payload["id"], payload["diagnosis"]) == ("agent.suggested", str(sug.id), "split")
     # 이벤트도 응답과 같은 조각 모양이고, 인용은 검증한 앞 8글자만 나간다 — 사유 글 전체가 아니다(#717)
@@ -198,7 +204,9 @@ def test_stall_diagnosis_uses_readiness_tool(world):
     assert (sug.diagnosis, sug.category, sug.shadow) == ("stall", "음식점", False)
     run = world.one(AgentRun, map_id=map_id, trigger="activity")
     assert run.priority["source"] == "single" and run.used_model is True   # 진단만 불러도 1회
-    assert run.tool_calls[0]["name"] == "get_readiness" and run.tool_calls[0]["result"]["ready"] is True
+    preview, readiness = run.tool_calls   # 미리 돌려 보기(코드, 6.7)가 모델보다 먼저 p1로 남는다
+    assert (preview["name"], preview["call_id"]) == ("preview_filter", "p1")
+    assert readiness["name"] == "get_readiness" and readiness["result"]["ready"] is True
 
 
 # ---------------------------------------------------------------- outcome 매핑
@@ -238,7 +246,7 @@ def test_failed_verification_is_invalid_claims(world):
     def made_up(inp, call):
         out = good_stall(inp, call)
         claim = out.claims[0].model_copy(update={"value": False})   # 도구 결과와 다른 값
-        return out.model_copy(update={"claims": [claim]})
+        return out.model_copy(update={"claims": [claim], "actions": []})   # 버튼이 있으면 근거를 코드가 채운다(#1380)
 
     assert observe(world, map_id, FakeGateway(diagnose=made_up)) == "invalid_claims"
 
@@ -248,13 +256,33 @@ def test_failed_verification_is_invalid_claims(world):
     assert run.outcome_detail == {"signal_id": "s1", "diagnosis": "stall", "decision": "suggest"}
 
 
+def test_button_basis_is_filled_from_this_run_when_the_model_claim_fails(world):
+    """모델 claim이 틀려 버튼 basis가 가리킬 곳이 없어도, 이번 관찰 기록(p1이나 get_readiness)으로 근거를 채워 버튼을 남긴다(#1380).
+    문장은 그 claim에 기대므로 빠진다."""
+    map_id, _, _ = _stall_map(world)
+
+    def wrong_claim(inp, call):
+        out = good_stall(inp, call)
+        return out.model_copy(update={"claims": [out.claims[0].model_copy(update={"value": False})]})
+
+    assert observe(world, map_id, FakeGateway(diagnose=wrong_claim)) == "suggested"
+
+    run = world.one(AgentRun, map_id=map_id, trigger="activity")
+    assert run.verification["basis_filled"] == 1 and run.verification["lines"]["kept"] == 0
+    sug = world.one(AgentSuggestion, map_id=map_id)
+    assert [a["type"] for a in sug.actions] == ["open_recommend"] and sug.advice == []
+    [filled] = sug.claims
+    assert filled["kind"] == "tool_result" and filled["id"] == "c2"
+    assert filled["call_id"] in {c["call_id"] for c in run.tool_calls}
+
+
 def test_fixed_gateway_reads_reasons_and_stays_silent(world):
     map_id, _, _ = _stall_map(world)
 
     assert observe(world, map_id, deps.FixedAgentLlmGateway()) == "silent"
 
     run = world.one(AgentRun, map_id=map_id, trigger="activity")
-    assert [c["name"] for c in run.tool_calls] == ["get_reasons"] and run.used_model is True
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_reasons"] and run.used_model is True
 
 
 # ---------------------------------------------------------------- 7. 모델 호출 중 상태가 바뀌면 stale
@@ -336,21 +364,23 @@ def _model_runs_today(world, map_id):
 
 
 def test_model_use_counts_only_diagnosis(world):
-    """출발 임박이면 카테고리 공백이 1순위라 진단을 부르지 않는다 — 모델 유형 신호가 있어도 모델 사용 0회. 출발이
-    멀면 정체가 1순위라 진단 1회. 우선순위는 어느 쪽이든 세지 않는다."""
+    """모델 사용은 진단만 센다 — 우선순위(코드 규칙)는 어느 쪽이든 세지 않는다. 출발 임박이면 카테고리 공백이 1순위다(urgent_dday).
+    카페 공백은 반대 핀이 후보라 모델 진단이다(#1356, 6.10 — 그 전에는 템플릿이라 0회였다) — 진단 1회. 출발이 멀면 정체가
+    1순위라 진단 1회."""
     near = _gap_and_stall_map(world, days_to_start=2)
     far = _gap_and_stall_map(world, days_to_start=30)
     gateway = FakeGateway(diagnose=silent)
 
-    assert observe(world, near, gateway) == "suggested"
-    assert gateway.calls == []
+    assert observe(world, near, gateway) == "silent"
+    assert gateway.calls == ["diagnose"]
+    assert (gateway.inputs[0]["diagnosis"], gateway.inputs[0]["category"]) == ("category_gap", "카페")
     run = world.one(AgentRun, map_id=near, trigger="activity")
-    assert (run.used_model, run.priority["rule_hits"]) == (False, ["urgent_dday"])
-    assert world.one(AgentSuggestion, map_id=near).diagnosis == "category_gap"
-    assert _model_runs_today(world, near) == 0
+    assert (run.used_model, run.priority["rule_hits"]) == (True, ["urgent_dday"])
+    assert _model_runs_today(world, near) == 1
 
     assert observe(world, far, gateway) == "silent"
-    assert gateway.calls == ["diagnose"]
+    assert gateway.calls == ["diagnose", "diagnose"]
+    assert gateway.inputs[1]["diagnosis"] == "stall"
     run = world.one(AgentRun, map_id=far, trigger="activity")
     assert (run.used_model, run.priority["source"], run.priority["rule_hits"]) == (True, "rules", [])
     assert _model_runs_today(world, far) == 1
@@ -495,8 +525,8 @@ def test_tool_error_after_the_model_call_is_recorded_and_counts_toward_the_cap(w
     assert (run.trigger, run.outcome, run.used_model) == ("activity", "error", True)
     assert run.outcome_detail == {"stage": "model", "error": "ToolRunnerError"}
     assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v2", 900, 200)
-    assert [c["name"] for c in run.tool_calls] == ["get_reasons"]
-    assert run.tool_calls[0]["result"]["reasons"][0]["text_len"] == len(AGAINST_TEXT)
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_reasons"]
+    assert run.tool_calls[1]["result"]["reasons"][0]["text_len"] == len(AGAINST_TEXT)
     assert AGAINST_TEXT not in _dump_agent_rows(factory)
     assert _model_runs_today(world, map_id) == 1
 
@@ -525,6 +555,63 @@ def test_failure_after_saving_does_not_count_the_diagnosis_twice(world, monkeypa
     assert world.one(AgentSuggestion, map_id=map_id).status == "active"
     # 한 관찰에 지도 관찰 행과 error 행이 함께 있어도 예외로 끝난 관찰 하나로 센다 — 30분 뒤
     assert world.one(AgentCursor, map_id=map_id).next_check_at == world.now + timedelta(minutes=30)
+
+
+# ---------------------------------------------------------------- lease를 잃은 관찰의 모델 사용 (12.3, #1072)
+
+def _claim(world, at, map_id):
+    with world.factory() as db:
+        claim = next(c for c in flows.service.claim_maps(db, at, limit=1000).claims if c.map_id == map_id)
+        db.commit()
+    return claim
+
+
+def _steal_lease(world, map_id):
+    """lease가 만료된 뒤 다른 실행이 같은 지도를 잡는다(#812)."""
+    return _claim(world, world.now + timedelta(seconds=constants.LEASE_SEC + 1), map_id)
+
+
+def test_lease_lost_after_the_diagnosis_counts_toward_the_cap(world, factory):
+    """진단을 부른 뒤 저장 전에 lease를 잃으면 stale 행에 used_model=true와 그때까지의 사용량을 남긴다 — 그 호출도 지도
+    상한에 센다(12.3 「상한이 세는 것」, #1072)."""
+    map_id, _, _ = _stall_map(world)
+    first = _claim(world, world.now, map_id)
+    gateway = FakeGateway(
+        diagnose=good_stall,
+        on_call=lambda what: _steal_lease(world, map_id) if what == "diagnose_done" else None,
+        diagnosis_usage=AgentUsage(model=LUNA, prompt_version="diagnose-v2", tokens_in=900, tokens_out=200),
+    )
+    assert _model_runs_today(world, map_id) == 0
+
+    outcome = flows.observe_map(map_id, world.now, session_factory=world.factory, gateway=gateway, token=first.token)
+
+    assert outcome == "stale"
+    assert gateway.calls == ["diagnose"]
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.trigger, run.outcome, run.outcome_detail) == ("activity", "stale", {"reason": "lease_lost"})
+    assert run.used_model is True
+    assert (run.model, run.prompt_version, run.tokens_in, run.tokens_out) == (LUNA, "diagnose-v2", 900, 200)
+    assert [c["name"] for c in run.tool_calls] == ["preview_filter", "get_readiness"]
+    assert world.rows(AgentSuggestion, map_id=map_id) == []
+    assert AGAINST_TEXT not in _dump_agent_rows(factory)
+    assert _model_runs_today(world, map_id) == 1
+
+
+def test_lease_lost_without_the_diagnosis_does_not_count(world):
+    """진단을 부르지 않은 관찰(코드 유형)이 lease를 잃으면 stale 행은 used_model=false 그대로다."""
+    map_id = world.gap_map()   # 코드 유형 신호 둘
+    world.event(map_id)
+    first = _claim(world, world.now, map_id)
+    _steal_lease(world, map_id)
+    gateway = FakeGateway()
+
+    outcome = flows.observe_map(map_id, world.now, session_factory=world.factory, gateway=gateway, token=first.token)
+
+    assert outcome == "stale"
+    assert gateway.calls == []
+    run = world.one(AgentRun, map_id=map_id)
+    assert (run.outcome, run.used_model, run.model, run.tokens_in, run.tool_calls) == ("stale", False, None, 0, [])
+    assert _model_runs_today(world, map_id) == 0
 
 
 def test_split_analysis_axis_names_come_from_recommend_labels(world):

@@ -8,7 +8,7 @@ on:
     branches: [develop, main]
   push:
     branches: [develop]
-    paths: ["contracts/**", "docs/api-spec.yaml"]
+    paths: ["contracts/**", "docs/api-spec.yaml", "docs/openapi-workflow.md", "frontend/src/**"]
 
 jobs:
   changes:
@@ -26,6 +26,8 @@ jobs:
               - "contracts/**"
               - "docs/api-spec.yaml"
               - ".github/workflows/contracts-test.yml"
+              - "docs/openapi-workflow.md"   # 화면이 아직 쓰는 deprecated 필드 표(#1467)
+              - "frontend/src/**"   # deprecated 필드를 화면이 쓰는지 본다(checks/deprecated-fields.test.ts)
 
   contracts:
     needs: changes

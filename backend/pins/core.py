@@ -9,8 +9,9 @@ authz.core.permissions_for에 위임한다. pin_permissions(kind, is_member)는 
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from auth.api import WITHDRAWN_DISPLAY_NAME
 from authz.core import Principal, Resource, can, permissions_for
 from authz.schemas import Permissions
 from common import categories
@@ -22,17 +23,18 @@ from pins.schemas import (
     Pin,
     PinCreateLive,
     PinCreateSearch,
+    PinTrash,
     PinUpdateRequest,
     PlaceSource,
     Reaction,
     ReactionSummary,
+    TrashedPin,
 )
 
 
 LINK_PIN_REJECTED_MESSAGE = "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
 
-# 핀 작성자 표시(#155, #369). 탈퇴 문구는 auth.api.WITHDRAWN_DISPLAY_NAME과 같은 값이다(test_core가 대조한다).
-WITHDRAWN_AUTHOR_NAME = "탈퇴한 구성원"
+# 핀 작성자 표시(#155, #369). 탈퇴한 사람 이름은 auth.api.WITHDRAWN_DISPLAY_NAME 한 곳이다(#1475).
 LEFT_AUTHOR_NAME = "나간 구성원"
 
 
@@ -41,7 +43,7 @@ def author_display_name(real_name: str | None, *, is_withdrawn: bool, is_current
     남아 현재 구성원으로 잡히기 때문이다(#245). 그다음 그 지도에서 나갔으면 '나간 구성원', 아니면 실명.
     핀 행에는 아무것도 쓰지 않고 조회할 때마다 계산하므로, 다시 들어오면 실명으로 돌아간다."""
     if is_withdrawn:
-        return WITHDRAWN_AUTHOR_NAME
+        return WITHDRAWN_DISPLAY_NAME
     if not is_current_member:
         return LEFT_AUTHOR_NAME
     return real_name
@@ -76,7 +78,7 @@ def validate_live_create(req: PinCreateLive) -> None:
 
 
 PIN_NOT_EDITABLE_MESSAGE = "AI 추천 핀과 확정 핀은 고칠 수 없어요"
-CATEGORY_NOT_EDITABLE_MESSAGE = "자체 DB 장소의 분류는 장소가 정해요. 분류는 직접 찍은 핀에서만 바꿀 수 있어요"
+CATEGORY_NOT_EDITABLE_MESSAGE = "분류는 직접 찍은 핀에서만 바꿀 수 있어요"
 CATEGORY_HAS_REACTIONS_MESSAGE = "의견이 달린 핀은 분류를 바꿀 수 없어요"
 
 
@@ -151,6 +153,7 @@ class PinRecord:
     search_query: str | None = None
     place_name: str | None = None
     place_url: str | None = None
+    naver_url: str | None = None
     created_by_display_name: str | None = None
     created_at: datetime | None = None
     checks: list[dict] | None = None
@@ -181,6 +184,7 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         search_query=record.search_query,
         place_name=record.place_name,
         place_url=record.place_url,
+        naver_url=record.naver_url,
         created_by=record.created_by,
         created_by_display_name=record.created_by_display_name,
         created_at=record.created_at,
@@ -232,6 +236,11 @@ def pin_updated_event(pin: Pin) -> Event:
     return Event(map_id=pin.map_id, channel="public", type="pin.updated", payload=_public_pin_payload(pin))
 
 
+def pin_restored_event(pin: Pin) -> Event:
+    """docs/events.md pin.restored — 지운 핀 복구(#864). 페이로드는 pin.created와 같은 Pin이다."""
+    return Event(map_id=pin.map_id, channel="public", type="pin.restored", payload=_public_pin_payload(pin))
+
+
 def pin_deleted_event(pin_id: str, map_id: str) -> Event:
     """docs/events.md pin.deleted — 페이로드는 {pin_id}뿐이다."""
     return Event(map_id=map_id, channel="public", type="pin.deleted", payload={"pin_id": pin_id})
@@ -257,7 +266,7 @@ def validate_reaction(reaction_type: str, reason_text: str | None, reason_chip_i
     if reaction_type != "against":
         return
     if reason_content(reason_text) is None and not reason_chip_ids:
-        raise AppError("EVIDENCE_REQUIRED", "반대 반응에는 사유가 필요합니다")
+        raise AppError("EVIDENCE_REQUIRED", "반대에는 사유가 필요해요")
 
 
 def validate_reactable(category: str) -> None:
@@ -273,7 +282,7 @@ def validate_chip_ids(category: str, reason_chip_ids: list[str] | None) -> None:
     unknown = chips.unknown_chip_ids(category, reason_chip_ids or [])
     if unknown:
         raise AppError(
-            "VALIDATION_ERROR", "이 핀의 카테고리에 없는 반대 사유 칩입니다", detail={"reason_chip_id": unknown[0]}
+            "VALIDATION_ERROR", "이 핀에서는 고를 수 없는 반대 사유 칩이에요", detail={"reason_chip_id": unknown[0]}
         )
 
 
@@ -294,4 +303,34 @@ def reaction_changed_event(
             "pin_id": pin_id, "reaction_summary": reaction_summary.model_dump(),
             "user_id": user_id, "display_name": display_name, "type": reaction_type,
         },
+    )
+
+
+# 휴지통(#1013, #864) — 지운 핀은 30일 동안 남고 그 뒤 정리 작업이 영구 삭제한다. 보관 일수는 여기서만 정한다.
+TRASH_RETENTION_DAYS = 30
+PURGE_BATCH_LIMIT = 1000   # 한 번 정리하는 핀 수 상한 — 남은 것은 다음 실행이 이어서 지운다
+
+
+def trash_purge_at(deleted_at: datetime) -> datetime:
+    """정리 작업이 이 시각부터 영구 삭제한다(deleted_at + 보관 일수)."""
+    return deleted_at + timedelta(days=TRASH_RETENTION_DAYS)
+
+
+def trash_days_left(deleted_at: datetime, now: datetime) -> int:
+    """복구까지 남은 날수(올림). 아직 복구할 수 있으면(purge_at 전) 1 이상, 지났으면 0."""
+    remaining = trash_purge_at(deleted_at) - now
+    if remaining <= timedelta(0):
+        return 0
+    return -(-remaining // timedelta(days=1))
+
+
+def is_restorable(deleted_at: datetime, now: datetime) -> bool:
+    """휴지통 목록과 복구가 같은 기준을 쓴다 — 정리가 지우기 전(`purge_at` 전)이다."""
+    return now < trash_purge_at(deleted_at)
+
+
+def to_trashed_pin(pin: Pin, deleted_at: datetime, *, deleted_by_name: str | None, was_confirmed: bool, now: datetime) -> TrashedPin:
+    return TrashedPin(
+        pin=pin, deleted_at=deleted_at, deleted_by_name=deleted_by_name,
+        purge_at=trash_purge_at(deleted_at), days_left=trash_days_left(deleted_at, now), was_confirmed=was_confirmed,
     )

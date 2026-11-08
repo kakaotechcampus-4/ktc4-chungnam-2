@@ -1,4 +1,4 @@
-"""api.purge_map_data(#431, 명세 17절 16번) — 대상 지도의 agent_* 7개 테이블 행만 지운다.
+"""api.purge_map_data(#431, 명세 17절 16번) — 대상 지도의 agent_* 8개 테이블 행만 지운다.
 
 같은 DB에 다른 테스트가 커밋한 agent 행이 있어도 흔들리지 않게, 테스트마다 자기만 쓰는 지도 id로 행을 만들고 그
 지도의 행만 센다(#594).
@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from agent import api
 from agent.models import (
     AgentCursor,
+    AgentMapStatus,
     AgentReasonSummary,
     AgentRun,
     AgentRunAdvice,
@@ -25,6 +26,7 @@ TABLES = {
     "agent_suggestions": AgentSuggestion,
     "agent_run_advice": AgentRunAdvice,
     "agent_reason_summaries": AgentReasonSummary,
+    "agent_map_status": AgentMapStatus,
     "agent_runs": AgentRun,
     "agent_cursors": AgentCursor,
     "agent_settings": AgentSettings,
@@ -53,7 +55,7 @@ def test_purge_deletes_every_agent_row_of_target_maps_only(db_session):
 
     assert result == {
         "agent_suggestion_views": 4, "agent_suggestions": 2, "agent_run_advice": 2, "agent_reason_summaries": 2,
-        "agent_runs": 2, "agent_cursors": 2, "agent_settings": 2,
+        "agent_map_status": 2, "agent_runs": 2, "agent_cursors": 2, "agent_settings": 2,
     }
     # 남은 것은 keep 지도 몫뿐이다(열람 2, 나머지 1씩)
     assert {name: _count(db_session, model, mine) for name, model in TABLES.items()} == {

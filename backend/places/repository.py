@@ -5,19 +5,20 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Sequence
 
 from geoalchemy2 import Geography, Geometry, WKTElement
-from sqlalchemy import Float, and_, case, cast, false, func, literal, null, or_, select, union_all, update
+from sqlalchemy import Float, and_, case, cast, delete, false, func, literal, null, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from places import matching
 from places.ingest import HoursRow, LabelRow, PlaceRow
 from places.matching import Candidate
-from places.models import Place, PlaceFact, PlaceHours
+from places.models import Place, PlaceExternalId, PlaceExternalIdVote, PlaceFact, PlaceHours, SidoBoundary
 from places.schemas import Area, FactLabel, PlaceHint, PlaceHours as PlaceHoursInfo, PlaceInfo, PlaceRef
 
 _CHUNK = 1000
@@ -54,6 +55,7 @@ class NearestRow:
     lat: float
     lng: float
     kakao_place_id: str | None = None   # 장소 검색(#822)이 카카오 결과와 같은 가게인지 가리는 데만 쓴다. 응답에 싣지 않는다
+    kakao_place_url: str | None = None  # 이미 기록된 카카오 장소 URL — 검색 결과의 place_source.url(#1486)이 places.core.place_link로 읽는다
 
 
 @dataclass(frozen=True)
@@ -198,7 +200,7 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
     lat, lng = _lat_lng()
     point = _geog(hint_lat, hint_lng)
     near = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng,
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng,
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", Place.category == category,
                func.ST_DWithin(Place.geom, point, matching.MAX_RADIUS_M))
@@ -209,11 +211,11 @@ def find_candidates(db: Session, hint_lat: float, hint_lng: float, category: str
     if kakao_place_id:
         have = {r.id for r in rows}
         rows += [r for r in db.execute(
-            select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng,
+            select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng,
                    cast(null(), Float).label("dist"))   # 반경 밖일 수 있어 거리를 재지 않는다
             .where(Place.status == "open", Place.kakao_place_id == kakao_place_id)
         ).all() if r.id not in have]
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[Candidate]]:
@@ -226,7 +228,7 @@ def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[C
     if not hints:
         return []
     lat, lng = _lat_lng()
-    cols = (Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+    cols = (Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
     keys = list(dict.fromkeys((h.category, h.lat, h.lng) for h in hints))   # 같은 좌표·분류는 한 번만 묻는다
     members = []
     for i, (category, h_lat, h_lng) in enumerate(keys):
@@ -262,7 +264,7 @@ def find_candidates_many(db: Session, hints: Sequence[PlaceHint]) -> list[list[C
         have = {r.id for r in picked}
         if h.kakao_place_id:
             picked += [r for r in by_kakao_id.get(h.kakao_place_id, []) if r.id not in have]
-        out.append([Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in picked])
+        out.append([Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address, r.kakao_place_url, r.source) for r in picked])
     return out
 
 
@@ -271,13 +273,13 @@ def find_nearby_own(db: Session, lat_: float, lng_: float, radius_m: float, limi
     lat, lng = _lat_lng()
     point = _geog(lat_, lng_)
     rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng,
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng,
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", func.ST_DWithin(Place.geom, point, radius_m))
         .order_by(func.ST_Distance(Place.geom, point), Place.id)
         .limit(limit)
     ).all()
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, r.dist, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
@@ -289,26 +291,45 @@ def find_by_name_hint(db: Session, name: str) -> list[Candidate]:
         return []
     lat, lng = _lat_lng()
     rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
         .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
-               or_(Place.name_norm.like(f"{nq}%"), Place.name_norm.in_(prefixes)))
+               or_(*(Place.name_norm.like(f"{t}%") for t in matching.hint_like_prefixes(name)), Place.name_norm.in_(prefixes)))
         .order_by(Place.id)
         .limit(matching.HINT_MAX_CANDIDATES + 1)
     ).all()
     if len(rows) > matching.HINT_MAX_CANDIDATES:
         return []
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address, r.kakao_place_url, r.source) for r in rows]
+
+
+def find_by_address_term(db: Session, term: str) -> list[Candidate]:
+    """주소 후보 조회(#1047): 영업 중 자체 DB 장소 중 주소에 도로명 앞부분(term)이 든 곳. idx_places_address_trgm(GIN)을 탄다 — 3자 이상이면
+    인덱스, 두 글자 도로명은 붙여 쓴 도로명 전체(`명동8가길`)로 받는다. 같은 도로명이 ADDRESS_CANDIDATE_MAX_ROWS를 넘으면 유일성을 말할 수
+    없어 빈 목록. 건물번호까지 같은지는 호출 쪽이 address_agreement로 거른다. 분류는 음식점·카페·관광지."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    escaped = re.sub(r"(?<=[가-힣])(?=\d)|(?<=\d)(?=[가-힣])", "%", escaped)   # 정규화 키가 공백을 무시하므로 `명동8가길`은 `명동 8가길`도 읽는다
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
+        .where(Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES),
+               Place.address.ilike(f"%{escaped}%", escape="\\"))
+        .order_by(Place.id)
+        .limit(matching.ADDRESS_CANDIDATE_MAX_ROWS + 1)
+    ).all()
+    if len(rows) > matching.ADDRESS_CANDIDATE_MAX_ROWS:
+        return []
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def find_by_kakao_place_id(db: Session, kakao_place_id: str) -> list[Candidate]:
     """이미 이 카카오 장소 ID로 매칭된 영업 중 장소(링크 해석 #474)."""
     lat, lng = _lat_lng()
     rows = db.execute(
-        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.address, lat, lng)
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
         .where(Place.status == "open", Place.kakao_place_id == kakao_place_id)
         .order_by(Place.id)
     ).all()
-    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address) for r in rows]
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def record_kakao_match(db: Session, place_id: str, kakao_place_id: str, kakao_place_url: str) -> None:
@@ -323,6 +344,56 @@ def record_kakao_match(db: Session, place_id: str, kakao_place_id: str, kakao_pl
         return
     place.kakao_matched_at = func.now()
     db.flush()
+
+
+def upsert_external_id(db: Session, provider: str, external_id: str, place_id: str, source: str, voter_hash: str | None) -> None:
+    """번호표에 짝 하나를 기록한다(#1048). 같은 짝이 이미 있으면 그 행을 쓴다 — 'hint'는 'user' 행을 신뢰 행으로 올리고, 'user'는 표 한 장을
+    더한다(voter_hash당 한 표). 없는 place_id면 KeyError. 번호만 저장한다."""
+    pid = _uuid(place_id)
+    if db.get(Place, pid) is None:
+        raise KeyError(place_id)
+    values = {"provider": provider, "external_id": external_id, "place_id": pid, "source": source}
+    db.execute(pg_insert(PlaceExternalId).values(**values).on_conflict_do_nothing(constraint="uq_place_external_ids_pair"))
+    row = db.execute(select(PlaceExternalId).where(
+        PlaceExternalId.provider == provider, PlaceExternalId.external_id == external_id, PlaceExternalId.place_id == pid)).scalar_one()
+    if source == "hint" and row.source != "hint":
+        row.source = "hint"
+    if source == "user" and voter_hash:
+        db.execute(pg_insert(PlaceExternalIdVote).values(external_id_row=row.id, voter_hash=voter_hash)
+                   .on_conflict_do_nothing(index_elements=["external_id_row", "voter_hash"]))
+    db.flush()
+
+
+def external_id_rows(db: Session, provider: str, external_id: str) -> list[tuple[str, str, int]]:
+    """번호 하나의 번호표 행 [(place_id, source, 표 수)]."""
+    votes = func.count(PlaceExternalIdVote.voter_hash)
+    rows = db.execute(
+        select(PlaceExternalId.place_id, PlaceExternalId.source, votes)
+        .outerjoin(PlaceExternalIdVote, PlaceExternalIdVote.external_id_row == PlaceExternalId.id)
+        .where(PlaceExternalId.provider == provider, PlaceExternalId.external_id == external_id)
+        .group_by(PlaceExternalId.id, PlaceExternalId.place_id, PlaceExternalId.source)
+        .order_by(PlaceExternalId.id)
+    ).all()
+    return [(str(r[0]), r[1], int(r[2])) for r in rows]
+
+
+def purge_external_id_votes(db: Session, voter_hash: str) -> int:
+    """탈퇴한 사용자의 표를 지운다(#1048). 번호표 행은 공용 데이터라 남긴다. 지운 표 수."""
+    return db.execute(delete(PlaceExternalIdVote).where(PlaceExternalIdVote.voter_hash == voter_hash)).rowcount or 0
+
+
+def find_open_by_ids(db: Session, place_ids: Sequence[str]) -> list[Candidate]:
+    """주어진 id 중 영업 중인 음식점·카페·관광지(번호표가 가리키는 장소, #1048). 읽기 전용."""
+    ids = [u for u in (_uuid_or_none(p) for p in place_ids) if u is not None]
+    if not ids:
+        return []
+    lat, lng = _lat_lng()
+    rows = db.execute(
+        select(Place.id, Place.name, Place.category, Place.kakao_place_id, Place.kakao_place_url, Place.source, Place.address, lat, lng)
+        .where(Place.id.in_(ids), Place.status == "open", Place.category.in_(matching.OWN_CATEGORIES))
+        .order_by(Place.id)
+    ).all()
+    return [Candidate(str(r.id), r.name, r.lat, r.lng, r.category, r.kakao_place_id, None, r.address, r.kakao_place_url, r.source) for r in rows]
 
 
 def get_places(db: Session, place_ids: Sequence[str]) -> dict[str, PlaceInfo]:
@@ -394,14 +465,14 @@ def find_nearest(db: Session, lat: float, lng: float, category: str | None, radi
     """누른 좌표 반경 안의 영업 중 장소를 가까운 순으로. ST_DWithin이 GiST 인덱스(idx_places_geom)를 탄다.
     좌표는 쿼리 파라미터로만 쓰고 어디에도 남기지 않는다(#473)."""
     rows = db.execute(_nearest_stmt(lat, lng, category, radius_m, limit)).all()
-    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng) for r in rows]
+    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id, r.kakao_place_url) for r in rows]
 
 
 def _nearest_stmt(lat: float, lng: float, category: str | None, radius_m: float, limit: int):
     point = _geog(lat, lng)
     p_lat, p_lng = _lat_lng()
     stmt = (
-        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng,
+        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id, Place.kakao_place_url,
                func.ST_Distance(Place.geom, point).label("dist"))
         .where(Place.status == "open", func.ST_DWithin(Place.geom, point, radius_m))
         .order_by(func.ST_Distance(Place.geom, point), Place.id)
@@ -466,10 +537,10 @@ def search_open_by_query(
         order += [Place.curated.desc(), Place.name.collate("C")]
     p_lat, p_lng = _lat_lng()
     stmt = (
-        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id)
+        select(Place.id, Place.name, Place.category, Place.address, Place.source, p_lat, p_lng, Place.kakao_place_id, Place.kakao_place_url)
         .where(*where).order_by(*order, Place.id).limit(limit).offset(offset)
     )
-    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id) for r in db.execute(stmt).all()]
+    return [NearestRow(str(r.id), r.name, r.category, r.address, r.source, r.lat, r.lng, r.kakao_place_id, r.kakao_place_url) for r in db.execute(stmt).all()]
 
 
 def get_facts(db: Session, place_ids: Sequence[str]) -> dict[str, list[FactLabel]]:
@@ -555,3 +626,41 @@ def _uuid_or_none(raw: str) -> uuid.UUID | None:
         return uuid.UUID(raw)
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+# ---- 시·도 경계(#1385) — 지역 판정의 정본 표. 읽기는 api.sido_at·circle_outside_region, 쓰기는 places.load boundaries ----
+
+def upsert_boundaries(db: Session, rows: Sequence[dict]) -> int:
+    """[{code, name, wkt, sha256}]를 code로 upsert(멱등). 넣은 행 수."""
+    for row in rows:
+        values = {"code": row["code"], "name": row["name"], "source_sha256": row["sha256"],
+                  "geom": func.ST_Multi(func.ST_CollectionExtract(func.ST_MakeValid(func.ST_GeomFromText(row["wkt"], 4326)), 3))}
+        stmt = pg_insert(SidoBoundary).values(**values)
+        db.execute(stmt.on_conflict_do_update(index_elements=[SidoBoundary.code],
+                                              set_={k: stmt.excluded[k] for k in ("name", "geom", "source_sha256")}))
+    return len(rows)
+
+
+def boundary_count(db: Session) -> int:
+    return db.scalar(select(func.count()).select_from(SidoBoundary)) or 0
+
+
+def boundary_hashes(db: Session) -> dict[str, str]:
+    return dict(db.execute(select(SidoBoundary.code, SidoBoundary.source_sha256)).all())
+
+
+def sido_by_boundary(db: Session, lat: float, lng: float) -> str | None:
+    """점이 속한 시·도 이름. 어느 경계에도 안 들면(바다·국외) None. 표가 비어 있으면 None."""
+    point = func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326)
+    return db.scalar(select(SidoBoundary.name).where(func.ST_Intersects(SidoBoundary.geom, point)).order_by(SidoBoundary.code).limit(1))
+
+
+def circle_outside_sido(db: Session, lat: float, lng: float, radius_m: float, sido_name: str) -> bool | None:
+    """geography 원(중심, radius_m)이 그 시·도 경계와 하나도 겹치지 않으면 True. 이름의 경계가 없으면 None."""
+    if not db.scalar(select(func.count()).select_from(SidoBoundary).where(SidoBoundary.name == sido_name)):
+        return None
+    point = func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326)
+    circle = cast(func.ST_Buffer(cast(point, Geography), radius_m, "quad_segs=32"), Geometry)   # 위도에 따른 경도 길이를 geography가 맞춘다
+    touches = db.scalar(select(func.count()).select_from(SidoBoundary)
+                        .where(SidoBoundary.name == sido_name, func.ST_Intersects(SidoBoundary.geom, circle)))
+    return not touches

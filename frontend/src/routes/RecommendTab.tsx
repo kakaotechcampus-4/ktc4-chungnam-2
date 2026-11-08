@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
+import AdArea from '@/features/ads/AdArea'
+import { useRecommendAds } from '@/features/ads/queries'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
 import ConditionsCard from '@/features/recommend/ConditionsCard'
@@ -31,30 +33,56 @@ import { josa } from '@/ui/josa'
 export default function RecommendTab() {
   const { mapId } = useShell()
   const run = useAiStore((s) => s.runs[mapId])
+  // 광고 조회는 탭을 연 동안 한 번이다 — 안의 화면이 바뀌어도(근거 확인처럼 광고가 없는 화면 포함) 여기서 붙잡아 둔다.
+  useRecommendAds(mapId)
 
   if (run?.status === 'awaiting_region_confirm') return <EvidenceScreen mapId={mapId} run={run} />
   if (run?.status === 'collecting_evidence') return <ResumeRun mapId={mapId} run={run} />
   // 다시 추천·반경 넓히기마다 화면(어떻게 골랐나요 등)을 처음부터 그린다.
-  if (run) return <RunResult key={`${run.id}-${run.attempt_no}-${run.default_radius_walk_min ?? 0}`} mapId={mapId} run={run} />
+  if (run) return <RunResult key={`${run.id}-${run.attempt_no}-${run.default_radius_m ?? 0}`} mapId={mapId} run={run} />
 
   // 혼자 쓰는 지도도 같은 조건으로 추천을 받는다(2026-10-07, #360) — 구성원 수로 막지 않는다.
   return (
     <TabSheet tab="recommend" header={<ReadinessHeader mapId={mapId} />}>
-      <ReadinessBody mapId={mapId} />
+      <div className="pb-[100px]">
+        <ReadinessBody mapId={mapId} />
+        <AdArea mapId={mapId} />
+      </div>
     </TabSheet>
   )
 }
 
+/** 열자마자 실행을 보낸 run. 실패하면 run 이 첫 실행 전으로 돌아와 이 화면이 새로 붙는데, 그때 또 보내면 성공할 때까지 끝없이 되풀이한다. */
+const autoSent = new Set<string>()
+
 /** 첫 실행 전인 run(예전 방식으로 만들었거나 첫 실행 전에 멈춘 것) — 근거 확인 없이 바로 실행한다(#849 폴백). */
 function ResumeRun({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const execute = useExecuteRunMutation(mapId)
-  // 한 번만 보낸다(개발 모드는 효과가 두 번 돈다). 보내는 순간 run 이 '실행 중'이 되어 이 화면은 사라진다.
-  const sent = useRef(false)
+  // 저절로는 한 번만 보낸다(개발 모드는 효과가 두 번 돈다). 보내는 순간 run 이 '실행 중'이 되어 이 화면은 사라진다.
+  const [retryOnly] = useState(() => autoSent.has(run.id))
   useEffect(() => {
-    if (sent.current) return
-    sent.current = true
+    if (autoSent.has(run.id)) return
+    autoSent.add(run.id)
     execute.mutate(run)
   }, [execute, run])
+  // 보낸 실행이 실패해 돌아왔다(이유는 토스트가 알렸다) — 사람이 다시 누르게 둔다.
+  if (retryOnly) {
+    return (
+      <TabSheet
+        tab="recommend"
+        header={
+          <>
+            <BackToReadiness mapId={mapId} />
+            <AiHeader title="추천 장소를 찾지 못했어요" sub="잠깐 문제가 생겼어요. 다시 눌러 주세요" mood="flustered" />
+          </>
+        }
+      >
+        <button type="button" disabled={execute.isPending} onClick={() => execute.mutate(run)} className="btn-primary btn-md w-full">
+          다시 시도
+        </button>
+      </TabSheet>
+    )
+  }
   return (
     <TabSheet tab="recommend" header={<AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />}>
       <ProgressBody />
@@ -76,7 +104,11 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   const failed = run.status === 'failed' || (result.error instanceof ApiError && result.error.code === 'RECOMMEND_FAILED')
   const tab = (header: React.ReactNode, body: React.ReactNode) => (
     <TabSheet tab="recommend" header={header}>
-      {body}
+      {/* 광고는 추천 전·진행·결과·0곳·실패 모두에서 맨 아래에 따로 놓인다(docs/ads.md 4절). */}
+      <div className="pb-[100px]">
+        {body}
+        <AdArea mapId={mapId} hide={result.data?.candidates} />
+      </div>
     </TabSheet>
   )
   const conditions = (applied: ReturnType<typeof noResultsApplied>) => (
@@ -84,14 +116,21 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   )
 
   // 실행 중이면 다른 무엇보다 먼저 '진행 중'이다 — 같은 시도의 예전 결과(0곳·실패)가 캐시에 남아 있어도 덮는다(#349).
+  // 진행·불러오기 실패 화면에도 나가는 길을 둔다 — 다른 기기에서 돌리는 중인 run 을 열면 이 화면이 끝나지 않는다.
   if (run.status === 'executing') {
-    return tab(<AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />, <ProgressBody />)
+    return tab(
+      <>
+        <BackToReadiness mapId={mapId} />
+        <AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />
+      </>,
+      <ProgressBody />,
+    )
   }
   if (failed) {
     return tab(
       <>
         <BackToReadiness mapId={mapId} />
-        <AiHeader title="추천을 끝내지 못했어요" sub="조건이 까다로워서가 아니에요. 잠깐 문제가 생겼어요" mood="error" />
+        <AiHeader title="추천 장소를 찾지 못했어요" mood="flustered" />
       </>,
       <Failed mapId={mapId} run={run} />,
     )
@@ -100,7 +139,7 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
     return tab(
       <>
         <BackToReadiness mapId={mapId} />
-        <AiHeader title={`조건에 맞는 ${run.category}${josa(run.category, '을', '를')} 찾지 못했어요`} sub="조건이 까다로워서가 아니라, 반경 안에 맞는 곳이 없었어요" mood="sorry" />
+        <AiHeader title={`조건에 맞는 ${run.category}${josa(run.category, '을', '를')} 찾지 못했어요`} sub="반경 안에 맞는 곳이 없었어요" mood="sad" />
       </>,
       <NoResults
         mapId={mapId}
@@ -113,15 +152,28 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   }
   if (!result.data) {
     return tab(
-      <AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />,
-      result.error ? <ErrorText message="결과를 불러오지 못했어요" error={result.error} /> : <ProgressBody />,
+      <>
+        <BackToReadiness mapId={mapId} />
+        <AiHeader title={`${run.category} 대안을 찾고 있어요`} sub="화면을 닫아도 계속 찾아요" mood="thinking" />
+      </>,
+      result.error ? (
+        <div className="space-y-2">
+          <ErrorText message="결과를 불러오지 못했어요" error={result.error} />
+          <button type="button" disabled={result.isFetching} onClick={() => void result.refetch()} className="btn-outline btn-sm">
+            다시 불러오기
+          </button>
+        </div>
+      ) : (
+        <ProgressBody />
+      ),
     )
   }
 
   const data = result.data
-  const count = data.candidates.length
+  // 깔때기는 마지막 실행 기준이라, 예전 시도에서 올린 후보까지 든 candidates 수가 아니라 이번에 찾은 수와 맞춘다.
+  const count = data.new_count ?? data.candidates.length
   if (view.kind === 'how') {
-    return tab(<AiHeader title="어떻게 골랐나요" sub="조건은 코드가 거르고, 순위도 규칙대로 정해요" />, <HowPicked funnel={data.funnel} count={count} onBack={back} />)
+    return tab(<AiHeader title="이렇게 골랐어요" sub="조건에 안 맞는 곳을 빼고, 남은 곳에 순위를 매겼어요" />, <HowPicked funnel={data.funnel} count={count} onBack={back} />)
   }
   // 머리글의 수는 이번 실행이 새로 찾은 곳이다(new_count, 올려도 줄지 않는다) — 이미 올린 곳은 목록 아래에 따로 보인다(#849).
   const found = data.new_count ?? data.candidates.filter((c) => c.visibility !== 'published').length

@@ -8,17 +8,22 @@
 - 구성원 별칭(m1, m2 …)을 여기서 매긴다. joined_at 순이다.
 - `latest_seq`, `latest_event_at`은 `realtime.api.latest_seq_by_map`으로 같은 트랜잭션에서 채운다(12.5, #515).
   event_log 보존(24시간) 안에 이 지도 이벤트가 없으면 None이다. 커서 계산에만 쓰고 상태는 도메인 테이블에서 읽는다.
+- 확정 일정(`schedule`, #1356)은 AI 코스와 같은 입력이다 — `agent.course.service`의 read_snapshot·build_input으로 사람이 날짜에 넣은
+  장소만 담고, 영업은 같은 세션으로 `places.api.get_week_open_status`(코스의 PlacesOpeningHours)에서 읽는다. 일정 점검 탐지(6.10)가 쓴다.
 
 데이터 모양(dataclass)도 여기 둔다. core.py는 이 모양만 알고 DB는 모른다.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from agent import core
+from agent.course import core as course_core, runner as course_runner, service as course_service
+from agent.course.api_schemas import CourseRequest
+from agent.course.gateways import PlacesOpeningHours
 from common import categories
+from common.kst import kst_date
 from maps import api as maps_api
 from pins import api as pins_api
 from realtime import api as realtime_api
@@ -102,6 +107,16 @@ class Action:
 
 
 @dataclass(frozen=True)
+class Schedule:
+    """확정 일정 중 사람이 날짜에 넣은 장소(#1356) — AI 코스 점검(review 모드)과 같은 입력. trip.places는 그 장소들뿐이고 별칭은 p1, p2 …,
+    course는 날짜 위치별 별칭(그날 순서는 visit_order), hours는 별칭 → 요일 → 영업(모르면 칸이 없다). 장소 이름이 들어 있지만 사본에만
+    있고 신호와 agent 테이블에는 pin_id만 간다."""
+    trip: course_core.Trip
+    course: course_core.Course
+    hours: dict[str, dict[int, str]]
+
+
+@dataclass(frozen=True)
 class Snapshot:
     map: MapInfo
     today: date           # KST 날짜
@@ -114,6 +129,7 @@ class Snapshot:
     actions: tuple[Action, ...] = ()
     latest_seq: int | None = None          # 이 지도의 가장 큰 event_log seq(12.5)
     latest_event_at: datetime | None = None   # 그 이벤트의 created_at
+    schedule: Schedule | None = None       # 확정 일정(#1356). 날짜에 넣은 장소가 코스 최소 수보다 적으면 None
 
     def __post_init__(self):
         object.__setattr__(self, "_pins_by_id", {p.pin_id: p for p in self.pins})
@@ -156,7 +172,7 @@ def build(db: Session, map_id: str, now: datetime) -> Snapshot | None:
     map_info = MapInfo(
         map_id=found["map_id"], start_date=found["start_date"], end_date=found["end_date"], deleted=found["deleted"],
     )
-    today = core.kst_date(now)
+    today = kst_date(now)
     latest_seq, latest_event_at = realtime_api.latest_seq_by_map(db).get(map_id, (None, None))
     if map_info.deleted:
         return Snapshot(map=map_info, today=today, latest_seq=latest_seq, latest_event_at=latest_event_at)
@@ -205,7 +221,23 @@ def build(db: Session, map_id: str, now: datetime) -> Snapshot | None:
         map=map_info, today=today, members=members, pins=pins, reactions=reactions, reasons=reasons,
         shortlist=shortlist, last_run_at=recommend_api.last_run_at_by_category(db, map_id=map_id),
         actions=derive_actions(pins, reactions, shortlist), latest_seq=latest_seq, latest_event_at=latest_event_at,
+        schedule=read_schedule(db, map_id),
     )
+
+
+def read_schedule(db: Session, map_id: str) -> Schedule | None:
+    """사람이 날짜에 넣은 확정 장소의 일정(#1356). AI 코스의 일정 입력(read_snapshot → build_input)에서 날짜에 넣은 핀만 남겨 review
+    모드로 만든다 — 점검이 사람이 정한 그대로 읽는다. 좌표 있는 장소가 코스 최소 수(MIN_PLACES)보다 적거나 코스 기간(COURSE_DAYS_MAX)
+    밖에 넣은 장소가 있으면 None. 영업은 같은 세션으로 읽는다(코스의 start_hours)."""
+    found = course_service.read_snapshot(db, map_id)
+    if found is None:
+        return None
+    placed = replace(found, pins=tuple(p for p in found.pins if p.scheduled_date is not None))
+    build = course_service.build_input(placed, CourseRequest())
+    if build.trip is None or build.schedule is None:
+        return None
+    return Schedule(trip=build.trip, course=build.schedule,
+                    hours=course_runner.start_hours(build.trip, PlacesOpeningHours(db)))
 
 
 def derive_actions(

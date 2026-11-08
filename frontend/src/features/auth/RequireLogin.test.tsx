@@ -6,6 +6,8 @@ import { http, HttpResponse } from 'msw'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import { wholeText } from '@/test/text'
+
 import RequireLogin from './RequireLogin'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -13,7 +15,7 @@ beforeEach(() => resetScenario('withdrawn-relogin'))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-const EXPIRED = '선택 시간이 지났어요. 카카오로 다시 시작해 주세요'
+const EXPIRED = '선택 시간이 지났어요. 다시 로그인해 주세요'
 
 function Search() {
   return <span data-testid="search">{useLocation().search}</span>
@@ -53,17 +55,17 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
     expect(await screen.findByRole('heading', { name: '이전에 탈퇴한 계정이 있어요' })).toBeInTheDocument()
     // 목 서버는 이틀 전에 탈퇴했다 — 남은 날수는 응답의 days_left 그대로다.
     expect(screen.getByText('탈퇴했던 나')).toBeInTheDocument()
-    expect(screen.getByText(/5일 안에는 기존 계정을 되살릴 수 있어요/)).toBeInTheDocument()
-    expect(screen.getByText(/5일 남음/)).toBeInTheDocument()
+    expect(screen.getByText(/5일 안에는 기존 계정을 복구할 수 있어요/)).toBeInTheDocument()
+    expect(screen.getByText(/5일 남았어요/)).toBeInTheDocument()
     expect(screen.getByText('기존 계정은 바로 삭제돼요')).toBeInTheDocument()
     expect(screen.getByTestId('search')).toHaveTextContent(/^$/)
     expect(screen.queryByText('내 지도 목록')).not.toBeInTheDocument()
   })
 
-  it('되살리기는 JSON 으로 restore 를 보내고 로그인된다', async () => {
+  it('복구는 JSON 으로 restore 를 보내고 로그인된다', async () => {
     const sent = recordChoices()
     show()
-    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 되살리기' }))
+    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 복구' }))
     expect(await screen.findByText('내 지도 목록')).toBeInTheDocument()
     expect(sent).toEqual([{ choice: 'restore', type: 'application/json' }])
   })
@@ -73,7 +75,7 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
     show()
     await userEvent.click(await screen.findByRole('button', { name: '새 계정으로 시작' }))
     const dialog = await screen.findByRole('alertdialog')
-    expect(within(dialog).getByText('기존 계정은 바로 삭제되고 되살릴 수 없어요.')).toBeInTheDocument()
+    expect(within(dialog).getByText(wholeText('기존 계정은 바로 삭제되고 복구할 수 없어요.'))).toBeInTheDocument()
 
     await userEvent.click(within(dialog).getByRole('button', { name: '취소' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
@@ -101,7 +103,7 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
       ),
     )
     show()
-    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 되살리기' }))
+    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 복구' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(EXPIRED)
     expect(screen.queryByText('내 지도 목록')).not.toBeInTheDocument()
   })
@@ -113,14 +115,33 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
       ),
     )
     show()
-    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 되살리기' }))
+    await userEvent.click(await screen.findByRole('button', { name: '기존 계정 복구' }))
     expect(await screen.findByText(/처리하지 못했어요/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '기존 계정 되살리기' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '기존 계정 복구' })).toBeEnabled()
   })
 
   it('login_pending 이 없으면 평소처럼 세션으로 판단한다', async () => {
     resetScenario('happy-path')
     show('/')
     expect(await screen.findByText('내 지도 목록')).toBeInTheDocument()
+  })
+})
+
+describe('구글 로그인(#1514)', () => {
+  const signedOut = () =>
+    server.use(http.get('*/auth/me', () => HttpResponse.json({ code: 'UNAUTHORIZED', message: '로그인이 필요합니다' }, { status: 401 })))
+
+  it('로그인 화면에 카카오 아래 「Google로 시작하기」가 있다', async () => {
+    signedOut()
+    show('/')
+    expect(await screen.findByRole('link', { name: 'Google로 시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '카카오로 시작하기' })).toBeInTheDocument()
+  })
+
+  it('구글 키가 없는 환경(google_unavailable)이면 준비 중이라고 알리고 주소에서 지운다', async () => {
+    signedOut()
+    show('/?login_error=google_unavailable')
+    expect(await screen.findByRole('alert')).toHaveTextContent('구글 로그인은 아직 준비 중이에요. 카카오로 시작해 주세요')
+    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent(/^$/))
   })
 })

@@ -3,8 +3,9 @@
 변경은 그 모듈의 api.py만). 커밋하지 않는다(common/database.py get_db가 요청당 한 번 커밋).
 """
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -84,16 +85,17 @@ def get_recent_runs(db: Session, *, run_id: str, limit: int = 10) -> list[dict]:
 
 def get_run_meta(db: Session, *, run_id: str) -> dict:
     """그 run 자신의 정보 `{run_id, map_id, category, requested_by, status, result_count, created_at,
-    default_radius_walk_min, widen_limit_walk_min, widen_step_walk_min}`(#587). agent가 조언 대상인지(완료, 결과 수)와 요청자
-    본인인지, 반경 넓히기 상한(도보 30분, core.WIDEN_LIMIT_MIN)을 넘는 배율인지, 반경 넓히기 한 번(도보 5분,
-    core.WIDEN_STEP_MIN)이 몇 배율인지(#677) 본다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0).
+    default_radius_m, widen_limit_m, widen_step_m, default_radius_walk_min, attempt_no}`(#587, #1385). 반경은 미터가 정본이다
+    (지금 반경, 넓히기 상한 5,000m, 한 번 +1,000m — 모든 카테고리 같다, core). default_radius_walk_min은 호환용 근사(round(m/80))다.
+    attempt_no는 다시 추천(retry)마다 오르는 횟수(#1103 — agent가 조언을 결과 상태별로 저장하는 키에 쓴다). agent가 조언
+    대상인지(완료, 결과 수)와 요청자 본인인지, 반경 넓히기 상한을 넘는 배율인지, 반경 넓히기 한 번이 몇 배율인지(#677) 본다. result_count는 get_recent_runs와 같은 기준(후보 수, done이 아니면 0).
     권한 판정 없음(위 주석)."""
     run = service.get_run_or_404(db, run_id)
     return {
         "run_id": str(run.id), "map_id": run.map_id, "category": run.category, "requested_by": run.requested_by,
         "status": run.status, "result_count": _result_count(db, run), "created_at": run.created_at,
-        "default_radius_walk_min": run.default_radius_walk_min, "widen_limit_walk_min": core.WIDEN_LIMIT_MIN,
-        "widen_step_walk_min": core.WIDEN_STEP_MIN,
+        "default_radius_m": core.run_radius_m(run), "widen_limit_m": core.WIDEN_LIMIT_M, "widen_step_m": core.WIDEN_STEP_M,
+        "default_radius_walk_min": core.radius_walk_min_compat(core.run_radius_m(run)), "attempt_no": run.attempt_no,
     }
 
 
@@ -155,9 +157,42 @@ def simulate_filter(
 
     장소 검색·라벨 Gateway는 생략하면 실행(라우터)과 같은 것을 고른다(recommend.deps, dev는 스텁). 쓰지 않는다 —
     run·후보·근거 줄·지역·제외 목록·last_funnel 모두 그대로다. 그 run의 근거 줄이 아닌 id는 NOT_FOUND, radius_factor가
-    0 이하이거나 반경 넓히기 상한(widen_limit_walk_min / default_radius_walk_min)을 넘으면 ValueError(#792). 권한 판정 없음(위 주석)."""
+    0 이하이거나 반경 넓히기 상한(widen_limit_m / default_radius_m)을 넘으면 ValueError(#792). 권한 판정 없음(위 주석)."""
     return flows.simulate_filter(
         db, run_id=run_id, radius_factor=radius_factor, disable_line_ids=disable_line_ids,
+        place_search=place_search or deps.get_place_search_gateway(),
+        place_facts=place_facts or deps.get_place_facts_gateway(),
+    )
+
+
+def reason_text_inputs(reactions: Sequence[Mapping[str, Any]]) -> list[dict]:
+    """agent의 ②(structure_reasons, 우리 조건 요약, 미리 돌려 보기 — docs/agent-v2.md 8.1, 6.7)가 부른다 — 글이 있는 반응마다 ②에
+    보낼 입력, 반응 순서 그대로. run 생성이 ②에 보내는 것과 같은 함수다(#1180): 배지는 반응 종류로 정한다(🚫 required, ♥
+    preferred). reactions는 pins.api.list_reasoned_reactions의 행(user_id, type, reason_text). 칩만 있는 반응은 빠진다."""
+    return flows.reason_text_inputs(reactions)
+
+
+def preview_filter(
+    db: Session, *, map_id: str, category: str, text_lines: Mapping[str, Sequence[Mapping[str, Any]]],
+    with_keys: Sequence[str] = (), place_search: PlaceSearchGateway | None = None,
+    place_facts: PlaceFactsGateway | None = None, center: tuple[float, float] | None = None,
+) -> dict:
+    """agent의 미리 돌려 보기(docs/agent-v2.md 6.7, #1180)가 진단 전에 부른다 — 지금 「추천 받기」를 누르면 실격 조건까지 남는
+    곳이 몇 곳인가. **run이 없어도 된다.** 줄 조립과 거르기는 run을 만들고 실행할 때와 같은 함수다(flows.preview_filter — 다시
+    구현하지 않는다). 반응은 이 함수가 run과 같이 읽고, 글의 ② 결과만 `text_lines`(reaction_id → [{fact_key, wants, badge}],
+    agent의 structure_reasons 결과)로 받는다. 이 함수는 모델을 부르지 않는다.
+
+    `{passed_count, with_keys_count, funnel[{key, removed_count}]}` — **수만 돌려준다.** 장소 이름과 id는 없다(크레딧 없이 추천을
+    받는 길이 되지 않게, #432). funnel은 pool·radius·closed·disqualify. with_keys_count는 통과한 곳 중 with_keys의 라벨이 모두
+    참(known)인 곳(절충안), with_keys가 없으면 None. run, 후보, 근거 줄, 제외 목록을 만들지도 읽지도 않는다 — 제외 목록은 사람마다
+    따로라(비공개) 실제 추천은 이 수보다 적을 수 있다. 추천 대상이 아닌 카테고리나 ② 결과가 빠진 글 반응은 ValueError, 추천 준비가
+    안 됐으면 AppError NOT_READY. Gateway를 생략하면 실행(라우터)과 같은 것을 고른다. 권한 판정 없음. 읽기 전용, 커밋하지 않는다.
+
+    `center`(lat, lng)를 주면 run 생성의 center와 같은 원 한 개로 센다(#1331). 생략하면 그 카테고리 핀들이 앵커다(지금 동작).
+
+    `simulate_filter`(run이 있어야 하는 추천 막힘 조언 전용)와 다르다 — 그쪽은 그 run의 저장된 줄과 제외 목록을 쓴다."""
+    return flows.preview_filter(
+        db, map_id=map_id, category=category, text_lines=text_lines, with_keys=with_keys, center=center,
         place_search=place_search or deps.get_place_search_gateway(),
         place_facts=place_facts or deps.get_place_facts_gateway(),
     )

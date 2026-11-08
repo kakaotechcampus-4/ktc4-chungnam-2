@@ -228,7 +228,8 @@ def react_all(trip: Trip, *, round_no: int) -> None:
 
 def run_recommend(trip: Trip, spec: RunSpec) -> None:
     c = trip.members[spec.member].client
-    r = c.post(f"/maps/{trip.map_id}/runs", json={"category": spec.category})
+    r = c.post(f"/maps/{trip.map_id}/runs", json={"category": spec.category,
+                                                  "center": {"lat": SEONGSU["lat"], "lng": SEONGSU["lng"]}})   # 지도 중심(#1331)
     if r.status_code != 202:
         trip.note(f"추천 {spec.category} 구성원{spec.member} → {r.status_code} {r.json().get('code')}")
         return

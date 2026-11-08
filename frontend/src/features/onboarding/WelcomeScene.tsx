@@ -1,8 +1,9 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { Search } from 'lucide-react'
 
-import AgainstMark from '@/ui/AgainstMark'
+import Mark from '@/ui/Mark'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
+import { PIN_OUTLINE, PIN_PATH } from '@/ui/pinPath'
 import { PINGO_MARK } from '@/ui/pingoMark'
 
 import { usePhaseLoop } from './usePhaseLoop'
@@ -59,9 +60,7 @@ function PingoAt({ x, y, w, mood }: { x: number; y: number; w: number; mood: Pin
   )
 }
 
-const PIN_PATH = 'M12 2C7.6 2 4 5.6 4 10c0 6 8 20 8 20s8-14 8-20c0-4.4-3.6-8-8-8z'
-
-/** 지도 핀(pinMarker 와 같은 물방울). 일반은 빨강 실선 + 진한 점, 확정은 골드 + 순서 번호. */
+/** 지도 핀(pinMarker 와 같은 모양). 일반은 빨강 속 + 진한 빨강 윤곽선 + 진한 점, 확정은 골드 + 순서 번호. */
 function ScenePin({ confirmed = false, n }: { confirmed?: boolean; n?: number }) {
   return (
     <svg viewBox="0 0 24 32" width="24" height="32" className="drop-shadow-[0_1px_2px_rgba(20,22,31,0.3)]">
@@ -69,8 +68,8 @@ function ScenePin({ confirmed = false, n }: { confirmed?: boolean; n?: number })
         d={PIN_PATH}
         strokeLinejoin="round"
         fill={confirmed ? 'var(--pin-confirmed)' : 'var(--pin-fill-full)'}
-        stroke={confirmed ? 'var(--pin-confirmed-mark)' : 'var(--pin-stroke)'}
-        strokeWidth={confirmed ? 1.5 : 2.5}
+        stroke={confirmed ? 'var(--pin-confirmed-mark)' : 'var(--pin-outline)'}
+        strokeWidth={PIN_OUTLINE}
       />
       {n != null ? (
         <text x="12" y="13.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="var(--pin-confirmed-mark)">
@@ -126,7 +125,7 @@ function PinScene() {
           </span>
         </div>
       </At>
-      <PingoAt x={32} y={92} w={30} mood={held ? 'wave' : 'happy'} />
+      <PingoAt x={32} y={92} w={30} mood={held ? 'welcome' : 'excited'} />
       {phase >= 2 && (
         <At x={66} y={80} anchor="center">
           <div key={phase === 2 ? 'drop' : 'stay'} className="enter-fade h-1.5 w-6 rounded-full bg-ink-300/70" />
@@ -147,7 +146,7 @@ function PinScene() {
 
 /** ① 핀과 의견 카드 → ② 좋음 → ③ 반대 + 이유 칩. */
 const REACTION_PHASES = [800, 1200, 1800]
-const REACTION_MOOD: PingoMood[] = ['default', 'happy', 'default']
+const REACTION_MOOD: PingoMood[] = ['default', 'heart', 'default']
 function ReactionScene() {
   const phase = usePhaseLoop(REACTION_PHASES)
   const like = phase === 1
@@ -161,10 +160,10 @@ function ReactionScene() {
         <div className={`${CARD} p-2`}>
           <div className="grid grid-cols-2 gap-1.5">
             <ReactionPill on={like} tone="good">
-              ♥ 좋음
+              <Mark kind="like" size={12} /> 좋음
             </ReactionPill>
             <ReactionPill on={against} tone="bad">
-              <AgainstMark size={12} /> 반대
+              <Mark kind="against" size={12} /> 반대
             </ReactionPill>
           </div>
           {against && (
@@ -183,7 +182,7 @@ function ReactionScene() {
 function ReactionPill({ on, tone, children }: { on: boolean; tone: 'good' | 'bad'; children: ReactNode }) {
   return (
     <span
-      className="flex items-center justify-center gap-0.5 rounded-lg border py-1 text-label font-bold transition-colors duration-200 ease-out motion-reduce:transition-none"
+      className="flex items-center justify-center gap-0.5 rounded-xl border py-1 text-label font-bold transition-colors duration-200 ease-out motion-reduce:transition-none"
       style={
         on
           ? { background: `var(--${tone}-bg)`, borderColor: `var(--${tone}-line)`, color: `var(--${tone}-text)` }
@@ -224,7 +223,7 @@ function AiScene() {
                   : { background: 'var(--bad-bg)', borderColor: 'var(--bad-line)', color: 'var(--bad-text)' }
               }
             >
-              {like ? '♥' : <AgainstMark size={10} />} {text}
+              {like ? <Mark kind="like" size={10} /> : <Mark kind="against" size={10} />} {text}
             </span>
           </At>
         ))}
@@ -239,7 +238,7 @@ function AiScene() {
             </div>
           </At>
         ))}
-      <PingoAt x={74} y={92} w={30} mood={phase === 2 ? 'happy' : phase === 1 ? 'thinking' : 'default'} />
+      <PingoAt x={74} y={92} w={30} mood={phase === 2 ? 'heart' : phase === 1 ? 'thinking' : 'default'} />
     </>
   )
 }
@@ -294,7 +293,7 @@ function ShortlistScene() {
           ))}
         </div>
       </At>
-      <PingoAt x={74} y={94} w={28} mood={confirmed ? 'happy' : 'default'} />
+      <PingoAt x={74} y={94} w={28} mood={confirmed ? 'relieved' : 'default'} />
     </>
   )
 }

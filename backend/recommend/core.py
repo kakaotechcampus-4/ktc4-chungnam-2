@@ -28,11 +28,31 @@ from recommend.schemas import Check
 # #707 — run 하나에 「+」로 직접 추가하는 글은 10개까지(×로 뺀 것도 센다). 「+」도 ②로 모델을 불러서다. 출발값이고,
 # 크레딧(#432) 뒤에도 남는 보호다(「+」는 크레딧을 쓰지 않는다, docs/credits-reviews.md 4절). 한 요청 5줄은 schemas.EvidencePatchRequest가 422로 막는다.
 MANUAL_EVIDENCE_LIMIT = 10
-# 반경 넓히기 상수 — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
-# 때 루트에게 알린다). 기본값 원은 도보 15분에서 시작해 한 번에 5분씩, 30분까지.
-DEFAULT_RADIUS_WALK_MIN = 15
-WIDEN_STEP_MIN = 5
-WIDEN_LIMIT_MIN = 30
+# 반경 넓히기 상수(#1385, 단위 m, 모든 카테고리 같다) — docs/constraints.md "반경 넓히기 상수" 절 그대로(조정 가능한 상수, 바꿀
+# 때 루트에게 알린다). 기본값 원은 3,000m에서 시작해 한 번에 1,000m씩, 5,000m까지. 이 값을 정하는 곳은 여기 하나다.
+DEFAULT_RADIUS_M = 3000
+WIDEN_STEP_M = 1000
+WIDEN_LIMIT_M = 5000
+# 사용자가 「추천 받기」 요청에서 고를 수 있는 반경(#1416) — 최소는 여기, 최대는 넓히기 상한과 같다(WIDEN_LIMIT_M). 서버는 사용자가
+# 어떻게 고르는지 모르고 정수 하나만 받는다. 요청 모델(schemas.RunCreateRequest.radius_m)의 ge/le는 순환 import라 같은 값을 적고 test_core가 맞는지 본다.
+MIN_RADIUS_M = 2000
+
+
+def request_radius_m(radius_m: int | None) -> int:
+    """요청의 반경(m). 없으면 기본 3,000m. 범위 검사는 요청 모델과 라우터(readiness 쿼리)가 하고, 여기는 값만 고른다."""
+    return DEFAULT_RADIUS_M if radius_m is None else radius_m
+
+
+def radius_walk_min_compat(radius_m: int) -> int:
+    """호환용 도보 분(`default_radius_walk_min` 응답 칸) = round(m / 80). 도보 분은 정본이 아니고 곧 없앤다(#1385)."""
+    return round(radius_m / WALKING_SPEED_M_PER_MIN)
+
+
+def run_radius_m(run: RecommendRun) -> int:
+    """run의 현재 기본값 원 반경(m). 미터 칸이 비어 있는 옛 run(#1385 이전)은 도보 분 × 80m로 읽는다."""
+    if run.default_radius_m is not None:
+        return run.default_radius_m
+    return run.default_radius_walk_min * WALKING_SPEED_M_PER_MIN
 
 
 def check_run_ready(run: RecommendRun) -> None:
@@ -134,26 +154,36 @@ def merge_circles(circles: list[Circle]) -> Circle:
     return Circle(anchor_lat=center_lat, anchor_lng=center_lng, radius_m=round(radius))
 
 
-def radius_m_for_walk_min(walk_min: int) -> int:
-    """기본값 원의 도보 시간(분) → 반경(m). common.geo의 보정계수를 그대로 쓴다."""
-    return walk_min * WALKING_SPEED_M_PER_MIN
+def run_radius_fields(run: RecommendRun) -> dict[str, int | None]:
+    """응답의 반경 칸 세 개 — `default_radius_m`(지금), `next_default_radius_m`(넓히면, 상한이면 None), 호환용
+    `default_radius_walk_min`(#1385, #1370, #1164). RecommendRun과 RunSummary가 같은 값을 낸다."""
+    current = run_radius_m(run)
+    return {"default_radius_m": current, "next_default_radius_m": next_default_radius_m(current)}
 
 
-def next_default_radius_walk_min(current_walk_min: int) -> int:
-    """반경 넓히기(5-6-1, 가드레일4) — 기본값 원의 다음 도보 시간. 이미 상한이면 409
-    WIDEN_LIMIT — 상한을 넘겨 완화하는 건 AI도 코드도 하지 않는다(사람이 「근거 고치기」/
-    「직접 찍기」로 간다). "사람이 명시한 원은 넓히지 않는다"는 구분은 이 함수가 아니라 호출부가
-    넘기는 대상에 달려 있다(flows.widen_run)."""
-    if current_walk_min >= WIDEN_LIMIT_MIN:
-        raise AppError("WIDEN_LIMIT", detail={"default_radius_walk_min": current_walk_min})
-    return min(current_walk_min + WIDEN_STEP_MIN, WIDEN_LIMIT_MIN)
+def next_default_radius_m(current_m: int) -> int | None:
+    """반경 넓히기(5-6-1, 가드레일4)가 만들 다음 기본값 원 반경(m) — 지금 + 1,000m, 상한 5,000m. 이미 상한이면 None(응답의
+    `next_default_radius_m`이 null이고, 화면은 「반경 넓히기」를 막는다, #1370)."""
+    if current_m >= WIDEN_LIMIT_M:
+        return None
+    return min(current_m + WIDEN_STEP_M, WIDEN_LIMIT_M)
 
 
-def pool_radius_factor(current_walk_min: int) -> float:
-    """후보 풀을 가져오는 원의 배율 = 상한 도보 분 / 지금 도보 분(#792). 반경 넓히기가 갈 수 있는 끝까지만 가져와야
+def widened_radius_m(current_m: int) -> int:
+    """반경 넓히기 한 번 뒤의 반경(m). 이미 상한이면 409 WIDEN_LIMIT — 상한을 넘겨 완화하는 건 AI도 코드도 하지 않는다(사람이
+    「근거 고치기」/「직접 찍기」로 간다). "사람이 명시한 원은 넓히지 않는다"는 구분은 이 함수가 아니라 호출부가 넘기는 대상에
+    달려 있다(flows.widen_run)."""
+    next_m = next_default_radius_m(current_m)
+    if next_m is None:
+        raise AppError("WIDEN_LIMIT", detail={"default_radius_m": current_m, "default_radius_walk_min": radius_walk_min_compat(current_m)})
+    return next_m
+
+
+def pool_radius_factor(current_m: int) -> float:
+    """후보 풀을 가져오는 원의 배율 = 상한(m) / 지금 반경(m)(#792). 반경 넓히기가 갈 수 있는 끝까지만 가져와야
     「반경 밖 제거」가 지금 반경 밖(상한 안)의 장소를 센다 — 지금 반경으로 가져오면 늘 0이다. 결과는 여전히 지금 반경
     안에서만 나오고(is_within_any_region), 상한 밖은 풀에도 없다(가드레일 4). 이미 상한이면 1이다."""
-    return max(WIDEN_LIMIT_MIN / current_walk_min, 1.0)
+    return max(WIDEN_LIMIT_M / current_m, 1.0)
 
 
 def is_within_any_region(lat: float, lng: float, regions: list[Circle]) -> bool:
@@ -239,24 +269,18 @@ def apply_disqualifier_filters(
 
     hard 체크만 본다. 선호(soft) 라벨(`constraints.SOFT_FACT_KEYS`)의 passed는 "실격 아님"이 아니라
     그 라벨의 참/거짓값이라(예: quiet=False → passed=False), 판정에 섞으면 아무도 원하지 않은
-    조건 때문에 후보가 전멸한다(#208). soft 체크는 선호 점수(score_candidates)의 입력으로만 쓴다.
+    조건 때문에 후보가 전멸한다(#208). 일반 soft 체크는 점수 입력으로 쓴다.
 
-    예외는 사람이 방향을 밝혀 `required`로 낸 soft 사유(#231, `soft_requirements` = (fact_key, wants)).
-    라벨이 known일 때만 본다 — wants=False("한식 말고")는 라벨 참이면, wants=True("조용한 곳이어야 해")는
-    라벨 거짓이면 실격이고, 모름은 통과(needs_check는 체크가 이미 달고 있다). 같은 키에 한 명은 "원함",
-    한 명은 "원하지 않음 required"여도 실격이 먼저다(가드레일 9) — 실격은 여기서만 정해진다."""
+    접근성 원함 예외는 known 거짓만 제거하고 모름은 통과시킨다."""
     return [
         all(check.passed for check in checks if check.fact_key not in constraints.SOFT_FACT_KEYS)
-        and not any(_violates_soft_requirement(checks, fact_key, wants) for fact_key, wants in soft_requirements)
+        and not any(
+            check.fact_key == key and check.confidence == "known" and check.passed != wants
+            for key, wants in soft_requirements if key in constraints.NEED_FILTER_SOFT_KEYS and wants is True
+            for check in checks
+        )
         for checks in candidate_checks
     ]
-
-
-def _violates_soft_requirement(checks: Sequence[Check], fact_key: str, wants: bool) -> bool:
-    for check in checks:
-        if check.fact_key == fact_key and check.confidence == "known":
-            return check.passed != wants  # passed = 라벨의 실제 참/거짓값
-    return False
 
 
 def checks_to_show(checks: Sequence[Check], wanted_fact_keys: Collection[str]) -> list[Check]:
@@ -321,7 +345,13 @@ def out_of_season_keys(start: date | None, end: date | None) -> frozenset[str]:
 class LineUse(NamedTuple):
     enforced: bool
     not_enforced_reason: str | None
-    effect: str | None   # 쓰이면 "filter"(후보를 거른다, required) | "score"(점수만, preferred), 안 쓰이면 None(#751)
+    effect: str | None   # hard·접근성 예외는 "filter", 일반 soft는 "score", 안 쓰이면 None(#751)
+
+    @property
+    def filters_candidates(self) -> bool | None:
+        """이 줄이 후보를 거르는가(#1260). 쓰이는 줄(enforced)이면 effect가 "filter"일 때 참, "score"면 거짓이고, 안 쓰이면 None이다.
+        근거 응답과 실행 스냅샷이 effect를 다시 해석하지 않고 이 값을 받는다."""
+        return self.effect == "filter" if self.enforced else None
 
 
 def evidence_line_use(
@@ -331,7 +361,7 @@ def evidence_line_use(
     기준이자 근거 응답이 보이는 값이라 이 함수 하나가 정한다. 이유는 no_key → off_season → 배지별 순서로 고른다:
     required+hard 키는 카테고리에 맞아야, soft 키(required·preferred)는 방향(wants)이 있어야 쓰인다.
     그 밖(hard도 soft도 아닌 키, preferred인 hard 키)은 not_for_category, reference는 no_direction.
-    쓰이는 required 줄은 실격 필터(_hard_fact_keys_from, _soft_requirements_from)에, preferred 줄은 점수에 들어간다."""
+    hard와 접근성 필요 조건은 필터에, 나머지 방향이 있는 soft 줄은 점수에 들어간다."""
     if fact_key is None:
         return LineUse(False, "no_key", None)
     if fact_key in off_season:
@@ -343,7 +373,8 @@ def evidence_line_use(
     if badge in ("required", "preferred") and fact_key in constraints.SOFT_FACT_KEYS:
         if wants is None:
             return LineUse(False, "no_direction", None)
-        return LineUse(True, None, "filter" if badge == "required" else "score")
+        effect = "filter" if badge == "required" and wants is True and fact_key in constraints.NEED_FILTER_SOFT_KEYS else "score"
+        return LineUse(True, None, effect)
     if badge not in ("required", "preferred"):
         return LineUse(False, "no_direction", None)
     return LineUse(False, "not_for_category", None)
@@ -364,7 +395,7 @@ def applied_evidence_entries(lines: Sequence[Any], category: str, off_season: Co
         entries.append({
             "id": str(line.id), "author_id": line.author_id, "text": line.text, "badge": line.badge,
             "fact_key": line.fact_key, "wants": line.wants, "enforced": use.enforced,
-            "not_enforced_reason": use.not_enforced_reason, "is_active": True,
+            "not_enforced_reason": use.not_enforced_reason, "filters_candidates": use.filters_candidates, "is_active": True,
         })
     return entries
 
@@ -449,17 +480,6 @@ def trip_weekdays(start: date | None, end: date | None) -> list[int]:
     return sorted({(start + timedelta(days=i)).weekday() for i in range(days)})
 
 
-def trip_open_status(week_status: Mapping[int, str] | None, weekdays: Sequence[int]) -> str:
-    """여행 요일들에서 이 장소의 영업 여부 → "closed"(모든 여행 요일이 closed) | "open"(하나라도 open) | "unknown".
-    요일별 상태는 places.api.get_week_open_status가 정한다(규칙은 한 곳). 여기서는 여행 요일에 모아 쓸 뿐이다."""
-    if not weekdays or not week_status:
-        return "unknown"
-    statuses = [week_status.get(day, "unknown") for day in weekdays]
-    if all(status == "closed" for status in statuses):
-        return "closed"
-    return "open" if "open" in statuses else "unknown"
-
-
 # 5-6 깔때기 단계 (키, 라벨) — 표의 순서가 깔때기 순서다(#751). 라벨은 화면에 보이고 last_funnel에 저장되는 글자, 키는
 # recommend.api를 읽는 모듈이 단계를 찾는 이름이다. 라벨을 바꾸면 옛 라벨로 저장된 깔때기는 키를 못 찾는다(None).
 FUNNEL_STAGES: tuple[tuple[str, str], ...] = (
@@ -505,9 +525,17 @@ IDEMPOTENCY_RETENTION = timedelta(hours=24)   # run이 연결된 행의 보관 �
 ReservationDecision = Literal["conflict", "reuse", "in_progress", "takeover"]
 
 
-def idempotency_request_hash(map_id: str, category: str, execute: bool = False) -> str:
-    """요청 동일성 = (지도, category, execute — 생략은 false). 같은 키로 이 값이 다르면 IDEMPOTENCY_CONFLICT다."""
-    return hashlib.sha256(f"{map_id}{category}{int(bool(execute))}".encode()).hexdigest()
+def idempotency_request_hash(
+    map_id: str, category: str, execute: bool = False, center: tuple[float, float] | None = None, radius_m: int | None = None,
+) -> str:
+    """요청 동일성 = (지도, category, execute, center, radius_m — execute 생략은 false, radius_m 생략은 기본 3,000m). 같은 키로 이 값이
+    다르면 IDEMPOTENCY_CONFLICT다. 명시한 3000은 생략과 같은 요청이라 해시에 넣지 않는다(#1416)."""
+    value = f"{map_id}{category}{int(bool(execute))}"   # center 없는 요청은 예전 해시와 같아야 한다 — 배포 직전에 만든 키(24시간 보관)의 재시도가 409가 되지 않게
+    if center is not None:
+        value += f"\x1f{center[0]:.17g}\x1f{center[1]:.17g}"
+    if radius_m is not None and radius_m != DEFAULT_RADIUS_M:   # radius_m 없는 요청의 해시는 예전 값 그대로
+        value += f"\x1fr{radius_m}"
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def reservation_decision(
@@ -548,13 +576,17 @@ class HeartedPlace:
 
 @dataclass(frozen=True)
 class ScoredCandidate:
-    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표."""
+    """3단계(상위 N곳 고르기) 입력 — 후보 하나의 점수·소속 동네·좌표.
+
+    met_conditions는 카드에 싣는 충족 집계(`build_member_fulfillment`)의 met 수(`met_condition_count`)다 —
+    같은 점수끼리의 순서에만 쓴다(#1288)."""
 
     place_id: str
     score: int
     region_label: str
     lat: float
     lng: float
+    met_conditions: int = 0
 
 
 def filter_heart_signals(hearted_places: Sequence[HeartedPlace], category: str) -> list[HeartedPlace]:
@@ -693,7 +725,8 @@ def score_candidates(
     criteria[fact_key] is True이고 후보 자신도 그 라벨이 known+True일 때만("양쪽 다 참일 때만")
     점수를 준다. 더하는 값은 (지지 점수 − 반대 점수)다. 지지·반대 구성원 한 사람이 직접 쓴 사유의
     작성자면 `WRITTEN_PREFERENCE_POINTS`, ♥로만 나왔으면 `HEART_PREFERENCE_POINTS`다(#414).
-    조사 안 된(unknown) 라벨은 0점 — 감점도 없다.
+    조사 안 된(unknown) 라벨은 0점 — 감점도 없다. 직접 쓴 선호(`preferred_authors`)가 후보에서 확인된 거짓(known+False)이면
+    작성자 한 사람당 `WRITTEN_PREFERENCE_POINTS`씩 깎는다(#1055). ♥에서만 이어받은 선호는 거짓이어도 0점이다.
 
     `avoided_authors`(fact_key → "있는 곳은 피하고 싶다"고 선호로 쓴 구성원, #231)는 그 키를 가진 후보에서
     한 사람당 `WRITTEN_PREFERENCE_POINTS`씩 깎는다. 기준(criteria)이 그 키를 True로 두지 않았어도 깎는다(피하는
@@ -706,7 +739,11 @@ def score_candidates(
     for place_id, checks in candidate_checks_by_place.items():
         total = 0
         for check in checks:
-            if check.confidence != "known" or not check.passed:
+            if check.confidence != "known":
+                continue
+            if not check.passed:
+                # 직접 쓴 선호가 확인된 거짓이면 깎는다(#1055). ♥에서 이어받은 선호는 깎지 않는다.
+                total -= WRITTEN_PREFERENCE_POINTS * len(preferred_authors.get(check.fact_key, ()))
                 continue
             if criteria.get(check.fact_key) is True:
                 supporting, opposing = support.get(check.fact_key, empty)
@@ -741,16 +778,13 @@ def build_member_fulfillment(
          hard 키는 wants=None, 방향이 있는 soft 키는 그 방향이다.
       조건이 하나도 없는 구성원은 집계 대상이 아니다(♥만 누르고 기준에 안 든 사람, 키 없는 반대 사유만 남긴 사람 —
       알러지 글이나 「취향이 아니에요」는 아무것도 확인하지 않았다).
-    - **satisfied** = 자기 조건을 *전부* 이 후보가 known으로 충족한 구성원 수. 선호는 known+참, 반대는 known이고
-      `_meets`(hard는 통과, soft는 방향에 맞음). 라벨이 모름(「확인 필요」)이면 실격 필터는 통과시켜도 충족으로
-      세지 않는다. 일부만 맞으면 충족으로 세지 않는다(구성원 만족을 부풀리지 않는다).
-    - 점수(`score_candidates`)와 같은 "양쪽 다 참" 조건을 재사용한다.
+    - **satisfied** = 화면에 보이는 conditions[]가 비어 있지 않고 *전부* met인 구성원 수(#1100).
+      ♥에서 이어받은 숨은 선호는 세지 않는다. 보이는 조건에 unmet·needs_check가 있으면 충족이 아니다.
     - **conditions**(#805, 표시용) = 구성원마다 조건별 상태. `written_line_ids`((구성원, fact_key) → 직접 쓴 근거 줄 id)에
       있는 조건은 met·unmet·needs_check를 모두 내리고, ♥에서만 나온 선호는 met만 내린다. 위 두 갈래에 든 조건만
-      담는다(키 없는 반대는 없다). satisfied·total·순위에는 영향이 없다."""
+      담는다(키 없는 반대는 없다). 이 목록으로 satisfied를 계산하며 total·순위·실격에는 영향이 없다."""
     line_ids = written_line_ids or {}
     support = _member_support(hearted_places, preferred_authors)
-    met = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
     known_checks = {c.fact_key: c for c in candidate_checks if c.confidence == "known"}
     conditions: dict[str, set[str]] = {}
     for fact_key, wanted in criteria.items():
@@ -760,24 +794,30 @@ def build_member_fulfillment(
         for member_id in supporting:
             conditions.setdefault(member_id, set()).add(fact_key)
     against = {member_id: set(keys) for member_id, keys in (disqualifier_conditions or {}).items() if keys}
-    by_member = [
-        {
+    by_member = []
+    for member_id in sorted(conditions.keys() | against.keys()):
+        entries = _member_condition_entries(
+            member_id, conditions.get(member_id, set()), against.get(member_id, set()), known_checks, line_ids,
+        )
+        # 보이는 conditions[]만으로 센다(#1100). ♥에서 이어받은 숨은 선호는 집계에 넣지 않는다. 보이는 조건이 없으면 충족이 아니다.
+        by_member.append({
             "user_id": member_id,
-            "satisfied": conditions.get(member_id, set()) <= met and all(
-                fact_key in known_checks and _meets(known_checks[fact_key], wants)
-                for fact_key, wants in against.get(member_id, ())
-            ),
-            "conditions": _member_condition_entries(
-                member_id, conditions.get(member_id, set()), against.get(member_id, set()), known_checks, line_ids,
-            ),
-        }
-        for member_id in sorted(conditions.keys() | against.keys())
-    ]
+            "satisfied": bool(entries) and all(entry["status"] == "met" for entry in entries),
+            "conditions": entries,
+        })
     return {
         "satisfied": sum(1 for entry in by_member if entry["satisfied"]),
         "total": len(by_member),
         "by_member": by_member,
     }
+
+
+def met_condition_count(fulfillment: Mapping) -> int:
+    """`build_member_fulfillment` 결과에서 구성원별 conditions[] 중 met인 것의 합 — 화면 「조건 n/m 충족」의 n을 다 더한 값.
+    새로 판정하지 않고 카드에 싣는 결과를 읽기만 한다. 같은 점수끼리의 순서에 쓴다(#1288)."""
+    return sum(
+        1 for member in fulfillment["by_member"] for condition in member["conditions"] if condition["status"] == "met"
+    )
 
 
 def _member_condition_entries(
@@ -837,10 +877,10 @@ def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]
     ]
     parts: list[str] = []
     if disqualifier_labels:
-        parts.append("실격 조건 통과: " + ", ".join(disqualifier_labels))
+        parts.append("통과한 실격 조건: " + ", ".join(disqualifier_labels))
     if preference_labels:
-        parts.append("선호 충족: " + ", ".join(preference_labels))
-    return " · ".join(parts) if parts else "반경 안 후보 중 활성 실격 조건에 걸리지 않은 곳이에요"
+        parts.append("맞는 선호: " + ", ".join(preference_labels))
+    return ". ".join(parts) if parts else "반경 안에서 실격 조건에 걸리지 않은 곳이에요"
 
 
 def select_top_candidates(
@@ -849,13 +889,12 @@ def select_top_candidates(
     *,
     limit: int = 3,
 ) -> list[str]:
-    """3단계 — 상위 N곳(기본 3곳) 고르기(이슈 #112).
+    """상위 limit곳을 한 곳씩 고른다(docs/constraints.md 「상위 3곳 선택」). 매번 남은 후보 중 이 순서로 가장 앞선 곳이다.
 
-    한 번에 정렬하지 않고 점수 높은 순으로 하나씩 집는다 — 동네 배분 tie-break가 "이미 뽑힌
-    동네"에 따라 달라지기 때문이다. 우선순위: 1) 점수(무조건 우선 — 동네 배분이 점수를 이기지
-    않는다) 2) 점수가 같으면 아직 안 뽑힌 동네(region_label) 우선 3) 그래도 같으면 그 무리의
-    기준 핀들까지 거리 "평균"(합이 아니다 — 무리마다 기준 핀 개수가 달라 합으로 비교하면
-    핀이 적은 동네가 무조건 유리해진다)이 가까운 쪽.
+      점수 내림차순 → 충족 조건 수(`met_conditions`) 내림차순(#1288) → 아직 안 뽑힌 region_label 우선 → 기준 핀 거리 평균
+
+    지역 안배는 점수와 충족 수를 이기지 못한다 — 둘 다 같을 때만 다른 동네를 먼저 고른다(2026-11-04 결정, #1288.
+    #1252의 「6점 하한 안 무리별 라운드로빈」은 낮은 점수의 동네가 높은 점수를 밀어내 걷어냈다).
 
     anchor_points_by_region에 후보의 region_label 키가 없거나 빈 시퀀스면 ValueError —
     "후보가 존재한다는 건 그 후보가 어떤 원 안에 있다는 뜻이고, 그 원의 중심이 기준 핀이다.
@@ -871,17 +910,17 @@ def select_top_candidates(
         ]
         return sum(distances) / len(distances)
 
+    if limit <= 0:
+        return []
+    distances = {candidate.place_id: avg_distance(candidate) for candidate in candidates}
     remaining = list(candidates)
-    chosen_ids: list[str] = []
-    chosen_regions: set[str] = set()
-
-    while remaining and len(chosen_ids) < limit:
-        best = min(
-            remaining,
-            key=lambda c: (-c.score, c.region_label in chosen_regions, avg_distance(c)),
-        )
-        chosen_ids.append(best.place_id)
-        chosen_regions.add(best.region_label)
+    chosen: list[str] = []
+    picked_regions: set[str] = set()
+    while remaining and len(chosen) < limit:
+        best = min(remaining, key=lambda c: (
+            -c.score, -c.met_conditions, c.region_label in picked_regions, distances[c.place_id],
+        ))
         remaining.remove(best)
-
-    return chosen_ids
+        chosen.append(best.place_id)
+        picked_regions.add(best.region_label)
+    return chosen

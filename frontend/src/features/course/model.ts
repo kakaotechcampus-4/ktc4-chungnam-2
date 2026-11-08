@@ -9,6 +9,16 @@ export type CourseStepDto = components['schemas']['CourseStep']
 export type CourseGoalDto = components['schemas']['CourseGoal']
 export type CourseDayDto = components['schemas']['CourseDay']
 export type CourseViolationDto = components['schemas']['CourseViolation']
+export type CourseFixDto = components['schemas']['CourseFix']
+export type CourseMoveDto = components['schemas']['CourseMove']
+export type CourseCheckedDto = components['schemas']['CourseChecked']
+export type CourseMode = CourseRunDto['mode']
+
+/** 실서버가 아직 mode 를 안 내면 plan 으로 그린다(#1322). */
+export const modeOf = (run: Pick<CourseRunDto, 'mode'>): CourseMode => run.mode ?? 'plan'
+/** fixes·checked 도 없을 수 있다고 보고 그린다. */
+export const fixesOf = (run: Pick<CourseRunDto, 'fixes'>): CourseFixDto[] => run.fixes ?? []
+export const checkedOf = (run: Pick<CourseRunDto, 'checked'>): CourseCheckedDto[] => run.checked ?? []
 
 /** 요청 한 줄의 글자 수 상한(api-spec CourseRequest.request_text). */
 export const REQUEST_MAX = 100
@@ -17,17 +27,25 @@ export const POLL_MS = 2000
 
 export const isFinished = (run: Pick<CourseRunDto, 'status'> | undefined): boolean => run?.status === 'done' || run?.status === 'failed'
 
-/** 요청 한 줄은 비어 있으면 보내지 않는다(선택 입력). */
-export const requestBody = (text: string): { request_text?: string } => {
-  const trimmed = text.trim()
-  return trimmed ? { request_text: trimmed } : {}
-}
+/** 코스 요청 하나 — 요청 한 줄과 「하루 걷기」에서 고른 상한(분, 안 골랐으면 null). 실패 뒤 「다시 시도」도 같은 것을 보낸다. */
+export type CourseAsk = { text: string; walkMax: number | null }
 
-/** 작업 기록의 「누가」 칩 — 색(tag-*)과 글자를 함께 쓴다. AI 파랑 · 코드 회색 · 사람 회색+사람 아이콘(주의 색은 조건 체크용이라 쓰지 않는다). */
-export const BY: Record<CourseStepDto['by'], { label: string; tag: string }> = {
-  ai: { label: 'AI', tag: 'tag-ai' },
-  code: { label: '코드', tag: 'tag-neutral' },
-  human: { label: '사람', tag: 'tag-neutral' },
+/**
+ * 「하루 걷기」 선택지(분, #1502 사용자 결정). 서버가 받는 범위(10~480분) 안에서 고르는 단위일 뿐이다 —
+ * 정책 상한(하루 도보 합계)은 서버에 있고, 「상관없음」이면 보내지 않아 서버 기본을 쓴다.
+ */
+export const WALK_MAX_OPTIONS = [60, 90, 120] as const
+
+/** 분을 「1시간 30분」처럼. */
+export const walkLabel = (min: number) => [Math.floor(min / 60) && `${Math.floor(min / 60)}시간`, min % 60 && `${min % 60}분`].filter(Boolean).join(' ')
+
+/** 요청 한 줄은 비어 있으면 보내지 않는다(선택 입력). 하루 걷기 상한은 고른 때만 모든 날에 건다. */
+export const requestBody = (text: string, walkMax: number | null = null): { request_text?: string; member_constraints?: { kind: 'daily_walk_max'; value: number }[] } => {
+  const trimmed = text.trim()
+  return {
+    ...(trimmed ? { request_text: trimmed } : {}),
+    ...(walkMax ? { member_constraints: [{ kind: 'daily_walk_max' as const, value: walkMax }] } : {}),
+  }
 }
 
 /** 첫 줄 「이해」는 카드의 제목이 "이렇게 이해했어요"라서, 문장 앞에 같은 말이 오면 한 번만 보이게 뗀다. */
@@ -38,7 +56,7 @@ export function understandBody(text: string): string {
 export const GOAL_STATE = {
   met: { label: '지킴', tag: 'tag-good' },
   missed: { label: '못 지킴', tag: 'tag-bad' },
-  unknown: { label: '확인할 수 없어요', tag: 'tag-neutral' },
+  unknown: { label: '알 수 없음', tag: 'tag-neutral' },
 } as const
 
 export function goalState(goal: CourseGoalDto) {
@@ -59,14 +77,14 @@ export function outcomeText(outcome: NonNullable<CourseRunDto['outcome']>): stri
     case 'solved_with_checks':
       return '코스를 짰어요. 영업 여부는 가게에 직접 확인해 주세요'
     case 'unresolved':
-      return '코스를 짰지만 지키지 못한 조건이 남았어요'
+      return '코스를 짰지만 지키지 못한 조건이 있어요'
     case 'timeout':
-      return '시간이 다 돼서 지금까지 짠 코스예요'
+      return '시간이 부족해서 여기까지 짰어요'
   }
 }
 
 /** 실패 안내. 계약상 INTERRUPTED(서버 재시작·15분 초과)와 ENGINE_ERROR 는 같은 문구다. */
-export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
+export const FAILURE_TEXT = '코스를 짜다가 중간에 끊겼어요. 잠시 후 다시 시도해 주세요'
 
 /**
  * 코스 요청이 실패했을 때의 안내. 코드가 아닌 HTTP 만으로 갈리지 않는다(docs/errors.md). 모르는 코드는 null 이라 호출부가 ErrorText 로 보인다.
@@ -75,8 +93,11 @@ export const FAILURE_TEXT = '코스 짜기가 중간에 끊겼어요'
 export function createErrorMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
   switch (error.code) {
-    case 'COURSE_NOT_ENOUGH_PLACES':
-      return '확정 리스트에 위치를 아는 장소가 2곳 이상 있어야 코스를 짤 수 있어요'
+    case 'COURSE_NOT_ENOUGH_PLACES': {
+      // 몇 곳부터인지는 서버 값(detail.min)이다 — 화면에 숫자를 적지 않는다. 문구는 docs/errors.md 표.
+      const min = error.detail?.min
+      return typeof min === 'number' ? `확정 리스트에 장소를 ${min}곳 이상 담아 주세요` : '확정 리스트에 장소를 더 담아 주세요'
+    }
     default:
       return null
   }
@@ -91,10 +112,15 @@ export function inProgressRunId(error: unknown): string | null {
 
 const ORDINALS = ['첫째', '둘째', '셋째', '넷째', '다섯째', '여섯째', '일곱째', '여덟째', '아홉째', '열째', '열한째', '열두째', '열셋째', '열넷째']
 
+/** "첫째 날" — 확정 탭 「일정 짜기」의 날짜 고르기도 같은 말을 쓴다. */
+export function dayOrdinal(index: number): string {
+  return `${ORDINALS[index] ?? `${index + 1}번째`} 날`
+}
+
 /** "첫째 날 · 10.3 (토)" — 시간은 보이지 않고 날짜와 요일만. */
 export function dayTitle(date: string, index: number): string {
   const d = new Date(`${date}T00:00:00`)
-  return `${ORDINALS[index] ?? `${index + 1}번째`} 날 · ${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
+  return `${dayOrdinal(index)} · ${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]})`
 }
 
 /** pin_id → 장소 이름. 이미 불러온 확정 리스트·핀 목록에서만 찾는다(새 요청 없음). 앞에 둔 것이 이긴다. */
@@ -134,11 +160,22 @@ export function dayStops(day: CourseDayDto, names: Map<string, string>, points: 
       const leg: Leg | null = found ? { mode: found.mode === 'transit' ? 'transit' : 'walk', minutes: found.approx_minutes } : null
       const name = names.get(slot.pin_id) ?? '이 장소'
       const at = points.get(slot.pin_id)
-      return { pinId: slot.pin_id, name, needsCheck: slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
+      // 그날 영업 여부를 아는 장소(서버 needs_check 가 false) — 「영업시간 확인됨」을 단다. 모르는 장소엔 아무것도 달지 않는다.
+      return { pinId: slot.pin_id, name, hoursKnown: !slot.needs_check, leg, point: at ? ({ name, ...at } satisfies KakaoPoint) : null }
     })
 }
 
 export type DayStop = ReturnType<typeof dayStops>[number]
+
+/**
+ * 「영업시간 확인됨」을 달아도 되는 결과인가. 서버 needs_check 는 「그날 영업 여부를 모름」만 뜻해서, 그날 쉬는 장소(위반 kind closed)도
+ * false 다. 위반에는 pin_id 가 없어 어느 장소인지 모르므로, 쉬는 날 위반이 하나라도 있으면 태그를 모두 숨긴다(이름 문장을 글자로 맞추지 않는다, #717).
+ * 서버가 위반에 pin_ids 를 내리면(루트 검수 #1127) 그 장소만 빼도록 바꾼다.
+ */
+export const showHoursKnown = (run: Pick<CourseRunDto, 'violations'>) => !run.violations.some((v) => v.kind === 'closed')
+
+/** 영업시간을 모르는 장소 수 — 서버 checks 는 (장소, 날) 마다라 같은 장소가 여러 날이면 한 곳으로 센다. */
+export const uncheckedPlaceCount = (run: Pick<CourseRunDto, 'checks'>) => new Set(run.checks.map((c) => c.pin_id)).size
 
 export type DayLink = { url: string; label: string; cut: boolean }
 
@@ -197,3 +234,17 @@ export function courseDrawings(run: Pick<CourseRunDto, 'days'>, points: Map<stri
     return [{ title: dayTitle(day.date, i), stops: placed, legs, ...dayLine(i) }]
   })
 }
+
+/** 고칠 점 카드 순서 — 하드 문제가 먼저, 같은 세기 안에서는 서버가 준 순서 그대로. */
+export const sortFixes = (fixes: CourseFixDto[]): CourseFixDto[] => [...fixes.filter((f) => f.strength === 'hard'), ...fixes.filter((f) => f.strength !== 'hard')]
+
+/** 카드가 일정을 바꾸는 카드인지(고치지 않기로 한 카드는 moves 가 비고 「반영」이 없다). */
+export const hasMoves = (fix: CourseFixDto): boolean => fix.moves.length > 0
+
+/** 미배정 장소를 날짜에 넣는 카드는 「○일째에 넣기」다(from_date 가 null). */
+export const isFill = (fix: CourseFixDto): boolean => fix.kind === 'unassigned' || fix.moves.every((m) => m.from_date === null)
+
+export const stalePrompt = '일정이 바뀌었어요'
+
+/** 카드를 반영했거나 반영 중에 일정이 바뀌어, 남은 카드가 낡았을 때의 안내(#1322). */
+export const staleFixText = `${stalePrompt}. 다시 점검하면 이어서 고칠 수 있어요`

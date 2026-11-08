@@ -9,13 +9,14 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from starlette.middleware.cors import CORSMiddleware
 
 from agent import loop as agent_loop
 from agent.course import service as course_service
 from common.adapters import format_assembly
 from common.database import SessionLocal, engine
+from common import logguard
 from common.errors import register_error_handlers
 from common.settings import settings
 from realtime.dispatcher import dispatcher
@@ -28,6 +29,9 @@ logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s 
 for _noisy in ("httpx", "httpcore"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
+# uvicorn 접근 로그가 쿼리스트링(code·state·검색어·좌표)과 초대 토큰을 찍지 않게 한다(#473, #1201).
+logguard.install()
+
 logger = logging.getLogger("pingo")
 
 SHUTDOWN_TIMEOUT = 5.0   # dispatcher 정지 대기 상한(초)
@@ -39,7 +43,9 @@ async def lifespan(_app: FastAPI):
     logger.info("\n%s", format_assembly())
     # 반드시 이 순서로: 이미 있는 event_log까지 따라잡은 뒤(동기, 한 번) 폴링 루프를 시작한다.
     dispatcher.initialize_last_seen()
+    dispatcher.begin_health_window()   # task 첫 실행 전 /health가 불려도 유예 구간이 이미 시작돼 있다
     task = asyncio.create_task(dispatcher.run_forever())
+    _app.state.dispatcher_task = task
     try:   # 서버가 죽으면서 끊긴 AI 코스 짜기(백그라운드) run을 끝낸다. 표가 아직 없어도(마이그레이션 전) 서버는 떠야 한다
         interrupted = course_service.interrupt_unfinished_runs(SessionLocal)
         if interrupted:
@@ -73,7 +79,11 @@ register_error_handlers(app)
 
 
 @app.get("/health")
-def health():
+def health(response: Response):
+    task = getattr(app.state, "dispatcher_task", None)
+    if task is None or task.done() or not dispatcher.healthy():
+        response.status_code = 503
+        return {"status": "error"}
     return {"status": "ok"}
 
 

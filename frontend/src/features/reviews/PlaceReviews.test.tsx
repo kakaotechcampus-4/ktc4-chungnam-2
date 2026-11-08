@@ -65,11 +65,11 @@ describe('장소 후기(#953)', () => {
 
   it('작성 시트에만 보상 한 줄 — 토스트는 「후기를 저장했어요」, 고치기 시트엔 크레딧 문구 없음. 내 후기는 「나」, 신고 대신 삭제', async () => {
     const before = await get<{ balance: number; review_reward: number }>('/credits/me')
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
     await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
-    expect(await within(await screen.findByRole('dialog')).findByText(`후기를 작성하면 ${before.review_reward} 크레딧이 충전돼요`)).toBeInTheDocument()
+    expect(await within(await screen.findByRole('dialog')).findByText(`후기를 쓰면 ${before.review_reward} 크레딧을 드려요`)).toBeInTheDocument()
     await writeReview(user, '5점', '아침에 가기 좋아요')
     await waitFor(() => expect(toast()).toBe('후기를 저장했어요'))
     // 받는 양은 서버가 정한다 — 화면은 credited 를 보이지 않을 뿐 잔액은 늘었다.
@@ -95,7 +95,7 @@ describe('장소 후기(#953)', () => {
     const credits = await get<{ balance: number; max_balance: number }>('/credits/me')
     expect(credits.balance).toBeGreaterThanOrEqual(credits.max_balance)
     const client = newClient()
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderWithClient(<PlaceReviews pin={await pin1()} />, client)
 
     await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
@@ -109,7 +109,7 @@ describe('장소 후기(#953)', () => {
 
   it('글 상한은 응답의 limits.body_max — 별점과 글이 있어야 저장할 수 있다', async () => {
     const { limits } = await get<ReviewPageDto>('/pins/pin_1/reviews')
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderWithClient(<PlaceReviews pin={await pin1()} />)
     await user.click(await screen.findByRole('button', { name: '후기 쓰기' }))
 
@@ -126,7 +126,7 @@ describe('장소 후기(#953)', () => {
 
   it('내 후기 삭제는 한 번 묻고 지운다 — 확인창에 크레딧 문구 없음', async () => {
     await fetch(`${BASE}/pins/pin_1/reviews/me`, { method: 'PUT', body: JSON.stringify({ rating: 4, body: '지울 후기' }) })
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
     await user.click(within((await screen.findByText('지울 후기')).closest('li')!).getByRole('button', { name: '삭제' }))
@@ -138,7 +138,7 @@ describe('장소 후기(#953)', () => {
   })
 
   it('신고는 한 번 묻고, 보내면 「신고했어요」 뒤 그 줄은 「신고함」', async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
     const row = within(await screen.findByRole('list')).getAllByRole('listitem')[0]

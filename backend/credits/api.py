@@ -9,6 +9,8 @@
 - reviews(#951): 첫 후기 저장과 같은 트랜잭션에서 grant_review
 - reviews(#951): ReviewSaved.balance에 get_balance, 후기 쓰기·신고 전에 reject_guest
 - auth.service: 탈퇴 7일 정리 purge_withdrawn_user(delete_by_user), 게스트 합치기 MERGE_STEPS(reassign_user)
+
+광고 보고 충전(명세 3.7, #1038)은 이 모듈 라우터 안에서 끝나고 부르는 모듈이 없어 여기에 함수가 없다.
 """
 
 from sqlalchemy.orm import Session
@@ -25,12 +27,14 @@ def check_can_spend(db: Session, *, user_id: str, feature: str) -> None:
 def charge(db: Session, *, user_id: str, feature: str, run_id: str) -> int:
     """실행 저장과 같은 트랜잭션에서 가격만큼 뺀다. ref_id = f"{feature}:{run_id}". 남은 잔액.
     첫 쓰기면 계정을 만들고 initial을 남긴다. 같은 run으로 다시 부르면 빼지 않고 잔액만 돌려준다.
-    읽기 확인과 쓰기 사이에 잔액이 줄었으면 여기서 402(모델은 이미 불렸다 — 드문 경합으로 받아들인다). 게스트는 403."""
+    읽기 확인과 쓰기 사이에 잔액이 줄었으면 여기서 402(모델은 이미 불렸다 — 드문 경합으로 받아들인다). 게스트는 403.
+    부르는 곳은 명세 3.2 「기능별 가격·차감·환불」 표에 적는다 — 새로 부르면 표에 줄을 더한다(#1479, 검사가 맞춘다)."""
     return service.charge(db, user_id=user_id, feature=feature, run_id=run_id)
 
 
 def refund(db: Session, *, feature: str, run_id: str) -> bool:
-    """결과 없이 끝난 실행의 차감을 돌려준다(코스 ENGINE_ERROR, INTERRUPTED). 잔액 상한까지만 채운다(명세 3.6). 멱등.
+    """사람이 얻은 게 없이 끝난 실행의 차감을 돌려준다. 잔액 상한까지만 채운다(명세 3.6). 멱등(한 run에 한 번).
+    **언제 돌려줄지는 부르는 기능이 정하고, 조건과 부르는 곳은 명세 3.2 표 한 곳에 적는다**(#1479) — 여기 나열하지 않는다.
     환불을 처리했으면 True(상한에 걸려 0이어도), 차감이 없었거나 이미 돌려줬으면 False."""
     return service.refund(db, feature=feature, run_id=run_id)
 
@@ -53,7 +57,7 @@ def get_balance(db: Session, *, user_id: str) -> int:
 
 
 def delete_by_user(db: Session, *, user_id: str) -> int:
-    """계정과 원장을 지운다. 지운 행 수. 탈퇴 7일 뒤 정리(auth.service.purge_withdrawn_user)가 부른다 —
+    """계정, 원장, 광고 세션을 지운다. 지운 행 수. 탈퇴 7일 뒤 정리(auth.service.purge_withdrawn_user)가 부른다 —
     탈퇴 때는 부르지 않는다(되살리면 잔액이 그대로 돌아와야 한다, #948)."""
     return service.delete_by_user(db, user_id=user_id)
 

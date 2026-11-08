@@ -254,9 +254,3 @@ def test_author_display_name_left_member():
 def test_author_display_name_current_member_keeps_real_name():
     assert core.author_display_name("철수", is_withdrawn=False, is_current_member=True) == "철수"
     assert core.author_display_name(None, is_withdrawn=False, is_current_member=True) is None
-
-
-def test_withdrawn_author_name_matches_auth():
-    from auth.api import WITHDRAWN_DISPLAY_NAME
-
-    assert core.WITHDRAWN_AUTHOR_NAME == WITHDRAWN_DISPLAY_NAME

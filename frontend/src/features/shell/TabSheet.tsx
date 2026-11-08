@@ -9,12 +9,13 @@ import { TriangleAlert } from 'lucide-react'
 
 import AgentButton from '@/features/agent/AgentButton'
 import type { ConnectionState } from '@/features/map/realtime'
+import TrashDropZone from '@/features/map/TrashDropZone'
 
 import Toaster from './Toaster'
 
 /**
  * 탭 하나의 바텀시트. 탭 컴포넌트는 제목 줄(header)과 본문만 넘긴다 —
- * 단계 기억·지도 버튼·토스트 자리는 여기서 탭 3개가 똑같이 갖는다.
+ * 단계 기억·지도 버튼·「핑고 AI 조언」·토스트 자리는 여기서 탭 4개가 똑같이 갖는다.
  * 넓은 화면에서는 지도 버튼·토스트·연결 띠를 지도 영역에 두므로(MapLayout) 시트에 붙이지 않는다(#338).
  */
 export default function TabSheet({
@@ -51,9 +52,11 @@ export default function TabSheet({
         !desktop && (
           <>
             <MapControls hidden={controlsHidden} fading={mapMoving} active={activeControl} onPress={onControl} onCrampedChange={setCramped} />
-            {/* 「핑고 AI 조언」은 마킹 탭 지도 왼쪽 아래(agent-v2 16.1). */}
-            {tab === 'map' && <AgentButton mapId={mapId} hidden={controlsHidden} fading={mapMoving} />}
+            {/* 「핑고 AI 조언」은 지도 왼쪽 아래(agent-v2 16.1). 조언은 지도 단위라 지도가 떠 있는 네 탭 모두에 있다(#1162). */}
+            <AgentButton mapId={mapId} hidden={controlsHidden} fading={mapMoving} />
             {!modalOpen && <Toaster controlsVisible={!controlsHidden && !mapMoving} inside={stage === 3} />}
+            {/* 핀을 끌 때만 나타나는 휴지통(#1012). 토스트와 같은 자리 규칙이다. */}
+            <TrashDropZone mapId={mapId} placement={stage === 3 ? 'inside' : 'above'} />
           </>
         )
       }

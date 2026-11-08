@@ -5,7 +5,7 @@
 
 ## 단일 FastAPI 앱 — 마이크로서비스 아님
 
-하나의 FastAPI 앱(단일 Cloud Run 배포, 최종기획안 13절)에 `backend/<module>/`이 각각 파이썬
+하나의 FastAPI 앱(AWS 서버 1대의 Docker Compose에서 환경마다 API 컨테이너 1개, `deploy_rules.md`)에 `backend/<module>/`이 각각 파이썬
 패키지로 들어간다.
 
 ```
@@ -41,8 +41,8 @@ Alembic 히스토리는 저장소 전체에 하나다. 모듈마다 별도 체�
 
 ## 로컬 실행
 
-- `pip install -r requirements.txt`, `.env.example`을 `.env`로 복사 후 값 채우기
-- DB·Redis: `docker-compose up -d` (`backend/docker-compose.yml` — PostgreSQL+PostGIS, Redis)
+- `pip install -r requirements-dev.txt`(운영 의존성 + 테스트·개발 도구. 운영 이미지는 `requirements.txt`만 설치한다 — 테스트 도구는 `requirements-dev.txt`에 둔다, #1439), `.env.example`을 `.env`로 복사 후 값 채우기
+- DB: `docker-compose up -d` (`backend/docker-compose.yml` — PostgreSQL+PostGIS. Redis는 쓰지 않는다, #1229)
 - `uvicorn main:asgi_app --reload` — `backend/main.py`는 이미 있다. 각 모듈은 자기 `router.py`를 만들고
   `main.py`의 주석 처리된 `include_router` 줄만 풀면 된다(그 외엔 `main.py`를 건드리지 않는다)
 - 마이그레이션: `alembic revision --autogenerate -m "..."` / `alembic upgrade head` — 모델을

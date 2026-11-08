@@ -22,6 +22,14 @@ export type MapView = Pick<MapDto, 'id' | 'title'> & {
   isOwner: boolean
   /** 목록 한 줄 요약 — "10.3 (토) ~ 10.5 (월) · 구성원 4명 · 핀 3개" */
   summary: string
+  /** 카드 「⋯」 메뉴의 수정·삭제·나가기 창이 쓰는 값(#1444). 지도 화면 머리글과 같은 모양이다. */
+  header: MapHeaderView
+  /** 지도 색(#1445). 고르지 않았으면 없다 — 카드는 흰 바탕, 기본 그림은 ink-100 하늘이다. */
+  color?: string
+  /** 방장이 올린 대표 이미지 주소(apiUrl 로 감싸 쓴다). 없으면 지역 기본 그림(RegionCover)이다. */
+  coverUrl?: string
+  /** 지금 방장 이름 — 초대받은 지도 카드의 「○○님의 지도」. */
+  ownerName?: string
 }
 
 /** "10.3 (토)" — 화면의 날짜 표기 하나. */
@@ -46,6 +54,8 @@ export type MapHeaderView = Pick<MapDto, 'id' | 'title'> & {
   isOwner: boolean
   /** 지도 삭제는 방장만(#369). */
   canDelete: boolean
+  /** 지도 복사는 방장만(#1446, permissions.md map.copy). */
+  canCopy: boolean
   /** 넘길 사람이 없는 방장은 나갈 수 없다 — 지도를 삭제해야 한다. */
   canLeave: boolean
   /** 방장이 나가면 방장이 될 사람의 이름. 요청자가 방장이고 넘길 사람이 있을 때만 있다. */
@@ -67,6 +77,7 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
     isOwner: map.my_role === 'owner',
     regionCenter: map.region ? { lat: map.region.lat, lng: map.region.lng } : undefined,
     canDelete: map.permissions.can_delete === true,
+    canCopy: map.permissions.can_copy === true,
     canLeave: map.permissions.can_leave !== false,
     nextOwnerName: map.next_owner?.display_name,
   }
@@ -75,11 +86,35 @@ export function toMapHeaderView(map: MapDto): MapHeaderView {
 /** 지도 만들기·수정 입력(TripFields). */
 export type TripDraft = { title: string; region: MapRegion | null; startDate: string; endDate: string }
 
-/** ISO 날짜 문자열은 사전순 비교가 곧 날짜 비교다. */
-export const tripDateError = (d: TripDraft) => Boolean(d.startDate && d.endDate && d.endDate < d.startDate)
+const DAY_MS = 86_400_000
+const isoDay = (iso: string) => Date.parse(`${iso}T00:00:00Z`)
 
-/** 빈 칸이 없고 종료일이 시작일보다 앞서지 않는다. 당일치기는 같은 날을 넣는다. */
-export const tripReady = (d: TripDraft) => d.title.trim() !== '' && d.startDate !== '' && d.endDate !== '' && !tripDateError(d)
+/** 시작일부터 maxDays 일째 되는 날(시작일·종료일 포함) — 종료일 칸이 고를 수 있는 끝(#1371). */
+export const tripEndMax = (startDate: string, maxDays: number) => new Date(isoDay(startDate) + (maxDays - 1) * DAY_MS).toISOString().slice(0, 10)
+
+/** 여행 기간 상한 문구 — docs/errors.md TRIP_TOO_LONG 그대로, N은 서버 값(`trip_max_days`·`detail.limit`). */
+const tripTooLong = (limit: number) => `여행 기간은 최대 ${limit}일까지 정할 수 있어요`
+
+/**
+ * 날짜 칸의 잘못 — 종료일이 시작일보다 앞서거나, 기간이 서버가 준 상한(`GET /maps`의 `trip_max_days`, #1371)을 넘으면 그 문구.
+ * 상한을 모르면(구버전 서버) 기간은 보지 않고 서버 검사에 맡긴다. ISO 날짜 문자열은 사전순 비교가 곧 날짜 비교다.
+ */
+export function tripDateError(d: TripDraft, maxDays?: number): string | null {
+  if (!d.startDate || !d.endDate) return null
+  if (d.endDate < d.startDate) return '종료일은 시작일과 같거나 뒤여야 해요'
+  if (maxDays && d.endDate > tripEndMax(d.startDate, maxDays)) return tripTooLong(maxDays)
+  return null
+}
+
+/** 빈 칸이 없고 날짜 칸에 잘못이 없다. 당일치기는 같은 날을 넣는다. */
+export const tripReady = (d: TripDraft, maxDays?: number) =>
+  d.title.trim() !== '' && d.startDate !== '' && d.endDate !== '' && !tripDateError(d, maxDays)
+
+/** 서버가 여행 기간 상한으로 막았을 때(422 TRIP_TOO_LONG) 문구, 아니면 null. */
+export function tripTooLongError(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.code !== 'TRIP_TOO_LONG') return null
+  return typeof err.detail?.limit === 'number' ? tripTooLong(err.detail.limit) : '여행 기간이 너무 길어요'
+}
 
 /** 지도 수정 본문 — 바뀐 칸만 보낸다(#465 부분 수정). 지역은 지우지 못하고 바꾸기만 한다. 바뀐 게 없으면 null. */
 export function mapChanges(
@@ -95,11 +130,12 @@ export function mapChanges(
   return Object.keys(body).length ? body : null
 }
 
-export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean }
+/** isGuest: 그 브라우저에서만 이어지는 게스트(#955). 방장이 될 수 없어 넘기기 목록에서 빠진다. */
+export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean; isGuest: boolean }
 
 export function toMemberView(member: MemberDto, myUserId: string | undefined): MemberView {
   const name = member.display_name ?? '이름 없음'
-  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner' }
+  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner', isGuest: member.is_guest === true }
 }
 
 export function toMapView(map: MapDto): MapView {
@@ -109,16 +145,20 @@ export function toMapView(map: MapDto): MapView {
     region: map.region?.label,
     createdByMe: map.created_by_me,
     isOwner: map.my_role === 'owner',
-    summary: `${formatTripDates(map.start_date, map.end_date)} · 구성원 ${map.member_count}명 · 핀 ${map.pin_count}개`,
+    summary: `${formatTripDates(map.start_date, map.end_date)}, 구성원 ${map.member_count}명, 핀 ${map.pin_count}개`,
+    header: toMapHeaderView(map),
+    color: map.color ?? undefined,
+    coverUrl: map.cover_url ?? undefined,
+    ownerName: map.owner_display_name ?? undefined,
   }
 }
 
-/** 켜진 초대 링크 한 줄(#467) — 「민수님이 만든 링크 · 2명 참여 · 11.7 (토)까지」. */
+/** 켜진 초대 링크 한 줄(#467) — 「민수님이 만든 링크, 2명 참여. 11.7 (토)까지 쓸 수 있어요」. */
 export type InviteRowView = { token: string; label: string }
 
 export function toInviteRowView(invite: InviteDto): InviteRowView {
   const by = invite.created_by_display_name ? `${invite.created_by_display_name}님이 만든 링크` : '초대 링크'
-  return { token: invite.token, label: `${by} · ${invite.used_count ?? 0}명 참여 · ${formatDay(new Date(invite.expires_at))}까지` }
+  return { token: invite.token, label: `${by}, ${invite.used_count ?? 0}명 참여. ${formatDay(new Date(invite.expires_at))}까지 쓸 수 있어요` }
 }
 
 /** 내 지도 목록과 상한(#623). 상한은 서버가 내려 준 값만 쓴다. */
@@ -127,10 +167,12 @@ export type MapListView = {
   limit: number
   /** 상한까지 찼다 — 「새 지도」를 막는다. */
   full: boolean
+  /** 여행 기간 상한(일, #1371). 구버전 서버는 보내지 않는다. */
+  tripMaxDays?: number
 }
 
 export function toMapListView(list: MapListDto): MapListView {
-  return { items: list.items.map(toMapView), limit: list.limit, full: list.items.length >= list.limit }
+  return { items: list.items.map(toMapView), limit: list.limit, full: list.items.length >= list.limit, tripMaxDays: list.trip_max_days }
 }
 
 /** 상한이라 「새 지도 만들기」를 막았을 때 곁에 두는 안내(지도 목록, PC 지도 바꾸기 메뉴). */
@@ -165,19 +207,27 @@ export function restoreMapErrorMessage(err: unknown, retentionDays: number): str
   return '지도를 복구하지 못했어요'
 }
 
+/** 지도 복사 실패 문구(#1446). 복사도 지도를 하나 늘려서 상한(409 MAP_LIMIT)에 걸릴 수 있다. */
+export function copyMapErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'MAP_LIMIT') return mapLimitMessage(err)
+  if (err instanceof ApiError && err.code === 'GUEST_NOT_ALLOWED') return '게스트는 지도를 복사할 수 없어요. 카카오로 로그인해 주세요'
+  return '지도를 복사하지 못했어요'
+}
+
 /** 초대 수락 실패 문구. 코드와 문구는 docs/errors.md 표를 따른다. */
 const INVITE_ERROR_MESSAGES: Record<string, string> = {
-  INVITE_NOT_FOUND: '유효하지 않은 초대 링크예요',
-  INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 요청하세요',
+  INVITE_NOT_FOUND: '잘못된 초대 링크예요',
+  INVITE_EXPIRED: '초대 링크가 만료됐어요. 초대한 분께 새 링크를 부탁해 보세요',
+  INVITE_REVOKED: '방장이 이 초대 링크를 껐어요. 새 링크를 부탁해 보세요',
   // 게스트로 참여(#485)에서만 나는 코드. 문구는 docs/errors.md 표.
-  GUEST_LIMIT: '이 링크로는 더 입장할 수 없어요. 초대한 분께 새 링크를 요청하세요',
+  GUEST_LIMIT: '이 링크로는 더 들어갈 수 없어요. 초대한 분께 새 링크를 부탁해 보세요',
   RATE_LIMITED: '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요',
 }
 
 /** 상한 숫자는 화면이 들고 있지 않는다 — 409 MAP_LIMIT 응답의 detail.limit만 쓴다(멘토 리뷰 #380). */
 function mapLimitMessage(err: ApiError): string {
   const limit = typeof err.detail?.limit === 'number' ? `${err.detail.limit}개까지` : '정해진 개수까지'
-  return `지도는 ${limit} 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`
+  return `지도는 ${limit} 만들거나 참여할 수 있어요. 다른 지도를 나가거나 삭제하고 다시 해 보세요`
 }
 
 /** 지도 만들기 실패 문구. 상한을 넘으면 409 MAP_LIMIT(#369), 게스트면 403 GUEST_NOT_ALLOWED(#472, docs/errors.md 문구). */
@@ -185,7 +235,7 @@ export function createMapErrorMessage(err: unknown): string {
   if (!(err instanceof ApiError)) return '지도를 만들지 못했어요'
   if (err.code === 'MAP_LIMIT') return mapLimitMessage(err)
   if (err.code === 'GUEST_NOT_ALLOWED') return '지도를 만들려면 카카오로 로그인해 주세요'
-  return '지도를 만들지 못했어요'
+  return tripTooLongError(err) ?? '지도를 만들지 못했어요'
 }
 
 export function inviteErrorMessage(err: unknown): string {
@@ -206,10 +256,16 @@ export function toInviteView(invite: InviteSummaryDto): InviteView {
   }
 }
 
-/** 초대 요약을 못 받은 이유. 만료·없는 링크는 화면을 따로 띄운다(Figma C-3). */
-export function inviteProblem(err: unknown): 'expired' | 'invalid' | null {
+export type InviteProblem = 'expired' | 'revoked' | 'invalid'
+
+/**
+ * 초대 링크를 더 쓸 수 없는 이유. 만료·꺼짐·없는 링크는 참여 버튼 없이 끝 화면을 띄운다(Figma C-3, #719).
+ * 요약 조회뿐 아니라 참여·게스트 입장 중에 링크가 꺼져도 같다.
+ */
+export function inviteProblem(err: unknown): InviteProblem | null {
   if (!(err instanceof ApiError)) return null
   if (err.code === 'INVITE_EXPIRED') return 'expired'
+  if (err.code === 'INVITE_REVOKED') return 'revoked'
   if (err.code === 'INVITE_NOT_FOUND') return 'invalid'
   return null
 }

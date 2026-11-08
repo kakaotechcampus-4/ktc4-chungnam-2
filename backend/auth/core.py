@@ -1,5 +1,5 @@
 """
-순수 함수만 — I/O 없음(docs/code-quality.md 기능형 코어). 세션 토큰 서명/검증과 카카오 프로필
+순수 함수만 — I/O 없음(docs/code-quality.md 기능형 코어). 세션 토큰 서명/검증과 카카오·구글 프로필
 파싱은 전부 입력을 받아 값을 반환할 뿐이라 여기 둔다. DB·HTTP 호출은 auth/service.py(셸)로.
 """
 
@@ -22,6 +22,9 @@ def _is_ascii_digits(value: str, *, max_len: int) -> bool:
 
 
 KAKAO_AUTHORIZE_URL = "https://kauth.kakao.com/oauth/authorize"
+GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+# 구글은 사용자 번호(sub)와 이름만 받는다. 이메일 범위를 넣지 않는다 — 기획안 개인정보 표 「이메일은 받지 않는다」(#1514).
+GOOGLE_SCOPE = "openid profile"
 STATE_TTL_SECONDS = 60 * 10  # 로그인 시작 → 카카오 동의 → 콜백까지 걸리는 시간. 짧게 둔다.
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30  # 30일. 세션 테이블이 없어(data-model.md) 무상태 토큰의 자체 만료로 대신한다.
 
@@ -133,6 +136,14 @@ def kakao_authorize_url(*, client_id: str, redirect_uri: str, state: str) -> str
     return f"{KAKAO_AUTHORIZE_URL}?{query}"
 
 
+def google_authorize_url(*, client_id: str, redirect_uri: str, state: str) -> str:
+    query = urlencode({
+        "response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri, "state": state,
+        "scope": GOOGLE_SCOPE, "prompt": "select_account",   # 브라우저에 구글 계정이 여럿이면 고르게 한다
+    })
+    return f"{GOOGLE_AUTHORIZE_URL}?{query}"
+
+
 def state_cookie_path(redirect_uri: str) -> str:
     """state 쿠키를 콜백에만 싣는 경로. 배포는 앞단이 /api를 벗겨 넘기므로(#819) 서버 안 경로가 아니라
     브라우저가 보는 콜백 주소의 부모 경로를 쓴다."""
@@ -236,7 +247,16 @@ def display_name_from_kakao_profile(profile: dict) -> str:
     return f"user_{profile['id']}"
 
 
+def display_name_from_google_profile(profile: dict) -> str:
+    """구글 userinfo 응답(`sub`, `name`)에서 표시 이름을 뽑는다. 이름이 비어 있으면 카카오와 같이 `user_{번호}`로 대신한다."""
+    name = profile.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return f"user_{profile['sub']}"
+
+
 GUEST_LIMIT_PER_INVITE = 10   # 초대 토큰 하나로 만들 수 있는 게스트 수(#472)
+GUEST_INACTIVE_DAYS = 90      # 마지막으로 쓴 지 이만큼 지난 게스트는 정기 정리가 지운다(#472). 정리 API는 기간을 받지 않는다(#1474)
 LAST_SEEN_REFRESH_SECONDS = 60 * 60 * 24   # last_seen_at은 하루 한 번만 갱신한다
 
 
