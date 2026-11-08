@@ -38,7 +38,7 @@ import { useRecentSearches } from '@/features/search/recentSearchStore'
 import RecentSearches from '@/features/search/RecentSearches'
 import { useSearchStore } from '@/features/search/searchStore'
 import AppMenu from '@/features/shell/AppMenu'
-import { PANEL_W, SIDE_PANEL_W, TAB_BAR_H } from '@/features/shell/layout'
+import { PANEL_GAP, PANEL_W, panelCover, TAB_BAR_H } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
 import { backAriaLabel, usePanelBackStore } from '@/features/shell/panelBack'
 import ProfileModal, { ProfileMenu } from '@/features/shell/ProfileModal'
@@ -54,7 +54,6 @@ import { ClearButton } from '@/ui/TextField'
 import Wordmark from '@/ui/Wordmark'
 
 /** 넓은 화면 패널이 미끄러지는 시간. 패널·덧칠의 `duration-300` 과 같은 값이다. */
-const PANEL_SLIDE_MS = 300
 
 /**
  * 지도 하나 안의 화면(최종기획안 4절). 지도는 항상 떠 있고, 하단 탭 4개(마킹·AI 추천·확정·AI 코스)가 그 위 바텀시트 내용을 바꾼다.
@@ -383,23 +382,10 @@ export default function MapLayout() {
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.source
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
-  // 패널이 다 열려 자리 잡았는지. 접기 시작하면 바로 false, 펼치면 미끄러지기가 끝난 뒤 true.
-  // - 지도 틀은 이때만 좁힌다. 그래야 패널이 미끄러지는 동안 그 뒤에 늘 지도가 깔려 있다
-  //   (지도 틀을 같이 움직이면 카카오맵이 프레임마다 다시 재지 못해 회색이 비친다).
-  const [panelSettled, setPanelSettled] = useState(panelOpen)
-  if (!panelOpen && panelSettled) setPanelSettled(false)
-  useEffect(() => {
-    if (!panelOpen) return
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const t = window.setTimeout(() => setPanelSettled(true), reduce ? 0 : PANEL_SLIDE_MS)
-    return () => window.clearTimeout(t)
-  }, [panelOpen])
-  // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접으면 화면 왼쪽 끝이다(탭은 패널 머리 안, #1538).
-  const mapLeft = desktop && panelSettled ? panelW : 0
-  // 지도 위 덧칠(칩·« 손잡이)은 패널 가장자리를 따라 같이 미끄러진다.
   // 「일정 짜기」 옆 패널이 열려 있으면 지도 위 토스트·버튼·칩이 그 오른쪽으로 비킨다(패널이 가리지 않게).
   const sideOpen = useScheduleOpen(mapId) && onShortlistTab && desktop
-  const overlayLeft = (panelOpen ? panelW : 0) + (sideOpen ? SIDE_PANEL_W : 0)
+  // 지도는 늘 화면 전체이고 패널은 그 위에 뜬 카드다(#1538). 지도 위 덧칠(칩·« 손잡이)과 카메라는 카드가 가린 폭만큼 비킨다.
+  const cover = desktop ? panelCover(panelOpen, panelW, sideOpen) : 0
 
   return (
     <>
@@ -434,19 +420,19 @@ export default function MapLayout() {
         onMovingChange={onMovingChange}
         onMapClick={onMapClick}
         tapBubble={tapAt && { ...tapAt, onPress: () => searchNearby(tapAt) }}
-        leftInset={mapLeft}
+        leftCover={cover}
       />
 
-      {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 왼쪽 패널이다. */}
+      {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 지도 위에 뜬 왼쪽 패널 카드다(#1538). */}
       {/* 접기는 화면 왼쪽 밖으로 left 를 옮겨 미끄러뜨린다 — transform 이면 안쪽 fixed 확인 창이 패널 기준으로 잡힌다. */}
       {/* 다 접히면 invisible + inert 로 보이지도, 포커스가 들어가지도 않는다. */}
       <div
         id="map-panel"
         inert={desktop && !panelOpen}
-        style={desktop ? { left: panelOpen ? 0 : -panelW, width: panelW } : undefined}
+        style={desktop ? { left: panelOpen ? PANEL_GAP : -panelW, width: panelW } : undefined}
         className={
           desktop
-            ? `fixed inset-y-0 z-30 flex flex-col border-r border-ink-200 bg-white transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
+            ? `fixed inset-y-3 z-30 flex flex-col overflow-hidden rounded-2xl bg-white shadow-float transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
                 panelOpen ? 'visible' : 'invisible'
               }`
             : 'contents'
@@ -622,7 +608,7 @@ export default function MapLayout() {
       {desktop && (
         <div
           className="pointer-events-none fixed inset-y-0 right-0 z-20 transition-[left] duration-300 ease-out motion-reduce:transition-none"
-          style={{ left: overlayLeft }}
+          style={{ left: cover }}
         >
           {/* 내 계정(카카오맵 오른쪽 위 원, #1538) — 이름 바꾸기·초대 링크·로그아웃. 지도 정보·구성원은 패널의 구성원 버튼이다. */}
           <div className="pointer-events-auto absolute right-4 top-3 rounded-full bg-white shadow-float">

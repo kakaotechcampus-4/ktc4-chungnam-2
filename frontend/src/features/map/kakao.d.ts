@@ -7,6 +7,11 @@
  * 이 파일에는 import/export 를 넣지 않는다 — 넣는 순간 모듈이 되어 전역 선언이 사라진다.
  */
 declare namespace kakao.maps {
+  enum CopyrightPosition {
+    BOTTOMLEFT,
+    BOTTOMRIGHT,
+  }
+
   class LatLng {
     constructor(lat: number, lng: number)
     getLat(): number
@@ -48,6 +53,8 @@ declare namespace kakao.maps {
     getProjection(): MapProjection
     /** 지도 틀 크기를 CSS 로 바꾼 뒤 부른다. 창 크기 변경(resize)에는 SDK 가 알아서 부른다. */
     relayout(): void
+    /** 카카오 로고·축척 막대 자리. reversed 면 로고와 축척의 좌우가 바뀐다. */
+    setCopyrightPosition(position: CopyrightPosition, reversed?: boolean): void
     /** 끌어서 옮기기를 켜고 끈다. 핀을 휴지통으로 끄는 동안 끈다(#1012). */
     setDraggable(draggable: boolean): void
   }
