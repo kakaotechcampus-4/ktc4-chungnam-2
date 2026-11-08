@@ -87,6 +87,8 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
         leave.mutate(undefined, {
           onSuccess: () => {
             showToast('지도에서 나왔어요')
+            // 지도 목록(/)에서 열었으면 이동이 없어 창이 남는다 — 다시 누르면 NOT_FOUND. 먼저 닫는다.
+            onCancel()
             navigate('/', { replace: true })
           },
         })
@@ -121,6 +123,8 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
         del.mutate(undefined, {
           onSuccess: () => {
             showToast('지도를 삭제했어요. 휴지통에서 복구할 수 있어요')
+            // 지도 목록(/)에서 열었으면 이동이 없어 창이 남는다 — 다시 누르면 NOT_FOUND. 먼저 닫는다.
+            onCancel()
             navigate('/', { replace: true })
           },
         })
