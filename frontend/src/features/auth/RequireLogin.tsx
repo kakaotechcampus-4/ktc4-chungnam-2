@@ -13,6 +13,7 @@ import PingoLoading from '@/ui/PingoLoading'
 import SheetTitle from '@/ui/SheetTitle'
 import EntryFrame from '@/ui/EntryFrame'
 import Wordmark from '@/ui/Wordmark'
+import Sentences from '@/ui/Sentences'
 
 import { isUnauthorized } from './api'
 import GoogleButton from './GoogleButton'
@@ -135,11 +136,13 @@ function LoginScreen({ notice }: { notice?: string }) {
 
         <div className="flex flex-1 flex-col lg:max-w-[400px] lg:rounded-2xl lg:border lg:border-ink-200 lg:bg-white lg:px-8 lg:py-10">
 
-        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">3초면 시작해요. 이름은 카카오나 구글에서 가져와요</p>
+        <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">
+          <Sentences text="3초면 시작해요. 이름은 카카오나 구글에서 가져와요" />
+        </p>
         {/* 빨강은 핀·🚫·되돌릴 수 없는 동작 전용이라(영역 분리 규칙) 로그인 실패는 주의색이다. */}
         {loginError && (
           <p role="alert" className="mt-3 text-balance break-keep rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] px-3 py-2.5 text-center text-sm font-semibold text-[var(--warn-text)]">
-            {loginError}
+            <Sentences text={loginError} />
           </p>
         )}
         {/* 카카오·구글이 입구라 큰 버튼, 게스트는 한 단계 작은 버튼이다. */}
@@ -214,7 +217,7 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
         <SheetTitle>게스트로 시작하기</SheetTitle>
       </div>
       <p className="mt-3 break-keep text-sm text-ink-700">
-        친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요.
+        <Sentences text="친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요." />
       </p>
       <ul className="mt-4 space-y-2 rounded-xl bg-ink-50 p-4 text-sm text-ink-700">
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />핀 찍기와 의견 남기기는 똑같이 쓸 수 있어요</li>

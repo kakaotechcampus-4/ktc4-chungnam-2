@@ -65,9 +65,13 @@ describe('겹친 검색 결과 묶기(#1174)', () => {
 })
 
 describe('지도를 끈 방향(#1433)', () => {
-  it('가로·세로 중 크게 움직인 쪽, 조금 떨린 것은 방향이 없다', () => {
-    expect(dragHeading({ x: 12, y: -5 })).toBe('right')
-    expect(dragHeading({ x: -12, y: 5 })).toBe('left')
+  it('8방향 중 가장 가까운 쪽, 조금 떨린 것은 방향이 없다', () => {
+    expect(dragHeading({ x: 12, y: -4 })).toBe('right')
+    expect(dragHeading({ x: -12, y: 4 })).toBe('left')
+    expect(dragHeading({ x: 10, y: -9 })).toBe('up-right')
+    expect(dragHeading({ x: -9, y: -10 })).toBe('up-left')
+    expect(dragHeading({ x: 8, y: 6 })).toBe('down-right')
+    expect(dragHeading({ x: -12, y: 5 })).toBe('down-left')
     expect(dragHeading({ x: 3, y: -9 })).toBe('up')
     expect(dragHeading({ x: -3, y: 9 })).toBe('down')
     expect(dragHeading({ x: 2, y: -3 })).toBeNull()

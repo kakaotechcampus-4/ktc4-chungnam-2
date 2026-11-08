@@ -10,6 +10,7 @@ import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import Switch from '@/ui/Switch'
+import Sentences from '@/ui/Sentences'
 
 import { badgeText, mapOrigin, notificationTarget, prefLabel, type NotificationDto } from './model'
 import { useMarkReadMutation, useNotificationPrefsQuery, useNotificationsQuery, useUpdatePrefMutation } from './queries'
@@ -149,7 +150,7 @@ function PrefsView({ onBack }: { onBack: () => void }) {
     <>
       <BackButton label="알림" onClick={onBack} />
       <SheetTitle>알림 설정</SheetTitle>
-      <p className="mb-3 mt-1 text-xs text-ink-500">끄면 그 알림은 더 이상 오지 않아요.</p>
+      <p className="mb-3 mt-1 text-xs text-ink-500"><Sentences text="끄면 그 알림은 더 이상 오지 않아요." /></p>
       {prefs.isPending && <CardSkeleton count={1} />}
       {prefs.error && <ErrorText message="알림 설정을 불러오지 못했어요" error={prefs.error} />}
       <ul className="divide-y divide-ink-100">

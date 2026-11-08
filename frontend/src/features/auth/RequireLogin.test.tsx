@@ -6,6 +6,8 @@ import { http, HttpResponse } from 'msw'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import { wholeText } from '@/test/text'
+
 import RequireLogin from './RequireLogin'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -73,7 +75,7 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
     show()
     await userEvent.click(await screen.findByRole('button', { name: '새 계정으로 시작' }))
     const dialog = await screen.findByRole('alertdialog')
-    expect(within(dialog).getByText('기존 계정은 바로 삭제되고 복구할 수 없어요.')).toBeInTheDocument()
+    expect(within(dialog).getByText(wholeText('기존 계정은 바로 삭제되고 복구할 수 없어요.'))).toBeInTheDocument()
 
     await userEvent.click(within(dialog).getByRole('button', { name: '취소' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())

@@ -13,6 +13,7 @@ import InviteLinks from '@/features/maps/InviteLinks'
 import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm, TransferOwnerConfirm } from '@/features/maps/MapLifecycle'
 import { useShareInvite } from '@/features/maps/useShareInvite'
 import Avatar from '@/ui/Avatar'
+import Sentences from '@/ui/Sentences'
 
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
@@ -162,7 +163,9 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
               지도 나가기
             </button>
           ) : (
-            <p className="flex-1 self-center text-xs text-ink-500">혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요</p>
+            <p className="flex-1 self-center text-xs text-ink-500">
+              <Sentences text="혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요" />
+            </p>
           )}
           {map.data.canDelete && (
             <button

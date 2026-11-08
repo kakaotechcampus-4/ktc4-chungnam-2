@@ -12,6 +12,7 @@ import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import Avatar from '@/ui/Avatar'
+import Sentences from '@/ui/Sentences'
 
 import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
@@ -120,7 +121,9 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
       {maps.length > 0 && (
         <>
           <h2 className="text-sm font-bold text-ink-900">지도 초대 링크</h2>
-          <p className="mb-2 text-xs text-ink-500">지도마다 링크가 따로 있어요. 복사해서 단톡방에 보내 주세요</p>
+          <p className="mb-2 text-xs text-ink-500">
+            <Sentences text="지도마다 링크가 따로 있어요. 복사해서 단톡방에 보내 주세요" />
+          </p>
           <ul className="space-y-2">
             {maps.map((map) => (
               <li key={map.id} className="flex items-center justify-between gap-2 rounded-xl bg-ink-50 px-3 py-2.5">

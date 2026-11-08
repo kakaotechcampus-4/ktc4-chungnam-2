@@ -18,6 +18,7 @@ import { josaRo } from '@/ui/josa'
 import PingoLoading from '@/ui/PingoLoading'
 import MapIllustration from '@/ui/MapIllustration'
 import TextField from '@/ui/TextField'
+import Sentences from '@/ui/Sentences'
 
 /**
  * 초대 수락 (#4, Figma 2절). 로그인 전(C-1)·로그인 후 구성원 아님(C-2)·만료(C-3).
@@ -88,7 +89,7 @@ export default function InvitePage() {
           <>
             <KakaoButton />
             <GoogleButton />
-            <p className="text-xs text-ink-500">로그인하고 함께 여행 계획을 시작해 보세요</p>
+            <p className="text-xs text-ink-500"><Sentences text="로그인하고 함께 여행 계획을 시작해 보세요" /></p>
             <GuestJoin token={token} onBroken={setLateProblem} />
           </>
         ) : (
@@ -160,8 +161,12 @@ function GuestJoin({ token, onBroken }: { token: string; onBroken: (problem: Inv
         구성원에게 보일 이름
       </label>
       <TextField id="guest-name" value={name} onChange={setName} maxLength={DISPLAY_NAME_MAX} placeholder="예: 지우" clearLabel="이름 지우기" autoFocus />
-      <p className="break-keep text-xs text-ink-500">자동으로 지은 이름이에요. 원하면 바꿔도 돼요</p>
-      <p className="break-keep text-xs text-ink-500">게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 가입하면 기록이 그대로 이어져요</p>
+      <p className="break-keep text-xs text-ink-500">
+        <Sentences text="자동으로 지은 이름이에요. 원하면 바꿔도 돼요" />
+      </p>
+      <p className="break-keep text-xs text-ink-500">
+        <Sentences text="게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 가입하면 기록이 그대로 이어져요" />
+      </p>
       {join.error && <ErrorText message={inviteErrorMessage(join.error)} error={join.error} />}
       <button type="submit" disabled={!trimmed || join.isPending} className="btn-primary btn-md w-full">
         {join.isPending ? '들어가는 중…' : '게스트로 참여하기'}
