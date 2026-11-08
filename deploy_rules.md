@@ -147,7 +147,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 |---|---|---|---|
 | 장소 적재 | 처음 한 번, 정예DB 공유본이 새로 나왔을 때 | 아래 "장소 데이터 적재" 순서 전체 | 정예를 먼저 `--authoritative`로, 커버리지(인허가)는 그다음. 끝에 나오는 `[curated] 분류별 정예 / 정예 아님` 수를 확인한다 |
 | 영업시간(`place_hours`) | 장소 적재 뒤, 정예 라벨이 바뀌었을 때 | `python -m places.load place-hours --file <라벨 JSON>` | 장소를 먼저 넣는다(못 찾은 장소는 건수만 보고한다). 칸이 없는 장소는 행을 만들지 않고, 영업 여부는 "확인 필요"로 통과한다. 추천(「영업 종료 제거」)과 AI 코스(휴무 요일)가 함께 읽는다(#747) |
-| 광고 | 광고를 넣거나 뺄 때 | `python -m ads.scripts.register --csv <경로>`, `python -m ads.scripts.deactivate <ad_id>` | `docs/ads.md`. 광고는 추천 후보 여부(`curated`)를 바꾸지 않는다. 장소를 새 DB에 다시 넣으면 장소 id가 바뀌므로 광고도 다시 등록한다 |
+| 광고 | 광고를 넣거나 뺄 때 | `python -m ads.scripts.register --csv <경로>`, `python -m ads.scripts.deactivate <ad_id>` | `docs/ads.md`. 페이즈 1에는 운영에 넣지 않는다(기획안 16-5절). 광고는 추천 후보 여부(`curated`)를 바꾸지 않는다. 장소를 새 DB에 다시 넣으면 장소 id가 바뀌므로 광고도 다시 등록한다 |
 
 추천 후보 여부는 재계산할 것이 없다. 후보 조회가 `places.curated`를 바로 읽는다(#743). 정예가 늘면 정예 적재만 하면 된다.
 
@@ -175,7 +175,8 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 - `PINGO_ENV=staging`. 운영과 같은 기동 가드를 받는다(스텁 금지, CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`).
 - `SESSION_SECRET`은 운영과 다른 값이다. 스테이징에서 만든 세션 쿠키가 운영에서 통하지 않게 한다.
 - `QA_LOGIN_SECRET`이 있을 때만 `POST /auth/qa-login`이 붙는다(#789). 운영에는 이 값을 넣지 않는다. 넣으면 서버가 뜨지 않는다.
-- `CREDIT_AD_PROVIDER=fake`면 잔액 부족 안내에 「광고 보고 크레딧 받기」가 뜨고 테스트 광고 창(7초)을 연다(docs/credits-reviews.md 3.7, #1037). 비우면 버튼이 없다. 확인은 잔액이 크레딧 가격보다 적은 계정으로 한다. 운영에 `fake`를 넣으면 서버가 뜨지 않는다(#1038). 운영은 비워 두고, 실제 광고(`adsense`, `gpt`)는 화면에 그 제공자가 생긴 뒤 켠다(아직 없음).
+- `CREDIT_AD_PROVIDER=fake`면 잔액 부족 안내에 「광고 보고 크레딧 받기」가 뜨고 테스트 광고 창(7초)을 연다(docs/credits-reviews.md 3.7, #1037). 비우면 버튼이 없다. 확인은 잔액이 크레딧 가격보다 적은 계정으로 한다. 운영에 `fake`를 넣으면 서버가 뜨지 않는다(#1038). 광고 보고 충전은 스테이징 전용이라 운영은 비워 둔다(기획안 16-4절, #1526). 실제 광고(`adsense`, `gpt`)도 운영에서 켜지 않는다.
+- 추천 탭 광고(`docs/ads.md`)는 페이즈 1에 운영에 등록하지 않는다(기획안 16-5절). 광고가 0개면 화면에 광고 영역이 나오지 않는다.
 - DB는 운영과 나눈다. 운영 DB를 복사하지 않는다(실사용자 데이터, #53).
 - 값은 저장소나 채팅에 남기지 않는다.
 
