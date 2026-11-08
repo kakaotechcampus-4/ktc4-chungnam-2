@@ -5,6 +5,7 @@ import MapPingo from '@/ui/MapPingo'
 
 import AgentSheet from './AgentSheet'
 import { useAgentQuery } from './queries'
+import { useIdleStage } from './useIdleStage'
 
 /** 말풍선을 두 번 열어 보면 이 기기에선 숨긴다(#1433) — 지도를 가린다. 화면 편의라 브라우저 저장소에 센다. */
 const OPENS_KEY = 'pingo-advice-opens'
@@ -42,6 +43,8 @@ export default function AgentButton({
   const [open, setOpen] = useState(false)
   const [opens, setOpens] = useState(readOpens)
   const heading = useSheetStore((s) => s.mapHeading)
+  // 5분 동안 아무것도 안 하면 핑고가 졸다가 이불 덮고 잔다. 손을 대면 바로 깬다.
+  const idle = useIdleStage()
   // 조회가 실패하면 새 제안 점만 못 켠다 — 버튼은 남고 시트가 열리면 거기서 오류를 보인다(AgentSheet).
   const state = useAgentQuery(mapId).data
   const dot = Boolean(state?.settings.enabled && state.has_unseen)
@@ -69,7 +72,7 @@ export default function AgentButton({
       >
         {/* 지도 위에 맨몸으로 서서 그림자로 띄운다. 휴대폰 48 · 태블릿 56 · PC 64. */}
         <span className="relative block drop-shadow-md">
-          <MapPingo heading={heading} wave={bubble} alert={dot} className="size-12 md:size-14 lg:size-16" />
+          <MapPingo heading={heading} wave={bubble} alert={dot} idle={idle} className="size-12 md:size-14 lg:size-16" />
         </span>
         {bubble && (
           <span

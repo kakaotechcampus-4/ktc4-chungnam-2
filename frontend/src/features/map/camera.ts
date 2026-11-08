@@ -94,12 +94,19 @@ export function groupNear(points: Px[], dist: number): number[][] {
   return groups
 }
 
+/** 대각선으로 보는 기울기 — 작은 쪽이 큰 쪽의 tan 22.5° 이상이면 45°에 더 가깝다(8방향을 45°씩 똑같이 나눈다). */
+const DIAGONAL = Math.tan(Math.PI / 8)
+
 /**
- * 사용자가 지도를 끈 방향(#1433) — 화면에서 움직인 만큼(px)의 가로·세로 중 큰 쪽.
+ * 사용자가 지도를 끈 방향(#1433) — 화면에서 움직인 만큼(px)을 8방향 중 가장 가까운 쪽으로.
  * min px 보다 덜 움직였으면 손떨림으로 보고 방향을 정하지 않는다(null).
  */
 export function dragHeading(d: Px, min = 4): MapHeading | null {
-  if (Math.max(Math.abs(d.x), Math.abs(d.y)) < min) return null
-  if (Math.abs(d.x) >= Math.abs(d.y)) return d.x > 0 ? 'right' : 'left'
-  return d.y > 0 ? 'down' : 'up'
+  const ax = Math.abs(d.x)
+  const ay = Math.abs(d.y)
+  if (Math.max(ax, ay) < min) return null
+  const h = d.x > 0 ? 'right' : 'left'
+  const v = d.y > 0 ? 'down' : 'up'
+  if (Math.min(ax, ay) >= DIAGONAL * Math.max(ax, ay)) return `${v}-${h}`
+  return ax >= ay ? h : v
 }

@@ -265,10 +265,15 @@
     --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
     --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
     --animate-pingo-frame-b: pingo-frame-b 600ms step-end infinite;
-    /* 위·아래로 오르내릴 때 뒷모습과 뒤집은 뒷모습을 걸음마다(0.3초) 바꿔 팔을 번갈아 뻗고, 걸음마다 몸이 한 번 오르거나 내려간다. */
-    --animate-pingo-frame-half: pingo-frame-half 600ms step-end infinite;
+    /* 위·아래(대각선 포함)는 걸음마다(0.3초) 몸이 한 번 오르거나 내려간다. 뒷모습은 한 장이고 걸음마다 좌우로 4° 기운다
+       — 뒤집은 뒷모습을 번갈아 쓰면 명암이 걸음마다 좌우로 바뀌었다. */
     --animate-pingo-climb: pingo-climb 300ms ease-out infinite;
     --animate-pingo-descend: pingo-descend 300ms ease-out infinite;
+    --animate-pingo-sway: pingo-sway 600ms ease-in-out infinite;
+    /* 5분 쉬면 졸고(꾸벅) 이어서 잔다(숨쉬기 + 머리 위로 떠오르는 z). 상태 표시라 깰 때까지 반복한다(DESIGN.md 「핑고 예외」). */
+    --animate-pingo-nod: pingo-nod 2.4s ease-in-out infinite;
+    --animate-pingo-breathe: pingo-breathe 3s ease-in-out infinite;
+    --animate-pingo-snore: pingo-snore 2.4s ease-out infinite;
     @keyframes pingo-climb {
         0%, 100% { transform: translateY(0); }
         45% { transform: translateY(-7%); }
@@ -281,9 +286,23 @@
         0% { opacity: 1; }
         25%, 100% { opacity: 0; }
     }
-    @keyframes pingo-frame-half {
-        0% { opacity: 1; }
-        50%, 100% { opacity: 0; }
+    @keyframes pingo-sway {
+        0%, 100% { transform: rotate(-4deg); }
+        50% { transform: rotate(4deg); }
+    }
+    @keyframes pingo-nod {
+        0%, 55%, 100% { transform: translateY(0) rotate(0); }
+        70% { transform: translateY(3%) rotate(-3deg); }
+        80% { transform: translateY(1%) rotate(-1deg); }
+    }
+    @keyframes pingo-breathe {
+        0%, 100% { transform: scale(1, 1); }
+        50% { transform: scale(1.02, 1.035); }
+    }
+    @keyframes pingo-snore {
+        0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+        25% { opacity: 1; }
+        100% { opacity: 0; transform: translate(-3px, -10px) scale(1); }
     }
     @keyframes pingo-frame-b {
         0%, 50%, 100% { opacity: 0; }
