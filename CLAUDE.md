@@ -68,6 +68,7 @@
 | 조건의 세기(실격, 선호) | 정리 전(#732). 줄이 이번 추천에 쓰이는지는 `recommend/core.py`의 `evidence_line_use` 한 곳이다(#740, 파이프라인, 근거 응답, agent가 함께 쓴다). 그 밖에 19곳이 `test_condition_strength_sites.py`의 목록에 있다(`recommend/flows.py`, `recommend/core.py`, `recommend/service.py`, `agent/core.py`, `agent/tools.py`). 칩의 배지는 `docs/constraints.md` 칩 표의 배지 열 | badge를 `"required"`, `"preferred"` 글자와 비교함, `SOFT_FACT_KEYS`나 `HARD_REGISTRY`를 `recommend/constraints.py` 밖에서 읽음 |
 | 사용자 글의 렌더 | 정리 전. agent 조언은 조각으로 내림(`agent/core.py`의 `render_segments`, #717). 알림 문장 `notifications/core.py`의 `compose_message`, 코스의 요청 원문 조각과 작업 기록(`agent/course`)은 아직 문장에 섞음 | 서버 문장 f-string 안에 사유, 검색어, 표시 이름 |
 | 사람과 로그인 수단 | `auth`: `users`(사람)와 `user_identities`(로그인 수단, #694) | 다른 모듈이 `is_guest`나 provider를 직접 판정함, `users`에 로그인 수단 열을 더함 |
+| 탈퇴한 사람 표시 이름 | `auth.api.WITHDRAWN_DISPLAY_NAME`(정본 `auth.core`), 다른 모듈은 import한다(#1475, `integration/test_withdrawn_name_one_place.py`) | 기능 모듈 안의 「탈퇴한 구성원」 문자열, 복사본이 정본과 같은지 대조하는 테스트 |
 | 영업 여부 판정 | `places.core.day_open_status`, 다른 모듈은 `places.api.get_week_open_status`로 받는다(#747) | 모듈 안의 요일 이름 표("월화수목금토일")로 hours, closed_days를 읽음, 시각 파싱이나 자정 넘김 계산 복사 |
 | 정리·보관 기간 | 그 데이터를 가진 모듈의 상수(`maps.core.TRASH_RETENTION` 등, 목록은 `maintenance/run.py` 설명). 정리 API는 `(db, now)`만 받는다(#1474) | `older_than_*` 인자, `maintenance`의 기간 상수, 설명이나 문서에 「N일 지난」을 다시 적음 |
 

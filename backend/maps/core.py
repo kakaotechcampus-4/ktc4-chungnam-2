@@ -9,14 +9,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from auth.api import WITHDRAWN_DISPLAY_NAME   # 탈퇴한 사람 표시 이름은 auth 한 곳(#1475)
 from authz.core import Principal, Resource, can
 from authz.policy import Role
 from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event
 from maps.schemas import TITLE_MAX_LENGTH, Invite, InviteSummary, Map, MapRegion, Member, NextOwner, TrashedMap
-
-WITHDRAWN_MEMBER_NAME = "탈퇴한 구성원"
 
 # 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
 MAP_LIMIT = 20
@@ -213,7 +212,7 @@ def to_invite(
         return Invite(token=invite.token, url=url, expires_at=invite.expires_at)
     return Invite(
         token=invite.token, url=url, expires_at=invite.expires_at, created_at=invite.created_at,
-        created_by_display_name=created_by_display_name or WITHDRAWN_MEMBER_NAME,
+        created_by_display_name=created_by_display_name or WITHDRAWN_DISPLAY_NAME,
         used_count=invite.used_count,
     )
 
@@ -234,7 +233,7 @@ def to_invite_summary(
         end_date=record.end_date,
         member_count=member_count,
         pin_count=pin_count,
-        inviter_display_name=inviter_display_name or WITHDRAWN_MEMBER_NAME,
+        inviter_display_name=inviter_display_name or WITHDRAWN_DISPLAY_NAME,
         expires_at=expires_at,
     )
 
