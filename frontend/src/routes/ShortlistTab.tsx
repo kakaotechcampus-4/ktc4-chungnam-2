@@ -5,6 +5,8 @@ import ErrorText from '@/ErrorText'
 import { dayOrdinal } from '@/features/course/model'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import { useEnrichPin } from '@/features/map/livePlaces'
+import type { PinFilters } from '@/features/map/model'
+import { CategoryChips } from '@/features/map/PinFilterControls'
 import ReactionHelp from '@/features/map/ReactionHelp'
 import { usePinsQuery } from '@/features/map/queries'
 import { useMembersQuery } from '@/features/maps/queries'
@@ -48,6 +50,8 @@ export default function ShortlistTab() {
   const desktop = useIsDesktop()
   const scheduleOpen = useScheduleOpen(mapId)
   const [putDay, setPutDay] = useState<string | null>(null)
+  // 리스트를 분류로 걸러 본다(기획안 5-3, #1559). 일정·넣기는 거르지 않은 리스트 그대로다.
+  const [category, setCategory] = useState<PinFilters['category']>(null)
 
   // 확정 탭을 떠나면 「일정 짜기」 패널을 닫는다.
   useEffect(() => () => leaveScheduleTab(), [mapId])
@@ -57,6 +61,7 @@ export default function ShortlistTab() {
   const inSchedule = scheduledIds(edit.schedule)
   // 리스트는 일정에 아직 넣지 않은 곳이다. 넣은 곳은 「동선 보기」(그날 일정)와 「일정 짜기」 패널에 있다.
   const items = all.filter((i) => !inSchedule.has(i.pin.id))
+  const shown = category ? items.filter((i) => i.pin.category === category) : items
   const scheduled = all.length - items.length
   const day = putDay && edit.dates.includes(putDay) ? putDay : edit.dates[0]
   const openPin = pins.find((p) => p.id === params.get('pin'))
@@ -179,8 +184,10 @@ export default function ShortlistTab() {
               ) : (
                 <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
               )}
+              <CategoryChips value={category} onChange={(c) => setCategory(c as PinFilters['category'])} className="-mx-1 px-1" />
+              {shown.length === 0 && <p className="text-sm text-ink-500">이 분류에는 확정된 곳이 없어요</p>}
               <ShortlistList
-                items={items}
+                items={shown}
                 dayLabel={day ? dayOrdinal(edit.dates.indexOf(day)) : ''}
                 onPut={day ? (item) => edit.put([item.pin.id], [item.pin.place_name ?? '이 장소'], day) : undefined}
                 onOpen={setOpenPin}
