@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router'
 import ErrorText from '@/ErrorText'
 import { useMeQuery } from '@/features/auth/queries'
 import CardSkeleton from '@/ui/CardSkeleton'
+import ProgressBar from '@/ui/ProgressBar'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import EmptyMap from '@/features/map/EmptyMap'
@@ -135,15 +136,19 @@ export default function MapTab() {
           {stage === 3 && !desktop && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
           {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
           <div className="mt-2 flex items-center gap-1">
-            <p className="text-xs text-ink-500">
-              {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
-              {counts && counts.members_total > 0 && (
-                <span className="font-bold text-ink-600">, {counts.members_total}명 중 {counts.members_with_opinion}명이 의견을 남겼어요</span>
-              )}
-            </p>
+            <p className="text-xs text-ink-500">{isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}</p>
             {/* 목록 줄의 ♥·반대·? 표시가 무엇인지(#1030). */}
             {pins && pins.length > 0 && <ReactionHelp />}
           </div>
+          {/* 지도 전체 참여율 — 글로만 적던 비율을 막대로도 보인다(#1539). */}
+          {counts && counts.members_total > 0 && (
+            <ProgressBar
+              label={`${counts.members_total}명 중 ${counts.members_with_opinion}명이 의견을 남겼어요`}
+              value={counts.members_with_opinion}
+              max={counts.members_total}
+              className="mt-2"
+            />
+          )}
         </>
       }
     >

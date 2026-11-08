@@ -332,6 +332,8 @@ components:
 | 글자 버튼·링크 | `btn-text` · `btn-link` | `index.css` |
 | 버튼인 카드·줄·지도 위 원 버튼의 올림·눌림 | `press` (바탕 위에 잉크 4%·8%를 덮는다) | `index.css` |
 | 누르는 알약(필터·선택) | `chip` (+ `chip-against`), 카테고리 줄은 `CategoryChips` | `index.css` · `features/map/PinFilterControls` |
+| 늘 하나가 골라진 2~5개 중 하나(의견 분류, 우리 조건 요약 카테고리) | `SegmentedControl` (ink-100 홈 안에서 고른 칸만 흰 면 + brand-600 굵은 글자 + `shadow-float`, 칸 높이 44, 14/600. 속은 라디오라 화살표로 옮긴다. 안 골랐을 수 있거나 칸 글이 길면(「1시간 30분까지」) `chip`) | `ui/SegmentedControl` |
+| 비율(참여율) | `ProgressBar` (위 줄 12/700 ink-600 뜻 글 + 오른쪽 brand-600 %, 아래 6px 막대 brand-600 / ink-100. 숫자는 글에 꼭 남긴다, 막대는 progressbar 로 읽힌다) | `ui/ProgressBar` |
 | 값 하나를 끌어 고르기(범위) | `RangeSlider` (막대 높이 44 · 손잡이 24 원(누르는 곳 44) · 채운 쪽 brand-600, 남은 쪽 ink-200 · 아래 눈금 글자 12 ink-500. 끌면 눈금 근처에서 붙고 기기가 짧게 떤다, 키보드는 붙지 않는다) | `ui/RangeSlider` |
 | 필터 드롭다운 | `FilterSelect` (「라벨 값 ▾」, 칸 전체가 select · 폭은 가장 긴 선택지, 줄 폭을 넘으면 값을 「…」로 줄인다) | `features/map/PinFilterControls` |
 | 짧은 표시 | `tag` + `tag-{neutral·ai·good·warn·bad}` | `index.css` |
@@ -341,7 +343,7 @@ components:
 | 시트 안 이전 화면 | `BackButton` 「‹ 마킹된 장소」 | `ui/BackButton` |
 | 비어 있을 때 | `EmptyState` (핑고 + 제목 + 설명 + 다음 행동, 찾던 게 없으면 `mood="sad"`) | `ui/EmptyState` |
 | 이유를 알리는 안내(결과 위) | `Notice` (ink-100 면 + warn-line 아이콘 + ink-700 글자 + 다음 행동 버튼) | `ui/Notice` |
-| 불러오는 중(모양을 아는 목록) | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리) | `ui/CardSkeleton` |
+| 불러오는 중(모양을 아는 목록) | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리 — 핀·지도·알림 목록, 일정, 확정 리스트, 검색 결과. 옆에 글이 없으면 `label`로 화면 읽기에만 알린다) | `ui/CardSkeleton` |
 | 응답 기다림(무엇이 나올지 모름) | `PingoLoading` (1초 뒤 걷는 핑고 + 한 줄, 로그인 상태 확인만 `mood="space"` 우주복 핑고) | `ui/PingoLoading` |
 | 두 문장 이상 안내 글 | `Sentences` (문장마다 줄, 한 문장이면 그대로) | `ui/Sentences` |
 | 핑고 | `Pingo` (표정 `mood` · 고개 내밀기 `peek`) · 작은 아이콘 자리는 `PingoMark` | `ui/Pingo` |

@@ -20,6 +20,7 @@ import { closeSchedule, leaveScheduleTab, openSchedule, useDropHover, useSchedul
 import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
+import CardSkeleton from '@/ui/CardSkeleton'
 import { Calendar } from '@/ui/DatePicker'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
@@ -150,7 +151,7 @@ export default function ShortlistTab() {
               </button>
             </div>
           ) : !edit.ready ? (
-            <p className="text-sm text-ink-500">일정을 불러오는 중…</p>
+            <CardSkeleton count={2} label="일정을 불러오는 중…" />
           ) : items.length === 0 ? (
             <p className="break-keep text-sm text-ink-500">
               <Sentences text="모든 장소를 일정에 넣었어요. 동선 보기로 날짜별 경로를 확인해 보세요." />
