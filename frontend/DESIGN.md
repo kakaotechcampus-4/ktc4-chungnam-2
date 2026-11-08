@@ -405,7 +405,7 @@ components:
 | 끌어 놓을 칸(끄는 동안 ink-300 점선, 끄는 줄이 위에 오면 `--action-fill` 점선 테두리. 놓을 수 없는 지도와 리스트 자리는 `--scrim` 절반 세기로 덮는다) | `drop-target` + `data-over`, 끄는 동안 `html[data-schedule-drag]` | `index.css` |
 | 일정 하루 칸과 줄(번호 · 이름 · 「빼기」 · ≡, 끼울 자리 선) | `ScheduleDayBox` · `ScheduleDayList` | `features/shortlist/ScheduleDay` |
 | 확정 탭 「일정 짜기」 패널(넓은 화면, 날짜 칸만) | `SchedulePanel` (`SchedulePanelHost`가 `SidePanel`로 연다) | `features/shortlist/SchedulePanel` |
-| 「동선 보기」 그날 일정(날짜 칩 + 그날 줄 + 카카오맵 길찾기) | `DayRoute` | `features/shortlist/DayRoute` |
+| 「동선 보기」 그날 일정(「볼 날짜」 달력 `Calendar` — 여행 날짜만, 장소를 넣은 날은 숫자 아래 brand 점 · 그날 줄 · 카카오맵 길찾기, #1535) | `DayRoute` | `features/shortlist/DayRoute` |
 | 확정 리스트 내보내기(글자 복사·txt·csv, 목록 아래 한 줄) | `ShortlistExport` (`btn-link` 셋 + 「내보내기」 머리) | `features/shortlist/ShortlistExport` |
 
 - **아이콘:** lucide 선 아이콘만 쓴다. 크기는 12(11~12px 글자 옆) · 14(13px 글자 옆) · 16(14~16px 글자 옆·작은 버튼) · 20(지도 버튼·큰 버튼·단독 아이콘 버튼) · 24(탭) 다섯 단계다.
