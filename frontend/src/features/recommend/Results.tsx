@@ -167,7 +167,7 @@ export function ResultsBody({
 
 /**
  * 카드를 누르면 지도가 그 후보로 간다(#843). 안의 버튼·링크는 자기 일만 한다. 키보드로는 제목 버튼으로 간다.
- * 지도에서 후보 점선 핀을 눌러도 같은 후보가 골라지고, 그 카드가 보이게 스크롤한다.
+ * 지도에서 후보 핑고 핀을 눌러도 같은 후보가 골라지고, 그 카드가 보이게 스크롤한다.
  */
 function CandidateCard({ mapId, run, c, members }: { mapId: string; run: RecommendRunDto; c: CandidateDto; members: MemberView[] }) {
   const selected = useAiStore((s) => s.focus?.id === c.id)

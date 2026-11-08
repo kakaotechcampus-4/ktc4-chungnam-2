@@ -17,7 +17,7 @@ type AiState = {
   radius: Record<string, number | undefined>
   setRadius: (mapId: string, radiusM: number) => void
   /**
-   * 카드나 지도에서 고른 후보(#843). 카드와 지도 점선 핀이 같은 값을 본다.
+   * 카드나 지도에서 고른 후보(#843). 카드와 지도 핑고 핀이 같은 값을 본다.
    * n 은 누를 때마다 늘린다 — 같은 후보를 다시 눌러도 지도가 다시 그리로 간다.
    */
   focus: { id: string; n: number } | null

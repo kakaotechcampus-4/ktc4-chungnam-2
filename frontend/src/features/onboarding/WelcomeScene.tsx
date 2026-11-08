@@ -3,8 +3,7 @@ import { Coins, Lock, Search, Trash2 } from 'lucide-react'
 
 import Mark from '@/ui/Mark'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
-import { PIN_OUTLINE, PIN_PATH } from '@/ui/pinPath'
-import { PINGO_MARK } from '@/ui/pingoMark'
+import { pinGlyph, type PinGlyph } from '@/ui/pinGlyph'
 
 import { usePhaseLoop } from './usePhaseLoop'
 
@@ -71,44 +70,19 @@ function PingoAt({ x, y, w, mood }: { x: number; y: number; w: number; mood: Pin
   )
 }
 
-/** 지도 핀(pinMarker 와 같은 모양). 일반은 빨강 속 + 진한 빨강 윤곽선 + 진한 점, 확정은 골드 + 순서 번호. */
+/** 지도 핀 — 지도와 같은 그림(`ui/pinGlyph`). 일반은 참여 다 모인 빨강, 확정은 ♥ 대신 동선 순서 번호. */
 function ScenePin({ confirmed = false, n }: { confirmed?: boolean; n?: number }) {
-  return (
-    <svg viewBox="0 0 24 32" width="24" height="32" className="drop-shadow-[0_1px_2px_rgba(20,22,31,0.3)]">
-      <path
-        d={PIN_PATH}
-        strokeLinejoin="round"
-        fill={confirmed ? 'var(--pin-confirmed)' : 'var(--pin-fill-full)'}
-        stroke={confirmed ? 'var(--pin-confirmed-mark)' : 'var(--pin-outline)'}
-        strokeWidth={PIN_OUTLINE}
-      />
-      {n != null ? (
-        <text x="12" y="13.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="var(--pin-confirmed-mark)">
-          {n}
-        </text>
-      ) : (
-        <circle cx="12" cy="10" r="3.2" fill="var(--pin-dot)" />
-      )}
-    </svg>
-  )
+  return <PinSvg glyph={confirmed ? { kind: 'confirmed', order: n } : { kind: 'normal', ratio: 1 }} />
 }
 
-/** 올리기 전 AI 후보 핀(pinMarker 의 핑고 핀과 같은 모양) — brand-600 물방울 + 머리에 흰 핑고 얼굴. */
+/** 올리기 전 AI 후보 핀(핑고 핀). */
 function SceneCandidatePin() {
-  const { pin, hole, face, eyes } = PINGO_MARK
-  return (
-    <svg viewBox="0 0 24 32" width="24" height="32" className="drop-shadow-[0_1px_2px_rgba(20,22,31,0.3)]">
-      <path d={PIN_PATH} strokeLinejoin="round" fill="var(--brand-600)" stroke="#fff" strokeWidth="2" />
-      <g transform="translate(5.3 3.6) scale(0.42)">
-        <path d={pin} fill="#fff" />
-        <circle cx={hole.cx} cy={hole.cy} r={hole.r} fill="var(--brand-600)" />
-        <rect x={face.x} y={face.y} width={face.w} height={face.h} rx={face.rx} fill="#fff" />
-        {eyes.map((e) => (
-          <ellipse key={e.cx} cx={e.cx} cy={e.cy} rx={e.rx} ry={e.ry} fill="var(--ink-900)" />
-        ))}
-      </g>
-    </svg>
-  )
+  return <PinSvg glyph={{ kind: 'candidate' }} />
+}
+
+function PinSvg({ glyph }: { glyph: PinGlyph }) {
+  // pinGlyph 는 상수·숫자로만 만든 마크업이다(사용자 글 없음).
+  return <svg viewBox="0 0 24 32" width="24" height="32" dangerouslySetInnerHTML={{ __html: pinGlyph(glyph) }} />
 }
 
 /** 판 위 작은 흰 카드(검색창·의견·확정 리스트). 지도 위에 뜬 것이라 그림자를 준다. */

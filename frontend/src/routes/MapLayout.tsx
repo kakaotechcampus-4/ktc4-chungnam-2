@@ -144,7 +144,7 @@ export default function MapLayout() {
     [found, search.selectedId],
   )
 
-  // AI 추천 탭에선 올리기 전 후보를 점선 핀으로 그린다(#843). 요청한 사람의 화면에만 있고 지도(핀 목록)는 바꾸지 않는다(가드레일 1).
+  // AI 추천 탭에선 올리기 전 후보를 핑고 핀으로 그린다(#843). 요청한 사람의 화면에만 있고 지도(핀 목록)는 바꾸지 않는다(가드레일 1).
   // 올린 후보는 이미 핀으로 떠 있어서 빼고, 좌표가 없는 후보도 뺀다. 결과는 추천 탭과 같은 캐시를 본다.
   const onRecommendTab = useMatch('/maps/:mapId/recommend') !== null
   // AI 추천은 보이는 지도 가운데 반경 안에서 찾는다(#1385) — 그 탭에서만 여행 지역 경계·그 밖 어둡게·반경 원을 그린다.
@@ -254,7 +254,7 @@ export default function MapLayout() {
     if (r) controller.current?.focusPin(r.lat, r.lng)
   }, [found, search.selectedId])
 
-  // AI 후보를 고르면(카드·지도 점선 핀) 그 후보로 간다(#843). 올린 후보는 그 자리의 핀으로 간다.
+  // AI 후보를 고르면(카드·지도 핑고 핀) 그 후보로 간다(#843). 올린 후보는 그 자리의 핀으로 간다.
   // 결과를 다시 받아도 같은 선택이면 다시 옮기지 않는다.
   const focusedCandidate = useRef<typeof candidateFocus>(null)
   useEffect(() => {
