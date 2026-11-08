@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from auth.api import WITHDRAWN_DISPLAY_NAME
 from authz.core import Principal, Resource, can, permissions_for
 from authz.schemas import Permissions
 from common import categories
@@ -33,8 +34,7 @@ from pins.schemas import (
 
 LINK_PIN_REJECTED_MESSAGE = "링크로는 핀을 찍을 수 없어요. 이름으로 검색해 주세요"
 
-# 핀 작성자 표시(#155, #369). 탈퇴 문구는 auth.api.WITHDRAWN_DISPLAY_NAME과 같은 값이다(test_core가 대조한다).
-WITHDRAWN_AUTHOR_NAME = "탈퇴한 구성원"
+# 핀 작성자 표시(#155, #369). 탈퇴한 사람 이름은 auth.api.WITHDRAWN_DISPLAY_NAME 한 곳이다(#1475).
 LEFT_AUTHOR_NAME = "나간 구성원"
 
 
@@ -43,7 +43,7 @@ def author_display_name(real_name: str | None, *, is_withdrawn: bool, is_current
     남아 현재 구성원으로 잡히기 때문이다(#245). 그다음 그 지도에서 나갔으면 '나간 구성원', 아니면 실명.
     핀 행에는 아무것도 쓰지 않고 조회할 때마다 계산하므로, 다시 들어오면 실명으로 돌아간다."""
     if is_withdrawn:
-        return WITHDRAWN_AUTHOR_NAME
+        return WITHDRAWN_DISPLAY_NAME
     if not is_current_member:
         return LEFT_AUTHOR_NAME
     return real_name
@@ -153,6 +153,7 @@ class PinRecord:
     search_query: str | None = None
     place_name: str | None = None
     place_url: str | None = None
+    naver_url: str | None = None
     created_by_display_name: str | None = None
     created_at: datetime | None = None
     checks: list[dict] | None = None
@@ -183,6 +184,7 @@ def to_pin_response(record: PinRecord, principal: Principal) -> Pin:
         search_query=record.search_query,
         place_name=record.place_name,
         place_url=record.place_url,
+        naver_url=record.naver_url,
         created_by=record.created_by,
         created_by_display_name=record.created_by_display_name,
         created_at=record.created_at,

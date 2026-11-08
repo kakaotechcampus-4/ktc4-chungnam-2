@@ -13,6 +13,7 @@ import DayRoute from '@/features/shortlist/DayRoute'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { seedSchedule } from '@/features/shortlist/__fixtures__/serverSchedule'
+import { wholeText } from '@/test/text'
 
 const BASE = 'http://localhost'
 
@@ -91,7 +92,7 @@ describe('AI 코스 — 모드별 결과(#1322)', () => {
       checked: [{ kind: 'travel', text: '하루 이동 시간은 모두 괜찮아요' }],
     })
     await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
-    expect(await screen.findByText('일정을 점검했어요. 고칠 점 2개')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('일정을 점검했어요. 고칠 점 2개'))).toBeInTheDocument()
     const cards = within(screen.getByRole('list', { name: '고칠 점' })).getAllByRole('article')
     expect(cards[0]).toHaveTextContent('꼭 고칠 것')
     expect(cards[0]).toHaveTextContent('휴무가 풀려요')
@@ -188,7 +189,7 @@ describe('한 카드를 반영한 뒤(#1322)', () => {
     expect(await screen.findByText('반영했어요')).toBeInTheDocument()
 
     expect(screen.queryByRole('button', { name: '둘째 날에 넣기' })).not.toBeInTheDocument() // 다른 카드 버튼 없음
-    expect(screen.getByText('일정이 바뀌었어요. 다시 점검하면 이어서 고칠 수 있어요')).toBeInTheDocument()
+    expect(screen.getByText(wholeText('일정이 바뀌었어요. 다시 점검하면 이어서 고칠 수 있어요'))).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: '다시 점검' })).toHaveLength(1) // 반영 안 한 카드 하나
   })
 })
@@ -201,7 +202,7 @@ describe('stale run(#1322)', () => {
     await user.click(await screen.findByRole('button', { name: '최근 코스 보기' }))
     expect(await screen.findAllByRole('button', { name: '다시 점검' })).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /^(반영|.*에 넣기)$/ })).not.toBeInTheDocument()
-    expect(screen.getAllByText('일정이 바뀌었어요. 다시 점검하면 이어서 고칠 수 있어요')).toHaveLength(2)
+    expect(screen.getAllByText(wholeText('일정이 바뀌었어요. 다시 점검하면 이어서 고칠 수 있어요'))).toHaveLength(2)
   })
 })
 

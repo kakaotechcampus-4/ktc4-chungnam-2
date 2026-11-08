@@ -35,6 +35,12 @@ export function kakaoLoginUrl(): string {
   return base ? `${base}/auth/kakao/login` : '/'
 }
 
+/** 구글 로그인 시작 주소(#1514). 카카오와 같다 — 서버가 state 쿠키를 심고 구글로 보낸다. 구글 키가 없는 환경이면 서버가 `login_error=google_unavailable`로 돌려보낸다. */
+export function googleLoginUrl(): string {
+  const base = import.meta.env.VITE_API_BASE_URL
+  return base ? `${base}/auth/google/login` : '/'
+}
+
 /**
  * 게스트로 참여(#472) — 이름만 입력해 그 초대의 지도에 바로 들어간다(계정 만들기와 초대 수락이 한 요청).
  * 응답과 함께 세션 쿠키가 온다. 로그인 전에만 부른다.

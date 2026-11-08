@@ -7,6 +7,7 @@ import type { CandidateDto, RecommendCategory } from '@/features/recommend/model
 import { pinErrorMessage } from '@/features/search/model'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
+import Sentences from '@/ui/Sentences'
 
 import type { AdDto } from './api'
 import { overlapsCandidate } from './model'
@@ -23,7 +24,9 @@ export default function AdArea({ mapId, hide = [] }: { mapId: string; hide?: Can
   if (ads.length === 0) return null
   return (
     <section aria-label="광고" className="mt-6 space-y-2 border-t border-ink-200 pt-4">
-      <p className="text-label text-ink-500">광고예요. 추천 조건과는 상관없는 장소예요</p>
+      <p className="text-label text-ink-500">
+        <Sentences text="광고예요. 추천 조건과는 상관없는 장소예요" />
+      </p>
       <ul className="space-y-2">
         {ads.map((ad) => (
           <li key={ad.ad_id}>
@@ -83,10 +86,20 @@ function AdCard({ mapId, category, ad }: { mapId: string; category: RecommendCat
             {create.isPending ? '올리는 중…' : '지도에 올리기'}
           </button>
         )}
-        {place.place_url && (
-          <a href={place.place_url} target="_blank" rel="noopener noreferrer" onClick={click} className="btn-link inline-flex items-center gap-0.5 text-xs">
-            카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
-          </a>
+        {(place.place_url || place.naver_url) && (
+          <span className="flex flex-wrap justify-end gap-x-3">
+            {place.place_url && (
+              <a href={place.place_url} target="_blank" rel="noopener noreferrer" onClick={click} className="btn-link inline-flex items-center gap-0.5 text-xs">
+                카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            )}
+            {/* 네이버 지도 검색 링크(#1513) — 광고 클릭 집계는 같다 */}
+            {place.naver_url && (
+              <a href={place.naver_url} target="_blank" rel="noopener noreferrer" onClick={click} className="btn-link inline-flex items-center gap-0.5 text-xs">
+                네이버 지도에서 보기 <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            )}
+          </span>
         )}
       </div>
     </article>

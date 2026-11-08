@@ -25,8 +25,27 @@
 - 5-6 실격 필터 순서(반경→영업종료→실격조건→중복제외→정렬)를 바꾸지 않는다. 순서가 깔때기 표시(funnel)의 의미를 결정한다.
 - 추천 횟수 상한은 없다. 「추천 받기」 1번에 크레딧 1이다(#432, #949, `docs/credits-reviews.md`): `flows._create_run`이
   모델(②) 전에 `credits.api.check_can_spend`, run INSERT와 같은 트랜잭션에서 `credits.api.charge`를 부른다. 가격 숫자는
-  여기 적지 않는다(`credits/constants.py`). 「다시 찾기」·「근거 고치기」는 크레딧을 쓰지 않는다. 추천에는 환불 경로가 없다
-  (실패하면 run과 차감이 함께 롤백된다). `attempt_no`와 `lock_requester_attempts`(#811)는 번호를 매기려고 남긴다.
+  여기 적지 않는다(`credits/constants.py`). 「다시 찾기」·「근거 고치기」는 크레딧을 쓰지 않는다. 환불은 **첫 실행이 0곳일
+  때 하나뿐이다**(`flows._search_and_store`가 같은 트랜잭션에서 `credits.api.refund`, #1015). 그 밖의 실패는 run과 차감이 함께
+  롤백된다. 차감·환불을 부르는 곳과 환불 조건의 정본은 `docs/credits-reviews.md` 3.2 표다(이유는 3.3절, 검사가 코드와 맞춘다, #1479) — 바꿀 때는 거기를 고치고 여기는 가리키기만 한다. `attempt_no`와 `lock_requester_attempts`(#811)는 번호를 매기려고 남긴다.
+
+## 추천 위치 기준이 바뀌면 같이 바뀌는 곳 (#1483)
+
+기준은 "보이는 지도 가운데 한 점의 원"이고(#1331), 반경은 사용자가 고른 m다(#1416, 기본·범위는 `core.DEFAULT_RADIUS_M`,
+`MIN_RADIUS_M`, `WIDEN_LIMIT_M`). 가운데 한 점으로 원을 만드는 함수는 `flows._center_region` 한 곳이다. 한 주에 기준을 세 번
+바꾸면서 같이 바뀌어야 할 곳을 하나씩 찾아야 했다(멘토 리뷰). 기준을 바꿀 때는 아래를 같이 본다.
+
+| 자리 | 지금 |
+|---|---|
+| run 생성 `flows.create_run`, `_create_run` | `center` 필수 — 없으면 422 `VALIDATION_ERROR` |
+| 요청 모델 `schemas.RunCreateRequest.center` | **선택으로 둔다.** `center`가 필수가 되기 전에 만든 멱등 키(보관 `core.IDEMPOTENCY_RETENTION`)의 재시도가 그 run을 돌려줘야 해서다(`tests/test_idempotency_811.py`). 새 요청은 위 422가 막는다. 운영에 #1331 코드가 올라가고 보관 기간이 지나면 필수로 바꾸고 `flows`의 422 검사와 옛 키 분기를 지운다 |
+| 멱등 동일성 `core.idempotency_request_hash` | `center`, `radius_m`가 들어간다 |
+| readiness 근처 정예 수 `flows._curated_nearby` | `center`가 있으면 `_center_region`, 없으면 핀 앵커(옛 기준) |
+| 미리 돌려 보기 `flows.preview_filter`(agent 진단) | agent는 화면이 없어 보이는 가운데를 모른다 → 핀 앵커(옛 기준, `_default_circle_and_anchors`). 교체 전 로직은 태그 `legacy/recommend-pin-anchor`로 남기고, 이 경로가 옛 기준을 쓰는 동안 코드에서 지우지 않는다 |
+| 여행 지역 밖 판정 `OUTSIDE_TRIP_REGION` | run과 같은 원(`places.api`의 경계 판정) |
+| 화면 | 지도 원과 범위 문구는 readiness `radius_m`, 넓히기 확인 창은 `default_radius_m`·`next_default_radius_m`(#1468) |
+| 계약 | `docs/api-spec.yaml`의 `POST /maps/{mapId}/runs`(`center`, `radius_m`), `Readiness.radius_*`, `docs/CHANGELOG-api.md` |
+| 테스트 대역 | `backend/conftest.py`의 `_run_center_from_pins` — `center` 없이 run을 만드는 옛 테스트에 핀 평균 중심을 채운다 |
 
 ## 완료 정의
 

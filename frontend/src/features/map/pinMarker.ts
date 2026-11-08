@@ -1,6 +1,6 @@
 import type { PlaceSearchResultDto } from '@/features/search/model'
 import { LIKE_PATH } from '@/ui/Mark'
-import { PIN_PATH } from '@/ui/pinPath'
+import { PIN_OUTLINE, PIN_PATH } from '@/ui/pinPath'
 import { PINGO_MARK } from '@/ui/pingoMark'
 
 import { kindLabel, type Pin } from './model'
@@ -9,7 +9,8 @@ type PinKind = Pin['kind']
 
 /**
  * 지도 위 핀은 모양 2가지다 — 색의 진하기는 **참여율**로 나타낸다.
- * - 일반·AI 추천: 빨강 실선 테두리 + 속은 참여율만큼 회색→빨강(oklch 로 섞어야 중간이 탁해지지 않는다)
+ * - 일반·AI 추천: 진한 빨강 윤곽선(`--pin-outline`, 확정 핀과 같은 굵기 `PIN_OUTLINE`) + 속은 참여율만큼 회색→빨강(oklch 로 섞어야 중간이 탁해지지 않는다).
+ *   빨강 테두리였을 땐 참여 100%에서 속과 같은 색이라 테두리가 사라졌다
  *   + 머리 가운데 진한 빨간 점. AI 추천은 「지도에 올리기」로 모두의 핀이 된 뒤라 일반 핀과 같게 그린다.
  *   올리기 전 후보만 핑고 핀으로 따로 그린다(createCandidateMarkerElement).
  * - 확정: 골드 채움 + 갈색 윤곽선 + 갈색 하트(좋음 하트 `LIKE_PATH`를 0.6배로). 참여율과 무관하다. 흰 테두리는 없앴다(#1355) — 골드는 어두운 타일에서도 밝고,
@@ -19,10 +20,10 @@ type PinKind = Pin['kind']
  */
 function shapeOf(kind: PinKind, ratio: number) {
   if (kind === '확정') {
-    return { fill: 'var(--pin-confirmed)', stroke: 'var(--pin-confirmed-mark)', width: 1.5, heart: true }
+    return { fill: 'var(--pin-confirmed)', stroke: 'var(--pin-confirmed-mark)', heart: true }
   }
   const fill = `color-mix(in oklch, var(--pin-fill-full) ${Math.round(ratio * 100)}%, var(--pin-fill-empty))`
-  return { fill, stroke: 'var(--pin-stroke)', width: 2.5, heart: false }
+  return { fill, stroke: 'var(--pin-outline)', heart: false }
 }
 
 /** var()·color-mix() 는 SVG 속성보다 style 에서 확실히 해석된다. */
@@ -38,7 +39,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
       <path d="${PIN_PATH}" stroke-linejoin="round"
-            style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${shape.width}" />
+            style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${PIN_OUTLINE}" />
       ${shape.heart ? `<path d="${LIKE_PATH}" transform="translate(7.2 5.7) scale(.6)" style="fill:var(--pin-confirmed-heart)" />` : `<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`}
     </svg>`
   el.addEventListener('click', onClick)

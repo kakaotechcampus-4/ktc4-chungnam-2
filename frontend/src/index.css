@@ -134,6 +134,27 @@
     }
   body {
     @apply bg-background text-foreground;
+    /* 단계 클래스가 없는 글자(입력칸 16px 등)도 같은 자간·행간을 따른다. */
+    letter-spacing: -0.01em;
+    line-height: 1.4;
+    /* 한글은 낱말(어절) 단위로 줄을 바꾼다. 띄어쓰기 없는 긴 글자(링크 등)만 넘칠 때 끊는다(#1511). */
+    word-break: keep-all;
+    overflow-wrap: break-word;
+    }
+  /* 문단 끝줄에 낱말 하나만 남지 않게(#1511). 두 문장 이상은 ui/Sentences 가 문장마다 줄을 바꾼다. */
+  p, li, dd {
+    text-wrap: pretty;
+    }
+  /* 가운데 정렬 글과 짧은 안내 글(text-xs·text-label)은 줄 길이를 고르게 — 「…확정 리스트에 먼저 / 담아 보세요」처럼 끝말만 가운데 떨어지지 않게(#1511). */
+  :where(.text-center) :is(p, li, dd),
+  p.text-center,
+  p:is(.text-xs, .text-label) {
+    text-wrap: balance;
+    }
+  /* 제목은 낱말 단위로 끊고 줄 길이를 고르게(#1511). 가운데 정렬 제목이 「…있어 / 요」처럼 한 글자만 남지 않게. */
+  h1, h2, h3 {
+    text-wrap: balance;
+    word-break: keep-all;
     }
   html {
     @apply font-sans;
@@ -209,10 +230,27 @@
 @theme {
     /* 12px 회색 안내 글이 작아 읽기 어려웠다(#1447) — xs 를 13px 로 올린다. body(13)와 굵기·색으로 가른다. */
     --text-xs: 0.8125rem;
-    --text-xs--line-height: 1.125rem;
     --text-title: 1.0625rem;
     --text-body: 0.8125rem;
     --text-label: 0.6875rem;
+    /* 행간·자간(DESIGN.md Typography 「행간·자간」, #1511). 한글은 기본 자간 0이 성글어 보여 줄인다 —
+       17px 이상 제목은 -2%, 그 아래는 -1%(작은 글자에 -2%면 받침 많은 글자끼리 붙어 보인다). 행간은 Tailwind 기본(1.4~1.5)보다 조인다. */
+    --text-2xl--line-height: 1.3;
+    --text-2xl--letter-spacing: -0.02em;
+    --text-xl--line-height: 1.3;
+    --text-xl--letter-spacing: -0.02em;
+    --text-title--line-height: 1.3;
+    --text-title--letter-spacing: -0.02em;
+    --text-base--line-height: 1.4;
+    --text-base--letter-spacing: -0.01em;
+    --text-sm--line-height: 1.4;
+    --text-sm--letter-spacing: -0.01em;
+    --text-body--line-height: 1.4;
+    --text-body--letter-spacing: -0.01em;
+    --text-xs--line-height: 1.35;
+    --text-xs--letter-spacing: -0.01em;
+    --text-label--line-height: 1.3;
+    --text-label--letter-spacing: -0.01em;
     /* 지도 위에 떠 있는 것(지도 버튼·검색창·상단 원·칩)과 바텀시트 윗변. 목록·카드에는 그림자가 없다. */
     --shadow-float: 0 2px 8px rgba(26, 28, 38, 0.12);
     --shadow-sheet: 0 -2px 12px rgba(26, 28, 38, 0.08);
@@ -227,10 +265,15 @@
     --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
     --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
     --animate-pingo-frame-b: pingo-frame-b 600ms step-end infinite;
-    /* 위·아래로 오르내릴 때 뒷모습과 뒤집은 뒷모습을 걸음마다(0.3초) 바꿔 팔을 번갈아 뻗고, 걸음마다 몸이 한 번 오르거나 내려간다. */
-    --animate-pingo-frame-half: pingo-frame-half 600ms step-end infinite;
+    /* 위·아래(대각선 포함)는 걸음마다(0.3초) 몸이 한 번 오르거나 내려간다. 뒷모습은 한 장이고 걸음마다 좌우로 4° 기운다
+       — 뒤집은 뒷모습을 번갈아 쓰면 명암이 걸음마다 좌우로 바뀌었다. */
     --animate-pingo-climb: pingo-climb 300ms ease-out infinite;
     --animate-pingo-descend: pingo-descend 300ms ease-out infinite;
+    --animate-pingo-sway: pingo-sway 600ms ease-in-out infinite;
+    /* 5분 쉬면 졸고(꾸벅) 이어서 잔다(숨쉬기 + 머리 위로 떠오르는 z). 상태 표시라 깰 때까지 반복한다(DESIGN.md 「핑고 예외」). */
+    --animate-pingo-nod: pingo-nod 2.4s ease-in-out infinite;
+    --animate-pingo-breathe: pingo-breathe 3s ease-in-out infinite;
+    --animate-pingo-snore: pingo-snore 2.4s ease-out infinite;
     @keyframes pingo-climb {
         0%, 100% { transform: translateY(0); }
         45% { transform: translateY(-7%); }
@@ -243,9 +286,23 @@
         0% { opacity: 1; }
         25%, 100% { opacity: 0; }
     }
-    @keyframes pingo-frame-half {
-        0% { opacity: 1; }
-        50%, 100% { opacity: 0; }
+    @keyframes pingo-sway {
+        0%, 100% { transform: rotate(-4deg); }
+        50% { transform: rotate(4deg); }
+    }
+    @keyframes pingo-nod {
+        0%, 55%, 100% { transform: translateY(0) rotate(0); }
+        70% { transform: translateY(3%) rotate(-3deg); }
+        80% { transform: translateY(1%) rotate(-1deg); }
+    }
+    @keyframes pingo-breathe {
+        0%, 100% { transform: scale(1, 1); }
+        50% { transform: scale(1.02, 1.035); }
+    }
+    @keyframes pingo-snore {
+        0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+        25% { opacity: 1; }
+        100% { opacity: 0; transform: translate(-3px, -10px) scale(1); }
     }
     @keyframes pingo-frame-b {
         0%, 50%, 100% { opacity: 0; }

@@ -39,7 +39,7 @@ def external_search(q: str = Query(...), user: CurrentUser = Depends(get_current
     query = q.strip()
     if not 1 <= len(query) <= _MAX_QUERY_LEN:
         raise AppError("VALIDATION_ERROR", f"검색어는 앞뒤 공백을 뺀 1~{_MAX_QUERY_LEN}자여야 합니다")
-    return ExternalSearch(query=query, url=api.kakao_search_url(query))
+    return ExternalSearch(query=query, url=api.kakao_search_url(query), naver_url=api.naver_search_url(query))
 
 
 @router.get("/places/search", response_model=list[PlaceSearchResult], response_model_exclude_none=True)

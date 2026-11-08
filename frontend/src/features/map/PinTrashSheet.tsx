@@ -6,6 +6,7 @@ import { showToast } from '@/features/shell/toast'
 import CardSkeleton from '@/ui/CardSkeleton'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
+import Sentences from '@/ui/Sentences'
 
 import { restorePinErrorMessage } from './model'
 import { usePinTrashQuery, useRestorePinMutation } from './queries'
@@ -51,7 +52,7 @@ export default function PinTrashSheet({ mapId, onClose }: { mapId: string; onClo
                     <br />
                     {days_left}일 안에 되돌릴 수 있어요
                   </p>
-                  {was_confirmed && <p className="text-xs text-ink-500">되돌리면 확정 리스트에도 다시 올라가요</p>}
+                  {was_confirmed && <p className="text-xs text-ink-500"><Sentences text="되돌리면 확정 리스트에도 다시 올라가요" /></p>}
                 </div>
                 <button
                   type="button"

@@ -274,7 +274,8 @@ def _external_search(
     그 근처 동네다(#1353)."""
     area = _search_area(db, map_id=map_id, category=category, place_search=place_search, center=center, near_cache=near_cache)
     query = core.external_search_query(area, category)
-    return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query))
+    return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query),
+                                  naver_url=places_api.naver_search_url(query))
 
 
 def _run_external_search(db: Session, run: RecommendRun, place_search: PlaceSearchGateway) -> schemas.ExternalSearch:
@@ -705,11 +706,11 @@ def _trip_weekdays(db: Session, map_id: str) -> list[int]:
 def _open_status_by_place(place_facts: PlaceFactsGateway, place_ids: Sequence[str], weekdays: Sequence[int]) -> dict[str, str]:
     """후보마다 여행 요일 기준 영업 여부("closed" | "open" | "unknown", #690). 시간 조회가 없는 게이트웨이이거나 여행 날짜가
     없으면 전부 "unknown"이다(지금처럼 아무도 빼지 않는다). 한 번에 배치 조회(N+1 금지)."""
-    get_week_status = getattr(place_facts, "get_week_open_status", None)
-    if not weekdays or get_week_status is None or not place_ids:
+    get_open_status = getattr(place_facts, "get_open_status_on_weekdays", None)
+    if not weekdays or get_open_status is None or not place_ids:
         return dict.fromkeys(place_ids, "unknown")
-    week_by_place = get_week_status(list(place_ids))
-    return {place_id: core.trip_open_status(week_by_place.get(place_id), weekdays) for place_id in place_ids}
+    found = get_open_status(list(place_ids), list(weekdays))   # 요일을 모으는 규칙도 places 한 곳(#747, #1483)
+    return {place_id: found.get(place_id, "unknown") for place_id in place_ids}
 
 
 def _pipeline_inputs(
@@ -1304,6 +1305,7 @@ def _candidate_response(
         member_fulfillment=candidate.member_fulfillment or None,  # {} = 집계 없음 → 필드 생략
         place_source=candidate.place_source,
         place_url=places_api.place_link(place) if place else None,
+        naver_url=places_api.naver_place_link(place.name, place.address) if place else None,
         visibility="published" if already_published else "private",
         published_pin_id=str(candidate.published_pin_id) if already_published else None,
         permissions=Permissions(

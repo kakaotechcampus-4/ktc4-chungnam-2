@@ -19,7 +19,8 @@ const CATEGORY_SEARCH_WORD: Record<string, string> = { 음식점: "맛집", 카�
 const EXTERNAL_SEARCH_BELOW = 3; // 후보가 이 수 미만이면 external_search(실서버 기준과 같은 값, 화면에는 적지 않는다)
 
 function externalSearch(query: string) {
-  return { query, url: `https://map.kakao.com/link/search/${encodeURIComponent(query)}` };
+  // #1513 네이버 지도 검색 링크 — 같은 검색어(서버는 places.api.naver_search_url 한 곳)
+  return { query, url: `https://map.kakao.com/link/search/${encodeURIComponent(query)}`, naver_url: `https://map.naver.com/p/search/${encodeURIComponent(query)}` };
 }
 
 function town(mapId: string | undefined) {
@@ -292,6 +293,7 @@ export const recommendHandlers = [
     // 「카카오맵에서 보기」 — 장소 페이지가 없으면 이름 + 동네 검색 링크(#798)
     const candidates = (store.candidates[runId] ?? []).map((c) => ({
       ...c, place_url: c.place_url ?? c.place_source?.url ?? externalSearch(`${c.place_name} ${regionTown}`).url,
+      naver_url: c.naver_url ?? externalSearch(`${c.place_name} ${regionTown}`).naver_url,
     }));
     const funnel = [
       { key: "pool", label: "카테고리 후보 풀", removed_count: 0 },

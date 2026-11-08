@@ -1,5 +1,5 @@
 """
-셸 — DB·카카오 HTTP 호출만 여기 둔다. 판정 로직(토큰 서명/검증, 표시 이름 추출)은
+셸 — DB·카카오·구글 HTTP 호출만 여기 둔다. 판정 로직(토큰 서명/검증, 표시 이름 추출)은
 auth/core.py(순수 함수)에 있다(docs/code-quality.md 기능형 코어/명령형 셸 분리).
 
 각 함수는 커밋하지 않는다 — common.database.get_db(session_scope)가 요청당 한 번 커밋한다
@@ -37,37 +37,53 @@ logger = logging.getLogger(__name__)
 
 KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 KAKAO_USERINFO_URL = "https://kapi.kakao.com/v2/user/me"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 _HTTP_TIMEOUT_SECONDS = 5.0
 _MAX_RESTORE_WAIT_SECONDS = 2.0   # 복구가 다음 초를 기다리는 상한(보통 1초 미만)
 
 
-class KakaoApiError(AppError):
-    """카카오 토큰 교환·프로필 조회가 실패했다 — 상태 코드, 네트워크 오류, 응답 모양이 기대와 다른 경우 모두.
-    콜백이 `login_error=kakao_failed`로 돌려보내려고 다른 AppError(탈퇴 계정 등)와 구분한다.
-    응답 본문·토큰은 메시지·detail·로그 어디에도 넣지 않는다 — 실패 종류(`reason`)만."""
+class OAuthProviderError(AppError):
+    """로그인 제공자(카카오·구글)의 토큰 교환·프로필 조회가 실패했다 — 상태 코드, 네트워크 오류, 응답 모양이 기대와 다른 경우 모두.
+    콜백이 `login_error={provider}_failed`로 돌려보내려고 다른 AppError(탈퇴 계정 등)와 구분한다.
+    응답 본문·토큰은 메시지·detail·로그 어디에도 넣지 않는다 — 실패 종류(`reason`)와 상태 코드만."""
 
-    def __init__(self, message: str, *, reason: str, kakao_status: int | None = None):
+    provider = ""
+
+    def __init__(self, message: str, *, reason: str, status: int | None = None):
         detail = {"reason": reason}
-        if kakao_status is not None:
-            detail["kakao_status"] = kakao_status
+        if status is not None:
+            detail[f"{self.provider}_status"] = status
         super().__init__("UNAUTHORIZED", message, detail=detail)
 
 
-def _kakao_request(send, *, message: str) -> dict:
-    """카카오 HTTP 호출 한 번 — 200이 아니거나, 연결에 실패하거나, JSON 객체가 아니면 KakaoApiError."""
+class KakaoApiError(OAuthProviderError):
+    provider = "kakao"
+
+
+class GoogleApiError(OAuthProviderError):
+    provider = "google"
+
+
+def _provider_request(send, *, message: str, error: type[OAuthProviderError]) -> dict:
+    """제공자 HTTP 호출 한 번 — 200이 아니거나, 연결에 실패하거나, JSON 객체가 아니면 `error`."""
     try:
         resp = send()
     except httpx.HTTPError as exc:
-        raise KakaoApiError(message, reason=type(exc).__name__) from None   # 요청 URL·헤더가 든 예외 본문은 버린다
+        raise error(message, reason=type(exc).__name__) from None   # 요청 URL·헤더가 든 예외 본문은 버린다
     if resp.status_code != 200:
-        raise KakaoApiError(message, reason="http_status", kakao_status=resp.status_code)
+        raise error(message, reason="http_status", status=resp.status_code)
     try:
         body = resp.json()
     except ValueError:
-        raise KakaoApiError(message, reason="invalid_json") from None
+        raise error(message, reason="invalid_json") from None
     if not isinstance(body, dict):
-        raise KakaoApiError(message, reason="unexpected_shape")
+        raise error(message, reason="unexpected_shape")
     return body
+
+
+def _kakao_request(send, *, message: str) -> dict:
+    return _provider_request(send, message=message, error=KakaoApiError)
 
 
 def _exchange_kakao_code(code: str) -> str:
@@ -221,6 +237,52 @@ def login_guest_with_kakao_code(db: Session, *, code: str, guest_user_id: str) -
     provider_user_id, display_name = _kakao_identity(code)
     return claim_guest(
         db, guest_user_id=guest_user_id, provider="kakao", provider_user_id=provider_user_id, display_name=display_name,
+    )
+
+
+def _google_identity(code: str) -> tuple[str, str]:
+    """인가 코드 → (구글 사용자 번호 sub, 표시 이름). 받는 범위는 `openid profile`뿐이다(core.GOOGLE_SCOPE)."""
+    message = "구글 인증에 실패했습니다"
+    body = _provider_request(
+        lambda: httpx.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": settings.google_redirect_uri,
+                "code": code,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=_HTTP_TIMEOUT_SECONDS,
+        ),
+        message=message, error=GoogleApiError,
+    )
+    token = body.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise GoogleApiError(message, reason="missing_access_token")
+    profile = _provider_request(
+        lambda: httpx.get(
+            GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {token}"}, timeout=_HTTP_TIMEOUT_SECONDS,
+        ),
+        message="구글 사용자 정보를 가져오지 못했습니다", error=GoogleApiError,
+    )
+    sub = profile.get("sub")
+    if not isinstance(sub, str) or not sub:
+        raise GoogleApiError("구글 사용자 정보를 가져오지 못했습니다", reason="missing_user_id")
+    return sub, core.display_name_from_google_profile(profile)
+
+
+def login_with_google_code(db: Session, *, code: str) -> User:
+    provider_user_id, display_name = _google_identity(code)
+    return find_or_create_user(db, provider="google", provider_user_id=provider_user_id, display_name=display_name)
+
+
+def login_guest_with_google_code(db: Session, *, code: str, guest_user_id: str) -> tuple[User, bool | None]:
+    """게스트 세션으로 시작한 구글 로그인 — 카카오와 같은 합치기(#560, #694, #1514)."""
+    provider_user_id, display_name = _google_identity(code)
+    return claim_guest(
+        db, guest_user_id=guest_user_id, provider="google", provider_user_id=provider_user_id, display_name=display_name,
     )
 
 

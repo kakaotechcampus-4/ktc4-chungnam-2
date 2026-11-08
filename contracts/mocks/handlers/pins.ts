@@ -97,6 +97,7 @@ function createPin(mapId: string, body: CreatePinBody): Response {
       lng: own.lng,
       place_name: own.place_name,
       ...(own.place_source?.url ? { place_url: own.place_source.url } : {}),
+      naver_url: `https://map.naver.com/p/search/${encodeURIComponent(own.place_name)}`,   // #1513 이름 검색 링크
       created_by: ME_USER_ID,
       created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
       created_at: new Date().toISOString(),
@@ -297,6 +298,7 @@ export const pinsHandlers = [
     pin.lng = own.lng;
     pin.place_name = own.place_name;
     if (own.place_source?.url) pin.place_url = own.place_source.url;
+    pin.naver_url = `https://map.naver.com/p/search/${encodeURIComponent(own.place_name)}`;
     delete pin.kakao_place_id;
     delete pin.search_query;
     (pin as any)._place_id = own.place_id;

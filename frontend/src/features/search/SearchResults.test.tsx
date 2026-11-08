@@ -5,6 +5,8 @@ import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { wholeText } from '@/test/text'
+
 import { SearchResultsBody, SearchResultsHeader } from './SearchResults'
 import { useSearchStore } from './searchStore'
 
@@ -44,7 +46,7 @@ describe('지도를 눌러 핀 찍기 (#486)', () => {
 
   it('근처에 장소가 없으면 지어내지 않고 이름 검색을 권한다', async () => {
     tapAt(37.5, 127.0)
-    expect(await screen.findByText('누른 곳 가까이에 찍을 수 있는 장소가 없어요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('누른 곳 가까이에 찍을 수 있는 장소가 없어요'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '검색으로 남기기' })).toBeInTheDocument()
   })
 })

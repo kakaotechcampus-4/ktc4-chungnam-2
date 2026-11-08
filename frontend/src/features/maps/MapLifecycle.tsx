@@ -9,6 +9,7 @@ import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
+import Sentences from '@/ui/Sentences'
 
 import { copyMapErrorMessage, deleteMapBody, mapChanges, tripReady, tripTooLongError, type MapHeaderView, type MemberView, type TripDraft } from './model'
 import { useCopyMapMutation, useDeleteMapMutation, useLeaveMapMutation, useMapsQuery, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
@@ -92,7 +93,9 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
       }
     >
       {cannotLeave ? (
-        <p className="text-sm font-semibold text-warn-text">혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요</p>
+        <p className="text-sm font-semibold text-warn-text">
+          <Sentences text="혼자 남은 방장은 나갈 수 없어요. 대신 지도를 삭제할 수 있어요" />
+        </p>
       ) : (
         leave.error && <ErrorText message="지도에서 나가지 못했어요" error={leave.error} />
       )}

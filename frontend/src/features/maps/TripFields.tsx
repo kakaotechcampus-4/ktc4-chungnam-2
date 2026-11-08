@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react'
 import TextField, { ClearButton } from '@/ui/TextField'
 
 import FieldError from '@/ui/FieldError'
+import Sentences from '@/ui/Sentences'
 
 import { tripDateError, tripEndMax, type TripDraft } from './model'
 import RegionPicker from './RegionPicker'
@@ -47,7 +48,7 @@ export default function TripFields({
             <ChevronDown size={16} className="text-ink-500" aria-hidden="true" />
           )}
         </div>
-        <p className="mt-1.5 text-xs text-ink-500">고르면 그 지역 장소 정보를 미리 준비해요</p>
+        <p className="mt-1.5 text-xs text-ink-500"><Sentences text="고르면 그 지역 장소 정보를 미리 준비해요" /></p>
       </Field>
 
       <div className="grid grid-cols-2 gap-2">

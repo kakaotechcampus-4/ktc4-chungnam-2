@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { PIN_PATH } from './pinPath'
+import { PIN_OUTLINE, PIN_PATH } from './pinPath'
 
 /**
  * 지도 대표 이미지의 기본 그림(#1445) — 지도 지역의 명소를 핑고와 같은 결(평면 2D, 채운 면, 둥근 끝)로 그린다.
@@ -125,10 +125,10 @@ const Fallback = (
   <>
     <path d="M0 112L320 78v14L0 126z" fill="#fff" />
     <g transform="translate(110 46)">
-      <path d={PIN_PATH} fill="var(--pin-fill-full)" stroke="var(--pin-stroke)" strokeWidth="2.5" />
+      <path d={PIN_PATH} fill="var(--pin-fill-full)" stroke="var(--pin-outline)" strokeWidth={PIN_OUTLINE} />
     </g>
     <g transform="translate(196 34)">
-      <path d={PIN_PATH} fill="var(--pin-confirmed)" stroke="var(--pin-confirmed-mark)" strokeWidth="2" />
+      <path d={PIN_PATH} fill="var(--pin-confirmed)" stroke="var(--pin-confirmed-mark)" strokeWidth={PIN_OUTLINE} />
     </g>
   </>
 )

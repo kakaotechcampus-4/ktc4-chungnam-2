@@ -4,6 +4,7 @@ import ErrorText from '@/ErrorText'
 import { dayOrdinal, dayTitle } from '@/features/course/model'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { isPlaced } from '@/features/map/model'
+import Sentences from '@/ui/Sentences'
 
 import { KAKAO_ROUTE_MAX, kakaoWalkUrl } from './model'
 import { useShortlistQuery } from './queries'
@@ -36,7 +37,7 @@ export default function DayRoute({ mapId, onOpen }: { mapId: string; onOpen: (pi
     )
   if (!edit.ready) return <p className="text-sm text-ink-500">불러오는 중…</p>
   const day = routeDay(edit.schedule, edit.dates, chosen)
-  if (!day) return <p className="text-sm text-ink-500">여행 날짜를 정하면 일정을 짤 수 있어요</p>
+  if (!day) return <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
 
   const byId = new Map((shortlist.data ?? []).map((i) => [i.pin.id, enrich(i.pin)]))
   const name = (id: string) => byId.get(id)?.place_name ?? '이 장소'
@@ -76,7 +77,7 @@ export default function DayRoute({ mapId, onOpen }: { mapId: string; onOpen: (pi
           {stops.length > KAKAO_ROUTE_MAX && <span className="font-normal text-ink-500"> · 앞 {KAKAO_ROUTE_MAX}곳</span>}
         </a>
       )}
-      {stops.length < ids.length && <p className="text-xs text-ink-500">위치를 모르는 핀은 동선에서 빠졌어요</p>}
+      {stops.length < ids.length && <p className="text-xs text-ink-500"><Sentences text="위치를 모르는 핀은 동선에서 빠졌어요" /></p>}
       {stops.length === 1 && <p className="text-xs text-ink-500">2곳 이상이면 동선을 그려요</p>}
     </div>
   )

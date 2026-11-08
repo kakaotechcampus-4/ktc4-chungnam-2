@@ -77,3 +77,24 @@ def test_fake_count_curated_counts_open_curated_in_any_area():
     assert fake.count_curated("음식점", [near, Area(37.6, 127.0, 300)]) == 2
     assert fake.count_curated("음식점", []) == 0
     assert fake.count_curated("숙소", [near]) == 0
+
+
+# ---- 네이버 지도 검색 링크(#1513) ----
+
+def test_naver_search_url_encodes_like_kakao():
+    url = core.naver_search_url("춘천 한식 & 술집/2")
+    tail = url.removeprefix("https://map.naver.com/p/search/")
+    assert tail == core.kakao_search_url("춘천 한식 & 술집/2").removeprefix(core.KAKAO_SEARCH_URL)
+    assert unquote(tail) == "춘천 한식 & 술집/2"
+    assert api.naver_search_url("성수동 카페") == url.replace(tail, "") + "%EC%84%B1%EC%88%98%EB%8F%99%20%EC%B9%B4%ED%8E%98"
+
+
+def test_naver_place_link_searches_name_and_neighborhood():
+    address = "서울특별시 성동구 성수이로 10 (성수동2가)"
+    assert api.naver_place_link("성수 칼국수", address) == core.naver_search_url("성수 칼국수 성동구 성수동2가")
+    assert api.naver_place_link("성수 칼국수", None) == core.naver_search_url("성수 칼국수")
+
+
+def test_naver_place_link_is_none_without_name():
+    assert api.naver_place_link("  ", "서울특별시 성동구 성수이로 10 (성수동2가)") is None
+    assert api.naver_place_link(None, None) is None

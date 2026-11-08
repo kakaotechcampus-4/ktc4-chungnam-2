@@ -2,6 +2,24 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-08, 구글 로그인 — `GET /auth/google/login`, `GET /auth/google/callback` (#1514)
+
+- **새 엔드포인트 둘**: 카카오 로그인과 같은 흐름(state 쿠키, 항상 302, 게스트 전환 합치기, 탈퇴 계정 선택)이다. state 쿠키는 `google_oauth_state`(경로 `/auth/google`).
+- **받는 정보**: 요청 범위 `openid profile` — 구글 사용자 번호(`sub`)와 이름. 이메일은 받지 않는다(기획안 개인정보 표). 로그인 수단은 `user_identities.provider = 'google'`로 남는다(스키마 변경 없음, #694).
+- **`login_error` 값 둘 추가**: `google_failed`(구글 토큰 교환·사용자 정보 실패), `google_unavailable`(그 환경에 구글 키가 없음 — 시작 경로가 구글로 보내지 않고 바로 돌려보낸다). 기존 값은 그대로다.
+- **같은 사람의 카카오 계정과 잇지 않는다**: 처음 쓰는 구글 계정은 새 계정이다. 게스트가 구글로 전환하면 카카오와 같이 게스트 계정에 붙거나 기록을 옮긴다.
+- **설정**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`(비어 있어도 서버는 뜬다). 운영·스테이징은 https이고 FE와 같은 호스트, 카카오 콜백과 같은 `/auth` 아래여야 서버가 뜬다(탈퇴 계정 선택 쿠키가 그 경로에 실린다).
+- 목 서버: `/auth/google/login`은 카카오처럼 로그인된 진입점으로 보낸다. 타입 재생성 필요(`npm run gen:types`).
+
+## 2026-11-08, 네이버 지도 검색 링크 — `ExternalSearch.naver_url`, `Pin`·`Candidate`·`AdPlace`의 `naver_url` (#1513)
+
+- 카카오맵 링크가 있는 자리마다 네이버 지도 검색 링크를 함께 준다(멘토 리뷰 #816, #1487). **늘리기만 한다** — 선택 필드 넷을 더했고 `url`·`place_url`은 그대로다(상위 호환).
+- **`ExternalSearch.naver_url`**: `https://map.naver.com/p/search/{검색어}`. 검색어는 `url`과 같다. `GET /places/external-search`, 추천 결과의 `external_search`, readiness가 모두 같은 규칙이다. #902에서 말한 링크 목록 필드 대신 형제 필드로 했다(외부 서비스가 둘뿐).
+- **`Pin.naver_url`, `Candidate.naver_url`, `AdPlace.naver_url`**: `{장소 이름} {동네}` 네이버 지도 검색 링크. 이름이 없으면 필드가 없다(Ad는 null). 실시간 핀(`source: live`)은 이름을 저장하지 않아 없다.
+- 길찾기 링크는 카카오만이다(네이버는 장소 번호가 있어야 한다). 네이버 장소 번호는 모으지 않는다.
+- 만드는 곳은 `places/core.py`의 `naver_search_url`·`naver_place_link` 한 곳이고 다른 모듈은 `places.api`로 받는다. 스키마(DB) 변경 없음.
+- 목 서버: 위 응답마다 `naver_url`을 싣는다. 타입 재생성 필요(`npm run gen:types`).
+
 ## 2026-11-07, `default_radius_walk_min`을 deprecated로 표시, 화면이 쓰는 deprecated 필드 검사 (#1467)
 
 - **`RecommendRun.default_radius_walk_min`** 에 `deprecated: true`를 달았다. 값과 응답은 그대로다(서버는 계속 내린다). 생성 타입에 `@deprecated`가 붙는다. #1385에서 반경을 m로 바꿀 때 글로만 "곧 없앤다"로 적어서 화면이 반경 넓히기 확인 창에 옛 칸(도보 분)과 +5분 계산을 계속 썼다(멘토 리뷰).

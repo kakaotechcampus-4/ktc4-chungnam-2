@@ -13,6 +13,7 @@ import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
+import Sentences from '@/ui/Sentences'
 
 import { useAiStore } from './aiStore'
 import { AiChecks, AiFulfillment, AiReason } from './Evidence'
@@ -68,7 +69,7 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
         {/* 숫자는 GET /credits/me 그대로(#733). 못 받으면 비운다 — 다시 추천은 크레딧과 무관하게 된다. */}
         {credits && <span className="shrink-0 text-label text-ink-500">{balanceText(credits)}</span>}
       </div>
-      <p className="mt-1.5 text-label text-ink-500">고친 조건으로, 지금 후보를 빼고 찾아 드려요 · 크레딧은 쓰지 않아요</p>
+      <p className="mt-1.5 text-label text-ink-500"><Sentences text="고친 조건으로, 지금 후보를 빼고 찾아 드려요 · 크레딧은 쓰지 않아요" /></p>
     </div>
   )
 }
@@ -120,7 +121,7 @@ export function ResultsBody({
         <span className="font-bold text-brand-600">어떻게 골랐나요 ›</span>
       </button>
       {/* 알러지는 거르지 않는다 — 데이터로 보장할 수 없어서 사유와 상관없이 항상 안내한다(#425) */}
-      <p className="text-xs text-ink-500">알러지가 있다면 가게에 직접 확인해 주세요</p>
+      <p className="text-xs text-ink-500"><Sentences text="알러지가 있다면 가게에 직접 확인해 주세요" /></p>
       <RunAdvice mapId={mapId} run={run} widen={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />} onOpenEvidence={onOpenConditions} />
       {/* 원한 조건에 맞는 곳이 반경 안에 없으면 다른 곳만 보여 주지 않고 이유를 말한다. 넓히는 건 사람이다(가드레일 4). */}
       {missing.length > 0 && (
@@ -209,10 +210,20 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
         <PublishButton mapId={mapId} run={run} c={c} />
         {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로.
             장소 페이지가 없으면 서버가 이름+동네 검색 링크를 준다(#798). */}
-        {c.place_url && (
-          <a href={c.place_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
-            카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
-          </a>
+        {(c.place_url || c.naver_url) && (
+          <span className="flex flex-wrap justify-end gap-x-3">
+            {c.place_url && (
+              <a href={c.place_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
+                카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            )}
+            {/* 네이버 지도 검색 링크(#1513) — 같은 모양으로 바로 뒤에 */}
+            {c.naver_url && (
+              <a href={c.naver_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
+                네이버 지도에서 보기 <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            )}
+          </span>
         )}
       </div>
     </article>
@@ -225,7 +236,7 @@ function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto;
   // 그사이 누가 같은 곳을 찍었으면(409 PIN_DUPLICATE) 다시 눌러도 같은 오류다 — 광고 칸처럼 버튼을 닫는다.
   const [onMap, setOnMap] = useState(false)
   if (c.visibility === 'published') {
-    return <span className="tag tag-good">지도에 올렸어요. 이제 모두에게 보여요</span>
+    return <span className="tag tag-good">지도에 올려 모두에게 보여요</span>
   }
   if (!c.permissions.can_publish) return null
   if (onMap) {
@@ -269,8 +280,8 @@ export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; coun
       <section className="text-body text-ink-600">
         <h4 className="mb-1 text-sm font-bold text-ink-900">순위는 이렇게 정했어요</h4>
         <ul className="list-inside list-disc space-y-0.5">
-          <li>있으면 좋은 조건을 많이 맞출수록 앞에 뒀어요</li>
-          <li>지역마다 1위를 먼저 뽑고 남은 자리를 채웠어요</li>
+          <li><Sentences text="있으면 좋은 조건을 많이 맞출수록 앞에 뒀어요" /></li>
+          <li><Sentences text="지역마다 1위를 먼저 뽑고 남은 자리를 채웠어요" /></li>
         </ul>
       </section>
     </div>

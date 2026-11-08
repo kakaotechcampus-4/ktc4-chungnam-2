@@ -26,7 +26,8 @@ def client():
 def test_returns_query_and_url(client, q, encoded):
     r = client.get("/places/external-search", params={"q": q})
     assert r.status_code == 200
-    assert r.json() == {"query": q, "url": "https://map.kakao.com/link/search/" + encoded}
+    assert r.json() == {"query": q, "url": "https://map.kakao.com/link/search/" + encoded,
+                        "naver_url": "https://map.naver.com/p/search/" + encoded}   # #1513
 
 
 def test_query_is_trimmed(client):
