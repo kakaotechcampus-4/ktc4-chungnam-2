@@ -22,6 +22,7 @@ import { guestMergedMessage } from './model'
 import PendingAccountScreen from './PendingAccountScreen'
 import { readPendingInvite } from './pendingInvite'
 import { useMeQuery } from './queries'
+import { TERMS } from './terms'
 
 /** docs/errors.md NO_PENDING_LOGIN — 선택 쿠키(10분)가 만료됐거나 이미 골랐다. */
 const PENDING_EXPIRED = '선택 시간이 지났어요. 다시 로그인해 주세요'
@@ -235,13 +236,6 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
     </ModalSheet>
   )
 }
-
-const TERMS = [
-  { to: '/terms', title: '핑고핑고 이용약관' },
-  { to: '/privacy', title: '핑고핑고 개인정보처리방침' },
-  // 「내 위치」 버튼이 기기 위치를 쓴다(서버로 보내지는 않음).
-  { to: '/location-terms', title: '핑고핑고 위치기반서비스 이용약관' },
-]
 
 /** 약관 동의 줄의 「이용약관」이 여는 목록. 문서 하나하나는 따로 연다(#602). */
 function TermsSheet({ onClose }: { onClose: () => void }) {

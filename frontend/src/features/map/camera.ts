@@ -22,11 +22,19 @@ export type Size = { w: number; h: number }
 export type Padding = { top: number; right: number; bottom: number; left: number }
 
 /**
- * 점을 맞출 때 비키는 여백. 넓은 화면은 지도 영역에 시트가 없어서 위는 칩, 오른쪽은 지도 버튼만 비킨다(#338).
+ * 넓은 화면에서 지도 왼쪽을 가리는 패널 카드 폭(px, #1538). 지도는 화면 전체이고 패널이 그 위에 떠 있다.
+ * ponytail: 지도(MapCanvas)가 화면에 하나라 모듈 값 하나로 둔다. 지도를 둘 띄우게 되면 지도마다 넘긴다.
+ */
+export const view = { cover: 0 }
+
+/**
+ * 점을 맞출 때 비키는 여백. 넓은 화면은 지도 영역에 시트가 없어서 위는 칩, 오른쪽은 지도 버튼, 왼쪽은 패널 카드를 비킨다(#338, #1538).
  * 휴대폰은 위가 검색창·칩, 아래가 2단계 시트다.
  */
 export function fitPadding(viewportH: number, desktop: boolean): Padding {
-  return desktop ? { top: 64, right: 76, bottom: 32, left: 32 } : { top: 170, right: 64, bottom: Math.round(viewportH * 0.62), left: 32 }
+  return desktop
+    ? { top: 64, right: 76, bottom: 32, left: 32 + view.cover }
+    : { top: 170, right: 64, bottom: Math.round(viewportH * 0.62), left: 32 }
 }
 
 const clamp = (level: number) => Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, level))
