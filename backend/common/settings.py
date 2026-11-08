@@ -123,6 +123,10 @@ class Settings:
     kakao_client_id: str = ""
     kakao_client_secret: str = ""
     kakao_redirect_uri: str = ""
+    # 구글 로그인(#1514). 카카오와 달리 비어 있어도 된다 — 비어 있으면 로그인 시작이 화면으로 「준비 중」을 돌려보낸다.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
     # FE 오리진의 정본(루트 확정, 2026-09-23) — maps의 "초대 링크 URL" 갭과 auth의 로그인
     # 리다이렉트 갭이 같은 원인(FE 오리진을 몰라 백엔드 자신의 주소로 대체)이라 여기 하나로
     # 합쳤다. dev 기본값은 Vite 개발 서버 주소. prod·staging은 빈 값이면 아래 __post_init__이 막는다.
@@ -270,16 +274,23 @@ class Settings:
             raise ConfigError(f"{env}에서 FRONTEND_BASE_URL을 해석할 수 없다") from None
         if front.scheme != "https" or not front_host:
             raise ConfigError(f"{env}에서 FRONTEND_BASE_URL이 https 주소가 아니다")
-        if self.kakao_redirect_uri:   # 비어 있으면 로그인 시도 때 실패한다(기존 동작) — 여기서는 있는 값만 검사한다
+        auth_parents = set()
+        for name, value in (("KAKAO_REDIRECT_URI", self.kakao_redirect_uri), ("GOOGLE_REDIRECT_URI", self.google_redirect_uri)):
+            if not value:   # 비어 있으면 로그인 시도 때 실패한다(기존 동작) — 여기서는 있는 값만 검사한다
+                continue
             try:
-                redirect = urlsplit(self.kakao_redirect_uri)
+                redirect = urlsplit(value)
                 redirect_host = redirect.hostname
             except ValueError:
-                raise ConfigError(f"{env}에서 KAKAO_REDIRECT_URI를 해석할 수 없다") from None
+                raise ConfigError(f"{env}에서 {name}를 해석할 수 없다") from None
             if redirect.scheme != "https" or not redirect_host:
-                raise ConfigError(f"{env}에서 KAKAO_REDIRECT_URI가 https 주소가 아니다")
+                raise ConfigError(f"{env}에서 {name}가 https 주소가 아니다")
             if redirect_host != front_host:
-                raise ConfigError(f"{env}에서 KAKAO_REDIRECT_URI와 FRONTEND_BASE_URL의 호스트가 다르다 — 로그인 쿠키가 FE로 가지 않는다")
+                raise ConfigError(f"{env}에서 {name}와 FRONTEND_BASE_URL의 호스트가 다르다 — 로그인 쿠키가 FE로 가지 않는다")
+            # `.../auth/{제공자}/callback`의 `.../auth` — 탈퇴 계정 선택 쿠키가 이 경로에 실린다(auth.core.pending_cookie_path)
+            auth_parents.add(redirect.path.rsplit("/", 2)[0])
+        if len(auth_parents) > 1:
+            raise ConfigError(f"{env}에서 KAKAO_REDIRECT_URI와 GOOGLE_REDIRECT_URI가 같은 /auth 아래가 아니다")
 
     @property
     def is_prod(self) -> bool:
@@ -319,6 +330,9 @@ class Settings:
             kakao_client_id=_env("KAKAO_CLIENT_ID", ""),
             kakao_client_secret=_env("KAKAO_CLIENT_SECRET", ""),
             kakao_redirect_uri=_env("KAKAO_REDIRECT_URI", ""),
+            google_client_id=_env("GOOGLE_CLIENT_ID", ""),
+            google_client_secret=_env("GOOGLE_CLIENT_SECRET", ""),
+            google_redirect_uri=_env("GOOGLE_REDIRECT_URI", ""),
             elice_ml_api_base_url=_env("ELICE_ML_API_BASE_URL", ""),
             elice_ml_api_key=_env("ELICE_ML_API_KEY", ""),
             llm_model=_env("LLM_MODEL", "gpt-6-luna"),

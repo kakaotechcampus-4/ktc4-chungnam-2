@@ -35,7 +35,7 @@
 | `AD_REWARD_LIMIT` | 429 | 오늘(KST) 광고 충전 세션을 다 열었다(#1037). `detail`에 `{ limit }` | 「오늘은 광고 충전을 {limit}번 모두 썼어요」 |
 | `AD_REWARD_INVALID` | 409 | 받을 수 없는 광고 세션(`POST /credits/ad-sessions/{id}/claim`, #1037). `detail`에 `{ reason: "too_early", retry_after_s }` 또는 `{ reason: "expired" }` | too_early: `retry_after_s` 뒤 한 번 더. expired: 「광고를 다시 봐 주세요」 |
 | `CREDIT_INSUFFICIENT` | 402 | 크레딧이 실행 가격보다 적다 — 추천 받기(`POST /maps/{mapId}/runs`)와 코스 짜기(`POST /maps/{mapId}/courses`), 모델을 부르기 전에 거절한다(#432). `detail`에 `{ required, balance }` | "크레딧이 부족해요. 후기를 쓰면 {review_reward} 크레딧을 드려요"(`GET /credits/me`의 값) + 「후기 쓰러 가기」 |
-| `NO_PENDING_LOGIN` | 404 | 선택 대기 중인 탈퇴 계정 로그인이 없다 — 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됨(#855) | "선택 시간이 지났어요. 카카오로 다시 시작해 주세요" → 로그인 화면 |
+| `NO_PENDING_LOGIN` | 404 | 선택 대기 중인 탈퇴 계정 로그인이 없다 — 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됨(#855) | "선택 시간이 지났어요. 다시 로그인해 주세요" → 로그인 화면 |
 | `INVITE_EXPIRED` | 410 | 만료된 초대 토큰 | "초대 링크가 만료됐어요. 초대한 분께 새 링크를 부탁해 보세요" |
 | `PLACE_NOT_SUPPORTED` | 422 | `source: search`인데 검색 결과와 짝이 되는 자체 DB 장소가 없음 (핀 만들기, #191). 실시간 핀(`source: live`)의 장소 후기 — 후기를 붙일 자체 DB 장소가 없다(#432) | "장소 정보가 없는 핀이에요" — 「그래도 핀 남기기」(`source: live`, #382)로 다시 보낸다. 후기: 실시간 핀에는 후기 영역을 그리지 않는다 |
 | `COURSE_NOT_ENOUGH_PLACES` | 422 | AI 코스 짜기(`POST /maps/{mapId}/courses`, #334)에서 코스를 짤 확정 장소가 2곳 미만. 좌표를 알 수 없는 실시간 핀은 세지 않는다. `detail`에 `{ min, count }` | 「AI 코스 짜기」 버튼 비활성화 + "확정 리스트에 장소를 2곳 이상 담아 주세요" |

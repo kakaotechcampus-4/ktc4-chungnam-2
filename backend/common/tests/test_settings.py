@@ -630,6 +630,9 @@ _SECRET_VALUES = ("db-password-1", "pw-in-url", "short-secret-value", "kakao-red
     ({"frontend_base_url": "http://app.pingo.example"}, "FRONTEND_BASE_URL"),
     ({"kakao_redirect_uri": "http://app.pingo.example/auth/kakao/callback"}, "KAKAO_REDIRECT_URI"),
     ({"kakao_redirect_uri": "https://api.other.example/auth/kakao/callback"}, "호스트"),
+    ({"google_redirect_uri": "http://app.pingo.example/api/auth/google/callback"}, "GOOGLE_REDIRECT_URI"),
+    ({"kakao_redirect_uri": "https://app.pingo.example/api/auth/kakao/callback",
+      "google_redirect_uri": "https://app.pingo.example/auth/google/callback"}, "같은 /auth"),
     ({"session_secret": "short-secret-value"}, "SESSION_SECRET"),
 ])
 def test_strict_environments_refuse_unsafe_transport_settings(environment, overrides, match):
@@ -660,6 +663,14 @@ def test_strict_accepts_tls_db_and_matching_https_redirect():
     s = _settings(kakao_redirect_uri="https://app.pingo.example/api/auth/kakao/callback")
 
     assert s.kakao_redirect_uri.startswith("https://app.pingo.example")
+
+
+def test_strict_accepts_kakao_and_google_callbacks_under_the_same_auth_path():
+    """탈퇴 계정 선택 쿠키가 `/api/auth`에 실리므로 두 콜백이 같은 `/auth` 아래면 통과한다(#1514)."""
+    assert _settings(
+        kakao_redirect_uri="https://app.pingo.example/api/auth/kakao/callback",
+        google_redirect_uri="https://app.pingo.example/api/auth/google/callback",
+    )
 
 
 @pytest.mark.parametrize("mode", ["require", "verify-ca", "verify-full"])

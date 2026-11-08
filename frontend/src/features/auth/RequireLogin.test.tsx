@@ -15,7 +15,7 @@ beforeEach(() => resetScenario('withdrawn-relogin'))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-const EXPIRED = '선택 시간이 지났어요. 카카오로 다시 시작해 주세요'
+const EXPIRED = '선택 시간이 지났어요. 다시 로그인해 주세요'
 
 function Search() {
   return <span data-testid="search">{useLocation().search}</span>
@@ -124,5 +124,24 @@ describe('탈퇴 계정 재로그인 선택 화면(#858)', () => {
     resetScenario('happy-path')
     show('/')
     expect(await screen.findByText('내 지도 목록')).toBeInTheDocument()
+  })
+})
+
+describe('구글 로그인(#1514)', () => {
+  const signedOut = () =>
+    server.use(http.get('*/auth/me', () => HttpResponse.json({ code: 'UNAUTHORIZED', message: '로그인이 필요합니다' }, { status: 401 })))
+
+  it('로그인 화면에 카카오 아래 「Google로 시작하기」가 있다', async () => {
+    signedOut()
+    show('/')
+    expect(await screen.findByRole('link', { name: 'Google로 시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '카카오로 시작하기' })).toBeInTheDocument()
+  })
+
+  it('구글 키가 없는 환경(google_unavailable)이면 준비 중이라고 알리고 주소에서 지운다', async () => {
+    signedOut()
+    show('/?login_error=google_unavailable')
+    expect(await screen.findByRole('alert')).toHaveTextContent('구글 로그인은 아직 준비 중이에요. 카카오로 시작해 주세요')
+    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent(/^$/))
   })
 })

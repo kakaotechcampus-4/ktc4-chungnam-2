@@ -16,6 +16,7 @@ import Wordmark from '@/ui/Wordmark'
 import Sentences from '@/ui/Sentences'
 
 import { isUnauthorized } from './api'
+import GoogleButton from './GoogleButton'
 import KakaoButton from './KakaoButton'
 import { guestMergedMessage } from './model'
 import PendingAccountScreen from './PendingAccountScreen'
@@ -23,7 +24,7 @@ import { readPendingInvite } from './pendingInvite'
 import { useMeQuery } from './queries'
 
 /** docs/errors.md NO_PENDING_LOGIN — 선택 쿠키(10분)가 만료됐거나 이미 골랐다. */
-const PENDING_EXPIRED = '선택 시간이 지났어요. 카카오로 다시 시작해 주세요'
+const PENDING_EXPIRED = '선택 시간이 지났어요. 다시 로그인해 주세요'
 
 /**
  * 로그인해야 볼 수 있는 화면들을 감싼다. 비로그인이면 그 자리에 로그인 화면을 띄운다.
@@ -91,12 +92,18 @@ function useGuestMergedToast() {
   }, [message])
 }
 
+/** 서버 콜백의 `login_error` 값(api-spec `/auth/kakao/callback`, `/auth/google/*`) 중 따로 안내할 것. 나머지는 「다시 시도」. */
+const LOGIN_ERRORS: Record<string, string> = {
+  cancelled: '로그인을 취소했어요',
+  google_unavailable: '구글 로그인은 아직 준비 중이에요. 카카오로 시작해 주세요',
+}
+
 function useLoginError(): string | null {
   const [params] = useSearchParams()
   const [code] = useState(() => params.get('login_error'))
   useStripParam('login_error')
   if (!code) return null
-  return code === 'cancelled' ? '로그인을 취소했어요' : '로그인하지 못했어요. 다시 시도해 주세요'
+  return LOGIN_ERRORS[code] ?? '로그인하지 못했어요. 다시 시도해 주세요'
 }
 
 /**
@@ -130,7 +137,7 @@ function LoginScreen({ notice }: { notice?: string }) {
         <div className="flex flex-1 flex-col lg:max-w-[400px] lg:rounded-2xl lg:border lg:border-ink-200 lg:bg-white lg:px-8 lg:py-10">
 
         <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">
-          <Sentences text="3초면 시작해요. 이름은 카카오에서 가져와요" />
+          <Sentences text="3초면 시작해요. 이름은 카카오나 구글에서 가져와요" />
         </p>
         {/* 빨강은 핀·🚫·되돌릴 수 없는 동작 전용이라(영역 분리 규칙) 로그인 실패는 주의색이다. */}
         {loginError && (
@@ -138,9 +145,10 @@ function LoginScreen({ notice }: { notice?: string }) {
             <Sentences text={loginError} />
           </p>
         )}
-        {/* 카카오가 주 입구라 큰 버튼, 게스트는 한 단계 작은 버튼이다. */}
+        {/* 카카오·구글이 입구라 큰 버튼, 게스트는 한 단계 작은 버튼이다. */}
         <div className="mt-3 space-y-2">
           <KakaoButton retry={Boolean(loginError)} />
+          <GoogleButton />
           <button type="button" onClick={() => setSheet('guest')} className="btn-neutral btn-md w-full">
             <UserRound size={16} aria-hidden="true" /> 게스트로 시작하기
             {/* 게스트는 초대 링크로만 들어간다(#485). 「이름 입력」에 밑줄을 두면 눌리는 칸처럼 보여서 덧말만 둔다(#1427).
@@ -168,7 +176,7 @@ function LoginScreen({ notice }: { notice?: string }) {
 
         {/* 법적 고지라 이 줄만 「~됩니다」체다. 한 줄에 다 넣으면 393px에서 끝말만 떨어져서 줄을 직접 나눈다. */}
         <p className="mt-auto pt-8 text-center text-xs leading-relaxed text-ink-500 md:mt-8 md:pt-0">
-          카카오나 게스트로 시작하면
+          카카오, 구글, 게스트로 시작하면
           <br />
           <button type="button" onClick={() => setSheet('terms')} className="font-semibold text-brand-600 underline underline-offset-2">
             이용약관
@@ -213,7 +221,7 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
       </p>
       <ul className="mt-4 space-y-2 rounded-xl bg-ink-50 p-4 text-sm text-ink-700">
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />핀 찍기와 의견 남기기는 똑같이 쓸 수 있어요</li>
-        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />새 지도 만들기, AI 추천, AI 코스는 카카오로 로그인해야 쓸 수 있어요</li>
+        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />새 지도 만들기, AI 추천, AI 코스는 카카오나 구글로 로그인해야 쓸 수 있어요</li>
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />90일 동안 쓰지 않으면 기록이 정리돼요</li>
       </ul>
       {invite && (
