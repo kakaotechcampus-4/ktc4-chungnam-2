@@ -3,13 +3,13 @@ import { X } from 'lucide-react'
 
 import SheetTitle from '@/ui/SheetTitle'
 
-import { PANEL_W, RAIL_W, SIDE_PANEL_W } from './layout'
+import { PANEL_W, SIDE_PANEL_W } from './layout'
 import { useSheetStore } from './sheetStore'
 import { useIsPc } from './useIsDesktop'
 
 /**
  * 넓은 화면에서 왼쪽 패널 옆에 붙는 패널(확정 탭 「일정 짜기」, 2026-11-03).
- * 내용 패널 오른쪽(접혀 있으면 탭 줄 오른쪽)에 위아래로 꽉 차게 붙는다 — 왼쪽 목록과 같이 보면서 쓴다. 모달이 아니라서 딤이 없다.
+ * 내용 패널 오른쪽(접혀 있으면 화면 왼쪽 끝)에 위아래로 꽉 차게 붙는다 — 왼쪽 목록과 같이 보면서 쓴다. 모달이 아니라서 딤이 없다.
  * 휴대폰에는 옆에 둘 자리가 없어서 쓰지 않는다.
  */
 export default function SidePanel({ label, onClose, children }: { label: string; onClose: () => void; children: ReactNode }) {
@@ -30,7 +30,7 @@ export default function SidePanel({ label, onClose, children }: { label: string;
       tabIndex={-1}
       aria-label={label}
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
-      style={{ left: panelOpen ? panelW : RAIL_W, width: SIDE_PANEL_W }}
+      style={{ left: panelOpen ? panelW : 0, width: SIDE_PANEL_W }}
       className="enter-fade fixed inset-y-0 z-30 flex flex-col border-r border-ink-200 bg-white shadow-float outline-none transition-[left] duration-300 ease-out motion-reduce:transition-none"
     >
       <header className="flex items-center gap-2 border-b border-ink-200 py-2 pl-4 pr-2">
