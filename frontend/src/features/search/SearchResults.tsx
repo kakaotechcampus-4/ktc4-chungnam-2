@@ -8,6 +8,7 @@ import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
+import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import { josa } from '@/ui/josa'
@@ -121,7 +122,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     )
   }
 
-  if (search.isPending) return <p className="text-sm text-ink-500">찾는 중…</p>
+  if (search.isPending) return <CardSkeleton label="찾는 중…" />
   if (search.error) {
     return (
       <div className="space-y-3">

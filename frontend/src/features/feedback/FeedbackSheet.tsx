@@ -3,6 +3,7 @@ import { useState } from 'react'
 import ErrorText from '@/ErrorText'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
+import SegmentedControl from '@/ui/SegmentedControl'
 import SheetTitle from '@/ui/SheetTitle'
 import TextArea from '@/ui/TextArea'
 import Sentences from '@/ui/Sentences'
@@ -41,13 +42,7 @@ export default function FeedbackSheet({ mapId, onClose }: { mapId?: string; onCl
         <Sentences text="불편했던 점이나 바라는 점을 알려 주세요. 답장은 못 드리지만 모두 읽어요." />
       </p>
 
-      <div role="group" aria-label="분류" className="mb-3 flex gap-2">
-        {FEEDBACK_CATEGORIES.map((c) => (
-          <button key={c.key} type="button" aria-pressed={category === c.key} onClick={() => setCategory(c.key)} className="chip">
-            {c.label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl label="분류" options={FEEDBACK_CATEGORIES} value={category} onChange={setCategory} className="mb-3" />
 
       <TextArea
         label="의견"

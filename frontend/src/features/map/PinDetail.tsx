@@ -14,6 +14,7 @@ import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Mark from '@/ui/Mark'
+import ProgressBar from '@/ui/ProgressBar'
 import FieldError from '@/ui/FieldError'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
@@ -277,9 +278,7 @@ export function PinDetailBody({
         {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
-          <p className="text-xs font-bold text-ink-600">
-            {participants(pin)}/{memberCount}명이 의견을 남겼어요
-          </p>
+          <ProgressBar label={`${participants(pin)}/${memberCount}명이 의견을 남겼어요`} value={participants(pin)} max={memberCount} className="pb-1" />
         )}
         <div className="flex flex-wrap items-center gap-3 border-y border-ink-200 py-2 text-body">
           {TYPES.map((t) => (
