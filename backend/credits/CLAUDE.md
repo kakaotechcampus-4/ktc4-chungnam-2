@@ -8,7 +8,9 @@
 
 - `credit_accounts`, `credit_ledger` 두 테이블(마이그레이션 0048)과 광고 세션 `credit_ad_sessions`(0054, #1038). **원본은 원장이다.** `balance`는 원장 합을 담아 두는
   잠금용 값이고, 둘을 함께 바꾸는 곳은 `service._apply` 하나다
-- 가격표와 지급량 — `constants.py` 한 곳(`INITIAL_CREDITS`, `PRICES`, `REVIEW_REWARD`, `MAX_BALANCE`, 광고 충전 `AD_*`)
+- 가격표와 지급량 — `constants.py` 한 곳(`INITIAL_CREDITS`, `CREDIT_COST_KRW`, `PRICES`, `REVIEW_REWARD`, `MAX_BALANCE`, 광고 충전 `AD_*`).
+  1크레딧 = 원가 ₩1이고 가격은 원가에서 나온다(#1478). 크레딧을 쓰는 기능의 가격·차감하는 곳·**환불 조건**·환불하는 곳은 명세 3.2 표
+  한 곳에 적는다(`integration/test_credit_feature_table.py`가 `PRICES`와 호출 위치를 맞춘다, #1479). 새 기능이 `charge`를 부르면 그 PR은 루트가 검수한다
 - 잔액 상한 30(`MAX_BALANCE`, 명세 3.6, #981) — 후기 보상, 광고 보상, 환불만 `core.capped_gain`으로 상한까지 채운다. 0이어도 원장 줄을
   남긴다(멱등, 그 장소 보상 끝). 이미 넘은 잔액은 깎지 않고 DB CHECK도 걸지 않는다
 - 게스트 판정 — `auth.api.guest_user_ids` 한 곳. 부르는 쪽이 `is_guest`를 넘기지 않는다
