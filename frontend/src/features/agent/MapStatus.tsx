@@ -8,7 +8,7 @@ import type { AgentMapStatusDto } from './model'
 export default function MapStatus({ status }: { status: AgentMapStatusDto | null | undefined }) {
   if (!status) return null
   return (
-    <section aria-label="지금 지도 현황" className="space-y-1.5 rounded-xl border-[1.5px] border-brand-300 bg-brand-50 p-3">
+    <section aria-label="지금 지도 현황" className="space-y-1.5 rounded-xl border-[1.5px] border-brand-300 bg-[var(--pingo-bg)] p-3">
       <h3 className="flex items-center gap-1.5 text-sm font-bold text-ink-900">
         <span className="tag tag-ai">AI</span>
         지금 지도 현황

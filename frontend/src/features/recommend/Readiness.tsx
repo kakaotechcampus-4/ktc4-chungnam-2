@@ -94,7 +94,7 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
     return () => clearTimeout(t)
   }, [at, steps.length])
   return (
-    <ol aria-live="polite" className="space-y-2 rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm">
+    <ol aria-live="polite" className="space-y-2 rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-3 text-sm">
       {steps.slice(0, at + 1).map((label, i) => {
         const current = i === at
         return (
@@ -411,7 +411,7 @@ function ReadinessTile({ card, selected, onPick }: { card: ReadinessCard; select
       aria-pressed={selected}
       onClick={onPick}
       className={`press rounded-xl border px-3 py-2.5 text-left disabled:bg-ink-50 ${
-        selected ? 'border-brand-600 bg-brand-50 ring-1 ring-brand-600' : 'border-ink-200 bg-white'
+        selected ? 'border-brand-600 bg-[var(--selected-bg)] ring-1 ring-brand-600' : 'border-ink-200 bg-white'
       }`}
     >
       <span className={`block font-bold ${card.ready ? 'text-ink-900' : 'text-ink-500'}`}>{card.category}</span>

@@ -54,7 +54,7 @@ export default function BottomSheet({
 
   if (desktop) {
     return (
-      <main aria-label="탭 내용" className="relative flex min-h-0 flex-1 flex-col bg-white">
+      <main aria-label="탭 내용" className="relative flex min-h-0 flex-1 flex-col bg-[var(--surface-sheet)]">
         {top}
         {banner}
         {/* 위 여백은 패널 헤더의 pb-1(포커스 테두리 자리)과 합쳐 16px. */}
@@ -117,7 +117,7 @@ export default function BottomSheet({
         top: dragging ? `calc(${STAGE_TOP[stage]} + ${dragY}px)` : STAGE_TOP[stage],
         bottom: SHEET_BOTTOM,
       }}
-      className={`fixed inset-x-0 z-30 flex flex-col rounded-t-2xl bg-white shadow-sheet ${
+      className={`fixed inset-x-0 z-30 flex flex-col rounded-t-2xl bg-[var(--surface-sheet)] shadow-sheet ${
         dragging ? '' : 'transition-[top] duration-300 ease-out motion-reduce:transition-none'
       }`}
     >
