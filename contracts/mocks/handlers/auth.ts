@@ -6,24 +6,12 @@ export const GUEST_PER_INVITE_LIMIT = 10;
 import { apiError } from "../util";
 
 export const authHandlers = [
-  // #128 — 로그인 시작은 BE가 카카오로 보낸다. 목 서버는 로그인된 것처럼 진입점으로 돌려보낸다.
-  http.get("*/auth/kakao/login", () => {
-    return new HttpResponse(null, { status: 302, headers: { Location: "/" } });
-  }),
-
-  http.get("*/auth/kakao/callback", () => {
-    // #855 탈퇴 계정이 복구 기간 안이면 로그인하지 않고(세션 없음) 선택 화면으로 보낸다. 쿼리에는 아무 개인정보도 싣지 않는다
-    if (store.pendingLogin) {
-      return new HttpResponse(null, { status: 302, headers: { Location: "/?login_pending=withdrawn_account" } });
-    }
-    // #560 게스트가 카카오로 전환하면 기록을 합치고 guest_merged=true로 돌려보낸다(목 서버는 내 계정이 게스트가 아니게 된다)
-    const me = store.users[ME_USER_ID];
-    if (me?.is_guest) {
-      me.is_guest = false;
-      return new HttpResponse(null, { status: 302, headers: { Location: "/?guest_merged=true" } });
-    }
-    return new HttpResponse(null, { status: 302, headers: { Location: "/" } });
-  }),
+  // #128 — 로그인 시작은 BE가 카카오·구글(#1514)로 보낸다. 목 서버는 로그인된 것처럼 진입점으로 돌려보낸다.
+  http.get("*/auth/kakao/login", loginStart),
+  http.get("*/auth/google/login", loginStart),
+  http.get("*/auth/kakao/callback", loginCallback),
+  // 구글 콜백은 카카오와 같은 규칙이다(#1514)
+  http.get("*/auth/google/callback", loginCallback),
 
   // #472 게스트로 참여 — 이름만 입력, 초대 토큰으로 바로 지도에 들어간다. 목 서버는 단일 사용자라 세션은 바꾸지 않고
   // 게스트 계정·구성원 행만 만든다. 토큰 하나당 게스트 10명(GUEST_LIMIT).
@@ -51,7 +39,7 @@ export const authHandlers = [
   // #855 탈퇴 계정 재로그인 — 선택 안내와 선택. 세션 없이(콜백이 내린 pending_account 쿠키로) 부른다. 목 서버는 store.pendingLogin이 그 쿠키 역할이다.
   http.get("*/auth/pending", () => {
     const pending = store.pendingLogin;
-    if (!pending) return apiError(404, "NO_PENDING_LOGIN", "선택 시간이 지났어요. 카카오로 다시 시작해 주세요");
+    if (!pending) return apiError(404, "NO_PENDING_LOGIN", "선택 시간이 지났어요. 다시 로그인해 주세요");
     const restoreUntil = new Date(new Date(pending.withdrawn_at).getTime() + 7 * 24 * 60 * 60 * 1000);
     return HttpResponse.json({
       display_name: pending.display_name,
@@ -66,7 +54,7 @@ export const authHandlers = [
     // additionalProperties: false — choice 말고 다른 필드가 오면 거절한다
     if (Object.keys(body).some((k) => k !== "choice")) return apiError(422, "VALIDATION_ERROR", "알 수 없는 필드가 있어요");
     if (body.choice !== "restart" && body.choice !== "restore") return apiError(422, "VALIDATION_ERROR", "choice는 restart 또는 restore여야 해요");
-    if (!store.pendingLogin) return apiError(404, "NO_PENDING_LOGIN", "선택 시간이 지났어요. 카카오로 다시 시작해 주세요");
+    if (!store.pendingLogin) return apiError(404, "NO_PENDING_LOGIN", "선택 시간이 지났어요. 다시 로그인해 주세요");
     const user = store.users[ME_USER_ID];
     store.pendingLogin = null; // 쿠키가 지워진다 — 같은 선택의 재전송은 404
     if (body.choice === "restore") {
@@ -102,3 +90,21 @@ export const authHandlers = [
 
   http.post("*/auth/withdraw", () => new HttpResponse(null, { status: 204 })),
 ];
+
+function loginStart() {
+  return new HttpResponse(null, { status: 302, headers: { Location: "/" } });
+}
+
+function loginCallback() {
+  // #855 탈퇴 계정이 복구 기간 안이면 로그인하지 않고(세션 없음) 선택 화면으로 보낸다. 쿼리에는 아무 개인정보도 싣지 않는다
+  if (store.pendingLogin) {
+    return new HttpResponse(null, { status: 302, headers: { Location: "/?login_pending=withdrawn_account" } });
+  }
+  // #560 게스트가 카카오로 전환하면 기록을 합치고 guest_merged=true로 돌려보낸다(목 서버는 내 계정이 게스트가 아니게 된다)
+  const me = store.users[ME_USER_ID];
+  if (me?.is_guest) {
+    me.is_guest = false;
+    return new HttpResponse(null, { status: 302, headers: { Location: "/?guest_merged=true" } });
+  }
+  return new HttpResponse(null, { status: 302, headers: { Location: "/" } });
+}

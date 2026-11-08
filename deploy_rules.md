@@ -49,6 +49,7 @@
 | DB 앱 계정 비밀번호(`DATABASE_URL`) | `env/<환경>.env`, `pingo_prod_app`과 `pingo_staging_app`이 따로다(#873) | 그 환경 DB 전부(사유 글, 구성원). 다른 환경 DB에는 접속이 거절된다. RDS는 팀 EC2에서만 붙으므로 서버 밖에서는 이 값만으로 못 들어온다 | 마스터로 `ALTER ROLE pingo_<환경>_app PASSWORD '…'` → `env/<환경>.env`의 `DATABASE_URL` 고치기 → API 다시 올리기 | 다시 올리는 몇 초 동안 그 환경이 열리지 않는다 |
 | RDS 마스터(`pingo_admin`) | Secrets Manager. 서버에 저장하지 않는다 | 두 환경 DB 전부, 계정 만들기와 지우기 | Secrets Manager가 30일마다 바꾼다. 급하면 콘솔에서 즉시 교체 | 앱은 마스터를 쓰지 않아 영향이 없다 |
 | 카카오 `KAKAO_CLIENT_SECRET`, `KAKAO_REST_API_KEY` | `env/<환경>.env` | 우리 앱 이름으로 로그인 코드 교환, 로컬 API 호출(호출 한도를 쓴다). 두 환경이 같은 카카오 앱이면(「서버 처음 준비」 8번) 한쪽에서 새도 둘 다다 — 같은 앱인지 확인 필요 | 카카오 Developers에서 다시 발급 → 두 환경 env 고치기 → 다시 올리기 | 그 사이 로그인과 장소 검색이 실패한다 |
+| 구글 `GOOGLE_CLIENT_SECRET` | `env/<환경>.env` | 우리 앱 이름으로 구글 로그인 코드 교환(받는 정보는 사용자 번호와 이름뿐) | 구글 클라우드 콘솔에서 비밀 다시 만들기 → 두 환경 env 고치기 → 다시 올리기 | 그 사이 구글 로그인만 실패한다 |
 | 모델 제공자 `ELICE_ML_API_KEY`(2026-11-02부터 OpenAI 프로젝트 키, 이름만 ELICE로 남았다, #1120) | `env/<환경>.env`. 환경마다 OpenAI 프로젝트와 키가 따로다 | 팀 비용으로 모델 호출(그 프로젝트의 월 예산 한도까지 쓴다). 사유 글이 모델로 간다 | OpenAI에서 새 키 발급 → env 고치기 → 다시 올리기. 순서는 아래 「모델 제공자 키 바꾸기」. 옛 키는 OpenAI에서 지운다 | 그 사이 추천의 사유 구조화와 AI 코스가 실패한다 |
 | `QA_LOGIN_SECRET` | `env/staging.env`만. 운영에 있으면 서버가 뜨지 않는다(#789) | 스테이징에 사용자를 만들 수 있다. 운영에는 경로가 없다 | 새 값으로 바꾸고 스테이징 API 다시 올리기 | 없음(하네스는 서버 안에서 같은 값을 읽는다) |
 | DuckDNS 토큰 | `/srv/pingo/secrets/duckdns_token` | 주소가 가리키는 IP를 바꿔 사용자를 다른 서버로 보낼 수 있다 | DuckDNS에서 토큰 재발급 | 없음(고정 IP라 갱신 작업을 꺼 두었다) |
@@ -74,6 +75,7 @@
 6. `docker compose up -d db` → 환경마다 마이그레이션 → 장소 적재(아래 「장소 데이터 적재」, 서버에서는 `deploy/load-places.sh <환경> /srv/pingo/data/places`) → `deploy.sh`로 앱을 올린다.
 7. `crontab /srv/pingo/deploy/crontab`.
 8. 카카오 Developers에 두 주소의 Redirect URI(`https://<주소>/api/auth/kakao/callback`)와 Web 사이트 도메인을 등록한다.
+   구글 로그인(#1514)을 켜려면 구글 클라우드 콘솔에서 OAuth 클라이언트(웹 애플리케이션)를 만들고, 승인된 리디렉션 URI에 두 주소의 `https://<주소>/api/auth/google/callback`을 넣는다. 동의 화면 범위는 `openid`, `profile`만 둔다(이메일 안 받음). `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`를 `env/<환경>.env`에 넣고 API를 다시 올린다. 비워 두면 로그인 화면이 「준비 중」을 알린다.
 
 ## RDS로 옮기기 (#873)
 
@@ -100,13 +102,13 @@
 
 ### AWS가 끝나기 전에(2026-11-20)
 
-서버와 RDS가 함께 끝난다. 그 전에 운영 DB 덤프(`backup.sh prod`)를 받아 저장소 밖에 보관한다. 시연은 그 뒤에도 로컬(`docs/demo-guide.md`)에서 돈다. RDS는 삭제 방지가 켜져 있어 지우려면 운영진에게 요청한다.
+서버와 RDS가 함께 끝난다. 그 전에 운영 DB 덤프(`backup.sh prod`)를 받아 저장소 밖에 보관한다. 그 전까지 시연은 스테이징에서 한다(최종 정예 데이터, `docs/demo-guide.md` 첫머리). 서버가 끝난 뒤에는 로컬(`docs/demo-guide.md` 2~4절)에서 돈다. RDS는 삭제 방지가 켜져 있어 지우려면 운영진에게 요청한다.
 
 ## 배포할 때마다
 
 - **스테이징**: develop에 머지하면 `images.yml`이 이미지를 만들고 스테이징에 올린다. 따로 할 일이 없다.
   - 배포로 API·화면 컨테이너가 다시 뜨는 10~30초 동안 앞단 프록시(Caddy)는 연결을 최대 30초 다시 시도한다(`deploy/Caddyfile`의 `lb_try_duration 30s`, #1403). 그동안 요청은 느려질 뿐 502로 실패하지 않는다. 연결을 잡고 있던 SSE는 끊기고 FE가 마지막 `id`로 다시 연결한다. Caddy 설정은 `sync.sh`가 배포 때마다 다시 읽는다(`caddy reload`).
-- **운영(릴리스)**: 1) develop → main PR(멘토 리뷰)을 머지한다. 2) Actions의 `deploy`를 스테이징, `sha-<main 커밋 7자리>`로 돌린다. 3) Actions의 `staging-check`(QA 하네스를 서버의 스테이징 컨테이너 안에서 공개 주소로 돈다, 비밀은 서버 밖으로 나오지 않는다)를 그 커밋으로 돌린다. 매일 06:00에도 develop으로 돈다. 4) 통과하면 그 main 커밋에 `v0.x.y` 태그를 단다 → `images.yml`이 그 태그로 이미지를 만든다. 5) `deploy`를 운영, `v0.x.y`로 돌린다. 운영은 배포 직전에 DB를 덤프한다(`deploy/backup.sh`).
+- **운영(릴리스)**: 1) develop → main PR(멘토 리뷰)을 머지한다. 2) Actions의 `deploy`를 스테이징, `sha-<main 커밋 7자리>`로 돌린다. 3) Actions의 `staging-check`(QA 하네스를 서버의 스테이징 컨테이너 안에서 공개 주소로 돈다, 비밀은 서버 밖으로 나오지 않는다)를 그 커밋으로 돌린다. 매일 06:00에도 develop으로 돈다. 4) 통과하면 그 main 커밋에 `v0.x.y` 태그를 단다 → `images.yml`이 그 태그로 이미지를 만든다. 5) `deploy`를 운영, `v0.x.y`로 돌린다. 운영은 배포 직전에 DB를 덤프한다(`deploy/backup.sh`). 6) 아래 「지울 칸」 표를 본다. 줄의 칸을 읽던 코드가 방금 올린 태그에 없으면 그 줄의 줄이기 이슈를 진행한다. 이 태그가 이제 이전 릴리스 호환 검사의 기준이라 그 칸을 지우는 PR이 통과한다(#1465).
 - **롤백**: `deploy`를 운영, 이전 `v` 태그로 돌린다. 버그는 그 버전 위에서 고치지 않고 develop에서 고쳐 다음 버전으로 올린다(멘토). 건강 확인에 실패한 배포는 `deploy.sh`가 이전 태그로 되돌린다.
 - **환경 변수를 바꿀 때**: 서버의 `deploy/env/<환경>.env`를 고치고 그 환경을 다시 올린다. 새 키를 더한 PR은 `backend/.env.example`과 `deploy/env/*.env.example`을 같이 고친다. 값은 저장소나 채팅에 남기지 않는다.
 - 이번 배포에 아래 「데이터가 바뀔 때」 단계가 있는지 확인한다. 마이그레이션 head는 하나여야 하고 CI(backend-test)가 확인한다.
@@ -133,7 +135,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 ### 지울 칸
 
-모델에서는 뺐지만 DB에 남겨 둔 테이블과 칸이다. 같은 검사가 지금 모델과 head 스키마를 비교해서, 모델에 없는 칸이 이 표에 없거나 표의 줄이 실제와 다르면 실패한다. 줄이기 마이그레이션을 넣을 때 그 줄을 지운다.
+모델에서는 뺐지만 DB에 남겨 둔 테이블과 칸이다. 같은 검사가 지금 모델과 head 스키마를 비교해서, 모델에 없는 칸이 이 표에 없거나 표의 줄이 실제와 다르면 실패한다. 줄이기 마이그레이션을 넣을 때 그 줄을 지운다. 언제 지워도 되는지는 검사가 알리지 않으니 운영 릴리스 6단계에서 이 표를 본다.
 
 | 테이블.칸 | 남긴 이유 | 줄이기 |
 |---|---|---|

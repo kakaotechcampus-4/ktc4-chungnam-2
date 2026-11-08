@@ -76,7 +76,90 @@ export interface paths {
                  *     **탈퇴한 계정이 복구 기간(탈퇴 후 7일) 안이면 로그인하지 않는다**(#855): 세션 쿠키를 만들지 않고 서명한 짧은 수명(10분)의 `pending_account` 쿠키(HttpOnly, **SameSite=Lax**, 운영은 Secure, **경로는 state 쿠키와 같은 규칙** — 브라우저가 보는 콜백 주소의 부모 경로. 배포는 앞단이 `/api`를 벗기므로 서버 안 경로가 아니다, #819)를 내려 같은 주소에 쿼리 `?login_pending=withdrawn_account`를 붙여 돌려보낸다. **쿠키 값은 이 한 번의 선택에만 묶인다**: 용도(`pending_account`)·사용자 id·로그인 수단·그 사용자의 탈퇴 시각(`deleted_at`)을 서명에 넣고, 서버가 선택 때 현재 상태와 맞는지 확인한다 — 그래서 복구·정리된 뒤나 다음 탈퇴 회차에는 같은 쿠키가 통하지 않는다(지웠다는 사실에 기대지 않는다). 쿼리에 이름·id·날짜를 싣지 않는다. 화면은 `GET /auth/pending`으로 안내를 받아 사용자가 「새 계정으로 시작」과 「기존 계정 되살리기」 중 고르게 하고 `POST /auth/pending`으로 보낸다. **복구 기한은 정리 작업의 실행과 무관하게 지금 시각으로 판정한다**(콜백·`GET`·`POST` 모두 `deleted_at` + 7일). 기한이 지났는데 아직 정리되지 않은 탈퇴 계정을 콜백이 만나면 그 자리에서 정리한 뒤(`restart`와 같은 정리) 선택 없이 새 계정으로 로그인한다(일반 성공). 이미 정리된 계정이면 같다.
                  *     **게스트가 시작한 로그인**(게스트 전환, #560)이 복구 기간 안의 탈퇴 계정에 닿으면 이번에는 게스트 기록을 합치지 않는다(`guest_merged=false`와 같은 상태 — 카카오 로그인만 되고 게스트 기록은 그대로 남는다). 선택 뒤 로그인은 선택한 계정으로 한다. 게스트 전환 합치기와 복구 선택을 한 흐름으로 합치는 것은 v1에 없다.
                  *     실패: 같은 주소에 쿼리 `?login_error=<값>`을 붙여 돌려보내고 세션 쿠키는 만들지 않는다. state 쿠키는 성공·실패 모두 지운다.
-                 *     `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패).
+                 *     `login_error` 값: `cancelled`(사용자가 카카오 화면에서 취소), `invalid_state`(state 쿠키와 다르거나 없음 — 처음부터 다시), `kakao_failed`(카카오 토큰 교환·프로필 조회 실패), `server_error`(그 밖의 실패). 구글 로그인(`/auth/google/*`)은 같은 값에 `google_failed`, `google_unavailable`을 더한다.
+                 */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/google/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 구글 로그인 시작 (#1514). 카카오(`/auth/kakao/login`)와 같은 흐름이다. 브라우저를 이 주소로 **이동**시킨다(fetch 아님)
+         * @description state 쿠키 이름은 `google_oauth_state`, 경로는 `/auth/google`(배포는 `/api/auth/google`)이다. 그 밖의 규칙(게스트 전환 합치기 포함)은 `/auth/kakao/login`과 같다.
+         *     **요청 범위는 `openid profile`뿐이다** — 구글 사용자 번호(`sub`)와 이름만 받고 이메일은 받지 않는다(기획안 개인정보 표).
+         *     **구글 키(`GOOGLE_CLIENT_ID`, `GOOGLE_REDIRECT_URI`)가 비어 있는 환경**에서는 구글로 보내지 않고 진입점에 `?login_error=google_unavailable`을 붙여 302로 돌려보낸다(카카오는 같은 경우 500이다 — 카카오는 꼭 있어야 하고 구글은 아직 켜지 않은 환경이 있다).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 구글 인가 화면(`https://accounts.google.com/o/oauth2/v2/auth?...&scope=openid+profile&state=...`)으로, 키가 없으면 진입점(`login_error=google_unavailable`)으로. `Set-Cookie: google_oauth_state` */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/google/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 구글 OAuth 콜백 (#1514). `/auth/kakao/callback`과 같은 규칙(항상 302, 게스트 전환, 탈퇴 계정 선택) */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 구글이 준 인가 코드. 취소하면 없고 error가 온다 */
+                    code?: string;
+                    /** @description 로그인 시작 때 서버가 만든 값. `google_oauth_state` 쿠키와 다르거나 없으면 `login_error=invalid_state` */
+                    state?: string;
+                    /** @description 구글이 실패·취소 때 붙이는 값. 있으면 `login_error=cancelled` */
+                    error?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /**
+                 * @description 성공·게스트 전환·탈퇴 계정 선택은 `/auth/kakao/callback`과 같다. 처음 쓰는 구글 계정이면 새 계정이 생긴다 — 같은 사람의 카카오 계정과 잇지 않는다.
+                 *     `login_error` 값: `cancelled`, `invalid_state`, `google_failed`(구글 토큰 교환·사용자 정보 조회 실패), `server_error`.
                  */
                 302: {
                     headers: {
@@ -6018,7 +6101,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 선택 대기 중인 탈퇴 계정 로그인이 없다 — 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됨(#855). 화면은 「선택 시간이 지났어요. 카카오로 다시 시작해 주세요」를 보이고 로그인 화면으로 보낸다 */
+        /** @description 선택 대기 중인 탈퇴 계정 로그인이 없다 — 쿠키가 없거나 만료(10분)·변조됐거나 이미 선택·정리됨(#855). 화면은 「선택 시간이 지났어요. 다시 로그인해 주세요」를 보이고 로그인 화면으로 보낸다 */
         NoPendingLogin: {
             headers: {
                 [name: string]: unknown;

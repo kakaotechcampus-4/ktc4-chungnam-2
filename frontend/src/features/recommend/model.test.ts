@@ -4,6 +4,7 @@ import { ApiError } from '@/api'
 
 import {
   evidenceLabel,
+  kmInputToM,
   evidenceLimitMessage,
   fulfillmentLine,
   groupEvidence,
@@ -243,5 +244,16 @@ describe('「찾는 범위」 반경 고르기(#1416)', () => {
     expect(readinessRadiusM({ 음식점: r }, '음식점', 3500)).toBe(3500)
     expect(readinessRadiusM({ 음식점: r }, '음식점', 9000)).toBe(2500)
     expect(readinessRadiusM({ 음식점: r }, '음식점')).toBe(2500)
+  })
+})
+
+describe('「찾는 범위」 km 칸(#1416)', () => {
+  it('km를 m로, 100m 단위로 반올림. 쉼표도 소수점. 범위 밖·숫자 아님은 null', () => {
+    expect(kmInputToM('3.5', 2000, 5000, 100)).toBe(3500)
+    expect(kmInputToM('3,25', 2000, 5000, 100)).toBe(3300)
+    expect(kmInputToM('2', 2000, 5000, 100)).toBe(2000)
+    expect(kmInputToM('5.1', 2000, 5000, 100)).toBeNull()
+    expect(kmInputToM('', 2000, 5000, 100)).toBeNull()
+    expect(kmInputToM('삼', 2000, 5000, 100)).toBeNull()
   })
 })

@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { ApiError } from '@/api'
+import { wholeText } from '@/test/text'
 
 import { createRun, fetchResult } from './api'
 import { noResultsExternalSearch, type RecommendRunDto } from './model'
@@ -61,7 +62,7 @@ describe('카카오맵에서 더 찾아보기(#798)', () => {
     await fetch(`${BASE}/maps/map_1`, { method: 'PATCH', body: JSON.stringify({ region: { label: '춘천시', lat: 37.88, lng: 127.73 } }) })
     renderWithClient(<ReadinessBody mapId="map_1" />)
 
-    expect(await screen.findByText('보고 있는 곳 주변에는 아직 추천할 장소가 없어요')).toBeInTheDocument()
+    expect(await screen.findByText(wholeText('보고 있는 곳 주변에는 아직 추천할 장소가 없어요'))).toBeInTheDocument()
     expectExternalLink('춘천시 맛집')
     expect(screen.getByRole('button', { name: '음식점 추천받기' })).toBeEnabled()
   })

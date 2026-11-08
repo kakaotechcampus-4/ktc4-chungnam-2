@@ -10,6 +10,7 @@ import { ApiError } from '@/api'
 import Toaster from '@/features/shell/Toaster'
 
 import CreditGate from './CreditGate'
+import { wholeText } from '@/test/text'
 
 const BASE = 'http://localhost'
 
@@ -87,7 +88,7 @@ describe('잔액 부족 안내의 광고 보고 충전(#1039)', { timeout: 20_00
 
     // 고지 한 줄과 버튼 — 숫자는 응답 값
     const { reward, daily_max, used_today } = before.ad
-    expect(await screen.findByText(`광고를 끝까지 보면 ${reward} 크레딧을 드려요. 오늘 ${daily_max - used_today}번 남았어요`)).toBeInTheDocument()
+    expect(await screen.findByText(wholeText(`광고를 끝까지 보면 ${reward} 크레딧을 드려요. 오늘 ${daily_max - used_today}번 남았어요`))).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: `광고 보고 ${reward} 크레딧 받기` }))
 
     // 테스트 광고 창: 다 보기 전에는 「보상 받고 닫기」가 없다
