@@ -256,10 +256,20 @@ export function PinDetailBody({
           {pin.category}
           <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : `${pin.created_by_display_name ?? '탈퇴한 구성원'}님이 찍은 핀`}</span>
           {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
-          {pin.place_url && (
-            <a href={pin.place_url} target="_blank" rel="noopener noreferrer" className="btn-link ml-auto">
-              카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
-            </a>
+          {(pin.place_url || pin.naver_url) && (
+            <span className="ml-auto flex flex-wrap justify-end gap-x-3">
+              {pin.place_url && (
+                <a href={pin.place_url} target="_blank" rel="noopener noreferrer" className="btn-link">
+                  카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
+                </a>
+              )}
+              {/* 네이버 지도 검색 링크(#1513) */}
+              {pin.naver_url && (
+                <a href={pin.naver_url} target="_blank" rel="noopener noreferrer" className="btn-link">
+                  네이버 지도에서 보기 <ExternalLink size={12} aria-hidden="true" />
+                </a>
+              )}
+            </span>
           )}
         </p>
         <PinMemo pin={pin} mapId={mapId} />

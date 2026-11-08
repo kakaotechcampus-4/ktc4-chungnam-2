@@ -50,7 +50,8 @@ def list_ads(
     _increment(db, [a.ad_id for a in chosen], core.stat_date(now), "served_count")
     return [
         core.to_item(a, places[a.place_id], on_map=core.on_map(
-            places[a.place_id], db_place_ids=db_place_ids, live_kakao_ids=live_kakao_ids))
+            places[a.place_id], db_place_ids=db_place_ids, live_kakao_ids=live_kakao_ids),
+            naver_url=places_api.naver_place_link(places[a.place_id]["name"], places[a.place_id].get("address")))
         for a in chosen
     ]
 

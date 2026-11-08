@@ -166,6 +166,7 @@ class Candidate(BaseModel):
     member_fulfillment: MemberFulfillment | None = None
     place_source: PlaceSource | None = None
     place_url: str | None = Field(default=None, max_length=2000)  # 「카카오맵에서 보기」(places.api.place_link, #798)
+    naver_url: str | None = Field(default=None, max_length=2000)  # 「네이버 지도에서 보기」(places.api.naver_place_link, #1513)
     visibility: Literal["private", "published"]
     published_pin_id: str | None = None
     permissions: Permissions

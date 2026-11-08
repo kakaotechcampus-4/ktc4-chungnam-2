@@ -106,9 +106,10 @@ def test_to_item_has_only_the_contract_fields():
     place = {"id": "p1", "name": "가" * 120, "category": "카페", "address": None, "lat": 37.5, "lng": 127.0,
              "kakao_place_id": "kakao:1", "kakao_place_url": "https://place.map.kakao.com/1"}
 
-    item = core.to_item(ad(1), place, on_map=False)
+    item = core.to_item(ad(1), place, on_map=False, naver_url="https://map.naver.com/p/search/x")
 
     assert set(item) == {"ad_id", "place", "on_map"}
-    assert set(item["place"]) == {"place_id", "name", "category", "address", "lat", "lng", "place_url"}
+    assert set(item["place"]) == {"place_id", "name", "category", "address", "lat", "lng", "place_url", "naver_url"}
+    assert item["place"]["naver_url"] == "https://map.naver.com/p/search/x"
     assert len(item["place"]["name"]) == 100
     assert item["place"]["place_url"] == "https://place.map.kakao.com/1"

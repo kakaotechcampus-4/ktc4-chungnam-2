@@ -132,6 +132,8 @@ def open_status_on_weekdays(week_status: Mapping[int, str] | None, weekdays: Seq
 
 KAKAO_SEARCH_URL = "https://map.kakao.com/link/search/"   # 이 형식은 kakao_search_url 한 곳에서만 쓴다
 
+NAVER_SEARCH_URL = "https://map.naver.com/p/search/"   # 이 형식은 naver_search_url 한 곳에서만 쓴다(#1513)
+
 _SIDO_SUFFIXES = ("특별시", "광역시", "특별자치시", "특별자치도", "도")
 _SIDO_SHORT = frozenset({"서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
                          "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"})
@@ -213,11 +215,29 @@ def place_link(name: str | None, address: str | None, kakao_place_url: str | Non
     동네가 없으면 이름만, 이름이 없으면 None."""
     if kakao_place_url:
         return kakao_place_url
+    query = place_search_query(name, address)
+    return kakao_search_url(query) if query else None
+
+
+def place_search_query(name: str | None, address: str | None) -> str | None:
+    """장소 하나를 밖에서 찾는 검색어 "{이름} {동네}"(동네가 없으면 이름만), 이름이 없으면 None. 카카오·네이버 링크가 같이 쓴다."""
     name = (name or "").strip()
     if not name:
         return None
     area = neighborhood(address)
-    return kakao_search_url(f"{name} {area}" if area else name)
+    return f"{name} {area}" if area else name
+
+
+def naver_search_url(query: str) -> str:
+    """네이버 지도 검색 링크. 검색어와 인코딩은 카카오 검색 링크와 같다(#1513)."""
+    return NAVER_SEARCH_URL + quote(query, safe="")
+
+
+def naver_place_link(name: str | None, address: str | None) -> str | None:
+    """장소 하나의 「네이버 지도에서 보기」 링크. "{이름} {동네}" 검색 링크(동네가 없으면 이름만), 이름이 없으면 None.
+    네이버 장소 번호는 모으지 않아 늘 검색 링크다(#1513)."""
+    query = place_search_query(name, address)
+    return naver_search_url(query) if query else None
 
 
 # ---- 번호표 신뢰 규칙(#1048) ----

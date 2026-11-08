@@ -18,6 +18,7 @@ class AdPlace(BaseModel):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
     place_url: str | None = Field(default=None, max_length=2000)
+    naver_url: str | None = Field(default=None, max_length=2000)   # 이름+동네 네이버 지도 검색 링크(#1513)
 
 
 class Ad(BaseModel):

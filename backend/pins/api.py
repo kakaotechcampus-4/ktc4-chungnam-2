@@ -130,6 +130,7 @@ def create_ai_pin(
         reaction_counts=core.ReactionCounts(),
         place_name=place.name if place else None,
         place_url=places_api.place_link(place) if place else None,   # AI 추천 핀은 늘 자체 DB 핀이다(#801)
+        naver_url=places_api.naver_place_link(place.name, place.address) if place else None,
         created_by_display_name=display_name,
         created_at=pin_row.created_at,
         checks=validated_checks,

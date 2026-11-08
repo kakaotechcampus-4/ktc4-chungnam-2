@@ -210,10 +210,20 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
         <PublishButton mapId={mapId} run={run} c={c} />
         {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로.
             장소 페이지가 없으면 서버가 이름+동네 검색 링크를 준다(#798). */}
-        {c.place_url && (
-          <a href={c.place_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
-            카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
-          </a>
+        {(c.place_url || c.naver_url) && (
+          <span className="flex flex-wrap justify-end gap-x-3">
+            {c.place_url && (
+              <a href={c.place_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
+                카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            )}
+            {/* 네이버 지도 검색 링크(#1513) — 같은 모양으로 바로 뒤에 */}
+            {c.naver_url && (
+              <a href={c.naver_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
+                네이버 지도에서 보기 <ExternalLink size={12} aria-hidden="true" />
+              </a>
+            )}
+          </span>
         )}
       </div>
     </article>

@@ -79,7 +79,7 @@ def _info(place_id, *, name="가게", address="서울특별시 성동구 연무�
 
 
 def _search(query):
-    return {"query": query, "url": places_api.kakao_search_url(query)}
+    return {"query": query, "url": places_api.kakao_search_url(query), "naver_url": places_api.naver_search_url(query)}
 
 
 def _set_region_label(db_session, label, *, map_id="map_1"):

@@ -277,6 +277,17 @@ def kakao_search_url(query: str) -> str:
     return core.kakao_search_url(query)
 
 
+def naver_search_url(query: str) -> str:
+    """네이버 지도 검색 링크 "https://map.naver.com/p/search/" + URL 인코딩한 검색어(#1513). 형식을 다른 곳에서 다시 적지 않는다."""
+    return core.naver_search_url(query)
+
+
+def naver_place_link(name: str | None, address: str | None) -> str | None:
+    """장소 하나의 「네이버 지도에서 보기」 링크: "{이름} {동네}" 검색 링크, 이름이 없으면 None(#1513).
+    recommend·pins·ads가 place_link 옆에 붙인다."""
+    return core.naver_place_link(name, address)
+
+
 def place_link(place: PlaceInfo) -> str | None:
     """get_places 결과 하나의 「카카오맵에서 보기」 링크. 기록된 카카오 장소 URL이 있으면 그것, 없으면 "{이름} {동네}"
     검색 링크(동네가 없으면 이름만). 이름이 없으면 None. recommend(결과 카드)와 pins(핀 상세)가 부른다."""

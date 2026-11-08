@@ -127,3 +127,4 @@ class ExternalSearch(BaseModel):
     링크는 places.api.kakao_search_url이 만든다. 추천 응답(recommend)도 이 타입을 쓴다."""
     query: str = Field(max_length=100)
     url: str = Field(max_length=2000)
+    naver_url: str | None = Field(default=None, max_length=2000)   # 같은 검색어의 네이버 지도 검색 링크(#1513)

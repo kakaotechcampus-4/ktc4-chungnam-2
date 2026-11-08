@@ -274,7 +274,8 @@ def _external_search(
     그 근처 동네다(#1353)."""
     area = _search_area(db, map_id=map_id, category=category, place_search=place_search, center=center, near_cache=near_cache)
     query = core.external_search_query(area, category)
-    return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query))
+    return schemas.ExternalSearch(query=query, url=places_api.kakao_search_url(query),
+                                  naver_url=places_api.naver_search_url(query))
 
 
 def _run_external_search(db: Session, run: RecommendRun, place_search: PlaceSearchGateway) -> schemas.ExternalSearch:
@@ -1304,6 +1305,7 @@ def _candidate_response(
         member_fulfillment=candidate.member_fulfillment or None,  # {} = 집계 없음 → 필드 생략
         place_source=candidate.place_source,
         place_url=places_api.place_link(place) if place else None,
+        naver_url=places_api.naver_place_link(place.name, place.address) if place else None,
         visibility="published" if already_published else "private",
         published_pin_id=str(candidate.published_pin_id) if already_published else None,
         permissions=Permissions(
