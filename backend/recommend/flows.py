@@ -705,11 +705,11 @@ def _trip_weekdays(db: Session, map_id: str) -> list[int]:
 def _open_status_by_place(place_facts: PlaceFactsGateway, place_ids: Sequence[str], weekdays: Sequence[int]) -> dict[str, str]:
     """후보마다 여행 요일 기준 영업 여부("closed" | "open" | "unknown", #690). 시간 조회가 없는 게이트웨이이거나 여행 날짜가
     없으면 전부 "unknown"이다(지금처럼 아무도 빼지 않는다). 한 번에 배치 조회(N+1 금지)."""
-    get_week_status = getattr(place_facts, "get_week_open_status", None)
-    if not weekdays or get_week_status is None or not place_ids:
+    get_open_status = getattr(place_facts, "get_open_status_on_weekdays", None)
+    if not weekdays or get_open_status is None or not place_ids:
         return dict.fromkeys(place_ids, "unknown")
-    week_by_place = get_week_status(list(place_ids))
-    return {place_id: core.trip_open_status(week_by_place.get(place_id), weekdays) for place_id in place_ids}
+    found = get_open_status(list(place_ids), list(weekdays))   # 요일을 모으는 규칙도 places 한 곳(#747, #1483)
+    return {place_id: found.get(place_id, "unknown") for place_id in place_ids}
 
 
 def _pipeline_inputs(

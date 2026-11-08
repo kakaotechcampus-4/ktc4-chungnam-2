@@ -791,17 +791,6 @@ def test_trip_weekdays_follow_the_trip_days_and_cap_at_a_week():
     assert core.trip_weekdays(date(2027, 1, 1), date(2027, 3, 1)) == list(range(7))
 
 
-def test_trip_open_status_closed_only_when_every_trip_day_is_closed():
-    week = {0: "open", 1: "closed", 2: "unknown", 3: "closed"}
-    assert core.trip_open_status(week, [1]) == "closed"
-    assert core.trip_open_status(week, [1, 3]) == "closed"
-    assert core.trip_open_status(week, [0, 1]) == "open"          # 일부 휴무 — 통과
-    assert core.trip_open_status(week, [1, 2]) == "unknown"       # 영업하는 요일이 확인되지 않았다
-    assert core.trip_open_status(week, [5]) == "unknown"          # 없는 요일은 모름
-    assert core.trip_open_status(None, [0]) == "unknown"          # 정보 없음
-    assert core.trip_open_status(week, []) == "unknown"           # 여행 날짜 없음
-
-
 # ---------- select_top_candidates ----------
 
 def test_select_top_candidates_picks_highest_scores_first():
