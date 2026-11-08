@@ -475,13 +475,20 @@ def r3_widen_retry():
           "A 30회 후 402, B는 자기 크레딧으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
     rid = r.json()["id"]
     b.post(f"/runs/{rid}/regions/confirm", json={}); b.post(f"/runs/{rid}/execute"); result(b, rid)
+    # 상한은 서버가 readiness로 내리는 값을 읽는다 — 넓히기 횟수나 단계 폭을 여기 적지 않는다(#1528, 반경 단계가 바뀌어 #1385 뒤 깨졌다)
+    center = run_body(mid)["center"]
+    card = b.get(f"/maps/{mid}/recommend/readiness", params={"center_lat": center["lat"], "center_lng": center["lng"]}).json().get("음식점", {})
+    limit_m = card.get("radius_max_m")
     last = None; n = 0
-    for _ in range(6):
+    for _ in range(10):
         last = b.post(f"/runs/{rid}/widen"); n += last.status_code == 202
-        if last.status_code == 202:
-            result(b, rid)   # 넓히기도 백그라운드로 다시 돈다 — 끝난 뒤에 다음을 누른다
-    check("B06", n == 3 and last.status_code == 409 and last.json().get("code") == "WIDEN_LIMIT",
-          f"넓히기 3회(15→30분) 후 409 WIDEN_LIMIT", f"{n}회 성공, 마지막 {last.status_code} {last.text[:120]}")
+        if last.status_code != 202:
+            break
+        result(b, rid)   # 넓히기도 백그라운드로 다시 돈다 — 끝난 뒤에 다음을 누른다
+    body = last.json() if last.headers.get("content-type", "").startswith("application/json") else {}
+    check("B06", n >= 1 and last.status_code == 409 and body.get("code") == "WIDEN_LIMIT"
+          and limit_m is not None and (body.get("detail") or {}).get("default_radius_m") == limit_m,
+          f"상한 {limit_m}m까지 넓힌 뒤 409 WIDEN_LIMIT", f"{n}회 성공, 상한 {limit_m}, 마지막 {last.status_code} {last.text[:120]}")
 
 
 def r3_concurrent_shortlist():
