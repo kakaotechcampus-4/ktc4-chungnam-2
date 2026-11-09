@@ -8,10 +8,10 @@ import { pinGlyph, type PinGlyph } from '@/ui/pinGlyph'
 
 import { usePhaseLoop } from './usePhaseLoop'
 
-export type SceneKind = 'pin' | 'reaction' | 'ai' | 'shortlist' | 'together' | 'invite' | 'safety' | 'credits' | 'login' | 'trash'
+export type SceneKind = 'pin' | 'reaction' | 'ai' | 'shortlist' | 'together' | 'invite' | 'safety' | 'credits' | 'login' | 'trash' | 'mapMouse' | 'mapTouch'
 
 /**
- * 첫 로그인 온보딩과 자주 묻는 질문(#1538)의 장면 — 연한 지도 판 위에서 핑고가 그 기능을 직접 쓰는 모습을 되풀이한다(DESIGN.md Motion 「핑고 예외」).
+ * 첫 로그인 온보딩과 자주 묻는 질문(#1538), 지도 쓰는 법(#1613)의 장면 — 연한 지도 판 위에서 핑고가 그 기능을 직접 쓰는 모습을 되풀이한다(DESIGN.md Motion 「핑고 예외」).
  * 장면은 몇 단계를 정해진 시간마다 돈다. 새로 나타나는 것만 등장 클래스로 한 번 나오고, 옮겨 가는 것은 transition 이다.
  * 움직임 줄이기면 마지막 단계에서 멈춘다. 뜻은 옆 제목·설명 글이 전하므로 장면은 스크린 리더에서 숨긴다.
  * 자리는 판에 대한 % 라서 판이 커지면(넓은 화면) 같이 커진다. 판은 4:3 이다.
@@ -41,6 +41,8 @@ const SCENES: Record<SceneKind, () => ReactNode> = {
   credits: CreditsScene,
   login: LoginScene,
   trash: TrashScene,
+  mapMouse: () => <MapGestureScene touch={false} />,
+  mapTouch: () => <MapGestureScene touch />,
 }
 
 /** 판 위 한 점(% 좌표)에 놓는다. `anchor` 는 그 점에 올 자기 자리 — 핀은 끝(아래 가운데)이다. */
@@ -498,5 +500,110 @@ function TrashScene() {
       )}
       <PingoAt x={16} y={96} w={24} mood={phase === 3 ? 'relieved' : phase >= 1 ? 'flustered' : 'default'} />
     </>
+  )
+}
+
+/**
+ * 「지도 쓰는 법」(#1613) — 마우스: ① 빈 곳(공원)을 클릭 → ② 그 자리가 가운데로 → ③ 다른 곳을 우클릭 → 누른 자리 점 + 메뉴
+ * → ④ 「신규 핀 찍기」 → ⑤ 그 자리에 핀. 터치는 클릭이 짧게 누르기, 우클릭이 길게 누르기(원이 차오름) + 위 말풍선이다.
+ * 지도 판(`layer`)이 통째로 옮겨 간다 — 판 밖까지 그려 두어 옮겨도 가장자리가 비지 않는다.
+ */
+const GESTURE_PHASES = [800, 300, 900, 700, 700, 700, 300, 1600, 400]
+/** 처음 누르는 곳(공원)과 옮긴 뒤 핀을 찍는 곳(판 %). */
+const TAP: [number, number] = [64, 30]
+const MENU_AT: [number, number] = [32, 62]
+const SHIFT: [number, number] = [50 - TAP[0], 50 - TAP[1]]
+const POINTER_LABEL = { mouse: ['클릭', '우클릭'], touch: ['짧게 누르기', '길게 누르기'] }
+
+function MapGestureScene({ touch }: { touch: boolean }) {
+  // 움직임 줄이기면 핀을 찍은 ⑦에 머문다.
+  const phase = usePhaseLoop(GESTURE_PHASES, 7)
+  const moved = phase >= 2 && phase < 8
+  // 우클릭은 누르자마자, 길게 누르기는 원이 다 찬 뒤(⑤)에 뜬다.
+  const menuOpen = phase >= (touch ? 5 : 4) && phase <= 6
+  const [tapX, tapY] = TAP
+  const [mx, my] = MENU_AT
+  // 핀은 옮겨 간 판 위의 자리라 판 좌표로 적는다.
+  const pinInLayer: [number, number] = [mx - SHIFT[0], my - SHIFT[1]]
+  // 손(커서·손가락)이 있는 곳과 보일지. 메뉴 단추는 마우스는 누른 자리 오른쪽 아래, 터치는 위 말풍선이다.
+  const press: [number, number] = touch ? [mx, my - 13] : [mx + 14, my + 8]
+  const hand: [number, number] = phase <= 2 ? TAP : phase === 5 || phase === 6 ? press : MENU_AT
+  const handShown = touch ? phase <= 1 || phase === 3 || phase === 4 || phase === 6 : phase <= 6
+  const label = phase === 1 ? POINTER_LABEL[touch ? 'touch' : 'mouse'][0] : phase === 4 ? POINTER_LABEL[touch ? 'touch' : 'mouse'][1] : null
+  return (
+    <div className={`absolute inset-0 transition-opacity duration-300 motion-reduce:transition-none ${phase === 8 ? 'opacity-0' : ''}`}>
+      <div
+        className={`absolute inset-0 ${phase === 2 ? 'transition-transform duration-500 ease-out motion-reduce:transition-none' : ''}`}
+        style={{ transform: moved ? `translate(${SHIFT[0]}%, ${SHIFT[1]}%)` : undefined }}
+      >
+        <svg viewBox="0 0 320 240" overflow="visible" className="absolute inset-0 size-full">
+          <rect x="-320" y="-240" width="960" height="720" fill="var(--ink-100)" />
+          <path d="M-320 250L640 58V76L-320 268Z" fill="#fff" />
+          <rect x="90" y="-240" width="14" height="720" fill="#fff" />
+          {/* 누르는 곳 — 공원. 옮기면 판 가운데에 온다. */}
+          <rect x={tapX * 3.2 - 26} y={tapY * 2.4 - 18} width="52" height="36" rx="12" fill="#CFE8C9" />
+        </svg>
+        <At x={30} y={48}>
+          <ScenePin />
+        </At>
+        {phase === 7 && (
+          <At x={pinInLayer[0]} y={pinInLayer[1]}>
+            <div className="enter-drop">
+              <ScenePin />
+            </div>
+          </At>
+        )}
+      </div>
+      {menuOpen && (
+        <At x={mx} y={my} anchor="center">
+          <span className="enter-pop block size-3 rounded-full border-2 border-white bg-brand-600 shadow-float" />
+        </At>
+      )}
+      {menuOpen && (
+        <At x={touch ? mx : mx + 2} y={touch ? my - 5 : my + 3} anchor={touch ? 'bottom' : 'top-left'}>
+          <span
+            className={`btn-outline btn-sm enter-pop pointer-events-none whitespace-nowrap shadow-float transition-transform duration-150 motion-reduce:transition-none ${
+              phase === 6 ? 'scale-95' : ''
+            }`}
+          >
+            신규 핀 찍기
+          </span>
+        </At>
+      )}
+      {touch && phase === 4 && (
+        <At x={mx} y={my} anchor="center" className="size-0">
+          <svg viewBox="0 0 48 48" className="press-ring">
+            <circle cx="24" cy="24" r="16" pathLength="100" />
+          </svg>
+        </At>
+      )}
+      {handShown && (
+        <At
+          x={hand[0]}
+          y={hand[1]}
+          anchor={touch ? 'center' : 'top-left'}
+          className={`z-10 ${touch ? '' : 'transition-[left,top] duration-500 ease-in-out motion-reduce:transition-none'}`}
+        >
+          {touch ? (
+            <span
+              key={phase}
+              className={`enter-fade block size-7 rounded-full border-2 border-white bg-ink-900/30 transition-transform duration-150 motion-reduce:transition-none ${
+                phase === 1 || phase === 6 ? 'scale-75' : ''
+              }`}
+            />
+          ) : (
+            <svg viewBox="0 0 16 22" width="16" height="22" className={`transition-transform duration-150 motion-reduce:transition-none ${phase === 1 || phase === 4 || phase === 6 ? 'scale-90' : ''}`}>
+              <path d="M1 1V17L5.2 13.2L8 20L10.6 18.9L7.9 12.4H13.6Z" fill="var(--ink-900)" stroke="#fff" strokeWidth="1.5" strokeLinejoin="round" />
+            </svg>
+          )}
+          {label && (
+            <span className="enter-pop absolute left-full top-full ml-1 whitespace-nowrap rounded-md bg-[var(--toast-bg)] px-1.5 py-0.5 text-label font-bold text-white">
+              {label}
+            </span>
+          )}
+        </At>
+      )}
+      <PingoAt x={86} y={96} w={22} mood={phase === 7 ? 'excited' : 'default'} />
+    </div>
   )
 }
