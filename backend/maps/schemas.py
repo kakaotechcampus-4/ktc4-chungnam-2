@@ -147,6 +147,8 @@ class InviteSummary(BaseModel):
     pin_count: int | None = None
     inviter_display_name: str
     expires_at: datetime
+    # 요청한 사람(로그인 세션, 게스트 포함)이 이미 이 지도 구성원일 때만 그 지도 id(#1563). 그 밖에는 키 자체를 주지 않는다.
+    already_member_map_id: str | None = None
 
 
 class Member(BaseModel):
