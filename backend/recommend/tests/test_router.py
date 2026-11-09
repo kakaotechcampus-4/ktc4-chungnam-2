@@ -98,8 +98,9 @@ def test_readiness_with_center_is_200_and_half_or_out_of_range_center_is_422_133
 def test_create_run_for_accommodation_is_422(app_client, db_session):
     """#146 — 숙소는 추천 대상이 아니다(RecommendCategory)."""
     _seed_ready_map(db_session)
-    resp = app_client.post("/maps/map_1/runs", json={"category": "숙소"}, cookies=_auth())
+    resp = app_client.post("/maps/map_1/runs", json={"category": "숙소", "center": RUN_CENTER}, cookies=_auth())
     assert resp.status_code == 422
+    assert [error["loc"][-1] for error in resp.json()["detail"]["errors"]] == ["category"]   # center는 맞다 — 카테고리 검증이 막은 것이다
 
 
 def test_idempotency_key_header_returns_the_same_run_and_rejects_a_short_key(app_client, db_session):
