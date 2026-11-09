@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from common.database import SessionLocal
 from common.events import EventLog
 from realtime.core import advance, close_after
+from realtime.presence import Presence
 
 POLL_INTERVAL = 0.5
 MAX_RETRY_INTERVAL = 8.0
@@ -61,6 +62,7 @@ class Dispatcher:
         self.error_count = 0
         self.last_success_at: float | None = None  # monotonic clock
         self._health_since: float | None = None
+        self.presence = Presence()   # 지도 접속 상태(#1551) — 전체 채널 구독 수로 센다
         self._closing = False   # 종료 중이면 새 구독도 곧바로 닫힌 채로 내준다
 
     def initialize_last_seen(self) -> None:
@@ -73,6 +75,8 @@ class Dispatcher:
     def subscribe(self, map_id: str, *, channel: str, user_id: str) -> Subscription:
         sub = Subscription(channel=channel, user_id=user_id)
         self._subscribers.setdefault(map_id, []).append(sub)
+        if channel == "public":
+            self.presence.connect(map_id, user_id)
         if self._closing:
             self._close(sub)
         return sub
@@ -120,7 +124,9 @@ class Dispatcher:
         try:
             subs.remove(sub)
         except ValueError:
-            pass
+            return   # 이미 뺀 구독 — 접속 수를 두 번 줄이지 않는다
+        if sub.channel == "public":
+            self.presence.disconnect(map_id, sub.user_id)
         if not subs:
             self._subscribers.pop(map_id, None)   # 빈 리스트를 계속 안 들고 있는다
 
