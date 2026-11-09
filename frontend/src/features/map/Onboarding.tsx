@@ -73,7 +73,8 @@ export function OnboardingBody({ mapId, kind, onDone }: { mapId: string; kind: O
   )
 }
 
-const INVITE_BUTTON: Record<InviteStatus, string> = {
+/** 초대 버튼 글자 — 온보딩과 「아직 나 혼자예요」 안내(AloneInvite)가 같이 쓴다. */
+export const INVITE_BUTTON: Record<InviteStatus, string> = {
   creating: '초대 링크를 만드는 중…',
   failed: '다시 시도',
   ready: '친구 초대하기',

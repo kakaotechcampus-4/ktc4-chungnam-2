@@ -8,6 +8,7 @@ import ProgressBar from '@/ui/ProgressBar'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import TaskProgress from '@/ui/TaskProgress'
+import AloneInvite from '@/features/map/AloneInvite'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
 import { filterPins, type Pin } from '@/features/map/model'
@@ -175,6 +176,8 @@ export default function MapTab() {
           onDismiss={newSince.dismiss}
         />
       )}
+      {/* 핀은 있는데 구성원이 나 하나면 초대를 권한다(기획안 6절, #1560). */}
+      {pins && pins.length > 0 && memberCount === 1 && <AloneInvite mapId={mapId} />}
       {pins && filters.opinion !== 'none' && <MyOpinionProgress pins={pins} onOpen={selectPin} onShowLeft={() => setFilter('opinion', 'none')} />}
       {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} />}
     </TabSheet>

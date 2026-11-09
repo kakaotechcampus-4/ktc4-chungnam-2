@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { Dialog } from 'radix-ui'
-import { Bug, CircleHelp, Map as MapIcon, Menu, MessageSquare, X } from 'lucide-react'
+import { Bug, CircleHelp, Map as MapIcon, Menu, MessageSquare, Settings, X } from 'lucide-react'
 
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { TERMS } from '@/features/auth/terms'
@@ -78,12 +78,13 @@ export default function AppMenu({ mapId }: { mapId: string }) {
                     의견 보내기
                   </MenuRow>
                 </li>
-                <li className="pl-8">
+                <li>
                   <Accordion
                     variant="menu"
                     items={[
                       {
                         id: 'settings',
+                        icon: <Settings size={20} aria-hidden="true" />,
                         title: '설정',
                         body: (
                           <>
