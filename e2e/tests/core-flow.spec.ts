@@ -37,7 +37,7 @@ test('방장이 반대한 곳을 빼고 추천받아 지도에 올리면 구성�
     // 크레딧을 쓰기 전에 확인 창을 거친다(#1363).
     await owner.getByRole('alertdialog').getByRole('button', { name: '추천받기' }).click()
     await expect(owner.getByText(/음식점 대안 \d곳을 찾았어요/)).toBeVisible({ timeout: 30_000 })
-    await expect(owner.getByText('지도에 올린 곳만 구성원 모두에게 보여요')).toBeVisible()
+    await expect(owner.getByText('지도에 올린 곳만 모두에게 보여요')).toBeVisible()
 
     const cards = owner.getByRole('article')
     const count = await cards.count()
