@@ -56,6 +56,10 @@ export default function ConditionsCard({
             <span className="mt-1 block text-xs font-bold text-[var(--warn-text)]">고친 조건 {changed}개는 다시 추천할 때 반영돼요</span>
           )}
         </span>
+        {/* 접혀 있으면 여기서 조건을 고칠 수 있다는 걸 글로 보인다(#1706). 화살표만으로는 펼치는 칸인지 몰랐다. */}
+        <span aria-hidden="true" className="shrink-0 text-sm font-bold text-link">
+          {open ? '접기' : '고치기'}
+        </span>
         <ChevronDown
           size={20}
           aria-hidden="true"

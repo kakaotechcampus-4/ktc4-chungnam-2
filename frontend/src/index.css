@@ -230,6 +230,8 @@
     --animate-pingo-flutter: pingo-flutter 700ms ease-in-out infinite;
     --animate-pingo-drift: pingo-drift 4s ease-in-out infinite;
     --animate-pingo-twinkle: pingo-twinkle 2.1s ease-in-out infinite;
+    /* AI 추천 결과가 처음 뜰 때 하트 두 개가 한 번 떠올랐다 사라진다(#1706). 반복하지 않는다. */
+    --animate-pingo-heart-rise: pingo-heart-rise 1s ease-out 1 both;
     /* 지도 위 3D 핑고 걷기(MapPingo, #1433) — 걸음마다 들썩이고, 측면 걷기 그림 1·2·3·2 를 0.15초씩 바꾼다. */
     --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
     --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
@@ -292,6 +294,11 @@
     @keyframes pingo-drift {
         0%, 100% { transform: translate(-1px, 1px) rotate(-8deg); }
         50% { transform: translate(1px, -4px) rotate(8deg); }
+    }
+    @keyframes pingo-heart-rise {
+        0% { opacity: 0; transform: translateY(4px) scale(0.6); }
+        30% { opacity: 1; transform: translateY(-2px) scale(1); }
+        100% { opacity: 0; transform: translateY(-12px) scale(1.05); }
     }
     @keyframes pingo-twinkle {
         0%, 100% { opacity: 1; }

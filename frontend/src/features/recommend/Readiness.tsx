@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router'
 import { Check } from 'lucide-react'
 
@@ -45,10 +45,10 @@ import {
 import { useCreateRunMutation, useReadinessQuery, useRunHistoryQuery } from './queries'
 
 /** AI 탭 시트 머리글 — 핑고 + 「AI」 배지. 표정은 그 화면의 상황을 따른다(Pingo.tsx). */
-export function AiHeader({ title, sub, mood }: { title: string; sub?: string; mood?: PingoMood }) {
+export function AiHeader({ title, sub, mood, celebrate = false, children }: { title: string; sub?: string; mood?: PingoMood; celebrate?: boolean; children?: ReactNode }) {
   return (
     <div className="flex items-center gap-3 rounded-xl bg-[var(--pingo-bg)] p-3">
-      <Pingo size={44} mood={mood} />
+      <Pingo size={44} mood={mood} celebrate={celebrate} />
       <div className="min-w-0">
         <p className="flex items-start gap-1.5 font-bold text-ink-900">
           <span className="tag tag-ai mt-px shrink-0">AI</span>
@@ -61,6 +61,7 @@ export function AiHeader({ title, sub, mood }: { title: string; sub?: string; mo
             <Sentences text={sub} />
           </p>
         )}
+        {children}
       </div>
     </div>
   )

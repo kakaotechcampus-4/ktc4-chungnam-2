@@ -180,14 +180,14 @@ function RunResult({ mapId, run }: { mapId: string; run: RecommendRunDto }) {
   }
   // 머리글의 수는 이번 실행이 새로 찾은 곳이다(new_count, 올려도 줄지 않는다) — 이미 올린 곳은 목록 아래에 따로 보인다(#849).
   const found = data.new_count ?? data.candidates.filter((c) => c.visibility !== 'published').length
+  const removed = data.funnel.reduce((sum, f) => sum + f.removed_count, 0)
   return tab(
-    <ResultsHeader mapId={mapId} run={run} count={found} />,
+    <ResultsHeader mapId={mapId} run={run} count={found} removed={removed} onHow={() => setView({ kind: 'how' })} />,
     <ResultsBody
       mapId={mapId}
       run={run}
       result={data}
       members={members}
-      onHow={() => setView({ kind: 'how' })}
       conditions={conditions({ lines: data.applied_evidence, none: data.no_applied_conditions })}
       onOpenConditions={() => setConditionsOpen(true)}
     />,
