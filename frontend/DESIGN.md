@@ -396,7 +396,7 @@ components:
 | 삭제한 핀(지도 정보의 `btn-text` 「삭제한 핀」 + 바닥 시트, 줄마다 이름·분류·삭제한 사람·남은 날, 「되돌리기」 `btn-outline btn-sm`, #864) | `PinTrashSheet` | `features/map/PinTrashSheet` |
 | 핀을 끌어 삭제하는 자리(끌 때만 나타남. 흰 알약 h-12 + 그림자 + 뚜껑 열리는 휴지통 아이콘 + 「삭제하기」, 위에 오면 brand-600 테두리 2px · brand-50 면 · 「놓으면 삭제」. 자리는 토스트와 같다, #1012) · 붙이는 함수 | `TrashDropZone` · `attachTrashDrag` | `features/map/TrashDropZone` · `features/map/pinDrag` |
 | 패널·시트 안 이전 화면(넓은 화면에선 패널 헤더 ‹ 로 옮김) | `PanelBackLink` (모바일은 `BackButton`) | `features/shell/PanelBackLink` |
-| 장소 검색 최근 검색어 | `RecentSearches` (검색창이 비어 있고 포커스가 있을 때 검색창 바로 밑에 붙는 흰 카드 — 열리면 검색창은 아래 모서리를 펴고, 둘이 한 덩어리로 brand-600 1px 둘레 + 이음매 ink-100 선이다. 브라우저 입력 기록은 `autoComplete="off"`로 끈다: 「최근 검색」 12/600 ink-500 + 「전체 삭제」 `btn-text`, 줄마다 시계 아이콘·검색어·✕. 이 브라우저에 계정마다 8개, 검색어만 남기고 지도 링크·결과는 남기지 않는다) | `features/search/RecentSearches` |
+| 장소 검색 최근 검색어 | `RecentSearches` (검색창을 누를 때마다 연다. 검색어가 남아 있어도 열고, 글을 치기 시작하거나 찾기를 시작하거나 Esc를 누르면 닫는다. ✕로 지우면 검색창에 포커스를 두고 다시 연다. 연달아 찾을 때 매번 다른 곳을 눌렀다 와야 했다(#1679). 검색창 바로 밑에 붙는 흰 카드 — 열리면 검색창은 아래 모서리를 펴고, 둘이 한 덩어리로 brand-600 1px 둘레 + 이음매 ink-100 선이다. 브라우저 입력 기록은 `autoComplete="off"`로 끈다. 머리는 "최근 검색" 12/600 ink-500 + "전체 삭제" `btn-text`, 줄마다 시계 아이콘, 검색어, ✕다. 이 브라우저에 계정마다 8개, 검색어만 남기고 지도 링크와 결과는 남기지 않는다) | `features/search/RecentSearches` |
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
 | 지금 지도를 열어 둔 사람 | `OnlineDot` (초록 `--good-line` 점 10px, 카드 면 테두리 2px). 아바타 오른쪽 아래(`Avatar online`)와 구성원 버튼의 인원 수 옆에 둔다. 점은 보이기만 하고 뜻은 버튼 이름이나 '지금 N명이 같이 보고 있어요' 글이 전한다(#1551) | `ui/OnlineDot` |
