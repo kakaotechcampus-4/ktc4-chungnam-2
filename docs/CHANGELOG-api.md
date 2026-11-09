@@ -2,6 +2,20 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-09, 마지막으로 본 뒤 새로 생긴 핀·의견 — `POST /maps/{mapId}/seen`, `GET /maps/{mapId}/news` (#1556)
+
+「마지막으로 본 때」를 서버가 사람마다 하나 갖는다(#1454 후속). 지금 화면은 브라우저에 의견 수를 적어 두고 짐작해서 기기마다 다르고 놓치는 의견이 있었다. **새 엔드포인트 둘, 기존 응답은 그대로다.**
+
+- **`POST /maps/{mapId}/seen`** → 204. 요청한 사람의 `memberships.last_seen_at`을 서버 시각으로 적는다. 화면은 「확인」을 누를 때와 지도를 떠날 때 부른다. 이벤트는 없다.
+- **`GET /maps/{mapId}/news`** → `MapNews { since, new_pin_ids, new_reactions, truncated }`.
+  - `since`가 null(한 번도 본 적 없음)이면 두 목록은 비어 있다.
+  - 새 핀: `created_at`이 `since` 뒤이고 내가 찍지 않은, 지금 지도에 있는 핀. 휴지통에서 되살린 핀은 빠진다(`created_at`이 옛 시각).
+  - 새 의견: `since` 뒤에 남기거나 바꾼(`updated_at`), 내 것이 아닌, 지금 남아 있는 반응. `NewReaction`은 `Reaction`에 `display_name`·`updated_at`을 더한 모양이고 사유는 칸으로 준다(#717).
+  - 각 목록은 최근 것부터 최대 100개, 넘으면 `truncated=true`. 이 조회는 `last_seen_at`을 바꾸지 않는다.
+- 둘 다 구성원만(게스트 포함), 아니면 404.
+- DB: `memberships.last_seen_at`(timestamptz, null 허용) — 서버 PR의 마이그레이션. 화면 후속: `features/map/newSince`의 수 비교와 브라우저 저장을 지우고 두 API를 쓴다.
+- 서버 구현 전까지 `integration/test_spec_route_coverage.py`의 `KNOWN_MISSING`과 `integration/test_response_contract.py`의 `KNOWN_UNCOVERED`에 두 경로를 둔다(서버 PR이 지운다).
+- 목 서버: 두 경로를 흉내 낸다(본 때는 메모리에만). 타입 재생성 필요(`npm run gen:types`).
 ## 2026-11-09, 핀의 동네·구성원별 의견 수·이미 구성원인 초대 — `Pin.neighborhood`, `Member.opinion_count`, `InviteSummary.already_member_map_id` (#1564, #1562, #1563)
 
 **늘리기만 한다** — 세 필드 모두 선택이고 서버가 채우기 전에는 없다. 기존 화면은 그대로 돈다.

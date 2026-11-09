@@ -585,6 +585,37 @@ paths:
         "409": { $ref: "#/components/responses/MapLimit" }
         "410": { $ref: "#/components/responses/InviteGone" }
 
+  /maps/{mapId}/seen:
+    post:
+      tags: [maps]
+      summary: |
+        이 지도를 지금 본 것으로 적는다(#1556) — 요청한 사람의 「마지막으로 본 때」(`memberships.last_seen_at`)를 서버 시각으로 바꾼다.
+        화면은 「확인」을 누를 때와 지도를 떠날 때(탭을 내릴 때 포함) 부른다. 구성원이면 누구나(게스트 포함). 이벤트를 보내지 않는다.
+        기기와 상관없이 한 사람에 하나다 — PC에서 확인하면 휴대폰의 「새 소식」도 사라진다.
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      responses:
+        "204": { description: 적었다 }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /maps/{mapId}/news:
+    get:
+      tags: [maps]
+      summary: |
+        마지막으로 본 뒤 새로 생긴 핀·의견(#1556, #1454) — 「무엇이 새것인가」를 서버 한 곳에서 정한다. 화면은 받은 대로 그린다.
+        - 기준 시각 `since`는 요청한 사람의 `memberships.last_seen_at`이다. 한 번도 `POST /maps/{mapId}/seen`을 부르지 않았으면 null이고 두 목록은 비어 있다(처음 연 지도).
+        - **새 핀**: 지금 지도에 있는 핀 중 `created_at`이 `since` 뒤이고 **내가 찍지 않은** 핀. AI 추천 핀은 「지도에 올리기」 시각이 `created_at`이다. 휴지통에서 되살린 핀은 `created_at`이 옛 시각이라 들어가지 않는다.
+        - **새 의견**: 지금 지도에 있는 핀에 달린 반응 중 `since` 뒤에 남기거나 바꾼 것(`updated_at` 기준)이고 **내 것이 아닌** 것. 그 뒤에 지운 반응은 없다(지금 남아 있는 반응만).
+        - 이 조회는 `last_seen_at`을 바꾸지 않는다. 각 목록은 최근 것부터 최대 100개, 넘으면 `truncated=true`.
+        - 사유 글은 문장에 섞지 않고 칸(`reason_text`, `reason_chip_ids`)으로 준다(#717). 구성원이 `GET /pins/{pinId}/reactions`로 이미 볼 수 있는 값이다.
+      parameters: [ { $ref: "#/components/parameters/MapId" } ]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MapNews" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /maps/{mapId}/members:
     get:
       tags: [maps]
@@ -2758,6 +2789,45 @@ components:
           maxItems: 10 # 사전 정의된 칩 목록에서 고르는 값, 코드에 근거 없음(멘토 리뷰 대응)
           items: { type: string, maxLength: 50 }
           description: "GET /categories/{category}/reason-chips가 준 칩의 id. 그 핀의 카테고리 목록에 없는 id는 422 VALIDATION_ERROR (2026-10-04, #60). 반대(against)에서만 보낸다"
+
+    MapNews:
+      type: object
+      description: "마지막으로 본 뒤 새로 생긴 핀·의견(#1556). 규칙은 GET /maps/{mapId}/news 설명"
+      required: [since, new_pin_ids, new_reactions, truncated]
+      properties:
+        since:
+          description: "요청한 사람의 마지막으로 본 때(memberships.last_seen_at). 처음 연 지도면 null이고 두 목록은 비어 있다"
+          oneOf:
+            - type: "null"
+            - { type: string, format: date-time }
+        new_pin_ids:
+          type: array
+          maxItems: 100
+          items: { type: string }
+          description: "since 뒤에 지도에 올라온, 내가 찍지 않은 핀의 id. 최근 것부터"
+        new_reactions:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/NewReaction" }
+          description: "since 뒤에 남기거나 바꾼, 내 것이 아닌 반응. 최근 것부터"
+        truncated: { type: boolean, description: "어느 한 목록이라도 100개를 넘어 잘렸으면 true. 화면은 「새 소식이 더 있어요」를 띄우고 지도를 다시 보게 한다" }
+
+    NewReaction:
+      type: object
+      description: "새 의견 하나(#1556). Reaction에 이름과 시각을 더한 모양이다"
+      required: [pin_id, user_id, display_name, type, reason_chip_ids, updated_at]
+      properties:
+        pin_id: { type: string }
+        user_id: { type: string }
+        display_name: { type: string, maxLength: 50, description: "남긴 사람 이름. 구성원 목록의 이름과 같다" }
+        type: { type: string, enum: [like, against] }
+        reason_text: { type: string, maxLength: 140, description: "사람이 쓴 사유. 없으면 필드를 생략한다" }
+        reason_chip_ids:
+          type: array
+          maxItems: 10
+          items: { type: string, maxLength: 50 }
+          description: "반대 사유 칩 id(ReasonChip.id). 없으면 빈 배열"
+        updated_at: { type: string, format: date-time, description: "그 반응을 남기거나 마지막으로 바꾼 시각" }
 
     Reaction:
       type: object

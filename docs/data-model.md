@@ -72,7 +72,9 @@ memberships(
   id, map_id, user_id, role('member'|'owner'),   -- authz 참고. color는 9/4 결정 #26으로 폐기(구성원 구분에 색 불필요)
                                                  -- #369: role이 방장 판단의 정본이다. 방장이 나가면 joined_at이 가장 빠른
                                                  --   구성원(탈퇴자 제외, 같으면 id 순)에게 위임된다
-  joined_at
+  joined_at,
+  last_seen_at                                   -- #1556(2026-11-09): 이 사람이 이 지도를 마지막으로 본 때(POST /maps/{mapId}/seen). null이면 아직 안 봄.
+                                                 --   GET /maps/{mapId}/news의 기준 시각. 기기와 상관없이 한 사람에 하나다
 )
   unique(map_id, user_id)
   unique(map_id) where role = 'owner'   -- #369: 지도당 방장은 최대 1명. 위임은 한 트랜잭션에서 강등 후 승격
