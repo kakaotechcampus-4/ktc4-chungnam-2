@@ -37,9 +37,8 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/google/callback"): "외부 구글 왕복(302) — auth/tests/test_google_login.py가 대역으로 검증(#1514)",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
-    # #1556 계약 PR — maps 서버 PR이 두 경로를 만들고 골든 패스에 호출을 넣으면서 이 두 줄을 지운다.
-    ("POST", "/maps/{mapId}/seen"): "#1556 서버 구현 전(계약 먼저)",
-    ("GET", "/maps/{mapId}/news"): "#1556 서버 구현 전(계약 먼저)",
+    # #1556 — /seen은 구현했다. /news는 pins.api의 새 핀·새 반응 조회가 들어온 뒤 만들고 이 줄을 지운다.
+    ("GET", "/maps/{mapId}/news"): "#1556 서버 구현 전(pins.api 조회 대기)",
     ("GET", "/places/external-search"): "서버 구현 전(#903) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
     ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
@@ -194,6 +193,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get(f"/invites/{extra.json()['token']}").status_code == 410      # INVITE_REVOKED
     assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
+    assert a.post(f"/maps/{map_id}/seen").status_code == 204   # #1556
     # 방장 직접 넘기기(#468) — 구성원 403, 나 자신 422, 넘기고 되받는다(이후 단계는 a가 방장이라고 가정한다)
     assert b.post(f"/maps/{map_id}/owner", json={"user_id": "user_b"}).status_code == 403
     assert a.post(f"/maps/{map_id}/owner", json={"user_id": "user_a"}).status_code == 422

@@ -194,6 +194,16 @@ def post_owner(
     return service.hand_over_owner(db, map_id=mapId, from_user_id=principal.user_id, to_user_id=body.user_id)
 
 
+@router.post("/maps/{mapId}/seen", status_code=204)
+def post_seen(
+    mapId: str = Path(...),
+    principal: Principal = MapForRead,
+    db=DbSession,
+):
+    # 이벤트를 보내지 않는다. 시각은 서버가 정한다(요청에 값을 받지 않는다).
+    service.mark_seen(db, map_id=mapId, user_id=principal.user_id, now=datetime.now(timezone.utc))
+
+
 @router.delete("/maps/{mapId}/members/me", status_code=204)
 def leave_map(
     mapId: str = Path(...),

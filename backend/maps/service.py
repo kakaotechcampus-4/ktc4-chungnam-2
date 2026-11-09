@@ -134,6 +134,14 @@ def role_in_map(db: Session, *, map_id: str, user_id: str) -> Role | None:
     ).scalar_one_or_none()
 
 
+def mark_seen(db: Session, *, map_id: str, user_id: str, now: datetime) -> None:
+    """POST /maps/{mapId}/seen(#1556) — 요청한 구성원의 「마지막으로 본 때」를 now로 바꾼다. 구성원 여부는 라우터 가드가 이미 봤다."""
+    db.execute(
+        update(MembershipRow).where(MembershipRow.map_id == map_id, MembershipRow.user_id == user_id)
+        .values(last_seen_at=now)
+    )
+
+
 def notify_owner_changed(db: Session, *, map_row: MapRow, new_owner_id: str, actor_id: str) -> None:
     """새 방장에게 owner_changed 알림(#470). 직접 넘기기·나가기·탈퇴 위임이 같은 트랜잭션에서 부른다."""
     notifications_api.notify(
