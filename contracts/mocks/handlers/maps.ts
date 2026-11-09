@@ -364,8 +364,23 @@ export const mapsHandlers = [
       pin_count: pinCount(map.id), // 핀의 이름·위치는 주지 않고 개수만
       inviter_display_name: store.members[map.id]?.[0]?.display_name,
       expires_at: invite.expires_at,
+      // #1625 카드 그림 — 지역과 토큰으로 여는 대표 이미지(올린 게 없으면 키가 없다)
+      ...(map.region ? { region: map.region } : {}),
+      ...(store.mapCovers[map.id] ? { cover_url: `/invites/${params.token as string}/cover?v=${store.mapCovers[map.id].updated_at}` } : {}),
       // #1563 내가 이미 구성원이면 지도 id를 준다(아니면 필드 없음)
       ...((store.members[map.id] ?? []).some((m) => m.user_id === ME_USER_ID) ? { already_member_map_id: map.id } : {}),
+    });
+  }),
+
+  http.get("*/invites/:token/cover", ({ params }) => {
+    const invite = store.invites[params.token as string];
+    if (!invite) return apiError(404, "INVITE_NOT_FOUND", "유효하지 않은 초대 링크예요");
+    const gone = inviteGone(invite);
+    if (gone) return gone;
+    const cover = store.mapCovers[invite.mapId];
+    if (!cover) return apiError(404, "NOT_FOUND", "대표 이미지가 없어요");
+    return new HttpResponse(cover.data, {
+      headers: { "Content-Type": cover.content_type, "Cache-Control": "private, max-age=31536000, immutable" },
     });
   }),
 

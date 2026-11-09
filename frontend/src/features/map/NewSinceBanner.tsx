@@ -8,11 +8,14 @@ export default function NewSinceBanner({
   since,
   newPins,
   newOpinions,
+  truncated = false,
   onDismiss,
 }: {
   since: string
   newPins: number
   newOpinions: number
+  /** 서버가 목록을 100개에서 잘랐다(#1556) — 지도에서 더 보라고 한 줄 더한다. */
+  truncated?: boolean
   onDismiss: () => void
 }) {
   if (!newPins && !newOpinions) return null
@@ -23,6 +26,7 @@ export default function NewSinceBanner({
         <p className="text-sm font-bold text-selected">{timeAgo(since)}에 본 뒤로 새로 생겼어요</p>
         <p className="mt-0.5 text-xs text-ink-600">{what}</p>
         <p className="text-xs text-ink-600">지도에 파란 점이 찍힌 핀이에요</p>
+        {truncated && <p className="text-xs text-ink-600">새 소식이 더 있어요. 지도를 둘러봐 주세요</p>}
       </div>
       <button type="button" onClick={onDismiss} className="btn-text shrink-0 text-sm">
         확인

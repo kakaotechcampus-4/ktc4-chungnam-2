@@ -21,10 +21,10 @@ function renderMenu() {
 }
 
 describe('☰ 메뉴(#1538)', () => {
-  it('「내 지도로 돌아가기」는 내 지도 목록으로 간다', async () => {
+  it('「내 지도 목록」는 내 지도 목록으로 간다', async () => {
     renderMenu()
     await userEvent.click(screen.getByRole('button', { name: '메뉴' }))
-    await userEvent.click(screen.getByRole('button', { name: '내 지도로 돌아가기' }))
+    await userEvent.click(screen.getByRole('button', { name: '내 지도 목록' }))
     expect(screen.getByRole('heading', { name: '내 지도 목록' })).toBeInTheDocument()
   })
 
@@ -32,7 +32,7 @@ describe('☰ 메뉴(#1538)', () => {
     renderMenu()
     await userEvent.click(screen.getByRole('button', { name: '메뉴' }))
     await userEvent.click(screen.getByRole('button', { name: '버그 신고하기' }))
-    expect(screen.queryByRole('button', { name: '내 지도로 돌아가기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '내 지도 목록' })).not.toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: '버그 신고하기' })).toBeInTheDocument()
   })
 

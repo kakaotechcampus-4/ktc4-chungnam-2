@@ -10,9 +10,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { START_PARAM } from '@/features/agent/actions'
 
 import { useSheetStore } from '@/features/shell/sheetStore'
+import { useToastStore } from '@/features/shell/toast'
 
 import { useAiStore } from './aiStore'
 import { createRun, fetchResult, retryRun } from './api'
+import { recommendKeys } from './queries'
 import ConditionsCard from './ConditionsCard'
 import type { RecommendResultDto, RecommendRunDto } from './model'
 import { ReadinessBody } from './Readiness'
@@ -214,6 +216,24 @@ describe('크레딧을 쓰기 전에 묻기, 다시 추천 버튼(#1363)', () =>
     expect(useAiStore.getState().runs[MAP]).toBeUndefined()
     await confirmCredit()
     await waitFor(() => expect(useAiStore.getState().runs[MAP]?.status).toBe('done'))
+  })
+
+  it('캐시에 남은 준비 상태가 예전 것이면 새로 받은 값으로 고른다 — 방금 의견을 남겨 준비된 카테고리에 "상황이 바뀌었어요"를 띄우지 않는다(#1583)', async () => {
+    useToastStore.setState({ toast: null })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const fresh = await fetch(`http://localhost/maps/${MAP}/recommend/readiness`).then((r) => r.json())
+    expect(fresh['음식점'].ready).toBe(true)
+    // 지도 탭에 있는 동안 받아 둔 값: 그때는 음식점 의견이 없었다.
+    client.setQueryData(recommendKeys.readiness(MAP), { ...fresh, 음식점: { ...fresh['음식점'], ready: false } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/maps/${MAP}/recommend?${START_PARAM}=${encodeURIComponent('음식점')}`]}>
+          <ReadinessBody mapId={MAP} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByRole('alertdialog', { name: '음식점 추천을 받을까요?' })).toBeInTheDocument()
+    expect(useToastStore.getState().toast).toBeNull()
   })
 
   it('다시 추천은 크레딧을 쓰지 않아 확인 창 없이 바로 가고, 버튼 옆에 남은 크레딧을 보인다', async () => {
