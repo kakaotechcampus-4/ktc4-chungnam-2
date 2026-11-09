@@ -91,3 +91,116 @@ def test_api_online_user_ids_reads_the_dispatcher(monkeypatch, d):
     d.subscribe("m1", channel="public", user_id="u1")
     assert api.online_user_ids("m1") == {"u1"}
     assert api.online_user_ids("other") == set()
+
+
+# ── member.presence 이벤트(#1551) ──
+
+
+def _drain(sub):
+    items = []
+    while not sub.queue.empty():
+        items.append(sub.queue.get_nowait())
+    return [(i.type, i.payload) for i in items]
+
+
+def test_first_connection_announces_online_to_other_public_subscribers_not_itself(d):
+    watcher = d.subscribe("m1", channel="public", user_id="u2")
+    _drain(watcher)
+    me = d.subscribe("m1", channel="public", user_id="u1")
+    assert _drain(me) == []   # 방금 붙은 연결은 REST 구성원 목록으로 현황을 받는다
+    assert _drain(watcher) == [("member.presence", {"user_id": "u1", "online": True})]
+
+
+def test_second_tab_and_private_channel_announce_nothing(d):
+    watcher = d.subscribe("m1", channel="public", user_id="u2")
+    d.subscribe("m1", channel="public", user_id="u1")
+    _drain(watcher)
+    d.subscribe("m1", channel="public", user_id="u1")
+    d.subscribe("m1", channel="private", user_id="u3")
+    assert _drain(watcher) == []
+
+
+def test_presence_stays_inside_its_map_and_never_reaches_private_channel(d):
+    other_map = d.subscribe("m2", channel="public", user_id="u9")
+    private = d.subscribe("m1", channel="private", user_id="u2")
+    d.subscribe("m1", channel="public", user_id="u1")
+    assert _drain(other_map) == []
+    assert _drain(private) == []   # 개인 채널 구독자에게 새지 않는다
+
+
+def test_two_tabs_one_closes_no_event_both_close_false_after_grace(d, clock):
+    watcher = d.subscribe("m1", channel="public", user_id="u2")
+    a = d.subscribe("m1", channel="public", user_id="u1")
+    b = d.subscribe("m1", channel="public", user_id="u1")
+    _drain(watcher)
+    d.unsubscribe("m1", a)
+    clock.now += GRACE * 2
+    d.expire_presence()
+    assert _drain(watcher) == []                      # 한 탭이 남아 있다
+    d.unsubscribe("m1", b)
+    clock.now += GRACE - 0.1
+    d.expire_presence()
+    assert _drain(watcher) == []                      # 유예 안
+    clock.now += 0.1
+    d.expire_presence()
+    assert _drain(watcher) == [("member.presence", {"user_id": "u1", "online": False})]
+    d.expire_presence()
+    assert _drain(watcher) == []                      # 한 번만 보낸다
+
+
+def test_reconnect_within_grace_sends_no_event(d, clock):
+    watcher = d.subscribe("m1", channel="public", user_id="u2")
+    gone = d.subscribe("m1", channel="public", user_id="u1")
+    _drain(watcher)
+    d.unsubscribe("m1", gone)
+    clock.now += GRACE - 1
+    d.subscribe("m1", channel="public", user_id="u1")
+    clock.now += GRACE * 10
+    d.expire_presence()
+    assert _drain(watcher) == []
+
+
+def test_presence_is_sse_without_id_and_not_stored():
+    from realtime.dispatcher import PresenceEvent
+    from realtime.router import _sse_format
+
+    text = _sse_format(PresenceEvent(map_id="m1", payload={"user_id": "u1", "online": True}))
+    assert text == 'event: member.presence\ndata: {"user_id": "u1", "online": true}\n\n'   # id 줄 없음
+
+
+@pytest.mark.asyncio
+async def test_other_member_joining_reaches_open_public_stream_as_presence_chunk():
+    import asyncio
+
+    from auth.schemas import CurrentUser
+    from realtime.dispatcher import dispatcher
+    from realtime.router import public_events
+
+    class Alive:
+        async def is_disconnected(self):
+            return False
+
+    async def open_stream(user_id):
+        response = await public_events(request=Alive(), mapId="pres-map", user=CurrentUser(user_id=user_id),
+                                       last_event_id=None)
+        agen = response.body_iterator
+        assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
+        pending = asyncio.ensure_future(agen.__anext__())
+        await asyncio.sleep(0)
+        return agen, pending
+
+    a, a_pending = await open_stream("user-a")
+    b, b_pending = await open_stream("user-b")
+    try:
+        chunk = await asyncio.wait_for(a_pending, timeout=1)
+        assert chunk == 'event: member.presence\ndata: {"user_id": "user-b", "online": true}\n\n'
+        assert not b_pending.done()   # 방금 붙은 연결에는 보내지 않는다
+    finally:
+        for agen, pending in ((a, a_pending), (b, b_pending)):
+            pending.cancel()
+            try:
+                await pending
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+            await agen.aclose()
+    assert dispatcher._subscribers.get("pres-map") is None
