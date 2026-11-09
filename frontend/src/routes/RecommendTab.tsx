@@ -21,6 +21,7 @@ import {
 } from '@/features/recommend/Results'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
+import { clearTabNews } from '@/features/shell/tabNews'
 import { josa } from '@/ui/josa'
 
 /**
@@ -33,6 +34,8 @@ import { josa } from '@/ui/josa'
 export default function RecommendTab() {
   const { mapId } = useShell()
   const run = useAiStore((s) => s.runs[mapId])
+  // 들어오면 탭 막대의 새 소식 점을 지운다(#1704).
+  useEffect(() => clearTabNews(mapId, 'recommend'), [mapId])
   // 광고 조회는 탭을 연 동안 한 번이다 — 안의 화면이 바뀌어도(근거 확인처럼 광고가 없는 화면 포함) 여기서 붙잡아 둔다.
   useRecommendAds(mapId)
 

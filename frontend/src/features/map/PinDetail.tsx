@@ -14,7 +14,6 @@ import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/qu
 import BlogPhotos from '@/ui/BlogPhotos'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Mark from '@/ui/Mark'
-import ProgressBar from '@/ui/ProgressBar'
 import FieldError from '@/ui/FieldError'
 import { josa } from '@/ui/josa'
 import MapAppLinks from '@/ui/MapAppLinks'
@@ -22,7 +21,6 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import Sentences from '@/ui/Sentences'
 import UnknownName from '@/ui/UnknownName'
-import PeopleProof from '@/ui/PeopleProof'
 import BusyLabel from '@/ui/BusyLabel'
 
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
@@ -249,28 +247,32 @@ function PinPhotos({ pin }: { pin: Pin }) {
   )
 }
 
-/** 핀 상세 본문(Figma 5절 '마킹된 장소 상세', 지금 탭 이름은 핀 찍기). */
+/**
+ * 핀 상세 본문(Figma 5절 '마킹된 장소 상세', 지금 탭 이름은 핀 찍기). 위에서부터 할 일 → 정보 순서다(#1696).
+ * 내 의견(할 일 카드) → 구성원 의견(막대 + 펼친 목록) → 장소 정보(사진, 지도 링크, AI 근거) → 후기.
+ * 사진과 링크가 먼저 있으면 2단계에서 "내 의견"이 아래로 밀려 안 보였다.
+ */
 export function PinDetailBody({
   pin,
   mapId,
   members,
+  startAgainst = false,
   onDone,
 }: {
   pin: Pin
   mapId: string
   members: MemberView[]
+  /** 목록 카드의 "✕ 반대"로 열었다 — 반대를 고른 채로 사유 입력부터 보인다(#1696). */
+  startAgainst?: boolean
   /** 의견을 등록하면 목록으로 돌아간다(Figma '의견 등록 후'). */
   onDone: () => void
 }) {
   const reactions = useReactionsQuery(pin.id)
   const chips = useReasonChipsQuery(pin.category)
-  const memberCount = members.length
-  const s = pin.reaction_summary
-  const mine = pin.my_reaction?.type ?? null
   const myId = useMeQuery().data?.id
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="space-y-1">
         <p className="flex flex-wrap items-center gap-x-1 text-body text-ink-600">
           {pin.category}
@@ -278,58 +280,44 @@ export function PinDetailBody({
           {pin.neighborhood && <span>· {pin.neighborhood}</span>}
           <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : <UnknownName text={`${authorName(pin)}님이 찍은 핀`} />}</span>
         </p>
-        <PinPhotos pin={pin} />
-        {/* 주소, 영업시간은 원본 장소 페이지에서 본다(카카오 응답 저장 금지, #53). 바로 눈에 띄게 버튼 줄로 둔다. 사진은 위 블로그 사진 줄(#1157). */}
-        <div className="py-1">
-          <MapAppLinks kakao={pin.place_url} naver={pin.naver_url} />
-        </div>
         <PinMemo pin={pin} mapId={mapId} />
         {isLive(pin) && <LiveInfo pin={pin} />}
-        {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}
-        {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
-        {memberCount > 0 && (
-          <PinParticipants pin={pin} memberCount={memberCount} names={reactions.data?.map((r) => members.find((m) => m.userId === r.user_id)?.name ?? r.display_name ?? '구성원')} />
-        )}
-        <div className="flex flex-wrap items-center gap-3 border-y border-ink-200 py-2 text-body">
-          {TYPES.map((t) => (
-            <span
-              key={t}
-              className="flex items-center gap-1 font-bold"
-              style={mine === t ? { background: R[t].bg, border: `1px solid ${R[t].line}`, color: R[t].text, padding: '2px 8px', borderRadius: 8 } : undefined}
-            >
-              <span style={{ color: R[t].line }}>{R[t].mark}</span>
-              <span className={mine === t ? '' : 'text-ink-900'}>{R[t].label}</span>
-              <span style={mine === t ? undefined : { color: R[t].text }}>{s[t]}명</span>
-              {mine === t && '· 나'}
-            </span>
-          ))}
-          <span className="flex items-center gap-1 font-bold">
-            <span className="text-ink-500"><Mark kind="unknown" /></span> <span className="text-ink-900">미확인</span>
-            <span className="text-ink-600">{Math.max(0, memberCount - participants(pin))}명</span>
-          </span>
-          {/* 「미확인」이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
-          <span className="ml-auto">
-            <ReactionHelp />
-          </span>
-        </div>
       </div>
 
-      {/* 2단계에서 바로 보이게 「내 의견」을 구성원 의견보다 위에 둔다(#308). */}
+      {/* 2단계에서 바로 보이게 "내 의견"을 맨 위에 둔다(#308, #1696). */}
       {pin.permissions.can_react ? (
-        // 핀마다 새로 그린다. 의견을 취소해도 고른 의견·사유는 남겨 「의견 등록」만 다시 누르면 되돌아간다(#959).
-        <MyOpinion key={pin.id} pin={pin} mapId={mapId} chipOptions={chips.data ?? []} chipsError={chips.error} onDone={onDone} />
+        // 핀마다 새로 그린다. 의견을 취소해도 고른 의견, 사유는 남겨 다시 누르면 되돌아간다(#959).
+        <MyOpinion
+          key={`${pin.id}-${startAgainst}`}
+          pin={pin}
+          mapId={mapId}
+          chipOptions={chips.data ?? []}
+          chipsError={chips.error}
+          startAgainst={startAgainst}
+          onDone={onDone}
+        />
       ) : (
         // 숙소 핀은 반응을 받지 않는다(#154). v1엔 숙소 핀이 없지만 권한이 꺼져 오면 그린다.
         <p className="text-sm text-ink-500">이 장소에는 의견을 남길 수 없어요</p>
       )}
 
-      <div className="-mx-4 h-1.5 bg-ink-100" />
+      <MemberOpinions pin={pin} members={members}>
+        {reactions.error ? (
+          <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
+        ) : (
+          reactions.data && <Opinions {...toOpinions(reactions.data, members, chips.data)} />
+        )}
+      </MemberOpinions>
 
-      {reactions.error ? (
-        <ErrorText message="구성원 의견을 불러오지 못했어요" error={reactions.error} />
-      ) : (
-        reactions.data && <Opinions {...toOpinions(reactions.data, members, chips.data)} />
-      )}
+      {/* 주소, 영업시간은 원본 장소 페이지에서 본다(카카오 응답 저장 금지, #53). 사진은 블로그 사진 줄(#1157). */}
+      <section aria-labelledby="place-info" className="space-y-2">
+        <h3 id="place-info" className="text-sm font-bold text-ink-900">
+          장소 정보
+        </h3>
+        {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}
+        <PinPhotos pin={pin} />
+        <MapAppLinks kakao={pin.place_url} naver={pin.naver_url} />
+      </section>
 
       {/* 장소 후기는 자체 DB 장소 핀에만(#953). 실시간 핀은 장소 정보가 없어 후기를 붙일 수 없다. */}
       {hasReviews(pin) && (
@@ -380,62 +368,74 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
   )
 }
 
-/** 의견 요약 줄의 주어 — 「현성님, 지우님이」, 나도 있으면 「나와 현성님이」, 나뿐이면 「내가」. */
-function subjectOf(people: { name: string; isMe: boolean }[]) {
-  const others = people.filter((p) => !p.isMe).map((p) => `${p.name}님`).join(', ')
-  if (!others) return '내가'
-  return people.some((p) => p.isMe) ? `나와 ${others}이` : `${others}이`
+/**
+ * 구성원 의견(#1696) — 머리 "구성원 의견, N명 중 M명이 남겼어요", 좋음, 반대, 아직 비율 막대, 그 아래 숫자 줄과 의견 목록.
+ * 막대는 색만으로 읽히지 않게 숫자 줄을 늘 같이 둔다(colors.md 3절 한계). "아직"은 아직 의견을 안 남긴 사람 수다("미확인"과 같은 값).
+ */
+function MemberOpinions({ pin, members, children }: { pin: Pin; members: MemberView[]; children: ReactNode }) {
+  const total = members.length
+  const s = pin.reaction_summary
+  const none = Math.max(0, total - participants(pin))
+  const width = (n: number) => `${total ? (n / total) * 100 : 0}%`
+  return (
+    <section aria-labelledby="member-opinions" className="space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <h3 id="member-opinions" className="text-sm font-bold text-ink-900">
+          구성원 의견
+        </h3>
+        {total > 0 && (
+          <p className="text-xs text-ink-500">
+            {total}명 중 {participants(pin)}명이 남겼어요
+          </p>
+        )}
+      </div>
+      {total > 0 && (
+        <div aria-hidden="true" className="flex h-2 overflow-hidden rounded-full bg-ink-100">
+          <span style={{ width: width(s.like), background: R.like.line }} />
+          <span style={{ width: width(s.against), background: R.against.line }} />
+        </div>
+      )}
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-body">
+        {TYPES.map((t) => (
+          <span key={t} className="flex items-center gap-1" style={{ color: R[t].text }}>
+            <span style={{ color: R[t].line }}>{R[t].mark}</span>
+            {R[t].label} <b className="text-base">{s[t]}</b>
+          </span>
+        ))}
+        <span className="flex items-center gap-1 text-ink-600">
+          아직 <b className="text-base">{none}</b>
+        </span>
+        {/* "미확인"이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
+        <span className="ml-auto">
+          <ReactionHelp />
+        </span>
+      </p>
+      {children}
+    </section>
+  )
 }
 
-function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>) {
-  // 내 의견은 위 「내 의견」에 이미 있어서 갈린 의견에선 뺀다.
-  const split = all.filter((o) => !o.isMe)
+/** 구성원 의견 목록 — 반대를 먼저, 이어서 좋음. 사유가 바로 보이게 펼쳐 둔다(#1696, 예전엔 좋음을 "펼치기"로 숨겼다). 내 의견은 위 카드에 있어 뺀다. */
+function Opinions({ split, likes, unknown }: ReturnType<typeof toOpinions>) {
+  const rows = [...split, ...likes].filter((o) => !o.isMe)
   const waiting = unknown.filter((m) => !m.isMe)
-  const [showLikes, setShowLikes] = useState(false)
-  const nameOf = (o: { name: string; isMe: boolean }) => `${o.name}${o.isMe ? ' (나)' : ''}`
-
   return (
-    <section className="space-y-2.5">
-      {split.length > 0 && (
-        <>
-          <h3 className="text-sm font-bold text-ink-900">갈린 의견 {split.length}</h3>
-          <ul className="divide-y divide-ink-200 overflow-hidden rounded-xl bg-ink-50">
-            {split.map((o) => (
-              <OpinionRow key={o.userId} o={o} name={nameOf(o)} />
-            ))}
-          </ul>
-        </>
-      )}
-      {likes.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between text-body">
-            <p className="font-medium text-ink-900">
-              <span style={{ color: R.like.line }}>{R.like.mark}</span> {subjectOf(likes)} 좋아해요
-            </p>
-            {likes.some((l) => l.chips.length || l.text) && (
-              <button type="button" onClick={() => setShowLikes((v) => !v)} className="btn-text inline-flex items-center gap-0.5 text-xs">
-                {showLikes ? '접기' : '펼치기'}
-                {showLikes ? <Mark kind="chevronUp" size={14} /> : <Mark kind="chevronDown" size={14} />}
-              </button>
-            )}
-          </div>
-          {showLikes && (
-            <ul className="mt-2 divide-y divide-ink-200 overflow-hidden rounded-xl bg-ink-50">
-              {likes.map((o) => (
-                <OpinionRow key={o.userId} o={o} name={nameOf(o)} />
-              ))}
-            </ul>
-          )}
-        </div>
+    <>
+      {rows.length > 0 && (
+        // 흰 면 + 테두리 — 시트 바탕(ink-50)과 같은 면이면 목록이 묻혔다.
+        <ul className="divide-y divide-ink-200 overflow-hidden rounded-xl border border-ink-200 bg-surface">
+          {rows.map((o) => (
+            <OpinionRow key={o.userId} o={o} name={o.name} />
+          ))}
+        </ul>
       )}
       {waiting.length > 0 && (
         // 의견을 기다리는 사람은 눈에 띄게 둔다 — 여럿이면 「○○님 외 N명」으로 줄인다(#1576).
         <p className="flex items-center gap-1.5 rounded-xl border border-brand-200 bg-brand-100 px-3 py-2.5 text-body font-semibold text-[var(--selected-text)]">
-          <Mark kind="unknown" /> {waiting.length > 1 ? `${waiting[0].name}님 외 ${waiting.length - 1}명이` : `${waiting[0].name}님이`} 아직 의견을
-          남기지 않았어요
+          {waiting.length > 1 ? `${waiting[0].name}님 외 ${waiting.length - 1}명이` : `${waiting[0].name}님이`} 아직 의견을 남기지 않았어요
         </p>
       )}
-    </section>
+    </>
   )
 }
 
@@ -456,14 +456,19 @@ function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
 }
 
 /**
- * 「내 의견 선택」. 고르면 아래에 사유 입력이 펼쳐진다. 등록 전까지 위 집계는 바뀌지 않는다.
- * 반대는 칩이나 글 중 하나가 있어야 등록된다(가드레일 3). 이 화면의 채움 버튼은 「의견 등록」 하나다.
+ * 내 의견(#1696). 세 모양이다.
+ * - 아직 없음: 할 일 카드(연파랑 면, 목록 카드와 같다) "이곳 어때요?". ♥는 누르면 바로 등록하고(목록과 같다) 목록으로 돌아간다.
+ *   ✕는 사유가 있어야 등록되므로(가드레일 3) 카드 안에 사유 칩, 입력이 펼쳐지고 "반대 남기기"로 등록한다.
+ * - 남김: 흰 카드 한 줄 "내 의견 ✕ 반대, 매워요" + "고치기". 좋음에 사유가 없으면 "좋은 점 적기"도 둔다.
+ * - 고치는 중: 고르면 아래에 사유가 펼쳐지고 "○○ 남기기"로 저장한다. "의견 취소"는 여기서만 보인다.
+ * 이 화면의 채움 버튼은 "○○ 남기기" 하나다.
  */
 function MyOpinion({
   pin,
   mapId,
   chipOptions,
   chipsError,
+  startAgainst,
   onDone,
 }: {
   pin: Pin
@@ -471,19 +476,34 @@ function MyOpinion({
   /** 화면엔 label, 요청엔 id 를 보낸다 — 이름을 보내면 서버가 422 로 막는다. */
   chipOptions: ReasonChip[]
   chipsError: Error | null
+  startAgainst: boolean
   onDone: () => void
 }) {
   const saved = pin.my_reaction
-  const [type, setType] = useState<ReactionType | null>(asReactionType(saved?.type))
+  const [editing, setEditing] = useState(false)
+  const [type, setType] = useState<ReactionType | null>(asReactionType(saved?.type) ?? (startAgainst ? 'against' : null))
   const [chips, setChips] = useState<string[]>(saved?.reason_chip_ids ?? [])
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
+  // 등록이 끝나면 버튼이 잠깐 초록 체크로 바뀐 뒤 닫는다(#1712). 바로 닫으면 누른 버튼에서 끝난 걸 볼 틈이 없었다.
+  // 등록 뒤 핀 목록을 다시 받으며 부모가 다시 그려져도 타이머가 처음부터 다시 돌지 않게 닫는 함수는 ref로 붙잡는다.
+  const [done, setDone] = useState(false)
+  const onDoneRef = useRef(onDone)
+  useEffect(() => {
+    onDoneRef.current = onDone
+  })
+  useEffect(() => {
+    if (!done) return
+    const t = setTimeout(() => onDoneRef.current(), DONE_MS)
+    return () => clearTimeout(t)
+  }, [done])
   const missingReason = type === 'against' && chips.length === 0 && text.trim() === ''
   // 사유 없이 반대를 누르면 버튼을 끄지 않고 이유를 입력칸 아래에 알린다 — 꺼진 버튼은 왜 막혔는지 읽히지 않는다(#959).
   const [triedEmpty, setTriedEmpty] = useState(false)
   const reasonRef = useRef<HTMLInputElement>(null)
   const reasonErrorId = useId()
   const showMissing = triedEmpty && missingReason
+  const fresh = !saved && !editing
 
   function submit() {
     if (!type) return
@@ -499,8 +519,9 @@ function MyOpinion({
     }
     react.mutate(body, {
       onSuccess: () => {
+        // 토스트는 바로 — 화면 읽기도 이 글로 알고, 닫은 뒤에도 남는다.
         showToast('의견을 남겼어요')
-        onDone()
+        setDone(true)
       },
       onError: (err) =>
         showToast(
@@ -510,10 +531,33 @@ function MyOpinion({
     })
   }
 
+  /** 처음 남기는 ♥ — 목록 카드의 ♥와 같게 바로 등록한다. 되돌리기는 토스트로. */
+  function likeNow() {
+    react.mutate(
+      { type: 'like' },
+      {
+        onSuccess: () => {
+          showToast('좋음을 남겼어요', {
+            label: '되돌리기',
+            onClick: () => react.mutate(null, { onError: () => showToast('의견을 되돌리지 못했어요') }),
+          })
+          onDone()
+        },
+        onError: () => showToast('의견을 등록하지 못했어요', { label: '다시 시도', onClick: likeNow }),
+      },
+    )
+  }
+
+  function pick(t: ReactionType) {
+    if (fresh && t === 'like') return likeNow()
+    setType(t)
+  }
+
   function cancel() {
     const previous: ReactionDto | null | undefined = saved
     react.mutate(null, {
-      onSuccess: () =>
+      onSuccess: () => {
+        setEditing(false)
         showToast('의견을 취소했어요', {
           label: '되돌리기',
           onClick: () =>
@@ -522,23 +566,65 @@ function MyOpinion({
               { type: previous.type, reason_text: previous.reason_text, reason_chip_ids: previous.reason_chip_ids },
               { onError: () => showToast('의견을 되돌리지 못했어요') },
             ),
-        }),
+        })
+      },
       onError: () => showToast('의견을 취소하지 못했어요'),
     })
   }
 
+  // 남긴 직후에는 체크가 보이게 요약 카드로 바로 넘어가지 않는다(#1712) — DONE_MS 뒤 목록으로 돌아간다.
+  if (saved && !editing && !done) {
+    const mine = asReactionType(saved.type)
+    const labelOf = (id: string) => chipOptions.find((c) => c.id === id)?.label ?? id
+    const reasons = [...(saved.reason_chip_ids ?? []).map(labelOf), ...(saved.reason_text ? [`“${saved.reason_text}”`] : [])]
+    return (
+      <section aria-labelledby="my-opinion" className="space-y-1.5 rounded-xl border border-ink-200 bg-surface p-3.5">
+        <div className="flex items-center justify-between gap-2">
+          <h3 id="my-opinion" className="text-sm font-bold text-ink-900">
+            내 의견
+          </h3>
+          <button type="button" onClick={() => setEditing(true)} className="btn-link text-body">
+            고치기
+          </button>
+        </div>
+        {mine && (
+          <p className="flex flex-wrap items-center gap-1.5 text-body text-ink-700">
+            <span className="tag" style={{ background: R[mine].bg, color: R[mine].text }}>
+              {R[mine].mark} {R[mine].label}
+            </span>
+            {reasons.join(' · ')}
+          </p>
+        )}
+        {mine === 'like' && reasons.length === 0 && (
+          <button type="button" onClick={() => setEditing(true)} className="btn-link text-body">
+            좋은 점 적기
+          </button>
+        )}
+      </section>
+    )
+  }
+
   return (
-    <section className="space-y-2.5">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-ink-900">내 의견 선택</h3>
+    <section
+      aria-labelledby="my-opinion"
+      className={`space-y-3 rounded-xl p-3.5 ${fresh ? 'border-[1.5px] border-brand-600 bg-brand-50' : 'border border-ink-200 bg-surface'}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 id="my-opinion" className="text-base font-bold text-ink-900">
+            {fresh ? '이곳 어때요?' : '내 의견 고치기'}
+          </h3>
+          {fresh && <p className="text-xs text-ink-600">의견이 모일수록 AI 추천이 정확해져요</p>}
+        </div>
         {saved && (
           <button type="button" onClick={cancel} disabled={react.isPending} className="btn-text text-body underline">
             의견 취소
           </button>
         )}
       </div>
-      {/* 의견을 고르면 아래에 사유 칸이 펼쳐진다. 휴대폰 시트 2단계에서는 그 칸이 탭 막대 뒤에 가려져서, 고른 뒤 시트를 3단계로 편다(#1694, BottomSheet data-sheet-expand). */}
-      <div role="radiogroup" aria-label="내 의견" data-sheet-expand className="grid grid-cols-2 gap-1.5">
+      {/* 고르면 아래에 사유 칸이 펼쳐지는 버튼만 시트를 3단계로 편다(#1694, BottomSheet data-sheet-expand).
+          처음 남기는 ♥는 바로 등록하고 목록으로 돌아가므로 펴지 않는다 — 펴면 3단계인 채로 목록이 열린다(#1696). */}
+      <div role="radiogroup" aria-label="내 의견" className="grid grid-cols-2 gap-1.5">
         {TYPES.map((t) => {
           const on = type === t
           return (
@@ -547,20 +633,20 @@ function MyOpinion({
               type="button"
               role="radio"
               aria-checked={on}
-              onClick={() => setType(t)}
-              className="press flex flex-col items-center gap-0.5 rounded-xl border py-2"
-              style={on ? { backgroundColor: R[t].bg, borderColor: R[t].line } : { backgroundColor: 'var(--surface-card)', borderColor: 'var(--ink-200)' }}
+              data-sheet-expand={fresh && t === 'like' ? undefined : true}
+              disabled={react.isPending}
+              onClick={() => pick(t)}
+              className="press flex h-11 items-center justify-center gap-1.5 rounded-xl border text-sm font-bold"
+              style={on ? { backgroundColor: R[t].bg, borderColor: R[t].line, color: R[t].text } : { backgroundColor: 'var(--surface-card)', borderColor: 'var(--ink-200)', color: 'var(--ink-900)' }}
             >
               <span style={{ color: R[t].line }}>{R[t].mark}</span>
-              <span className="text-xs font-bold" style={{ color: on ? R[t].text : 'var(--ink-600)' }}>
-                {R[t].label}
-              </span>
+              {R[t].label}
             </button>
           )
         })}
       </div>
 
-      {type && (
+      {type && !(fresh && type === 'like') && (
         <div className="space-y-2">
           <p className="text-body font-bold text-ink-900">{PROMPT[type].title}</p>
           {type === 'against' && chipOptions.length > 0 && (
@@ -592,33 +678,28 @@ function MyOpinion({
             inputRef={reasonRef}
             describedBy={showMissing ? reasonErrorId : undefined}
           />
-          {showMissing && (
-            <FieldError id={reasonErrorId}>
-              {MISSING_REASON}
-            </FieldError>
+          {showMissing && <FieldError id={reasonErrorId}>{MISSING_REASON}</FieldError>}
+          <button
+            aria-busy={react.isPending}
+            type="button"
+            onClick={() => !done && submit()}
+            disabled={react.isPending}
+            className={`btn-primary btn-md w-full ${done ? 'btn-done' : ''}`}
+          >
+            <BusyLabel busy={react.isPending} busyText="남기는 중…" done={done} doneText="남겼어요">
+              {R[type].label} 남기기
+            </BusyLabel>
+          </button>
+          {saved && (
+            <button type="button" onClick={() => setEditing(false)} className="btn-text w-full text-center text-body">
+              고치지 않기
+            </button>
           )}
-          {type === 'against' && <p className="text-label text-ink-500">자세히 적을수록 추천이 정확해져요</p>}
         </div>
       )}
-
-      <button
-        aria-busy={react.isPending}
-        type="button"
-        onClick={submit}
-        disabled={!type || react.isPending}
-        className="btn-primary btn-md w-full"
-      >
-        <BusyLabel busy={react.isPending} busyText="등록하는 중…">의견 등록</BusyLabel>
-      </button>
     </section>
   )
 }
 
-/**
- * 이 핀에 의견을 남긴 사람 — 누가 남겼는지 얼굴로(#1547, 사회적 증거). 의견 목록을 받기 전에는 막대로 비율만 보인다.
- * 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자는 글로 꼭 적는다(colors.md 3절 한계).
- */
-function PinParticipants({ pin, memberCount, names }: { pin: Pin; memberCount: number; names?: string[] }) {
-  if (names) return <PeopleProof names={names} total={memberCount} verb="이 의견을 남겼어요" />
-  return <ProgressBar label={`${participants(pin)}/${memberCount}명이 의견을 남겼어요`} value={participants(pin)} max={memberCount} className="pb-1" />
-}
+/** 의견 등록 뒤 초록 체크를 보이는 시간(#1712). 그 뒤 목록으로 돌아간다. */
+const DONE_MS = 900

@@ -34,6 +34,8 @@ export default function ModalSheet({
   const startY = useRef(0)
 
   function requestClose() {
+    // 끌던 값(dragY)이 남아 있으면 transition 클래스가 빠져 transitionend 가 오지 않는다. 그러면 onClose 가 불리지 않고 투명한 시트가 화면을 막는다.
+    setDragY(null)
     // 동작 줄이기면 transition 이 없어 transitionend 가 오지 않는다 — 바로 닫는다.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) onClose()
     else setClosing(true)
@@ -93,9 +95,9 @@ export default function ModalSheet({
                 className="max-h-[90dvh] overflow-y-auto rounded-t-2xl bg-surface px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 outline-none md:max-h-[85dvh] md:rounded-2xl md:p-5"
               >
                 {/* 맨 위 줄: 가운데 손잡이(좁은 화면만) + 오른쪽 ✕. 넓은 화면은 손잡이가 없어 ✕가 유일하게 보이는 닫기다(#1690).
-                    ✕를 제목 줄에 겹치지 않고 따로 줄을 두는 건, 제목 줄 오른쪽에 「설정」·스위치를 두는 시트가 있어서다. */}
+                    ✕를 제목 줄에 겹치지 않고 따로 줄을 두는 건, 제목 줄 오른쪽에 "설정"이나 스위치를 두는 시트가 있어서다. */}
                 <div className="-mx-4 -mt-2 flex h-11 items-center md:-mx-5 md:-mt-5 md:h-12">
-                  {/* 손잡이 줄만 끌린다 — 내용까지 끌게 하면 긴 목록(지역 고르기)의 스크롤과 부딪힌다. ✕·Esc·딤으로도 닫힌다. */}
+                  {/* 손잡이 줄만 끌린다 — 내용까지 끌게 하면 긴 목록(지역 고르기)의 스크롤과 부딪힌다. ✕, Esc, 딤으로도 닫힌다. */}
                   <div
                     aria-hidden="true"
                     className="flex h-full flex-1 cursor-grab touch-none items-center justify-center pl-11 md:invisible"

@@ -77,14 +77,15 @@ export async function pinPlace(page: Page, name: string) {
 export async function opposeWithChip(page: Page, chip: string) {
   await page.getByRole('radio', { name: '반대' }).click()
   await page.getByRole('button', { name: chip, exact: true }).click()
-  await page.getByRole('button', { name: '의견 등록' }).click()
+  await page.getByRole('button', { name: '반대 남기기' }).click()
   // 토스트 글자만 맞춘다. 다 남기면 뜨는 완료 카드("모든 핀에 의견을 남겼어요", #1659)도 status라 함께 걸린다.
   await expect(page.getByRole('status').filter({ hasText: /^의견을 남겼어요$/ })).toBeVisible()
 }
 
 /** 「핀 찍기」 목록의 핀 줄. 접근성 이름이 「장소 이름 …」으로 시작한다. */
 export function pinRow(page: Page, name: string) {
-  return page.getByRole('main', { name: '바텀시트' }).getByRole('button', { name: new RegExp(`^${name} `) })
+  // 반응 안 한 핀 줄 옆의 바로 반응 버튼(「○○ 좋음」, 「○○ 반대, 이유 쓰기」, #1696)도 이름이 같은 말로 시작해서 뺀다.
+  return page.getByRole('main', { name: '바텀시트' }).getByRole('button', { name: new RegExp(`^${name} (?!좋음$|반대, 이유 쓰기$)`) })
 }
 
 /** 열린 핀 상세에서 「확정 리스트에 넣기」를 누른다. */
