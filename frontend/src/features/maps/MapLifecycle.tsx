@@ -176,6 +176,7 @@ export function TransferOwnerConfirm({ mapId, members, onCancel }: { mapId: stri
       title="누구에게 방장을 넘길까요?"
       body="넘기면 나는 구성원으로 지도에 남아요."
       ok={to ? `${to.name}님에게 넘기기` : '넘기기'}
+      danger
       pending={transfer.isPending || !to}
       onCancel={onCancel}
       onOk={() =>

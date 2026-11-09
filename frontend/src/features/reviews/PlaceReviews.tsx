@@ -117,6 +117,7 @@ export default function PlaceReviews({ pin }: { pin: Pin }) {
           title="이 후기를 신고할까요?"
           body="욕설이나 장소와 상관없는 글이면 알려 주세요. 운영자가 확인해요."
           ok="신고"
+          danger
           pending={report.isPending}
           onCancel={() => setAsking(null)}
           onOk={() => sendReport(asking.item)}

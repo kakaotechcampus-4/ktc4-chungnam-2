@@ -5,7 +5,7 @@ import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { allInside, dragHeading, fitCenter, fitLevel, fitPadding, groupNear, view, zoomSteps } from './camera'
 import { attachLongPress } from './longPress'
 import { createMarkerLayer, mapFade, PIN_GROUP_PX, type MarkerLayer } from './markerLayer'
-import { usePinDragStore } from './pinDrag'
+import { setMapBridge, usePinDragStore } from './pinDrag'
 import {
   createCandidateMarkerElement,
   createSearchGroupMarkerElement,
@@ -326,6 +326,21 @@ export default function MapCanvas({
         }
 
         mapRef.current = { maps, map }
+        // 핀을 끌어 옮길 때(#1549) 놓은 화면 자리를 지도 좌표로 바꾸는 다리. 그 점을 지도가 아닌 것(패널, 시트)이 덮고 있으면 null 이다.
+        setMapBridge({
+          toLatLng: (x, y) => {
+            const hit = document.elementFromPoint(x, y)
+            if (!hit || !container.contains(hit)) return null
+            const box = container.getBoundingClientRect()
+            const at = map.getProjection().coordsFromContainerPoint(new maps.Point(x - box.left, y - box.top))
+            return { lat: at.getLat(), lng: at.getLng() }
+          },
+          toScreen: ({ lat, lng }) => {
+            const box = container.getBoundingClientRect()
+            const p = map.getProjection().containerPointFromCoords(new maps.LatLng(lat, lng))
+            return { x: box.left + p.x, y: box.top + p.y }
+          },
+        })
         /** 그 곳이 보이는 영역 가운데(시트 위, 패널 카드 오른쪽)에 오게 하는 지도 가운데(지금 축척 기준). */
         const liftedCenter = (to: kakao.maps.LatLng) => {
           const proj = map.getProjection()
@@ -399,6 +414,7 @@ export default function MapCanvas({
 
     return () => {
       cancelled = true
+      setMapBridge(null)
       detach()
       layerRef.current?.destroy()
       layerRef.current = null
