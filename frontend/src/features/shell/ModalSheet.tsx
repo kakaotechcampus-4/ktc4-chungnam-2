@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Dialog } from 'radix-ui'
+import { X } from 'lucide-react'
 
 import Toaster from './Toaster'
 
@@ -91,20 +92,27 @@ export default function ModalSheet({
                 tabIndex={-1}
                 className="max-h-[90dvh] overflow-y-auto rounded-t-2xl bg-surface px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 outline-none md:max-h-[85dvh] md:rounded-2xl md:p-5"
               >
-                {/* 손잡이 줄만 끌린다 — 내용까지 끌게 하면 긴 목록(지역 고르기)의 스크롤과 부딪힌다. Esc·딤으로도 닫힌다. */}
-                <div
-                  aria-hidden="true"
-                  className="-mx-4 -mt-2 flex h-7 cursor-grab touch-none items-center justify-center md:hidden"
-                  onPointerDown={(e) => {
-                    startY.current = e.clientY
-                    setDragY(0)
-                    e.currentTarget.setPointerCapture(e.pointerId)
-                  }}
-                  onPointerMove={(e) => dragY !== null && setDragY(e.clientY - startY.current)}
-                  onPointerUp={onHandleUp}
-                  onPointerCancel={() => setDragY(null)}
-                >
-                  <div className="h-1 w-12 rounded-full bg-ink-300" />
+                {/* 맨 위 줄: 가운데 손잡이(좁은 화면만) + 오른쪽 ✕. 넓은 화면은 손잡이가 없어 ✕가 유일하게 보이는 닫기다(#1690).
+                    ✕를 제목 줄에 겹치지 않고 따로 줄을 두는 건, 제목 줄 오른쪽에 「설정」·스위치를 두는 시트가 있어서다. */}
+                <div className="-mx-4 -mt-2 flex h-11 items-center md:-mx-5 md:-mt-5 md:h-12">
+                  {/* 손잡이 줄만 끌린다 — 내용까지 끌게 하면 긴 목록(지역 고르기)의 스크롤과 부딪힌다. ✕·Esc·딤으로도 닫힌다. */}
+                  <div
+                    aria-hidden="true"
+                    className="flex h-full flex-1 cursor-grab touch-none items-center justify-center pl-11 md:invisible"
+                    onPointerDown={(e) => {
+                      startY.current = e.clientY
+                      setDragY(0)
+                      e.currentTarget.setPointerCapture(e.pointerId)
+                    }}
+                    onPointerMove={(e) => dragY !== null && setDragY(e.clientY - startY.current)}
+                    onPointerUp={onHandleUp}
+                    onPointerCancel={() => setDragY(null)}
+                  >
+                    <div className="h-1 w-12 rounded-full bg-ink-300" />
+                  </div>
+                  <button type="button" onClick={requestClose} aria-label={`${label} 닫기`} className="press inline-flex size-11 shrink-0 items-center justify-center text-ink-600 md:mr-1">
+                    <X size={20} aria-hidden="true" />
+                  </button>
                 </div>
                 {children}
               </section>
