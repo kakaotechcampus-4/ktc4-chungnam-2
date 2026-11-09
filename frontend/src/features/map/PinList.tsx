@@ -7,6 +7,7 @@ import Mark from '@/ui/Mark'
 import { participationRatio, toPinCard, type Pin, type PinCardView, type ReactionType } from './model'
 import { attachTrashDrag } from './pinDrag'
 import { createPinMarkerElement } from './pinMarker'
+import UnknownName from '@/ui/UnknownName'
 
 /** 반응 용어·기호는 고정(기획안 9절). 색은 지도 밖 UI 전용 반응 토큰(colors.md). */
 const REACTION: Record<ReactionType | 'unknown', { mark: ReactNode; label: string; color: string; chip: string }> = {
@@ -90,7 +91,7 @@ function PinCard({
             <span className="shrink-0 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-600">의견 남기기</span>
           )}
         </div>
-        <p className="mt-0.5 text-xs text-ink-500">{card.meta}</p>
+        <p className="mt-0.5 text-xs text-ink-500"><UnknownName text={card.meta} /></p>
         <p className="mt-1.5 flex items-center gap-2 text-xs" aria-label={summaryLabel(card)}>
           {ORDER.map((type) => {
             const r = REACTION[type]
