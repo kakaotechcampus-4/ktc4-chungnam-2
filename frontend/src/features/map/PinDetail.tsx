@@ -257,6 +257,8 @@ export function PinDetailBody({
       <div className="space-y-1">
         <p className="flex flex-wrap items-center gap-x-1 text-body text-ink-600">
           {pin.category}
+          {/* 동네는 서버가 자체 DB 주소에서 뽑는다. 실시간 핀과 주소 없는 장소는 없어서 비운다(#1564). */}
+          {pin.neighborhood && <span>· {pin.neighborhood}</span>}
           <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : <UnknownName text={`${authorName(pin)}님이 찍은 핀`} />}</span>
           {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
           {(pin.place_url || pin.naver_url) && (
