@@ -37,8 +37,6 @@ KNOWN_UNCOVERED: dict[tuple[str, str], str] = {
     ("GET", "/auth/google/callback"): "외부 구글 왕복(302) — auth/tests/test_google_login.py가 대역으로 검증(#1514)",
     ("GET", "/maps/{mapId}/events"): "SSE 스트림 — realtime 테스트가 담당",
     ("GET", "/maps/{mapId}/events/me"): "SSE 스트림 — realtime 테스트가 담당",
-    # #1556 — /seen은 구현했다. /news는 pins.api의 새 핀·새 반응 조회가 들어온 뒤 만들고 이 줄을 지운다.
-    ("GET", "/maps/{mapId}/news"): "#1556 서버 구현 전(pins.api 조회 대기)",
     ("GET", "/places/external-search"): "서버 구현 전(#903) — 구현되면 이 모듈의 계약 테스트를 더하고 지운다",
     ("POST", "/auth/qa-login"): "스테이징 전용 — 테스트 앱에 없다(#788), staging 설정 앱으로 auth 테스트가 본다(#789)",
 }
@@ -194,6 +192,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
     assert a.post(f"/maps/{map_id}/seen").status_code == 204   # #1556
+    assert a.get(f"/maps/{map_id}/news").status_code == 200
     # 방장 직접 넘기기(#468) — 구성원 403, 나 자신 422, 넘기고 되받는다(이후 단계는 a가 방장이라고 가정한다)
     assert b.post(f"/maps/{map_id}/owner", json={"user_id": "user_b"}).status_code == 403
     assert a.post(f"/maps/{map_id}/owner", json={"user_id": "user_a"}).status_code == 422
@@ -336,6 +335,11 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert a.patch("/auth/me", json={"display_name": "철수2"}).status_code == 200
     assert a.patch("/auth/me", json={"display_name": ""}).status_code == 422
 
+    assert a.post(f"/maps/{map_id}/seen").status_code == 204   # 새 소식(#1556)의 기준 시각 — 아래 반응이 이 뒤에 생긴다
+    # 시험 세션은 긴 트랜잭션이라 DB now()가 멈춰 있다 — 기준 시각을 1시간 앞으로 물러 「이 뒤에 생긴 것」이 구분되게 한다.
+    from sqlalchemy import text as _text
+    db_session.execute(_text("UPDATE memberships SET last_seen_at = last_seen_at - interval '1 hour' WHERE map_id = :m AND user_id = 'user_a'"), {"m": map_id})
+    db_session.commit()
     pins = []
     for key in ("seongsu-kalguksu", "seongsu-bunsik", "hongdae-ramen"):
         r = a.post(f"/maps/{map_id}/pins", json=pin_body(key))
@@ -364,6 +368,12 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert opinions.status_code == 200 and len(opinions.json()) == 2
     mine = [p for p in a.get(f"/maps/{map_id}/pins").json() if p["id"] == pins[0]][0]
     assert mine["my_reaction"]["type"] == "like"
+    # 새 소식(#1556) — a가 위에서 지도를 본 뒤 b가 남긴 사유 없는 ♥와 사유 있는 🚫가 지나간다. 사유 없는 반응은 reason_text 칸을 생략한다(null 아님).
+    news = a.get(f"/maps/{map_id}/news")
+    assert news.status_code == 200
+    by_pin = {r["pin_id"]: r for r in news.json()["new_reactions"]}
+    assert pins[0] in by_pin, news.json()
+    assert "reason_text" not in by_pin[pins[0]] and by_pin[pins[1]]["reason_text"] == "별로"
     assert b.delete(f"/pins/{pins[0]}/reaction").status_code == 204
 
     # 추천: 근거 수정 → 실행 → 반경 넓히기(15→20→25→30분, 그다음 409) → 다시 추천 → 게시

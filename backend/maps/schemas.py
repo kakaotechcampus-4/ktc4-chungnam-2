@@ -8,7 +8,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 from authz.schemas import Permissions
 
@@ -103,6 +103,36 @@ class MapList(BaseModel):
     limit: int
     # maps/core.py::TRIP_MAX_DAYS — 422 TRIP_TOO_LONG의 detail.limit과 같은 값이다(#1371).
     trip_max_days: int
+
+
+class NewReaction(BaseModel):
+    """새 의견 하나(#1556) — docs/api-spec.yaml NewReaction과 1:1. reason_text가 없으면 필드를 생략한다."""
+
+    pin_id: str
+    user_id: str
+    display_name: str = Field(max_length=50)
+    type: Literal["like", "against"]
+    reason_text: str | None = Field(default=None, max_length=140)
+    reason_chip_ids: list[str] = Field(default_factory=list, max_length=10)
+    updated_at: datetime
+
+    @model_serializer(mode="wrap")
+    def _omit_missing_reason(self, handler):
+        """사유가 없으면 reason_text 칸을 생략한다(스펙: 없으면 필드 생략, null 아님). MapNews는 since=null을 남겨야 해서
+        응답 전체에 exclude_none을 쓰지 못하므로 이 필드만 여기서 뺀다."""
+        data = handler(self)
+        if data.get("reason_text") is None:
+            data.pop("reason_text", None)
+        return data
+
+
+class MapNews(BaseModel):
+    """GET /maps/{mapId}/news(#1556). since는 null일 수 있어 exclude_none을 쓰지 않는다(필수 칸)."""
+
+    since: datetime | None
+    new_pin_ids: list[str] = Field(max_length=100)
+    new_reactions: list[NewReaction] = Field(max_length=100)
+    truncated: bool
 
 
 class TrashedMap(BaseModel):
