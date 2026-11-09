@@ -146,7 +146,7 @@ export function ResultsBody({
       )}
       <div className="space-y-3">
         {fresh.length > 0 && (
-          <ol className="space-y-3">
+          <ol className="space-y-4">
             {fresh.map((c) => (
               <li key={c.id}>
                 <CandidateCard mapId={mapId} run={run} c={c} members={members} />
@@ -164,7 +164,7 @@ export function ResultsBody({
         {published.length > 0 && (
           <section className="space-y-3 pt-2">
             <h3 className="text-sm font-bold text-ink-900">이미 지도에 올린 곳</h3>
-            <ol className="space-y-3">
+            <ol className="space-y-4">
               {published.map((c) => (
                 <li key={c.id}>
                   <CandidateCard mapId={mapId} run={run} c={c} members={members} />
@@ -202,10 +202,12 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest('a, button')) focus()
       }}
-      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-[var(--pingo-bg)] p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
+      // 흰 면 + 하늘색 테두리(#1706). AI 하늘색 면은 시트 바탕(라벤더 회색)과 밝기가 거의 같아 카드끼리 구분이 안 됐다.
+      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-surface p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
     >
       <header className="flex items-center gap-2">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-link">
+        {/* 순위는 채운 원 + 흰 숫자 — 테두리 원은 숫자가 약하게 보였다(#1706). */}
+        <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">
           {c.rank}
         </span>
         <h3 className="min-w-0 flex-1 text-title font-bold text-ink-900">
@@ -221,7 +223,7 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
         </h3>
       </header>
       {/* 카테고리는 머리("카페 대안")에 있어 카드마다 적지 않는다. 지역 기준과 출처(가드레일 5)를 이름 아래 한 줄로(#1706). */}
-      <p className="pl-8 text-xs text-ink-500">
+      <p className="pl-9 text-xs text-ink-500">
         {[c.region_label && `${c.region_label} 기준`, `출처: ${sourceLabel(c)}`].filter(Boolean).join(', ')}
       </p>
       <AiReason text={c.reason} />
