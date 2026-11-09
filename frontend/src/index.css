@@ -314,6 +314,11 @@
     .btn-primary {
         @apply rounded-xl bg-brand-600 font-bold text-white transition-colors not-disabled:hover:bg-[var(--action-fill-hover)] not-disabled:active:bg-[var(--action-fill-pressed)] disabled:bg-ink-100 disabled:text-ink-400;
     }
+    /* 끝난 표시(#1712, BusyLabel done) — 채움 버튼이 잠깐 좋음 초록이 된다. 그동안 올림, 눌림 색이 덮지 않게 !important 다. */
+    .btn-done {
+        background-color: var(--good-line) !important;
+        color: white !important;
+    }
     .btn-outline {
         @apply press rounded-xl border border-brand-600 bg-surface font-bold text-link disabled:border-ink-300 disabled:text-ink-400;
     }
