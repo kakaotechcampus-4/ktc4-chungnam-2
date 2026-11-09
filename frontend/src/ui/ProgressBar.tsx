@@ -1,5 +1,8 @@
 import { useId, type ReactNode } from 'react'
 
+/** 다 찼는지 — 막대와 % 글자가 초록이 된다. */
+export const isFull = (value: number, max: number) => max > 0 && value >= max
+
 /** 0~100 정수. 분모가 0이면 0이다. */
 export const percent = (value: number, max: number) => (max > 0 ? Math.min(100, Math.max(0, Math.round((value / max) * 100))) : 0)
 
@@ -37,7 +40,13 @@ export function ProgressTrack({ value, max, labelledBy, valueText, quiet = false
       aria-valuetext={valueText}
       className={`${quiet ? 'h-1.5' : 'h-2'} overflow-hidden rounded-full bg-ink-100`}
     >
-      <div className={`h-full rounded-full ${quiet ? 'bg-ink-500' : 'bg-[var(--action-fill)]'} transition-[width] duration-300 motion-reduce:transition-none`} style={{ width: `${percent(value, max)}%` }} />
+      {/* 참여 현황(quiet)은 정보라 회색(#1636). 할 일 막대는 채우는 동안 파랑, 다 차면 좋음 초록(완료). 빨강, 주황은 쓰지 않는다(진행이 적은 건 오류가 아니다). */}
+      <div
+        className={`h-full rounded-full transition-[width,background-color] duration-300 motion-reduce:transition-none ${
+          quiet ? 'bg-ink-500' : isFull(value, max) ? 'bg-[var(--good-line)]' : 'bg-[var(--action-fill)]'
+        }`}
+        style={{ width: `${percent(value, max)}%` }}
+      />
     </div>
   )
 }

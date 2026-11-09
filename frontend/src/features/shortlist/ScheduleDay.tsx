@@ -3,26 +3,31 @@ import { GripVertical } from 'lucide-react'
 
 import DragGhost from './DragGhost'
 import type { DropSpot } from './schedule'
-import { useDropHover } from './scheduleStore'
+import { useDropHover, useFlash } from './scheduleStore'
 import { useScheduleDrag } from './useScheduleDrag'
 
 /**
  * 일정 하루 칸 — 「일정 짜기」 패널(넓은 화면)과 「동선 보기」가 같이 쓴다. 칸이 끌어 놓을 자리다(`data-day`).
  * 끄는 줄이 위에 오면 점선 테두리가 된다(`drop-target`, index.css).
+ * `color`(날짜 색 토큰, `dayLine`)를 주면 칸 왼쪽 4px 띠와 번호 원이 그 색이다 — 흰 카드가 여럿 늘어서면 날이 갈리지 않았다.
+ * 빈 날은 점선 테두리의 낮은 한 줄로 줄여 장소가 있는 날이 먼저 보이게 한다.
  */
-export function ScheduleDayBox({ day, title, count, children }: { day: string; title: string; count: number; children: ReactNode }) {
+export function ScheduleDayBox({ day, title, count, color, children }: { day: string; title: string; count: number; color?: string; children: ReactNode }) {
   const hover = useDropHover()
+  const empty = count === 0
   return (
     <section
       data-day={day}
       aria-label={title}
       data-over={hover?.day === day}
-      className="drop-target rounded-xl border border-ink-200 bg-surface p-3"
+      style={color && !empty ? { borderLeft: `4px solid var(${color})` } : undefined}
+      className={`drop-target rounded-xl border bg-surface ${empty ? 'flex items-center justify-between gap-2 border-dashed border-ink-300 px-3 py-2.5' : 'border-ink-200 p-3'}`}
     >
       <h3 className="text-sm font-bold text-ink-900">
-        {title} <span className="font-normal text-ink-500">{count}곳</span>
+        {title}
+        {!empty && <span className="font-normal text-ink-500"> {count}곳</span>}
       </h3>
-      <div className="mt-2">{children}</div>
+      <div className={empty ? 'shrink-0' : 'mt-2'}>{children}</div>
     </section>
   )
 }
@@ -38,10 +43,12 @@ type ListProps = {
   onDrop: (pinId: string, spot: DropSpot) => void
   onShift: (pinId: string, delta: -1 | 1) => void
   empty: string
+  /** 번호 원 색(날짜 색 토큰). 없으면 회색 원. */
+  color?: string
 }
 
 /** 그날 장소 줄 — 순서대로 번호를 달고, 끄는 동안 끼울 자리에 선을 긋는다. 번호 순서가 곧 「동선 보기」 순서다. */
-export function ScheduleDayList({ day, ids, nameOf, subOf, onOpen, onTakeOut, onDrop, onShift, empty }: ListProps) {
+export function ScheduleDayList({ day, ids, nameOf, subOf, onOpen, onTakeOut, onDrop, onShift, empty, color }: ListProps) {
   const hover = useDropHover()
   const at = hover?.day === day ? hover.index : null
   const marker = <li aria-hidden="true" className="h-0.5 rounded-full bg-[var(--action-fill)]" />
@@ -59,6 +66,7 @@ export function ScheduleDayList({ day, ids, nameOf, subOf, onOpen, onTakeOut, on
             <ScheduleRow
               pinId={id}
               n={i + 1}
+              color={color}
               last={i === ids.length - 1}
               name={nameOf(id)}
               sub={subOf?.(id)}
@@ -82,6 +90,7 @@ export function ScheduleDayList({ day, ids, nameOf, subOf, onOpen, onTakeOut, on
 function ScheduleRow({
   pinId,
   n,
+  color,
   last,
   name,
   sub,
@@ -92,6 +101,7 @@ function ScheduleRow({
 }: {
   pinId: string
   n: number
+  color?: string
   last: boolean
   name: string
   sub?: string
@@ -103,6 +113,12 @@ function ScheduleRow({
   const { handlers, dragging, ghost } = useScheduleDrag(pinId, (spot) => onDrop(pinId, spot))
   const handle = useRef<HTMLButtonElement>(null)
   const keyMoved = useRef(false)
+  const row = useRef<HTMLLIElement>(null)
+  const flash = useFlash(pinId)
+  // 확정 리스트에서 방금 넣은 줄 — 패널 안에서 보이게 옮기고 잠깐 테두리를 번지게 한다.
+  useEffect(() => {
+    if (flash) row.current?.scrollIntoView?.({ block: 'nearest', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  }, [flash])
   useEffect(() => {
     if (!keyMoved.current) return
     keyMoved.current = false
@@ -116,9 +132,13 @@ function ScheduleRow({
     </>
   )
   return (
-    <li data-pin={pinId} className={`flex items-center gap-2 rounded-xl bg-surface py-0.5 pl-2 pr-0.5 ring-1 ring-ink-200 ${dragging ? 'opacity-40' : ''}`}>
-      {/* 번호 원은 AI 코스 날짜별 카드와 같다(ink-100 면). 순서는 목록(ol)이 읽어 준다. */}
-      <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-100 text-xs font-bold text-ink-700">
+    <li ref={row} data-pin={pinId} className={`flex items-center gap-2 rounded-xl bg-surface py-0.5 pl-2 pr-0.5 ring-1 ring-ink-200 ${dragging ? 'opacity-40' : ''} ${flash ? 'flash-ring' : ''}`}>
+      {/* 번호 원은 AI 코스 날짜별 카드와 같다(ink-100 면, 날짜 색을 주면 그 색). 순서는 목록(ol)이 읽어 준다. */}
+      <span
+        aria-hidden="true"
+        style={color ? { background: `var(${color})` } : undefined}
+        className={`flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${color ? 'text-white' : 'bg-ink-100 text-ink-700'}`}
+      >
         {n}
       </span>
       {onOpen ? (

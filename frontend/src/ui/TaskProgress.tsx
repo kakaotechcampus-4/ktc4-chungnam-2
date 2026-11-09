@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react'
 import { Check } from 'lucide-react'
 
-import { percent, ProgressTrack } from './ProgressBar'
+import { isFull, percent, ProgressTrack } from './ProgressBar'
 import Sentences from './Sentences'
 
 export type TaskItem = { key: string; label: string; done: boolean; onClick?: () => void }
@@ -41,7 +41,7 @@ export default function TaskProgress({
             {unit}
           </span>
         </p>
-        <span aria-hidden="true" className="text-sm font-bold text-[var(--action-quiet-text)]">
+        <span aria-hidden="true" className={`text-sm font-bold ${isFull(done, total) ? 'text-[var(--good-text)]' : 'text-[var(--action-quiet-text)]'}`}>
           {percent(done, total)}%
         </span>
       </div>
@@ -70,7 +70,8 @@ export default function TaskProgress({
 /** 할 일 한 줄 — 끝난 일은 채운 파란 원 + 체크, 남은 일은 빈 원. 누를 수 있으면 누르는 자리 전체가 44px다. */
 function TaskRow({ item }: { item: TaskItem }) {
   const mark = item.done ? (
-    <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--action-fill)] text-white">
+    // 끝나는 순간 원이 커지며 체크가 그려진다(`done-check`) — 다른 곳에서 넣어도 여기서 바로 보인다.
+    <span className="done-check flex size-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--action-fill)] text-white">
       <Check size={12} strokeWidth={3} aria-hidden="true" />
     </span>
   ) : (

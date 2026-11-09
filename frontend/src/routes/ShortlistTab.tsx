@@ -18,12 +18,13 @@ import DayRoute from '@/features/shortlist/DayRoute'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { scheduledIds, UNSET_DAY } from '@/features/shortlist/schedule'
-import { closeSchedule, leaveScheduleTab, openSchedule, useDropHover, useScheduleOpen } from '@/features/shortlist/scheduleStore'
+import { closeSchedule, flashPin, leaveScheduleTab, openSchedule, useDropHover, useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
 import CardSkeleton from '@/ui/CardSkeleton'
 import { Calendar } from '@/ui/DatePicker'
+import DoneCard from '@/ui/DoneCard'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import Mark from '@/ui/Mark'
@@ -71,6 +72,16 @@ export default function ShortlistTab() {
     if (pinId) next.set('pin', pinId)
     else next.delete('pin')
     setParams(next)
+  }
+
+  /**
+   * 「넣기」 — 토스트만으로는 일정에 들어간 것이 잘 보이지 않았다. 넓은 화면은 「일정 짜기」 패널을 열고 넣은 줄을 잠깐 강조한다.
+   * 휴대폰은 패널이 없어서 위 「일정」 카드의 그날 줄이 체크로 바뀌는 것(`done-check`)과 토스트로 알린다.
+   */
+  function putInDay(pinId: string, name: string, toDay: string, index?: number) {
+    edit.put([pinId], [name], toDay, index)
+    if (desktop && !scheduleOpen) openSchedule(mapId)
+    flashPin(pinId)
   }
 
   function toggleRoute() {
@@ -149,7 +160,7 @@ export default function ShortlistTab() {
           data-over={hover?.day === UNSET_DAY}
           className="drop-target space-y-3 rounded-xl pb-[100px] outline-offset-4"
         >
-          {edit.ready && !edit.error && <ScheduleProgress dates={edit.dates} days={edit.schedule.days} onPick={setPutDay} />}
+          {edit.ready && !edit.error && items.length > 0 && <ScheduleProgress dates={edit.dates} days={edit.schedule.days} onPick={setPutDay} />}
           {edit.error ? (
             <div className="space-y-2">
               <ErrorText message="일정을 불러오지 못했어요" error={edit.error} />
@@ -160,9 +171,17 @@ export default function ShortlistTab() {
           ) : !edit.ready ? (
             <CardSkeleton count={2} label="일정을 불러오는 중…" />
           ) : items.length === 0 ? (
-            <p className="break-keep text-sm text-ink-500">
-              <Sentences text="모든 장소를 일정에 넣었어요. 동선 보기로 날짜별 경로를 확인해 보세요." />
-            </p>
+            // 다 넣었다는 걸 회색 글 한 줄로 두면 눈에 띄지 않았다 — 완료 카드 + 다음 할 일(동선 보기) 버튼.
+            <DoneCard
+              title="모든 장소를 일정에 넣었어요"
+              action={
+                <button type="button" onClick={toggleRoute} className="btn-outline btn-sm">
+                  동선 보기
+                </button>
+              }
+            >
+              {emptyDays(edit.dates, edit.schedule.days) > 0 ? `빈 날이 ${emptyDays(edit.dates, edit.schedule.days)}일 있어요` : '날짜별 경로를 확인해 보세요'}
+            </DoneCard>
           ) : (
             <>
               {day ? (
@@ -190,11 +209,11 @@ export default function ShortlistTab() {
               <ShortlistList
                 items={shown}
                 dayLabel={day ? dayOrdinal(edit.dates.indexOf(day)) : ''}
-                onPut={day ? (item) => edit.put([item.pin.id], [item.pin.place_name ?? '이 장소'], day) : undefined}
+                onPut={day ? (item) => putInDay(item.pin.id, item.pin.place_name ?? '이 장소', day) : undefined}
                 onOpen={setOpenPin}
                 onDrop={
                   desktop && scheduleOpen
-                    ? (item, spot) => spot.day !== UNSET_DAY && edit.put([item.pin.id], [item.pin.place_name ?? '이 장소'], spot.day, spot.index)
+                    ? (item, spot) => spot.day !== UNSET_DAY && putInDay(item.pin.id, item.pin.place_name ?? '이 장소', spot.day, spot.index)
                     : undefined
                 }
               />
@@ -207,18 +226,22 @@ export default function ShortlistTab() {
   )
 }
 
+/** 장소를 하나도 넣지 않은 여행 날 수. */
+const emptyDays = (dates: string[], days: Record<string, string[]>) => dates.filter((d) => !days[d]?.length).length
+
 /** 일정 카드에 보이는 날 수. 넘치면 「외 N일」로 줄인다. */
 const DAY_ROWS = 4
 
 /**
- * 「일정 2/3일」 — 여행 날짜 중 장소를 하나라도 넣은 날의 수(#1547). 빈 날이 있을 때만 그린다.
+ * 「일정 2/3일」 — 여행 날짜 중 장소를 하나라도 넣은 날의 수(#1547). 다 채우면 초록 막대와 한 줄만 남는다.
  * 날마다 한 줄 — 빈 날을 누르면 그날이 「넣을 날짜」로 골라진다.
  */
 function ScheduleProgress({ dates, days, onPick }: { dates: string[]; days: Record<string, string[]>; onPick: (day: string) => void }) {
   const count = (d: string) => days[d]?.length ?? 0
-  const filled = dates.filter((d) => count(d) > 0).length
-  const firstEmpty = dates.findIndex((d) => count(d) === 0)
-  if (dates.length === 0 || firstEmpty === -1) return null
+  const filled = dates.length - emptyDays(dates, days)
+  if (dates.length === 0) return null
+  // 다 채우면 막대가 초록이 되고 줄 대신 한 줄로 알린다 — 사라지면 다 채운 것을 알 수 없었다.
+  if (filled === dates.length) return <TaskProgress title="일정" done={filled} total={dates.length} unit="일" items={[]} hint="모든 날에 장소를 넣었어요" />
   const items = dates.slice(0, DAY_ROWS).map((d, i) =>
     count(d) > 0
       ? { key: d, label: `${dayOrdinal(i)} · ${count(d)}곳`, done: true }

@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { MessageCircle } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { usePinsQuery } from '@/features/map/queries'
@@ -27,7 +28,7 @@ type Imp = ReturnType<typeof useLinkImport>
 type Entry = { row: ImportRow; i: number }
 
 /**
- * 카톡 대화에서 핀 가져오기(기획안 5-9, #578, #1046). 「대화 내보내기」 .txt 파일에서 고른 기간의 지도 링크(네이버·카카오·구글)와
+ * 카톡 대화로 핀 찍기(기획안 5-9, #578, #1046). 「대화 내보내기」 .txt 파일에서 고른 기간의 지도 링크(네이버·카카오·구글)와
  * 공유 글의 상호명·주소만 브라우저 안에서 읽고, 대화 원문은 서버로 보내지도 저장하지도 않는다(#1139 — 붙여넣기는 없앴다).
  * 링크마다 4단으로 푼다(#1046): 서버가 찾은 곳 → 같은 주소 후보 확인 → 이름으로 찾은 후보 → 직접 찾기·하나씩 찍기.
  */
@@ -46,8 +47,8 @@ export default function ImportSheet({
   const imp = useLinkImport(mapId, near)
   const hasRows = imp.rows.length > 0
   return (
-    <ModalSheet label="카톡 대화에서 핀 가져오기" onClose={onClose}>
-      <SheetTitle>카톡 대화에서 핀 가져오기</SheetTitle>
+    <ModalSheet label="카톡 대화로 핀 찍기" onClose={onClose}>
+      <SheetTitle>카톡 대화로 핀 찍기</SheetTitle>
       {/* 파일 넣기는 늘 있다 — 다른 대화 파일을 넣으면 아래 목록에 새 링크만 더한다(#1045). */}
       <FileBox onAdd={imp.add} more={hasRows} />
       {hasRows && <ReviewStep imp={imp} onOpenOne={onOpenOne} onSearchName={onSearchName} />}
@@ -455,11 +456,15 @@ function SearchRow({ e, imp, busy, sameAsAbove, onSearchName }: { e: Entry; imp:
   )
 }
 
-/** 마킹 탭 제목 줄의 「카톡 대화에서 가져오기」. 여는 일만 한다 — 시트는 `ImportSheetHost`가 화면 바뀜과 상관없이 한 자리에서 그린다(#1045). */
+/** 마킹 탭 제목 줄의 「카톡 대화로 핀 찍기」. 여는 일만 한다 — 시트는 `ImportSheetHost`가 화면 바뀜과 상관없이 한 자리에서 그린다(#1045). */
 export function ImportButton({ mapId }: { mapId: string }) {
   return (
-    <button type="button" onClick={() => openImport(mapId)} className="btn-link shrink-0 text-sm">
-      카톡 대화에서 가져오기
+    <button type="button" onClick={() => openImport(mapId)} className="btn-link flex shrink-0 items-center gap-1.5 text-sm">
+      {/* 카톡에서 오는 기능임을 글보다 먼저 알아보게 카카오 노랑 말풍선 원을 앞에 둔다. */}
+      <span aria-hidden="true" className="flex size-5 items-center justify-center rounded-full bg-[var(--kakao-yellow)]">
+        <MessageCircle size={12} fill="currentColor" className="text-black/85" />
+      </span>
+      카톡 대화로 핀 찍기
     </button>
   )
 }
