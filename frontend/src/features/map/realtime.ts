@@ -59,10 +59,11 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
     // 분류가 바뀌었을 때만 필요하지만 페이로드에 예전 분류가 없어 늘 다시 받는다.
     // 확정 리스트는 핀을 따로 들고 있어 실시간 핀 승격(#777)으로 이름이 바뀌면 다시 받는다(#786).
     'pin.updated': [counts, readiness, { queryKey: shortlistKeys.list(mapId) }],
-    'pin.deleted': [counts, readiness],
+    // 구성원 줄의 의견 수(#1562)는 지운 핀의 의견을 세지 않는다 — 핀이 지워지고 되살아나고 의견이 바뀌면 다시 받는다.
+    'pin.deleted': [counts, readiness, members],
     // 되살린 핀이 확정이었으면 확정 리스트에 다시 올라간다(#864). 휴지통 목록에서도 빠진다.
-    'pin.restored': [counts, readiness, { queryKey: shortlistKeys.list(mapId) }, { queryKey: pinKeys.trash(mapId) }],
-    'reaction.changed': [counts, readiness],
+    'pin.restored': [counts, readiness, members, { queryKey: shortlistKeys.list(mapId) }, { queryKey: pinKeys.trash(mapId) }],
+    'reaction.changed': [counts, readiness, members],
     'member.joined': [map, members],
     // 누가 나가면 그 사람의 의견이 지워진다.
     'member.left': [pins, counts, map, members, readiness],

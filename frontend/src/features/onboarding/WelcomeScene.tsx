@@ -346,7 +346,7 @@ function InviteScene() {
       {phase === 2 && (
         <>
           <At x={8} y={36} anchor="top-left" className="w-[52%]">
-            <div className="enter-pop rounded-xl rounded-tl-sm bg-[#FEE500] px-2.5 py-1.5 text-label font-semibold text-ink-900 shadow-float">
+            <div className="enter-pop rounded-xl rounded-tl-sm bg-[var(--kakao-yellow)] px-2.5 py-1.5 text-label font-semibold text-ink-900 shadow-float">
               우리 여행 지도 여기!
               <span className="mt-0.5 block truncate font-normal text-ink-700">pingo…/invites/…</span>
             </div>
@@ -457,7 +457,7 @@ function LoginScene() {
       <At x={6} y={34} anchor="top-left" className="w-[56%]">
         <div className="space-y-1.5">
           <span
-            className={`flex h-7 items-center justify-center rounded-lg bg-[#FEE500] text-label font-bold text-ink-900 transition-transform duration-200 motion-reduce:transition-none ${phase === 1 ? 'scale-95' : ''}`}
+            className={`flex h-7 items-center justify-center rounded-lg bg-[var(--kakao-yellow)] text-label font-bold text-ink-900 transition-transform duration-200 motion-reduce:transition-none ${phase === 1 ? 'scale-95' : ''}`}
           >
             카카오로 시작하기
           </span>

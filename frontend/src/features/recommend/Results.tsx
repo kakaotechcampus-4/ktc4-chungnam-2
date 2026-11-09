@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { ExternalLink, RotateCw } from 'lucide-react'
+import { RotateCw } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import RunAdvice from '@/features/agent/RunAdvice'
@@ -15,6 +15,7 @@ import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import Sentences from '@/ui/Sentences'
+import MapAppLinks from '@/ui/MapAppLinks'
 
 import { useAiStore } from './aiStore'
 import { AiChecks, AiFulfillment, AiReason } from './Evidence'
@@ -209,23 +210,8 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
       <AiFulfillment evidence={c} members={members} />
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
-        {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로.
-            장소 페이지가 없으면 서버가 이름+동네 검색 링크를 준다(#798). */}
-        {(c.place_url || c.naver_url) && (
-          <span className="flex flex-wrap justify-end gap-x-3">
-            {c.place_url && (
-              <a href={c.place_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
-                카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
-              </a>
-            )}
-            {/* 네이버 지도 검색 링크(#1513) — 같은 모양으로 바로 뒤에 */}
-            {c.naver_url && (
-              <a href={c.naver_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
-                네이버 지도에서 보기 <ExternalLink size={12} aria-hidden="true" />
-              </a>
-            )}
-          </span>
-        )}
+        {/* 사진, 주소, 영업시간은 원본 장소 페이지에서 본다. 장소 페이지가 없으면 서버가 이름+동네 검색 링크를 준다(#798). */}
+        <MapAppLinks kakao={c.place_url} naver={c.naver_url} variant="inline" />
       </div>
     </article>
   )
