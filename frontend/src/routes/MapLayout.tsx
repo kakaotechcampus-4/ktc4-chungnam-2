@@ -12,6 +12,7 @@ import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { mapTapAction, showMapMenuHintOnce } from '@/features/map/mapTap'
 import { PIN_GROUP_PARAM, usePinGroup, usePinSelection } from '@/features/map/usePinSelection'
 import { authorName, byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
+import MapGestureHelp from '@/features/map/MapGestureHelp'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
@@ -24,7 +25,9 @@ import { boundaryCorners, useRegionBoundary } from '@/features/map/regionGeo'
 import MapSwitcher from '@/features/maps/MapSwitcher'
 import NotificationBell from '@/features/notifications/NotificationBell'
 import { AccountMenu } from '@/features/maps/AccountSheet'
-import { useMapQuery, useMapsQuery } from '@/features/maps/queries'
+import { othersOnline } from '@/features/maps/model'
+import { useMapQuery, useMapsQuery, useMembersQuery } from '@/features/maps/queries'
+import OnlineDot from '@/ui/OnlineDot'
 import { useAiStore } from '@/features/recommend/aiStore'
 import { useRecommendRadiusM, useResultQuery } from '@/features/recommend/queries'
 import { firstMapLink } from '@/features/kakaoImport/share'
@@ -75,6 +78,9 @@ export default function MapLayout() {
   const allPins = useMemo(() => loadedPins ?? [], [loadedPins])
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
+  // 나 말고 지금 이 지도를 열어 둔 사람(#1551) — 구성원 버튼에 접속 점을 단다.
+  const watching = othersOnline(useMembersQuery(mapId).data)
+  const membersLabel = `지도 정보와 구성원 ${memberCount}명${watching > 0 ? `, 지금 ${watching}명이 같이 보는 중` : ''}`
   useLivePinResolver(allPins, mapInfo?.regionCenter, useResolveLivePin(mapId))
   const desktop = useIsDesktop()
   const panelW = useIsPc() ? PANEL_W.pc : PANEL_W.tablet
@@ -128,7 +134,7 @@ export default function MapLayout() {
   // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
   // 받기 전(loadedPins 없음)에 떠나면 적지 않는다 — 빈 모습을 적으면 다음에 모든 핀이 새 핀으로 보인다.
   const { news } = useNewSince(mapId, loadedPins, myId)
-  useSaveSeenOnLeave(mapId, loadedPins, myId)
+  useSaveSeenOnLeave(mapId, myId)
   const freshKey = [...news.keys()].sort().join(',')
   const freshPinIds = useMemo(() => new Set(freshKey ? freshKey.split(',') : []), [freshKey])
   // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
@@ -541,11 +547,12 @@ export default function MapLayout() {
                 trigger={
                   <button
                     type="button"
-                    aria-label={`지도 정보와 구성원 ${memberCount}명`}
+                    aria-label={membersLabel}
                     className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-surface px-2.5 text-sm font-bold text-link press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
                   >
                     <Users size={16} aria-hidden="true" />
                     {memberCount > 0 && memberCount}
+                    {watching > 0 && <OnlineDot />}
                   </button>
                 }
               />
@@ -554,12 +561,13 @@ export default function MapLayout() {
                 <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
-                  aria-label={`지도 정보와 구성원 ${memberCount}명`}
+                  aria-label={membersLabel}
                   onClick={() => openProfile(true)}
                   className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-surface px-2.5 text-sm font-bold text-link shadow-float"
                 >
                   <Users size={16} aria-hidden="true" />
                   {memberCount > 0 && memberCount}
+                  {watching > 0 && <OnlineDot />}
                 </button>
               </div>
             )}
@@ -622,13 +630,19 @@ export default function MapLayout() {
               />
             )}
           </div>
+          {/* 칩 줄 끝 「?」는 지도 쓰는 법(#1613). 칩은 옆으로 밀고 「?」는 오른쪽에 남는다. */}
           {!desktop && chipsShown && (
-            <CategoryChips
-              value={filters.category}
-              onChange={(c) => setFilter('category', c)}
-              floating
-              className={`pointer-events-auto -mx-4 px-4 pb-1 transition-opacity ${fade}`}
-            />
+            <div className={`-ml-4 flex items-center gap-2 transition-opacity ${fade}`}>
+              <CategoryChips
+                value={filters.category}
+                onChange={(c) => setFilter('category', c)}
+                floating
+                className="pointer-events-auto min-w-0 flex-1 pb-1 pl-4"
+              />
+              <span className="-mt-1 shrink-0">
+                <MapGestureHelp />
+              </span>
+            </div>
           )}
         </header>
 
@@ -667,14 +681,20 @@ export default function MapLayout() {
           </div>
           <div className="absolute left-4 right-20 top-3 flex flex-col items-start gap-2">
             {chipsShown && (
-              <CategoryChips
-                value={filters.category}
-                onChange={(c) => setFilter('category', c)}
-                floating
-                // 마우스로는 옆으로 밀기 어렵고 가로 스크롤바가 지도를 가려서, 좁으면 줄을 바꾼다.
-                // 터치(태블릿)는 모바일처럼 옆으로 민다 — 좁은 지도 위에서 칩이 두세 줄로 쌓이지 않게(#603).
-                className={`pointer-events-auto max-w-full pointer-fine:flex-wrap transition-opacity ${fade}`}
-              />
+              <div className={`flex max-w-full items-start gap-2 transition-opacity ${fade}`}>
+                <CategoryChips
+                  value={filters.category}
+                  onChange={(c) => setFilter('category', c)}
+                  floating
+                  // 마우스로는 옆으로 밀기 어렵고 가로 스크롤바가 지도를 가려서, 좁으면 줄을 바꾼다.
+                  // 터치(태블릿)는 모바일처럼 옆으로 민다 — 좁은 지도 위에서 칩이 두세 줄로 쌓이지 않게(#603).
+                  className="pointer-events-auto min-w-0 pointer-fine:flex-wrap"
+                />
+                {/* 지도 쓰는 법(#1613) — 칩 줄 끝. */}
+                <span className="shrink-0 py-1.5">
+                  <MapGestureHelp />
+                </span>
+              </div>
             )}
           </div>
           {/* 연결 끊김은 지도 위쪽 가운데, 칩 줄 아래(#1575) — 왼쪽 위에 두면 칩과 섞여 안 보였다. 좁은 화면에서도 칩과 겹치지 않게 칩 줄 아래다. */}

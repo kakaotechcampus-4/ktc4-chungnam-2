@@ -8,5 +8,6 @@ geoalchemy2==0.15.2
 python-dotenv==1.2.2
 httpx==0.27.2
 pyyaml==6.0.2
+pillow==12.3.0
 openai==3.22.1
 pyproj==3.6.1

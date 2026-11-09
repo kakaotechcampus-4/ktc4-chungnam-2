@@ -17,7 +17,7 @@ type Sheet = 'faq' | 'bug' | 'other' | 'withdraw' | 'logout' | null
 
 /**
  * PC 지도 패널 머리의 ☰와 왼쪽에서 나오는 메뉴(#1538, 카카오맵 왼쪽 메뉴 모양).
- * 위에서부터 워드마크 + ✕ → 아이콘 줄(내 지도로 돌아가기) → 글자 줄(자주 묻는 질문 · 버그 신고하기 · 의견 보내기 · 설정 ⌄) → 선 → 작은 글자(로그아웃).
+ * 위에서부터 워드마크 + ✕ → 아이콘 줄(내 지도 목록) → 글자 줄(자주 묻는 질문 · 버그 신고하기 · 의견 보내기 · 설정 ⌄) → 선 → 작은 글자(로그아웃).
  * 줄을 누르면 메뉴를 닫고 그 창을 연다. 바깥이나 Esc로 닫고, 닫으면 ☰로 초점이 돌아온다(Radix Dialog).
  */
 export default function AppMenu({ mapId }: { mapId: string }) {
@@ -57,7 +57,7 @@ export default function AppMenu({ mapId }: { mapId: string }) {
               <ul>
                 <li>
                   <MenuRow icon={<MapIcon size={20} aria-hidden="true" />} onClick={() => navigate('/')}>
-                    내 지도로 돌아가기
+                    내 지도 목록
                   </MenuRow>
                 </li>
               </ul>
