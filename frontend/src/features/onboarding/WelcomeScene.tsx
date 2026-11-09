@@ -529,7 +529,7 @@ function MapGestureScene({ touch }: { touch: boolean }) {
   // 손(커서·손가락)이 있는 곳과 보일지. 메뉴 단추는 마우스는 누른 자리 오른쪽 아래, 터치는 위 말풍선이다.
   const press: [number, number] = touch ? [mx, my - 13] : [mx + 14, my + 8]
   const grab: [number, number] = [mx, my - 6]
-  const hand: [number, number] = phase <= 2 ? TAP : phase === 5 || phase === 6 ? press : phase === 8 ? grab : phase === 9 ? [TRASH_AT[0], TRASH_AT[1] - 6] : MENU_AT
+  const hand: [number, number] = phase <= 2 ? TAP : phase === 5 || phase === 6 ? press : phase === 8 ? grab : phase === 9 ? [TRASH_AT[0], TRASH_AT[1] - 14] : MENU_AT
   const handShown = (touch ? phase <= 1 || phase === 3 || phase === 4 || phase === 6 : phase <= 6) || phase === 8 || phase === 9
   const labels = POINTER_LABEL[touch ? 'touch' : 'mouse']
   const label = phase === 1 ? labels[0] : phase === 4 ? labels[1] : phase === 8 ? labels[2] : null

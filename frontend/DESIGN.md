@@ -362,7 +362,7 @@ components:
 | 핑고 | `Pingo` (표정 `mood` · 고개 내밀기 `peek`) · 작은 아이콘 자리는 `PingoMark` | `ui/Pingo` |
 | 지도 위 핑고(3D, 끈 방향 8방향으로 걷기·오르내리기, 쉬면 졸기·잠들기, 새 조언 「!」) | `MapPingo` (`heading` · `wave` · `alert` · `idle`, 크기는 className). 쉬는 시간은 `features/agent/useIdleStage` | `ui/MapPingo` |
 | 온보딩 장면(핑고가 기능을 쓰는 모습, 4:3 지도 판) | `WelcomeScene` (`kind` = pin·reaction·ai·shortlist, 자주 묻는 질문 장면, 지도 쓰는 법 `mapMouse`·`mapTouch`) | `features/onboarding/WelcomeScene` |
-| 지도 쓰는 법(지도 위 카테고리 칩 줄 끝 「?」, 모양은 `chip` + `shadow-float` + 아이콘 16, 누르는 곳 44) | `MapGestureHelp` (`MenuPopover` 안에 제목 · 장면 · 「손이 하는 일 — 지도가 하는 일」 두 줄. 마우스(`pointer: fine`)면 클릭·우클릭, 아니면 짧게·길게 누르기 — 첫 안내 토스트와 같은 기준) | `features/map/MapGestureHelp` |
+| 지도 쓰는 법(지도 위 카테고리 칩 줄 끝 「?」, 모양은 `chip` + `shadow-float` + 아이콘 16, 누르는 곳 44) | `MapGestureHelp` (`MenuPopover` 안에 제목 · 장면 · 「손이 하는 일 — 지도가 하는 일」 세 줄(가운데로 옮기기, 핀 찍기, 핀 끌어 지우기 #1012). 마우스(`pointer: fine`)면 클릭·우클릭·눌러서 끌기, 아니면 짧게·길게 누르기·길게 눌러 끌기 — 첫 안내 토스트와 같은 기준) | `features/map/MapGestureHelp` |
 | 여러 장 중 몇 번째(온보딩) | `StepDots` (지금 장 brand-600 길쭉한 점 · 나머지 ink-300, 읽는 글은 「4장 중 2장」) | `ui/StepDots` |
 | 서비스 이름(로고) | `Wordmark` 「pingopingo」 — pin ink-900 + go brand-600(12° 기울임). 높이만 정하고 글자로 다시 쓰지 않는다 | `ui/Wordmark` |
 | 그리다 죽었을 때(흰 화면 대신) | `ErrorBoundary` (`mood="sad"` 안내 + 「다시 열기」 + 「처음으로」, `resetKey`가 바뀌면 비움. 앱 전체와 지도 탭 자리에 있다) | `ui/ErrorBoundary` |
