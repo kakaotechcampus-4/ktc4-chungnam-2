@@ -15,10 +15,30 @@ import { useCoverMutation, useUpdateMapMutation } from './queries'
 
 /** 카드·편집 창 위의 대표 이미지 — 올린 이미지가 있으면 그것, 없으면 지역 기본 그림(#1445). 장식이라 숨긴다. */
 export function MapCover({ map, className = '' }: { map: Pick<MapView, 'region' | 'coverUrl'>; className?: string }) {
-  if (map.coverUrl) {
-    return <img src={apiUrl(map.coverUrl)} alt="" className={`object-cover ${className}`} />
-  }
+  if (map.coverUrl) return <CoverImage key={map.coverUrl} src={apiUrl(map.coverUrl)} className={className} />
   return <RegionCover region={map.region} className={className} />
+}
+
+/**
+ * 올린 사진 — 받기 전에는 회색 면, 받으면 흐릿한 데서 선명해지며 나타난다(#1675, 로딩 패턴 「블러 업」).
+ * 빈 칸이었다가 사진이 툭 나타나던 것을 바꿨다. 작은 미리보기 사진은 서버에 없어서 흐림은 받은 사진에 건다.
+ * 캐시에서 바로 온 사진은 onLoad 전에 이미 다 받았을 수 있어 ref 에서도 본다. 동작 줄이기면 바로 보인다.
+ */
+function CoverImage({ src, className }: { src: string; className: string }) {
+  const [loaded, setLoaded] = useState(false)
+  return (
+    <span className={`overflow-hidden bg-ink-100 ${className}`}>
+      <img
+        src={src}
+        alt=""
+        ref={(el) => {
+          if (el?.complete && el.naturalWidth > 0) setLoaded(true)
+        }}
+        onLoad={() => setLoaded(true)}
+        className={`h-full w-full object-cover transition-[opacity,filter] duration-500 motion-reduce:transition-none ${loaded ? 'opacity-100 blur-0' : 'opacity-0 blur-md'}`}
+      />
+    </span>
+  )
 }
 
 /** 서버가 막은 이유. 크기 상한은 응답의 detail.limit_bytes 로 적는다(화면에 숫자를 두지 않는다). */

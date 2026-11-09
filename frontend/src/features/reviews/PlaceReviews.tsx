@@ -7,6 +7,7 @@ import { useCreditsQuery } from '@/features/credits/queries'
 import { timeAgo, type Pin } from '@/features/map/model'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
+import Skeleton, { Bone } from '@/ui/Skeleton'
 import StarRating from '@/ui/StarRating'
 
 import { authorLabel, flattenPages, summaryText, type ReviewItemDto } from './model'
@@ -28,7 +29,21 @@ export default function PlaceReviews({ pin }: { pin: Pin }) {
   const [asking, setAsking] = useState<{ kind: 'delete' } | { kind: 'report'; item: ReviewItemDto } | null>(null)
   const guest = guestOf(creditBlock(credits.error)) ?? guestOf(creditBlock(report.error))
 
-  if (reviews.isPending) return null
+  // 받는 동안 비워 두면 한꺼번에 나타나며 아래 내용을 민다 — 머리 줄과 후기 한 줄 자리를 먼저 그린다(#1675).
+  if (reviews.isPending) {
+    return (
+      <Skeleton label="후기를 불러오는 중…" className="space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="space-y-1.5">
+            <Bone className="h-4 w-16" />
+            <Bone className="h-6 w-32" />
+          </div>
+          <Bone className="h-8 w-20 rounded-md" />
+        </div>
+        <Bone className="h-16 w-full rounded-xl" />
+      </Skeleton>
+    )
+  }
   // 「더 보기」가 실패해도 받은 쪽은 남긴다 — 처음부터 못 받았을 때만 이 줄 하나다.
   if (!reviews.data) return <ErrorText message="후기를 불러오지 못했어요" error={reviews.error} />
 

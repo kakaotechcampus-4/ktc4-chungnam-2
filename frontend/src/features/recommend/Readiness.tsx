@@ -14,7 +14,6 @@ import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import CoachMark from '@/ui/CoachMark'
-import PingoLoading from '@/ui/PingoLoading'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
 
 import CreditConfirm from '@/features/credits/CreditConfirm'
@@ -25,6 +24,7 @@ import FieldError from '@/ui/FieldError'
 import Mark from '@/ui/Mark'
 import RangeSlider from '@/ui/RangeSlider'
 import Sentences from '@/ui/Sentences'
+import Skeleton, { Bone } from '@/ui/Skeleton'
 
 import { useAiStore } from './aiStore'
 import {
@@ -154,7 +154,7 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
     create.start(asking.category, { onError: asking.fromAgent ? changed : undefined, radiusM: pickedRadius ? radiusM : null })
   }
 
-  if (readiness.isPending) return <PingoLoading label="준비 상태를 확인하는 중…" />
+  if (readiness.isPending) return <ReadinessSkeleton />
   if (readiness.error) return <ErrorText message="추천 준비 상태를 불러오지 못했어요" error={readiness.error} />
 
   return (
@@ -468,5 +468,21 @@ function RunHistory({ mapId }: { mapId: string }) {
         </button>
       )}
     </section>
+  )
+}
+
+/** 준비 상태를 받는 동안 — 카테고리 칸 셋, 찾는 범위 막대, 추천받기 버튼 자리(#1675). 걷는 핑고 대신 나올 모양을 먼저 그린다. */
+function ReadinessSkeleton() {
+  return (
+    <Skeleton label="준비 상태를 확인하는 중…" className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        {[0, 1, 2].map((i) => (
+          <Bone key={i} className="h-[68px] rounded-xl" />
+        ))}
+      </div>
+      <Bone className="h-4 w-16" />
+      <Bone className="h-11 w-full rounded-xl" />
+      <Bone className="h-13 w-full rounded-xl" />
+    </Skeleton>
   )
 }

@@ -141,6 +141,8 @@ export default function ShortlistTab() {
       }
     >
       {shortlist.error && <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />}
+      {/* 받는 동안 본문이 비어 있었다 — 리스트 줄 모양을 먼저 그린다(#1675). */}
+      {shortlist.isPending && <CardSkeleton count={3} label="확정 리스트를 불러오는 중…" />}
       {shortlist.data?.length === 0 && (
         <EmptyState
           title="아직 확정된 장소가 없어요"

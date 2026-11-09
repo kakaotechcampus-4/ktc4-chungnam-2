@@ -1,7 +1,7 @@
 import { ChevronDown } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import PingoLoading from '@/ui/PingoLoading'
+import Skeleton, { Bone } from '@/ui/Skeleton'
 
 import EvidenceGroups from './EvidenceGroups'
 import { visibleConditionCount, type EvidenceLineDto, type RecommendRunDto } from './model'
@@ -64,7 +64,17 @@ export default function ConditionsCard({
       </button>
       {open && (
         <div className="border-t border-ink-100 p-3">
-          {evidence.isPending && <PingoLoading label="조건을 불러오는 중…" />}
+          {/* 묶음 제목 + 칩 줄 모양(#1675). */}
+          {evidence.isPending && (
+            <Skeleton label="조건을 불러오는 중…" className="space-y-2">
+              <Bone className="h-3 w-16" />
+              <div className="flex flex-wrap gap-1.5">
+                {['w-20', 'w-24', 'w-16', 'w-28'].map((w) => (
+                  <Bone key={w} className={`h-8 rounded-full ${w}`} />
+                ))}
+              </div>
+            </Skeleton>
+          )}
           {evidence.error && <ErrorText message="조건을 불러오지 못했어요" error={evidence.error} />}
           {evidence.data && (
             <EvidenceGroups

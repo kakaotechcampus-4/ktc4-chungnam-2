@@ -4,6 +4,7 @@ import { useId } from 'react'
 import { useNavigate } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import Skeleton, { Bone } from '@/ui/Skeleton'
 
 import { MAP_LIMIT_HINT } from './model'
 import { useMapsQuery } from './queries'
@@ -40,7 +41,13 @@ export default function MapSwitcher({ mapId, title }: { mapId: string; title?: s
           className="z-50 max-h-[min(480px,var(--radix-dropdown-menu-content-available-height))] w-[var(--radix-dropdown-menu-trigger-width)] min-w-64 overflow-y-auto rounded-xl border border-ink-200 bg-surface p-1.5 shadow-float"
         >
           <DropdownMenu.Label className="px-2.5 pb-1 pt-1.5 text-xs text-ink-500">내 지도</DropdownMenu.Label>
-          {maps.isPending && <p className="px-2.5 py-2 text-sm text-ink-500">불러오는 중…</p>}
+          {maps.isPending && (
+            <Skeleton label="지도 목록을 불러오는 중…" className="space-y-1 px-2.5 py-2">
+              {[0, 1, 2].map((i) => (
+                <Bone key={i} className="h-9 w-full rounded-lg" />
+              ))}
+            </Skeleton>
+          )}
           {maps.error && (
             <div className="px-2.5 py-2">
               <ErrorText message="지도 목록을 불러오지 못했어요" error={maps.error} />
