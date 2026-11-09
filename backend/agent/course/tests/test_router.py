@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
+from agent.course.constants import STALE_AFTER
 from agent.course.gateways import CourseLlm
 from agent.course.models import AgentCourseRun
 from agent.course.tests.conftest import confirmed_map
@@ -258,9 +259,14 @@ def _minutes_ago(world, minutes):
     return world.now - timedelta(minutes=minutes)
 
 
+# 끊긴 run 판정(STALE_AFTER, #1609)의 양옆. 라우터는 실제 시계를 쓰므로 안쪽은 넉넉히 30초를 둔다
+STALE = STALE_AFTER + timedelta(minutes=1)
+FRESH = STALE_AFTER - timedelta(seconds=30)
+
+
 def test_get_fails_a_running_run_older_than_stale_after(world, places, client):
     map_id, _ = confirmed_map(world, places, 3)
-    run_id = insert_run(world, map_id, status="running", created_at=_minutes_ago(world, 16))
+    run_id = insert_run(world, map_id, status="running", created_at=world.now - STALE)
 
     body = client("u1").get(f"/course-runs/{run_id}").json()
 
@@ -271,7 +277,7 @@ def test_get_fails_a_running_run_older_than_stale_after(world, places, client):
 
 def test_latest_fails_a_running_run_older_than_stale_after(world, places, client):
     map_id, _ = confirmed_map(world, places, 3)
-    run_id = insert_run(world, map_id, status="queued", created_at=_minutes_ago(world, 16))
+    run_id = insert_run(world, map_id, status="queued", created_at=world.now - STALE)
 
     body = client("u1").get(f"/maps/{map_id}/courses/latest").json()
 
@@ -282,7 +288,7 @@ def test_latest_fails_a_running_run_older_than_stale_after(world, places, client
 
 def test_get_keeps_a_running_run_within_stale_after(world, places, client):
     map_id, _ = confirmed_map(world, places, 3)
-    run_id = insert_run(world, map_id, status="running", created_at=_minutes_ago(world, 14))
+    run_id = insert_run(world, map_id, status="running", created_at=world.now - FRESH)
     u1 = client("u1")
 
     assert u1.get(f"/course-runs/{run_id}").json()["status"] == "running"

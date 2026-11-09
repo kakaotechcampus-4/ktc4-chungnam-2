@@ -30,7 +30,7 @@ CLUSTER_THRESHOLD_M = 3_000
 
 # 루프 상한
 MAX_TURNS = 16
-RUN_TIMEOUT_SEC = 180
+RUN_TIMEOUT_SEC = 180              # 한 run의 실행 상한(초). 한 수씩 루프(loop)와 서비스 경로가 같이 쓴다(아래 RUN_LIMIT, #1609)
 MAX_INVALID_TURNS = 2              # 연속으로 쓸 수 없는 턴이 이만큼이면 이후는 기준선이 끝까지 간다
 TOOL_LIMITS: dict[str, int] = {    # run당 도구별 상한. 없는 도구는 상한 없음(턴 상한만)
     "get_opening_hours": 6,
@@ -107,10 +107,14 @@ MEMBER_WALK_MIN, MEMBER_WALK_MAX = 10, 480   # member_constraints.daily_walk_max
 EXCLUDED_OVER_LIMIT = "OVER_LIMIT"
 EXCLUDED_OVER_LIMIT_MESSAGE = f"한 번에 짤 수 있는 {MAX_PLACES}곳을 넘어 동선에서 빠졌어요"
 
-# 서버 시작 때 정리하는 run의 나이(#813). 한 run의 최악 시간은 모델 호출 (목표 1 + 지휘 DIRECT_MAX_TURNS)번 x 호출당 15초
-# (llm/client.py의 타임아웃, 재시도 없음) = 90초에 코드 계산이다. 5분은 그 3배 이상의 여유이고, 요청과 조회가 정리하는
-# STALE_AFTER(15분, service.py)보다 짧다. 이보다 어린 run은 다른 프로세스에서 도는 것일 수 있어 시작 정리가 건드리지 않는다.
-STARTUP_ORPHAN_AFTER = timedelta(minutes=5)
+# 실행 상한과 끊긴 run 판정(#1609). 서비스 경로(runner.run_course, direct.run_direct)는 run의 created_at부터 RUN_LIMIT이 지나면
+# 모델을 더 부르지 않고 코드 규칙(기준선)이 마무리한다(이미 시작한 호출은 끊지 않는다). 그래서 살아 있는 run은 상한에 여유를 더한
+# STALE_AFTER 안에 끝나고, 그보다 오래 진행 중(queued·running)인 run은 어느 프로세스의 것이든 죽은 것이다 — 요청·조회·서버 시작이
+# 모두 이 값 하나로 INTERRUPTED로 끝낸다(service.fail_stale_runs). 여유 1분 = 상한 직전에 시작한 모델 호출 하나(llm/client.py의
+# 타임아웃) + 코드 계산과 저장. 값을 바꾸면 여기에 이유를 남긴다.
+RUN_LIMIT = timedelta(seconds=RUN_TIMEOUT_SEC)
+STALE_MARGIN = timedelta(minutes=1)
+STALE_AFTER = RUN_LIMIT + STALE_MARGIN
 
 # 모델 턴 실패로 보는 예외 — 이 예외면 그 턴은 코드 규칙(기준선)이 대신한다. 목표 루프(loop)와 지휘(direct)가 같은 값을 쓴다(#1475).
 # deps.ModelTurnFailed는 RuntimeError라 여기 든다.

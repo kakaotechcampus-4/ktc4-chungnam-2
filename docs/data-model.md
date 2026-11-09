@@ -589,7 +589,7 @@ index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
 unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
 ```
 
-- 진행 중으로 15분 넘게 남은 run은 `failed(INTERRUPTED)`로 끝낸다. 새 요청과 조회(`GET /course-runs/{runId}`, `GET /maps/{mapId}/courses/latest`)가 같은 판정(`agent.course.service.fail_stale_runs`)을 부른다(#736). 늦게 끝난 계산은 `running`일 때만 저장하므로 끝낸 run을 덮지 않는다. 서버가 시작할 때도 진행 중인 run을 모두 같은 값으로 끝낸다(인스턴스 하나 전제, #168).
+- 실행은 `created_at`부터 실행 상한(`agent/course/constants.py`의 `RUN_LIMIT`) 안에서 끝난다. 상한이 지나면 모델을 더 부르지 않고 코드가 마무리해 `done`으로 저장한다(#1609). 그래서 상한에 여유를 더한 `STALE_AFTER`(같은 파일)보다 오래 진행 중(queued, running)인 run은 어느 프로세스의 것이든 죽은 것이고 `failed(INTERRUPTED)`로 끝낸다. 판정은 `agent.course.service.fail_stale_runs` 한 곳이고, 새 요청과 조회(`GET /course-runs/{runId}`, `GET /maps/{mapId}/courses/latest`, #736)와 서버 시작이 범위만 달리해 부른다. 서버 시작도 같은 값을 쓰므로 서버가 둘 이상이어도 다른 프로세스가 돌리는 run을 끝내지 않는다. 늦게 끝난 계산은 `running`일 때만 저장하므로 끝낸 run을 덮지 않는다.
 - 영업시간 칸이 places에 아직 없어(#580 6번) 지금은 모든 장소가 「확인 필요」(`checks`)다.
 
 ---

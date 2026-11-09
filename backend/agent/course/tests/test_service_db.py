@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 
 from agent.course import api as course_api, service
 from agent.course.api_schemas import CourseRequest
-from agent.course.constants import MAX_PLACES, STARTUP_ORPHAN_AFTER
+from agent.course.constants import MAX_PLACES, RUN_LIMIT, STALE_AFTER
 from agent.course.gateways import CourseLlm, NullOpeningHours
 from agent.course.models import AgentCourseRun
 from agent.course.tests.conftest import confirmed_map
@@ -122,7 +122,7 @@ def test_in_progress_blocks_and_other_user_is_independent(world, places):
 
 def test_stale_active_run_is_failed_instead_of_blocking_forever(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    old = request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+    old = request(world, map_id, now=world.now - STALE_AFTER - timedelta(minutes=1))
 
     new = request(world, map_id)
 
@@ -191,7 +191,7 @@ def test_interrupted_run_is_refunded_once(world, places):
     """INTERRUPTED로 끝난 run의 크레딧이 돌아온다. 두 번 끝내도(요청, 조회, 서버 시작) 한 번만(명세 12절 15)."""
     map_id, _ = confirmed_map(world, places, 3)
     before = balance(world)
-    old = request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+    old = request(world, map_id, now=world.now - STALE_AFTER - timedelta(minutes=1))
     assert balance(world) == before - 1
 
     with world.factory() as db:
@@ -208,7 +208,7 @@ def test_interrupted_run_is_refunded_once(world, places):
 
 def test_startup_interrupt_refunds_each_run(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    old_age = world.now - STARTUP_ORPHAN_AFTER - timedelta(minutes=1)
+    old_age = world.now - STALE_AFTER - timedelta(minutes=1)
     before = {u: balance(world, u) for u in ("u1", "u2")}
     for u in ("u1", "u2"):
         request(world, map_id, user=u, now=old_age)
@@ -221,11 +221,65 @@ def test_startup_interrupt_refunds_each_run(world, places):
 def test_stale_run_on_new_request_is_refunded_and_new_one_charged(world, places):
     map_id, _ = confirmed_map(world, places, 3)
     before = balance(world)
-    request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+    request(world, map_id, now=world.now - STALE_AFTER - timedelta(minutes=1))
 
     request(world, map_id)                          # 오래된 run을 끝내며 돌려주고, 새 run에 1을 뺀다
 
     assert balance(world) == before - 1
+
+
+# 끊긴 run을 끝내는 세 길(#1609) — 요청(지도+사람), 조회(run id, latest의 지도+사람), 서버 시작(전체). 판정은 STALE_AFTER 하나다
+STALE_PATHS = ("request", "lookup", "startup")
+
+
+def clean_up(world, map_id, job, path) -> None:
+    """router와 main.py가 부르는 그대로. 요청 길은 새 run을 요청한다(진행 중이 남아 있으면 COURSE_IN_PROGRESS)."""
+    if path == "request":
+        request(world, map_id)
+    elif path == "lookup":
+        with world.factory() as db:
+            service.fail_stale_runs(db, run_id=uuid.UUID(job.run_id), now=world.now)                  # GET /course-runs/{runId}
+            service.fail_stale_runs(db, map_id=map_id, requested_by=world.uid("u1"), now=world.now)   # GET /maps/{mapId}/courses/latest
+            db.commit()
+    else:
+        service.interrupt_unfinished_runs(world.factory, now=world.now)
+
+
+@pytest.mark.parametrize("path", STALE_PATHS)
+def test_run_past_stale_after_is_interrupted_on_every_path_and_refunded_once(world, places, path):
+    map_id, _ = confirmed_map(world, places, 3)
+    before = balance(world)
+    old = request(world, map_id, now=world.now - STALE_AFTER - timedelta(seconds=1))
+
+    clean_up(world, map_id, old, path)
+    for again in ("lookup", "startup"):            # 다른 길이 다시 끝내려 해도 이미 끝난 run이라 환불이 늘지 않는다
+        clean_up(world, map_id, old, again)
+
+    r = row(world, old.run_id)
+    assert (r.status, r.failure_code) == ("failed", "INTERRUPTED")
+    assert balance(world) == before - (1 if path == "request" else 0)      # 요청 길은 새 run에 1을 쓴다
+
+
+@pytest.mark.parametrize("path", STALE_PATHS)
+def test_run_inside_stale_after_is_left_alone_on_every_path(world, places, path):
+    """상한은 지났어도 여유 안이면 상한 직전에 시작한 모델 호출을 마무리하는 중일 수 있다 — 어느 길도 끝내지 않는다."""
+    map_id, _ = confirmed_map(world, places, 3)
+    before = balance(world)
+    job = request(world, map_id, now=world.now - STALE_AFTER + timedelta(seconds=5))
+
+    if path == "request":
+        with pytest.raises(AppError) as e:
+            clean_up(world, map_id, job, path)
+        assert code_of(e) == "COURSE_IN_PROGRESS"
+    else:
+        clean_up(world, map_id, job, path)
+
+    assert row(world, job.run_id).status == "queued" and balance(world) == before - 1
+
+
+def test_stale_after_is_the_run_limit_plus_a_margin():
+    """끊긴 run 판정은 실행 상한에서 나온다 — 상한을 바꾸면 판정도 따라간다(#1609)."""
+    assert RUN_LIMIT < STALE_AFTER <= RUN_LIMIT * 2
 
 
 def test_member_constraint_day_outside_trip_is_422(world, places):
@@ -267,6 +321,24 @@ def test_execute_run_saves_the_view_and_marks_done(world, places):
     assert placed == sorted(pin_ids[:4])
     assert [e["pin_id"] for e in r.excluded] == [pin_ids[4]] and len(r.checks) == 4
     assert r.steps[0]["stage"] == "이해"
+
+
+def test_execute_run_past_the_limit_skips_the_model_and_saves_done(world, places):
+    """큐에서 기다리다 실행 상한이 지난 run — 기준 시각은 created_at이다(판정과 같은 기준). 모델을 부르지 않고 코드 규칙이 마무리해
+    done으로 저장하고, 작업 기록에 상한 단계를 남긴다(#1609)."""
+    map_id, _ = confirmed_map(world, places, 4)
+    job = request(world, map_id, body=CourseRequest(request_text=TEXT), now=world.now - RUN_LIMIT - timedelta(seconds=1))
+    calls = []
+
+    def spy(i):
+        calls.append(i)
+        raise AssertionError("상한이 지난 run은 모델을 부르지 않는다")
+
+    service.execute_run(job, session_factory=world.factory, llm=CourseLlm(spy, spy), gateway=NullOpeningHours())
+
+    r = row(world, job.run_id)
+    assert calls == [] and r.status == "done" and r.failure_code is None and r.model_turns == 0
+    assert r.unmatched == [TEXT] and any(s["text"].startswith("실행 시간 상한이 되어") for s in r.steps)
 
 
 def test_model_calls_carry_the_requester_usage_label(world, places):
@@ -359,7 +431,7 @@ def test_engine_error_refunds_the_credit_once(world, places):
     """ENGINE_ERROR로 끝난 run의 크레딧이 돌아온다. 뒤이은 정리가 다시 끝내려 해도 한 번만(명세 12절 15)."""
     map_id, _ = confirmed_map(world, places, 3)
     before = balance(world)
-    job = request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+    job = request(world, map_id, now=world.now - STALE_AFTER - timedelta(minutes=1))
 
     class Boom:
         def get_opening_hours(self, place_ids):
@@ -387,7 +459,7 @@ def test_done_run_keeps_the_charge(world, places):
 
 def test_execute_skips_a_run_that_is_no_longer_queued(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    job = request(world, map_id, now=world.now - STARTUP_ORPHAN_AFTER - timedelta(minutes=1))
+    job = request(world, map_id, now=world.now - STALE_AFTER - timedelta(minutes=1))
     assert service.interrupt_unfinished_runs(world.factory, now=world.now) >= 1
 
     service.execute_run(job, session_factory=world.factory, llm=NO_MODEL, gateway=NullOpeningHours())
@@ -398,7 +470,7 @@ def test_execute_skips_a_run_that_is_no_longer_queued(world, places):
 
 def test_late_finishing_run_does_not_overwrite_an_interrupted_one(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    job = request(world, map_id, now=world.now - service.STALE_AFTER - timedelta(minutes=1))
+    job = request(world, map_id, now=world.now - STALE_AFTER - timedelta(minutes=1))
     class InterruptedMidRun:
         def get_opening_hours(self, place_ids):         # 계산 도중 조회가 오래된 run을 끝낸다
             with world.factory() as db:
@@ -414,10 +486,10 @@ def test_late_finishing_run_does_not_overwrite_an_interrupted_one(world, places)
 
 def test_startup_interrupts_only_old_active_runs(world, places):
     map_id, _ = confirmed_map(world, places, 3)
-    old_age = world.now - STARTUP_ORPHAN_AFTER - timedelta(minutes=1)
+    old_age = world.now - STALE_AFTER - timedelta(minutes=1)
     old_queued = request(world, map_id, now=old_age)
     old_running = request(world, map_id, user="u2", now=old_age)
-    recent_running = request(world, map_id, user="u3", now=world.now - timedelta(seconds=30))
+    recent_running = request(world, map_id, user="u3", now=world.now - timedelta(minutes=1))    # 1분 된 run(#1609)
     with world.factory() as db:
         for job in (old_running, recent_running):
             db.get(AgentCourseRun, uuid.UUID(job.run_id)).status = "running"
@@ -431,7 +503,7 @@ def test_startup_interrupts_only_old_active_runs(world, places):
     for job in (old_queued, old_running):
         r = row(world, job.run_id)
         assert (r.status, r.failure_code) == ("failed", "INTERRUPTED") and r.finished_at is not None
-    assert row(world, recent_running.run_id).status == "running"      # 다른 프로세스에서 도는 run은 둔다
+    assert row(world, recent_running.run_id).status == "running"      # STALE_AFTER 안의 run은 다른 프로세스에서 도는 것일 수 있어 둔다
     with world.factory() as db:
         assert db.execute(select(AgentCourseRun).where(AgentCourseRun.status == "done")).scalars().one().outcome == "solved"
 

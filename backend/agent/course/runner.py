@@ -8,12 +8,15 @@ DB를 모른다. 모델 자리는 planner로 주입한다(llm.api의 fixed/real 
   부르지 않는다(목표 0개 → 지휘 루프도 모델 없이 한 번 최적화). 목표 세우기가 실패하면 요청 전체가 "반영하지 못했어요"로 남고 코스는
   기본 목표로 짠다.
 - 영업시간은 `OpeningHoursGateway`로 읽는다. 시작 스냅샷도 같은 게이트웨이에서 만든다(`start_hours`).
+- 실행 상한(#1609): 서비스는 run의 created_at을 기준 시각으로 넘긴다. 목표 세우기와 지휘 턴 앞에서 `direct.past_limit`을 보고, 지났으면
+  모델을 더 부르지 않고 코드 규칙이 마무리한다. 작업 기록에 그 단계를 남기고 결과(outcome)에 timed_out을 반영한다.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from dataclasses import replace
@@ -66,11 +69,14 @@ def run_course(
     direct_planner: Optional[Callable[[Mapping[str, Any]], Any]],
     gateway: OpeningHoursGateway, on_step: Optional[OnStepRecord] = None,
     map_items: Sequence[goals_mod.SummaryItem] = (),
+    started_at: Optional[datetime] = None, clock: direct.Clock = direct.utc_now,
 ) -> Computation:
     """build.trip이 있어야 한다(too_few면 호출하지 않는다). 모델 호출 실패는 던지지 않는다 — 기준선이 대신한다.
 
     on_step(record)는 작업 기록 단계(`worklog.StepRecord`)가 생길 때마다 순서대로 부른다: 목표 세우기 뒤의 "이해", 확인 문장, 지휘 턴마다의
-    생각·도구 결과·검증 줄·기본값 답, 마지막 "결과". 콜백이 던져도 계산은 계속한다(진행 표시는 부가 기능이다)."""
+    생각·도구 결과·검증 줄·기본값 답, 마지막 "결과". 콜백이 던져도 계산은 계속한다(진행 표시는 부가 기능이다).
+
+    started_at은 실행 상한의 기준 시각(run의 created_at)이고 clock은 지금 시각이다(테스트가 주입한다). 없으면 상한이 없다."""
     trip = build.trip
     assert trip is not None
     text = request_text.strip()[:REQUEST_TEXT_MAX_CHARS]
@@ -81,9 +87,13 @@ def run_course(
     unmatched: tuple[str, ...] = ()
     understood_by = worklog.MODEL
     goals_failure: Optional[str] = None
+    goals_timed_out = False
     if text or (setter is not None and candidates):
         if setter is None:                       # 목표를 세울 모델 자리가 없다 — 요청 전체를 반영하지 못했다고 밝힌다
             unmatched, understood_by = _whole(text), "코드(목표 세우기 없음)"
+        elif direct.past_limit(started_at, clock):     # 실행 상한이 이미 지났다(큐 대기 등) — 부르지 않고 기본 목표로 짠다(#1609)
+            unmatched, understood_by = (_whole(text) if text else ()), "코드(실행 상한)"
+            goals_failure, goals_timed_out = direct.DEADLINE, True
         else:
             try:
                 verified = goals_mod.verify_goal_set(trip, text, setter(goals_mod.goals_input(trip, text, candidates)), candidates)
@@ -117,7 +127,11 @@ def run_course(
         assert build.schedule is not None
         judge = review_mod.judge_input(review_mod.review(trip, build.schedule, state.hours, state.goals))
     result = direct.run_direct(state, decide=decider, hours=gateway, unmatched_count=len(unmatched),
-                              on_step=on_direct_step, review_input=judge.payload if judge else None)
+                              on_step=on_direct_step, review_input=judge.payload if judge else None,
+                              started_at=started_at, clock=clock)
+    if goals_timed_out and not result.timed_out:     # 목표 세우기에서 상한이 지났다 — 지휘는 목표가 없어 모델을 부르지 않았어도 상한으로 끝난 run이다
+        result = replace(result, timed_out=True, outcome=core.outcome(
+            result.violations, timed_out=True, checks=len(core.find_checks(trip, result.course, result.state.hours))))
     reviewed = None
     unassigned: tuple[str, ...] = ()
     if mode == "review":       # 다 넣은 일정 — 사람이 정한 그대로(그날 순서까지) 점검한다. 일정과 locks는 바꾸지 않고 안은 제안일 뿐이다
@@ -127,7 +141,7 @@ def run_course(
         result = replace(
             result, course=build.schedule, violations=violations,
             goal_results=goals_mod.evaluate_all(trip, build.schedule, result.state.goals),
-            outcome=core.outcome(violations, timed_out=False, checks=len(core.find_checks(trip, build.schedule, hours))),
+            outcome=core.outcome(violations, timed_out=result.timed_out, checks=len(core.find_checks(trip, build.schedule, hours))),
         )
         order, worth = review_mod.hooks_of(judge, result.judgment) if judge and result.judgment else (None, None)    # 판단이 없으면 코드 기본(입력 순서, 모두 고침)
         reviewed = review_mod.review(trip, build.schedule, hours, result.state.goals, order=order, worth=worth)

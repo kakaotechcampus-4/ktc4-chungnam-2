@@ -3,9 +3,10 @@
 영업시간 게이트웨이는 서비스와 같은 NullOpeningHours(전부 모름)다 — 모든 장소가 「확인 필요」로 남고 위반으로 세지 않는다.
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from agent.course import core
+from agent.course.constants import RUN_LIMIT
 from agent.course.gateways import CourseLlm, NullOpeningHours, get_course_llm
 from agent.course.intake import PinInput, build_trip
 from agent.course.result import violation_text
@@ -144,6 +145,33 @@ class TestRunWithRequest:
         out = run_course(b, "", goals_planner=None, direct_planner=None, gateway=NullOpeningHours())
         assert any(v["kind"] == "member" and "구성원 조건 10분" in v["text"] for v in out.view.violations)
         assert out.view.outcome == "unresolved"
+
+
+class TestRunLimit:
+    """실행 상한(#1609)의 목표 세우기 쪽. 지휘 턴 쪽은 test_optimize_direct.TestRunLimit."""
+    T0 = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+
+    def test_past_the_limit_goal_setting_is_skipped_and_the_run_still_finishes(self):
+        calls = []
+
+        def spy(i):
+            calls.append(i)
+            return goals_planner(i)
+
+        out = run_course(build(), TEXT, goals_planner=spy, direct_planner=direct_planner(), gateway=NullOpeningHours(),
+                         started_at=self.T0, clock=lambda: self.T0 + RUN_LIMIT)
+        v = out.view
+        assert calls == [] and out.model_turns == 0
+        assert v.goals == [] and v.unmatched == [TEXT] and v.outcome == "solved_with_checks"
+        assert (v.steps[0]["by"], v.steps[0]["by_detail"]) == ("code", "코드(실행 상한)")
+        assert v.steps[1]["text"].startswith("실행 시간 상한이 되어 목표를 세우지 못했어요.")
+        assert v.steps[-1]["stage"] == "결과"
+
+    def test_inside_the_limit_both_models_are_called(self):
+        out = run_course(build(), TEXT, goals_planner=goals_planner, direct_planner=direct_planner(), gateway=NullOpeningHours(),
+                         started_at=self.T0, clock=lambda: self.T0 + RUN_LIMIT - timedelta(seconds=1))
+        assert out.model_turns == 2 and [g["id"] for g in out.view.goals] == ["day_indoor:d2"]
+        assert not any("실행 시간 상한" in s["text"] for s in out.view.steps)
 
 
 class TestViewTexts:
