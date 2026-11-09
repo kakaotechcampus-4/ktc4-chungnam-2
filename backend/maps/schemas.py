@@ -179,6 +179,9 @@ class InviteSummary(BaseModel):
     expires_at: datetime
     # 요청한 사람(로그인 세션, 게스트 포함)이 이미 이 지도 구성원일 때만 그 지도 id(#1563). 그 밖에는 키 자체를 주지 않는다.
     already_member_map_id: str | None = None
+    # 카드 그림(#1625) — 올린 대표 이미지가 있으면 토큰으로 여는 주소, 없으면 화면이 region으로 지역 그림을 그린다.
+    region: MapRegion | None = None
+    cover_url: str | None = None
 
 
 class Member(BaseModel):
