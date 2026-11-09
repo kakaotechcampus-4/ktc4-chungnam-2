@@ -4,11 +4,13 @@ import { useSearchParams } from 'react-router'
 import ErrorText from '@/ErrorText'
 import { useMeQuery } from '@/features/auth/queries'
 import CardSkeleton from '@/ui/CardSkeleton'
+import ProgressBar from '@/ui/ProgressBar'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
+import TaskProgress from '@/ui/TaskProgress'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
-import { filterPins } from '@/features/map/model'
+import { filterPins, type Pin } from '@/features/map/model'
 import ReactionHelp from '@/features/map/ReactionHelp'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
 import NewSinceBanner from '@/features/map/NewSinceBanner'
@@ -135,15 +137,19 @@ export default function MapTab() {
           {stage === 3 && !desktop && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
           {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
           <div className="mt-2 flex items-center gap-1">
-            <p className="text-xs text-ink-500">
-              {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
-              {counts && counts.members_total > 0 && (
-                <span className="font-bold text-ink-600">, {counts.members_total}명 중 {counts.members_with_opinion}명이 의견을 남겼어요</span>
-              )}
-            </p>
+            <p className="text-xs text-ink-500">{isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}</p>
             {/* 목록 줄의 ♥·반대·? 표시가 무엇인지(#1030). */}
             {pins && pins.length > 0 && <ReactionHelp />}
           </div>
+          {/* 지도 전체 참여율 — 글로만 적던 비율을 막대로도 보인다(#1539). */}
+          {counts && counts.members_total > 0 && (
+            <ProgressBar
+              label={`${counts.members_total}명 중 ${counts.members_with_opinion}명이 의견을 남겼어요`}
+              value={counts.members_with_opinion}
+              max={counts.members_total}
+              className="mt-2"
+            />
+          )}
         </>
       }
     >
@@ -169,6 +175,7 @@ export default function MapTab() {
           onDismiss={newSince.dismiss}
         />
       )}
+      {pins && filters.opinion !== 'none' && <MyOpinionProgress pins={pins} onOpen={selectPin} onShowLeft={() => setFilter('opinion', 'none')} />}
       {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} />}
     </TabSheet>
   )
@@ -188,5 +195,43 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
     >
       {what} 핀은 아직 없어요
     </EmptyState>
+  )
+}
+
+/** 할 일 카드에 보이는 줄 수. 남은 곳이 더 있으면 「남은 N곳 모두 보기」로 필터를 연다. */
+const TASK_ROWS = 3
+
+/**
+ * 「내 의견 2/3곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547). 남은 곳이 있을 때만 그린다.
+ * 확정된 핀은 의견을 안 남겨도 할 일로 보지 않는다(목록 카드의 「의견 남기기」와 같은 기준).
+ * 줄은 끝낸 곳 하나(있으면)와 남은 곳 — 남은 곳을 누르면 그 핀이 열린다.
+ */
+export function MyOpinionProgress({ pins, onOpen, onShowLeft }: { pins: Pin[]; onOpen: (pinId: string) => void; onShowLeft: () => void }) {
+  const open = pins.filter((p) => p.kind !== '확정')
+  const doneList = open.filter((p) => p.my_reaction)
+  const leftList = open.filter((p) => !p.my_reaction)
+  if (leftList.length === 0) return null
+  const name = (p: Pin) => p.place_name ?? '이름 없는 장소'
+  const shownDone = doneList.slice(0, 1).map((p) => ({ key: p.id, label: name(p), done: true }))
+  const shownLeft = leftList.slice(0, TASK_ROWS - shownDone.length).map((p) => ({ key: p.id, label: name(p), done: false, onClick: () => onOpen(p.id) }))
+  const hidden = leftList.length - shownLeft.length
+  return (
+    <div className="mb-3">
+      <TaskProgress
+        title="내 의견"
+        done={doneList.length}
+        total={open.length}
+        unit="곳"
+        items={[...shownDone, ...shownLeft]}
+        hint={`남은 ${leftList.length}곳에 의견을 남기면 AI 추천이 더 정확해져요`}
+        more={
+          hidden > 0 && (
+            <button type="button" onClick={onShowLeft} className="btn-link shrink-0 text-sm">
+              남은 {leftList.length}곳 모두 보기
+            </button>
+          )
+        }
+      />
+    </div>
   )
 }

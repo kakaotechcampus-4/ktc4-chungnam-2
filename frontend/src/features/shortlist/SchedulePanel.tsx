@@ -4,6 +4,7 @@ import ErrorText from '@/ErrorText'
 import { dayTitle } from '@/features/course/model'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import SidePanel from '@/features/shell/SidePanel'
+import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import Sentences from '@/ui/Sentences'
 
@@ -49,7 +50,7 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
         </button>
       </div>
     )
-  if (!edit.ready) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  if (!edit.ready) return <CardSkeleton count={2} label="불러오는 중…" />
   if (edit.dates.length === 0) return <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
   const items = shortlist.data ?? []
   if (items.length === 0) {

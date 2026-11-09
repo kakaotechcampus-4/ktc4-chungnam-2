@@ -14,11 +14,13 @@ import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Mark from '@/ui/Mark'
+import ProgressBar from '@/ui/ProgressBar'
 import FieldError from '@/ui/FieldError'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import Sentences from '@/ui/Sentences'
+import PeopleProof from '@/ui/PeopleProof'
 
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
@@ -277,9 +279,7 @@ export function PinDetailBody({
         {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}
         {/* 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자로 꼭 적는다(colors.md 3절 한계). */}
         {memberCount > 0 && (
-          <p className="text-xs font-bold text-ink-600">
-            {participants(pin)}/{memberCount}명이 의견을 남겼어요
-          </p>
+          <PinParticipants pin={pin} memberCount={memberCount} names={reactions.data?.map((r) => members.find((m) => m.userId === r.user_id)?.name ?? r.display_name ?? '구성원')} />
         )}
         <div className="flex flex-wrap items-center gap-3 border-y border-ink-200 py-2 text-body">
           {TYPES.map((t) => (
@@ -597,4 +597,13 @@ function MyOpinion({
       </button>
     </section>
   )
+}
+
+/**
+ * 이 핀에 의견을 남긴 사람 — 누가 남겼는지 얼굴로(#1547, 사회적 증거). 의견 목록을 받기 전에는 막대로 비율만 보인다.
+ * 색만으로는 1/4와 2/4가 잘 안 갈려서 숫자는 글로 꼭 적는다(colors.md 3절 한계).
+ */
+function PinParticipants({ pin, memberCount, names }: { pin: Pin; memberCount: number; names?: string[] }) {
+  if (names) return <PeopleProof names={names} total={memberCount} verb="이 의견을 남겼어요" />
+  return <ProgressBar label={`${participants(pin)}/${memberCount}명이 의견을 남겼어요`} value={participants(pin)} max={memberCount} className="pb-1" />
 }

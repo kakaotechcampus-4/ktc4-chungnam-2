@@ -4,6 +4,7 @@ import ErrorText from '@/ErrorText'
 import { dayOrdinal, dayTitle } from '@/features/course/model'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { isPlaced } from '@/features/map/model'
+import CardSkeleton from '@/ui/CardSkeleton'
 import { Calendar } from '@/ui/DatePicker'
 import Sentences from '@/ui/Sentences'
 
@@ -36,7 +37,7 @@ export default function DayRoute({ mapId, onOpen }: { mapId: string; onOpen: (pi
         </button>
       </div>
     )
-  if (!edit.ready) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  if (!edit.ready) return <CardSkeleton count={2} label="불러오는 중…" />
   const day = routeDay(edit.schedule, edit.dates, chosen)
   if (!day) return <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
 

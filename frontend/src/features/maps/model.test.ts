@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ApiError } from '@/api'
 
-import { inviteProblem, mapChanges, toInviteRowView, tripDateError, tripEndMax, tripReady, tripTooLongError } from './model'
+import { inviteProblem, mapChanges, titleServerError, toInviteRowView, tripDateError, tripEndMax, tripReady, tripTitleError, tripTooLongError } from './model'
 
 const before = { title: '부산 1박 2일', startDate: '2026-11-01', endDate: '2026-11-02', region: { label: '부산', lat: 35.1, lng: 129.0 } }
 const draft = { ...before, region: before.region as typeof before.region | null }
@@ -57,5 +57,21 @@ describe('여행 기간 상한(#1371) — 상한 일수는 서버 값', () => {
   it('서버가 막으면(422 TRIP_TOO_LONG) detail.limit 으로 같은 문구', () => {
     expect(tripTooLongError(new ApiError(422, { code: 'TRIP_TOO_LONG', message: '', detail: { limit: 7 } }))).toBe('여행 기간은 최대 7일까지 정할 수 있어요')
     expect(tripTooLongError(new ApiError(409, { code: 'MAP_LIMIT', message: '' }))).toBeNull()
+  })
+})
+
+describe('제목 칸의 잘못(#1536)', () => {
+  it('처음부터 빈 칸은 알리지 않고, 지웠거나 띄어쓰기만 남기면 이유를 적는다', () => {
+    expect(tripTitleError('', false)).toBeNull()
+    expect(tripTitleError('', true)).toBe('여행 제목을 적어 주세요')
+    expect(tripTitleError('   ', true)).toBe('띄어쓰기만으로는 제목을 만들 수 없어요')
+    expect(tripTitleError(' 부산 ', true)).toBeNull()
+  })
+
+  it('서버가 제목 때문에 거절했을 때만 제목 칸 아래 이유가 된다', () => {
+    const invalid = (loc: string[]) => new ApiError(422, { code: 'VALIDATION_ERROR', message: '', detail: { errors: [{ loc, msg: '', type: '' }] } })
+    expect(titleServerError(invalid(['body', 'title']))).toBe('이 제목은 쓸 수 없어요. 글자를 바꿔 다시 적어 주세요')
+    expect(titleServerError(invalid(['body', 'start_date']))).toBeNull()
+    expect(titleServerError(new ApiError(409, { code: 'MAP_LIMIT', message: '' }))).toBeNull()
   })
 })

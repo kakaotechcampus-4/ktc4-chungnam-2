@@ -7,6 +7,7 @@ import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
 import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import { useMeQuery } from '@/features/auth/queries'
 import FeedbackSheet from '@/features/feedback/FeedbackSheet'
+import FaqSheet from '@/features/help/FaqSheet'
 import PinTrashSheet from '@/features/map/PinTrashSheet'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import InviteLinks from '@/features/maps/InviteLinks'
@@ -19,7 +20,7 @@ import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 import { useSheetStore } from './sheetStore'
 
-type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | 'trash' | null
+type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | 'bug' | 'faq' | 'trash' | null
 
 /**
  * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
@@ -51,7 +52,8 @@ export function ProfileMenu({ mapId, trigger }: { mapId: string; trigger: ReactN
       holdOpen={confirm !== null}
       overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}
     >
-      <ProfileBody mapId={mapId} onConfirm={setConfirm} />
+      {/* 넓은 화면의 계정은 지도 오른쪽 위 계정 원과 ☰ 메뉴에 있다(#1538). */}
+      <ProfileBody mapId={mapId} onConfirm={setConfirm} account={false} />
     </MenuPopover>
   )
 }
@@ -66,12 +68,14 @@ function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Conf
   if (which === 'name') return <EditNameDialog onCancel={onCancel} />
   if (which === 'owner' && members) return <TransferOwnerConfirm mapId={mapId} members={members} onCancel={onCancel} />
   if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
+  if (which === 'bug') return <FeedbackSheet mapId={mapId} initialCategory="bug" onClose={onCancel} />
+  if (which === 'faq') return <FaqSheet onClose={onCancel} />
   if (which === 'trash') return <PinTrashSheet mapId={mapId} onClose={onCancel} />
   return null
 }
 
-/** 지도 정보 시트·메뉴 공통 내용 — 초대 링크, 구성원, 핀 휴지통, 나가기·삭제, 계정. */
-function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
+/** 지도 정보 시트·메뉴 공통 내용 — 초대 링크, 구성원, 핀 휴지통, 나가기·삭제, 계정(`account`, 휴대폰만). */
+function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onConfirm: (which: Confirm) => void; account?: boolean }) {
   const map = useMapQuery(mapId)
   const members = useMembersQuery(mapId)
   const { url, token, status: inviteStatus, error: inviteError, retry: retryInvite, copied, copy, share } = useShareInvite(mapId)
@@ -179,29 +183,48 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
         </div>
       )}
 
-      <div className="mt-4 flex items-center justify-between border-t border-ink-200 pt-4">
-        <div>
-          <p className="text-sm font-bold text-ink-900">계정</p>
-          <p className="text-xs text-ink-500">
-            {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
-            {me.data?.display_name}{' '}
-            <button type="button" onClick={() => onConfirm('name')} className="btn-link">
-              이름 바꾸기
+      {account && (
+        <>
+          <div className="mt-4 flex items-center justify-between border-t border-ink-200 pt-4">
+            <div>
+              <p className="text-sm font-bold text-ink-900">계정</p>
+              <p className="text-xs text-ink-500">
+                {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
+                {me.data?.display_name}{' '}
+                <button type="button" onClick={() => onConfirm('name')} className="btn-link">
+                  이름 바꾸기
+                </button>
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onConfirm('logout')}
+              className="btn-neutral btn-sm"
+            >
+              로그아웃
             </button>
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => onConfirm('logout')}
-          className="btn-neutral btn-sm"
-        >
-          로그아웃
-        </button>
-      </div>
-      {me.data?.is_guest && <div className="mt-3"><GuestAccountNotice /></div>}
-      <button type="button" onClick={() => onConfirm('feedback')} className="btn-text mt-3 w-full text-center text-body">
-        핑고핑고에 의견 보내기
-      </button>
+          </div>
+          {me.data?.is_guest && <div className="mt-3"><GuestAccountNotice /></div>}
+          <HelpLinks onPick={onConfirm} />
+        </>
+      )}
     </>
+  )
+}
+
+/** 계정 칸 아래 도움 줄(휴대폰) — 자주 묻는 질문 · 버그 신고하기 · 의견 보내기. 넓은 화면은 ☰ 메뉴에 있다(#1538). */
+export function HelpLinks({ onPick }: { onPick: (which: 'faq' | 'bug' | 'feedback') => void }) {
+  return (
+    <div className="mt-3 flex justify-center gap-4">
+      <button type="button" onClick={() => onPick('faq')} className="btn-text text-body">
+        자주 묻는 질문
+      </button>
+      <button type="button" onClick={() => onPick('bug')} className="btn-text text-body">
+        버그 신고하기
+      </button>
+      <button type="button" onClick={() => onPick('feedback')} className="btn-text text-body">
+        의견 보내기
+      </button>
+    </div>
   )
 }

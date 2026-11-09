@@ -92,6 +92,22 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1']))
   })
 
+  it('일정 진행 막대 — 장소를 넣은 날 수와 가장 앞의 빈 날을 알린다(#1547)', async () => {
+    renderTab()
+    const bar = await screen.findByRole('progressbar', { name: /^일정/ })
+    expect(bar).toHaveAttribute('aria-valuenow', '0')
+    expect(bar).toHaveAttribute('aria-valuemax', '3')
+    expect(screen.getByRole('button', { name: '남은 일: 첫째 날 · 비어 있어요' })).toBeInTheDocument()
+
+    await putTwoOnSecondDay()
+    await waitFor(() => expect(screen.getByRole('progressbar', { name: /^일정/ })).toHaveAttribute('aria-valuenow', '1'))
+    expect(screen.getByText('둘째 날 · 2곳')).toBeInTheDocument()
+
+    // 빈 날을 누르면 그날이 넣을 날짜로 골라진다.
+    await userEvent.click(screen.getByRole('button', { name: '남은 일: 셋째 날 · 비어 있어요' }))
+    expect(within(screen.getByRole('group', { name: /^넣을 날짜/ })).getByRole('button', { name: /셋째 날$/ })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('동선 보기를 켜면 날짜 칩과 그날 순서가 보이고, ↑↓ 로 순서를 바꾸고 「빼기」로 리스트에 돌린다', async () => {
     renderTab()
     await putTwoOnSecondDay()

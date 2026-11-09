@@ -20,11 +20,13 @@ import { closeSchedule, leaveScheduleTab, openSchedule, useDropHover, useSchedul
 import ShortlistExport from '@/features/shortlist/ShortlistExport'
 import ShortlistList from '@/features/shortlist/ShortlistList'
 import { useScheduleEdit } from '@/features/shortlist/useTripSchedule'
+import CardSkeleton from '@/ui/CardSkeleton'
 import { Calendar } from '@/ui/DatePicker'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import Mark from '@/ui/Mark'
 import Sentences from '@/ui/Sentences'
+import TaskProgress from '@/ui/TaskProgress'
 
 /**
  * 확정된 장소 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 위에서 날을 고른 뒤 줄의 「넣기」로 그날에 넣는다.
@@ -142,6 +144,7 @@ export default function ShortlistTab() {
           data-over={hover?.day === UNSET_DAY}
           className="drop-target space-y-3 rounded-xl pb-[100px] outline-offset-4"
         >
+          {edit.ready && !edit.error && <ScheduleProgress dates={edit.dates} days={edit.schedule.days} onPick={setPutDay} />}
           {edit.error ? (
             <div className="space-y-2">
               <ErrorText message="일정을 불러오지 못했어요" error={edit.error} />
@@ -150,7 +153,7 @@ export default function ShortlistTab() {
               </button>
             </div>
           ) : !edit.ready ? (
-            <p className="text-sm text-ink-500">일정을 불러오는 중…</p>
+            <CardSkeleton count={2} label="일정을 불러오는 중…" />
           ) : items.length === 0 ? (
             <p className="break-keep text-sm text-ink-500">
               <Sentences text="모든 장소를 일정에 넣었어요. 동선 보기로 날짜별 경로를 확인해 보세요." />
@@ -193,5 +196,35 @@ export default function ShortlistTab() {
         </div>
       )}
     </TabSheet>
+  )
+}
+
+/** 일정 카드에 보이는 날 수. 넘치면 「외 N일」로 줄인다. */
+const DAY_ROWS = 4
+
+/**
+ * 「일정 2/3일」 — 여행 날짜 중 장소를 하나라도 넣은 날의 수(#1547). 빈 날이 있을 때만 그린다.
+ * 날마다 한 줄 — 빈 날을 누르면 그날이 「넣을 날짜」로 골라진다.
+ */
+function ScheduleProgress({ dates, days, onPick }: { dates: string[]; days: Record<string, string[]>; onPick: (day: string) => void }) {
+  const count = (d: string) => days[d]?.length ?? 0
+  const filled = dates.filter((d) => count(d) > 0).length
+  const firstEmpty = dates.findIndex((d) => count(d) === 0)
+  if (dates.length === 0 || firstEmpty === -1) return null
+  const items = dates.slice(0, DAY_ROWS).map((d, i) =>
+    count(d) > 0
+      ? { key: d, label: `${dayOrdinal(i)} · ${count(d)}곳`, done: true }
+      : { key: d, label: `${dayOrdinal(i)} · 비어 있어요`, done: false, onClick: () => onPick(d) },
+  )
+  const hidden = dates.length - items.length
+  return (
+    <TaskProgress
+      title="일정"
+      done={filled}
+      total={dates.length}
+      unit="일"
+      items={items}
+      hint={hidden > 0 ? `외 ${hidden}일이 더 있어요` : undefined}
+    />
   )
 }

@@ -16,6 +16,7 @@ import { showToast } from '@/features/shell/toast'
 import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import ErrorText from '@/ErrorText'
+import CardSkeleton from '@/ui/CardSkeleton'
 import Notice from '@/ui/Notice'
 import EmptyState from '@/ui/EmptyState'
 import TextField from '@/ui/TextField'
@@ -57,7 +58,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
       </div>
     )
   }
-  if (shortlist.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  if (shortlist.isPending) return <CardSkeleton count={2} label="불러오는 중…" />
   // 실패를 확정 0곳으로 읽으면 「장소가 2곳 이상 필요해요」 안내가 거짓으로 뜬다.
   if (shortlist.isError) return <LoadFailed error={shortlist.error} onRetry={() => void shortlist.refetch()} />
   return <Entry mapId={mapId} routable={routable} text={text} setText={setText} walkMax={walkMax} setWalkMax={setWalkMax} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />

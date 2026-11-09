@@ -116,6 +116,22 @@ export function tripTooLongError(err: unknown): string | null {
   return typeof err.detail?.limit === 'number' ? tripTooLong(err.detail.limit) : '여행 기간이 너무 길어요'
 }
 
+/**
+ * 제목 칸 아래에 둘 서버 거절 이유(#1536). 422 `VALIDATION_ERROR`의 `detail.errors[].loc`에 title 이 있을 때만이다.
+ * 그 밖의 실패는 null — 화면 아래 오류 줄이 맡는다.
+ */
+export function titleServerError(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.code !== 'VALIDATION_ERROR') return null
+  const errors = Array.isArray(err.detail?.errors) ? (err.detail.errors as { loc?: unknown }[]) : []
+  return errors.some((e) => Array.isArray(e.loc) && e.loc.includes('title')) ? '이 제목은 쓸 수 없어요. 글자를 바꿔 다시 적어 주세요' : null
+}
+
+/** 제목 칸의 잘못 — 지웠거나 띄어쓰기만 있으면 그 이유. 처음부터 비어 있는 칸은 버튼만 끄고 알리지 않는다. */
+export function tripTitleError(title: string, touched: boolean): string | null {
+  if (!touched || title.trim() !== '') return null
+  return title === '' ? '여행 제목을 적어 주세요' : '띄어쓰기만으로는 제목을 만들 수 없어요'
+}
+
 /** 지도 수정 본문 — 바뀐 칸만 보낸다(#465 부분 수정). 지역은 지우지 못하고 바꾸기만 한다. 바뀐 게 없으면 null. */
 export function mapChanges(
   before: Pick<MapHeaderView, 'title' | 'startDate' | 'endDate' | 'region'>,

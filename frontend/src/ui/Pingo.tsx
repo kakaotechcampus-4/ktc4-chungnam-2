@@ -300,7 +300,7 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
 }
 
 /**
- * 단순화 로고(시안 「Simplified Version」) — 얼굴만. 작은 아이콘 자리(하단 탭, 넓은 화면 탭 줄)에 쓴다.
+ * 단순화 로고(시안 「Simplified Version」) — 얼굴만. 작은 아이콘 자리(하단 탭)에 쓴다.
  */
 export function PingoMark({ size = 28 }: { size?: number }) {
   const face = 'var(--pingo-body)'

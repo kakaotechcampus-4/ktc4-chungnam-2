@@ -56,16 +56,19 @@ export default function TextField({
   )
 }
 
-/** 입력칸 안 ✕(지우기). 보이는 원은 20px, 누르는 영역은 44px. */
+/**
+ * 입력칸 안 ✕(지우기). 보이는 원은 20px, 누르는 영역은 44px.
+ * 글자보다 앞에 나서지 않게 연한 회색 원(ink-200)에 ink-500 ✕다(#1536). ✕ 선은 원·흰 바탕 모두와 3:1을 넘는다.
+ */
 export function ClearButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       type="button"
       aria-label={label}
       onClick={onClick}
-      className="hit-44 flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-500 text-white"
+      className="hit-44 flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-200 text-ink-500 transition-colors hover:bg-ink-300 hover:text-ink-700"
     >
-      <X size={12} aria-hidden="true" />
+      <X size={12} strokeWidth={2.5} aria-hidden="true" />
     </button>
   )
 }

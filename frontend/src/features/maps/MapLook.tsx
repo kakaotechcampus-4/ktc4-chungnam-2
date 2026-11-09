@@ -14,11 +14,11 @@ import type { MapView } from './model'
 import { useCoverMutation, useUpdateMapMutation } from './queries'
 
 /** 카드·편집 창 위의 대표 이미지 — 올린 이미지가 있으면 그것, 없으면 지역 기본 그림(#1445). 장식이라 숨긴다. */
-export function MapCover({ map, className = '' }: { map: Pick<MapView, 'region' | 'color' | 'coverUrl'>; className?: string }) {
+export function MapCover({ map, className = '' }: { map: Pick<MapView, 'region' | 'coverUrl'>; className?: string }) {
   if (map.coverUrl) {
     return <img src={apiUrl(map.coverUrl)} alt="" className={`object-cover ${className}`} />
   }
-  return <RegionCover region={map.region} color={map.color} className={className} />
+  return <RegionCover region={map.region} className={className} />
 }
 
 /** 서버가 막은 이유. 크기 상한은 응답의 detail.limit_bytes 로 적는다(화면에 숫자를 두지 않는다). */
@@ -98,7 +98,8 @@ export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void
 
 /**
  * 지도 색 변경(방장만, #1445). 파스텔 견본 8개 + 직접 고르기(브라우저 색 고르기 창) + 색 없음.
- * 견본은 누르는 즉시 저장하고, 직접 고른 색은 「이 색으로 저장」으로 저장한다. 미리보기는 위 그림이 바로 보여 준다.
+ * 견본은 누르는 즉시 저장하고, 직접 고른 색은 「이 색으로 저장」으로 저장한다.
+ * 색은 목록 카드 바탕에만 쓴다(#1537) — 미리보기도 목록 카드 모양 그대로 보여 준다.
  */
 export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void }) {
   const update = useUpdateMapMutation(map.id)
@@ -114,9 +115,14 @@ export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void
   return (
     <ModalSheet label="색상 변경" onClose={onClose}>
       <SheetTitle>색상 변경</SheetTitle>
-      <p className="mt-1 text-sm text-ink-600"><Sentences text="목록 카드 바탕과 기본 그림의 하늘 색이에요" /></p>
-      <div className="mt-4 overflow-hidden rounded-xl border border-ink-200">
-        <MapCover map={{ ...map, color: color ?? undefined }} className="block aspect-[16/7] w-full" />
+      <p className="mt-1 text-sm text-ink-600"><Sentences text="내 지도 목록의 카드 바탕 색이에요. 구성원 모두에게 같은 색이 보여요" /></p>
+      {/* 목록 카드(MapListPage)와 같은 모양이다. 고른 색이 없으면 흰 카드다. */}
+      <div aria-hidden="true" style={color ? { background: color } : undefined} className="mt-4 overflow-hidden rounded-xl border border-ink-200 bg-white">
+        <MapCover map={map} className="block aspect-[16/6] w-full" />
+        <div className="p-4">
+          <p className="truncate text-title font-bold text-ink-900">{map.title}</p>
+          <p className="mt-1 text-sm text-ink-600">{map.summary}</p>
+        </div>
       </div>
       <div role="radiogroup" aria-label="지도 색" className="mt-4 flex flex-wrap gap-3">
         {MAP_COLORS.map((c) => {
