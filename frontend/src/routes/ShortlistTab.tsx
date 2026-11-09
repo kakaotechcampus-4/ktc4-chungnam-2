@@ -144,7 +144,7 @@ export default function ShortlistTab() {
           data-over={hover?.day === UNSET_DAY}
           className="drop-target space-y-3 rounded-xl pb-[100px] outline-offset-4"
         >
-          {edit.ready && !edit.error && <ScheduleProgress dates={edit.dates} days={edit.schedule.days} />}
+          {edit.ready && !edit.error && <ScheduleProgress dates={edit.dates} days={edit.schedule.days} onPick={setPutDay} />}
           {edit.error ? (
             <div className="space-y-2">
               <ErrorText message="일정을 불러오지 못했어요" error={edit.error} />
@@ -200,10 +200,32 @@ export default function ShortlistTab() {
   )
 }
 
-/** 「일정 2/3일」 — 여행 날짜 중 장소를 하나라도 넣은 날의 수(#1547). 빈 날이 있을 때만, 가장 앞의 빈 날을 알린다. */
-function ScheduleProgress({ dates, days }: { dates: string[]; days: Record<string, string[]> }) {
-  const filled = dates.filter((d) => (days[d]?.length ?? 0) > 0).length
-  const firstEmpty = dates.findIndex((d) => !(days[d]?.length ?? 0))
+/** 일정 카드에 보이는 날 수. 넘치면 「외 N일」로 줄인다. */
+const DAY_ROWS = 4
+
+/**
+ * 「일정 2/3일」 — 여행 날짜 중 장소를 하나라도 넣은 날의 수(#1547). 빈 날이 있을 때만 그린다.
+ * 날마다 한 줄 — 빈 날을 누르면 그날이 「넣을 날짜」로 골라진다.
+ */
+function ScheduleProgress({ dates, days, onPick }: { dates: string[]; days: Record<string, string[]>; onPick: (day: string) => void }) {
+  const count = (d: string) => days[d]?.length ?? 0
+  const filled = dates.filter((d) => count(d) > 0).length
+  const firstEmpty = dates.findIndex((d) => count(d) === 0)
   if (dates.length === 0 || firstEmpty === -1) return null
-  return <TaskProgress label="일정" done={filled} total={dates.length} unit="일" hint={`${dayOrdinal(firstEmpty)}이 비어 있어요`} />
+  const items = dates.slice(0, DAY_ROWS).map((d, i) =>
+    count(d) > 0
+      ? { key: d, label: `${dayOrdinal(i)} · ${count(d)}곳`, done: true }
+      : { key: d, label: `${dayOrdinal(i)} · 비어 있어요`, done: false, onClick: () => onPick(d) },
+  )
+  const hidden = dates.length - items.length
+  return (
+    <TaskProgress
+      title="일정"
+      done={filled}
+      total={dates.length}
+      unit="일"
+      items={items}
+      hint={hidden > 0 ? `외 ${hidden}일이 더 있어요` : undefined}
+    />
+  )
 }
