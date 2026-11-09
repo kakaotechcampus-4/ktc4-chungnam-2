@@ -114,7 +114,8 @@ export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void
 
 /**
  * 지도 색 변경(방장만, #1445). 파스텔 견본 8개 + 직접 고르기(브라우저 색 고르기 창) + 색 없음.
- * 견본은 누르는 즉시 저장하고, 직접 고른 색은 「이 색으로 저장」으로 저장한다.
+ * 견본·직접 고르기·「색 없음」은 미리보기 카드만 바꾸고, 맨 아래 「저장」이 저장하고 창을 닫는다(#1643).
+ * 「닫기」는 고른 색을 버린다. 대표 이미지 창과 같은 방식이다.
  * 색은 목록 카드 바탕에만 쓴다(#1537) — 미리보기도 목록 카드 모양 그대로 보여 준다.
  */
 export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void }) {
@@ -122,9 +123,18 @@ export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void
   const [color, setColor] = useState<string | null>(map.color ?? null)
   const custom = color != null && !MAP_COLORS.some((c) => c.value.toLowerCase() === color.toLowerCase())
 
-  function save(next: string | null) {
-    setColor(next)
-    update.mutate({ color: next }, { onSuccess: () => showToast(next ? '지도 색을 바꿨어요' : '지도 색을 지웠어요') })
+  const changed = (color?.toLowerCase() ?? null) !== (map.color?.toLowerCase() ?? null)
+
+  function save() {
+    update.mutate(
+      { color },
+      {
+        onSuccess: () => {
+          showToast(color ? '지도 색을 바꿨어요' : '지도 색을 지웠어요')
+          onClose()
+        },
+      },
+    )
   }
 
   const swatch = 'relative flex size-11 items-center justify-center rounded-full border border-ink-300'
@@ -151,7 +161,7 @@ export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void
               aria-checked={on}
               aria-label={c.name}
               disabled={update.isPending}
-              onClick={() => save(c.value)}
+              onClick={() => setColor(c.value)}
               className={`${swatch} ${on ? 'ring-2 ring-brand-600 ring-offset-2' : ''}`}
               style={{ background: c.value }}
             >
@@ -177,20 +187,19 @@ export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void
       </div>
       {update.error && <ErrorText message="지도 색을 바꾸지 못했어요" error={update.error} />}
       <div className="mt-5 space-y-2">
-        {/* 직접 고른 색은 고르기 창을 움직이는 동안 계속 바뀌어서, 다 고른 뒤 이 버튼으로 저장한다. */}
-        {custom && color !== map.color && (
-          <button type="button" disabled={update.isPending} onClick={() => save(color)} className="btn-primary btn-lg w-full">
-            이 색으로 저장
-          </button>
-        )}
-        {map.color && (
-          <button type="button" disabled={update.isPending} onClick={() => save(null)} className="btn-outline btn-lg w-full">
+        {color && (
+          <button type="button" disabled={update.isPending} onClick={() => setColor(null)} className="btn-outline btn-lg w-full">
             색 없음
           </button>
         )}
-        <button type="button" onClick={onClose} className="btn-neutral btn-lg w-full">
-          닫기
-        </button>
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <button type="button" onClick={onClose} className="btn-neutral btn-lg">
+            닫기
+          </button>
+          <button type="button" disabled={!changed || update.isPending} onClick={save} className="btn-primary btn-lg">
+            {update.isPending ? '저장하는 중…' : '저장'}
+          </button>
+        </div>
       </div>
     </ModalSheet>
   )

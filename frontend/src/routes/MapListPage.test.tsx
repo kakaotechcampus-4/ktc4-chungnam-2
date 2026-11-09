@@ -62,15 +62,24 @@ describe('내 지도 목록 — 카드 「⋯」 메뉴와 두 묶음(#1444)', (
     await userEvent.click(screen.getByRole('button', { name: '저장' }))
     expect(await screen.findByRole('button', { name: '부산 먹방 메뉴' })).toBeInTheDocument()
   })
-  it('색상 변경에서 견본을 누르면 바로 저장되고 카드 바탕이 그 색이 된다', async () => {
+  it('색상 변경은 견본을 골라도 「닫기」면 버리고, 「저장」을 눌러야 카드 바탕이 그 색이 된다(#1643)', async () => {
     setup()
-    await userEvent.click(await screen.findByRole('button', { name: '제주도 여행 메뉴' }))
+    const card = (await screen.findByRole('button', { name: '제주도 여행 메뉴' })).closest('li')!.querySelector('a')!
+    const before = card.style.background
+    await userEvent.click(screen.getByRole('button', { name: '제주도 여행 메뉴' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '색상 변경' }))
+    expect(await screen.findByRole('button', { name: '저장' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('radio', { name: '민트' }))
+    await userEvent.click(screen.getByRole('button', { name: '닫기' }))
+    expect(card.style.background).toBe(before)
+    await userEvent.click(screen.getByRole('button', { name: '제주도 여행 메뉴' }))
     await userEvent.click(screen.getByRole('menuitem', { name: '색상 변경' }))
     await userEvent.click(await screen.findByRole('radio', { name: '민트' }))
-    expect(await screen.findByRole('radio', { name: '민트', checked: true })).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '닫기' }))
-    const card = (await screen.findByRole('button', { name: '제주도 여행 메뉴' })).closest('li')!.querySelector('a')!
-    await vi.waitFor(() => expect(card.style.background).not.toBe(''))
+    expect(screen.getByRole('radio', { name: '민트', checked: true })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '저장' }))
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: '저장' })).not.toBeInTheDocument())
+    const saved = (await screen.findByRole('button', { name: '제주도 여행 메뉴' })).closest('li')!.querySelector('a')!
+    await vi.waitFor(() => expect(saved.style.background).not.toBe(before))
   })
   it('대표 이미지는 사진을 골라도 바로 올리지 않고 「저장」을 눌러야 올린다(#1643)', async () => {
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:preview', revokeObjectURL: () => {} }))
