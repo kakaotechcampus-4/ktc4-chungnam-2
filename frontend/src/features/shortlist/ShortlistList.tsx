@@ -19,6 +19,7 @@ export default function ShortlistList({
   onPut,
   onOpen,
   onDrop,
+  myId,
 }: {
   items: ShortlistItemDto[]
   /** 넣을 날(「첫째 날」). 여행 날짜가 없으면 `onPut`도 없고 「넣기」를 그리지 않는다. */
@@ -26,6 +27,8 @@ export default function ShortlistList({
   onPut?: (item: ShortlistItemDto) => void
   onOpen: (pinId: string) => void
   onDrop?: (item: ShortlistItemDto, spot: DropSpot) => void
+  /** 내 핀을 「내가 찍은 핀」으로 부르려고 받는다. */
+  myId?: string
 }) {
   return (
     <ul className="space-y-2">
@@ -34,6 +37,7 @@ export default function ShortlistList({
           key={item.id}
           item={item}
           dayLabel={dayLabel}
+          myId={myId}
           onPut={onPut && (() => onPut(item))}
           onOpen={() => onOpen(item.pin.id)}
           onDrop={onDrop && ((spot) => onDrop(item, spot))}
@@ -49,12 +53,14 @@ function Row({
   onPut,
   onOpen,
   onDrop,
+  myId,
 }: {
   item: ShortlistItemDto
   dayLabel: string
   onPut?: () => void
   onOpen: () => void
   onDrop?: (spot: DropSpot) => void
+  myId?: string
 }) {
   const name = item.pin.place_name ?? '이 장소'
   const { handlers, dragging, ghost } = useScheduleDrag(item.pin.id, (spot) => onDrop?.(spot))
@@ -66,7 +72,8 @@ function Row({
           <p className="truncate font-bold text-ink-900">{name}</p>
           <p className="truncate text-xs text-ink-500">
             {item.pin.category}
-            <UnknownName text={` · ${authorName(item.pin)}님이 찍은 핀`} />
+            {/* 핀 상세와 같은 말을 쓴다 — 내 핀을 「황경님이 찍은 핀」으로 부르지 않는다. */}
+            {item.pin.created_by === myId ? ' · 내가 찍은 핀' : <UnknownName text={` · ${authorName(item.pin)}님이 찍은 핀`} />}
           </p>
         </button>
         {onPut && (
