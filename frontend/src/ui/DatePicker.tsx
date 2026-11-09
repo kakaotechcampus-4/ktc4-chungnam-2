@@ -111,6 +111,7 @@ export function Calendar({
   onPick,
   autoFocus = false,
   dayName,
+  marked,
   className = 'w-[19.25rem]',
 }: {
   value: string
@@ -120,6 +121,8 @@ export function Calendar({
   autoFocus?: boolean
   /** 날 이름 뒤에 붙일 말(확정 탭의 「둘째 날」). */
   dayName?: (day: string) => string | undefined
+  /** 숫자 아래 점을 찍을 날(동선 보기의 장소를 넣은 날). 점은 보이기만 하고 뜻은 `dayName`으로 읽힌다. */
+  marked?: (day: string) => boolean
   className?: string
 }) {
   const now = today()
@@ -196,7 +199,7 @@ export function Calendar({
               aria-label={[`${y}년 ${m}월 ${d}일 ${WEEK[weekday(day)]}요일`, dayName?.(day)].filter(Boolean).join(' ')}
               onClick={() => onPick(day)}
               className={[
-                'mx-auto flex size-11 items-center justify-center rounded-full text-base transition-colors',
+                'relative mx-auto flex size-11 items-center justify-center rounded-full text-base transition-colors',
                 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--line-focus)]',
                 // 오늘은 테두리 한 줄 — 주말 면·고른 날 채움 어디에 와도 보인다.
                 day === now ? 'font-bold ring-1 ring-inset ring-[var(--action-fill)]' : '',
@@ -208,6 +211,9 @@ export function Calendar({
               ].join(' ')}
             >
               {d}
+              {marked?.(day) && (
+                <span aria-hidden="true" className={`absolute bottom-1.5 size-1 rounded-full ${picked ? 'bg-white' : 'bg-[var(--action-fill)]'}`} />
+              )}
             </button>
           )
         })}

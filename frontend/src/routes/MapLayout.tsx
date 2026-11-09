@@ -11,7 +11,7 @@ import { useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { mapTapAction } from '@/features/map/mapTap'
 import { usePinSelection } from '@/features/map/usePinSelection'
-import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
+import { authorName, byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
@@ -358,7 +358,7 @@ export default function MapLayout() {
     if (key === 'recent') {
       const pin = [...placed].sort(byNewest)[0]
       map.panTo(pin.lat!, pin.lng!)
-      const who = [pin.created_by_display_name, timeAgo(pin.created_at)].filter(Boolean).join(' · ')
+      const who = [authorName(pin), timeAgo(pin.created_at)].filter(Boolean).join(' · ')
       showToast(`가장 최근 핀: ${pin.place_name ?? '이름 없는 핀'} (${who})`)
     } else {
       // 누른 사람이 원한 것이라 이미 다 보여도 맞춘다(#1026).
