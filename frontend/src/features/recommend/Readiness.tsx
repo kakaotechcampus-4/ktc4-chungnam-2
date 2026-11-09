@@ -13,6 +13,7 @@ import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
+import CoachMark from '@/ui/CoachMark'
 import PingoLoading from '@/ui/PingoLoading'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
 
@@ -198,11 +199,15 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
           type="button"
           disabled={!chosen || create.isPending}
           onClick={() => chosen && ask(chosen, false)}
+          data-coach="recommend-run"
           className="btn-primary btn-lg w-full"
         >
           {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '의견이 모이면 추천받을 수 있어요'}
         </button>
       </CreditGate>
+      <CoachMark id="recommend-run" target="recommend-run" title="모두의 의견으로 AI가 후보를 찾아요">
+        반대 이유와 선호를 조건으로 정리해 맞는 곳을 찾아 줘요. 결과는 나에게만 보이고, 지도에 올릴 곳은 직접 골라요
+      </CoachMark>
       {asking && (
         <CreditConfirm
           feature="recommend_run"

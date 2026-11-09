@@ -2,7 +2,7 @@ import type { components } from '@pingo/contracts/src/types/api'
 
 import { api } from '@/api'
 
-import type { PinCategory, PinCreateRequest, PinDto, PinResolveRequest, PinTrash, PinUpdateRequest, ReactionDto, ReactionRequest, ReasonChip, FilterCounts } from './model'
+import type { PinCategory, PinCreateRequest, PinDto, PinPhotoDto, PinResolveRequest, PinTrash, PinUpdateRequest, ReactionDto, ReactionRequest, ReasonChip, FilterCounts } from './model'
 
 export const fetchPins = (mapId: string) => api<PinDto[]>(`/maps/${mapId}/pins`)
 
@@ -17,6 +17,8 @@ export const markMapSeen = (mapId: string, seenAt: string, init?: Pick<RequestIn
   api<void>(`/maps/${mapId}/seen`, { method: 'POST', body: JSON.stringify({ seen_at: seenAt }), ...init })
 
 export const fetchReactions = (pinId: string) => api<ReactionDto[]>(`/pins/${pinId}/reactions`)
+
+export const fetchPinPhotos = (pinId: string) => api<PinPhotoDto[]>(`/pins/${pinId}/photos`)
 
 export const putReaction = (pinId: string, body: ReactionRequest) =>
   api<ReactionDto>(`/pins/${pinId}/reaction`, { method: 'PUT', body: JSON.stringify(body) })
