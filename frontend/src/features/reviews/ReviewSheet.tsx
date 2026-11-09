@@ -10,7 +10,7 @@ import SheetTitle from '@/ui/SheetTitle'
 import StarRating from '@/ui/StarRating'
 import TextArea from '@/ui/TextArea'
 
-import { canSave, saveErrorMessage, type MyReviewDto } from './model'
+import { canSave, RATING_WORDS, saveErrorMessage, type MyReviewDto } from './model'
 import { useSaveReviewMutation } from './queries'
 
 /**
@@ -57,8 +57,12 @@ export default function ReviewSheet({
       <p className="mt-1 text-sm text-ink-500">{placeName}</p>
       {!mine && showsReviewReward(credits.data) && <p className="mt-3 rounded-xl bg-ink-50 p-3 text-body text-ink-700">{reviewRewardText(credits.data?.review_reward)}</p>}
 
-      <div className="mt-3">
+      {/* 별 옆에 고른 점수의 말 — 바뀌면 화면 읽기도 읽는다. */}
+      <div className="mt-3 flex items-center gap-2">
         <StarRating value={rating} onChange={setRating} size={28} label="별점 고르기" />
+        <p aria-live="polite" className={`text-sm ${rating === null ? 'text-ink-500' : 'font-bold text-link'}`}>
+          {rating === null ? '별을 눌러 골라 주세요' : RATING_WORDS[rating - 1]}
+        </p>
       </div>
 
       <TextArea

@@ -1,13 +1,13 @@
 import { useId, type ReactNode } from 'react'
 import { Check } from 'lucide-react'
 
-import { percent, ProgressTrack } from './ProgressBar'
+import { isFull, percent, ProgressTrack } from './ProgressBar'
 import Sentences from './Sentences'
 
 export type TaskItem = { key: string; label: string; done: boolean; onClick?: () => void }
 
 /**
- * 끝나지 않은 일의 카드(DESIGN.md 「끝나지 않은 일」, #1547). 「내 의견 67%」 + 막대 + 할 일 목록 —
+ * 끝나지 않은 일의 카드(DESIGN.md 「끝나지 않은 일」, #1547). 「내가 남긴 의견 67%」 + 막대 + 할 일 목록 —
  * 얼마나 남았는지와 무엇이 남았는지를 함께 보이면 마저 끝내고 싶어진다(자이가르닉 효과).
  * 다 끝나면 부르는 쪽이 그리지 않는다. 할 일 표시라 브랜드 파랑이다(「파랑은 할 일」). 막대는 `ProgressTrack` 하나를 쓴다.
  * 목록 줄을 누르면 그 일로 바로 간다(`onClick`). 줄은 부르는 쪽이 고른 것만 — 길면 `more`로 나머지를 연다.
@@ -36,12 +36,12 @@ export default function TaskProgress({
       <div className="flex items-baseline justify-between gap-2">
         <p id={id} className="text-sm font-bold text-ink-900">
           {title}
-          <span className="ml-1.5 text-xs font-semibold text-ink-500">
+          <span className="ml-1.5 text-base font-bold text-[var(--action-quiet-text)]">
             {done}/{total}
             {unit}
           </span>
         </p>
-        <span aria-hidden="true" className="text-sm font-bold text-[var(--action-quiet-text)]">
+        <span aria-hidden="true" className={`text-sm font-bold ${isFull(done, total) ? 'text-[var(--good-text)]' : 'text-[var(--action-quiet-text)]'}`}>
           {percent(done, total)}%
         </span>
       </div>
@@ -70,7 +70,8 @@ export default function TaskProgress({
 /** 할 일 한 줄 — 끝난 일은 채운 파란 원 + 체크, 남은 일은 빈 원. 누를 수 있으면 누르는 자리 전체가 44px다. */
 function TaskRow({ item }: { item: TaskItem }) {
   const mark = item.done ? (
-    <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--action-fill)] text-white">
+    // 끝나는 순간 원이 커지며 체크가 그려진다(`done-check`) — 다른 곳에서 넣어도 여기서 바로 보인다.
+    <span className="done-check flex size-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--action-fill)] text-white">
       <Check size={12} strokeWidth={3} aria-hidden="true" />
     </span>
   ) : (

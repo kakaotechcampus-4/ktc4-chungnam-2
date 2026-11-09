@@ -74,7 +74,7 @@ async function paste() {
   await screen.findByRole('radiogroup', { name: '성수 노포 곱창 후보' })
 }
 
-describe('카톡 대화에서 핀 가져오기 — 네이버·공유 글 힌트·후보(#1046)', () => {
+describe('카톡 대화로 핀 찍기 — 네이버·공유 글 힌트·후보(#1046)', () => {
   it('링크와 상호명·주소 힌트만 같은 길이로 보낸다 — 대화 원문·보낸 사람은 보내지 않는다', async () => {
     const previews = capture(`/maps/${MAP}/pins/link-preview`)
     await paste()
@@ -289,7 +289,7 @@ describe('카톡 가져오기 — 누적·새로고침 뒤 유지·버튼(#1045)
       </QueryClientProvider>,
     )
     act(() => openImport(MAP))
-    expect(await screen.findByRole('dialog', { name: '카톡 대화에서 핀 가져오기' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: '카톡 대화로 핀 찍기' })).toBeInTheDocument()
     expect(useSheetStore.getState().modalOpen).toBe(true)
 
     act(() => closeImport())

@@ -352,6 +352,20 @@ describe("에러 시나리오", () => {
     expect(res2.status).toBe(409);
   });
 
+  it("#1157 블로그 사진: 자체 DB 핀은 PinPhoto 3장, 실시간 핀은 빈 배열, 없는 핀은 404", async () => {
+    const photos = await fetch(`${BASE}/pins/pin_1/photos`).then((r) => r.json());
+    expect(photos).toHaveLength(3);
+    for (const p of photos) {
+      expect(Object.keys(p).sort()).toEqual(["link_url", "site_name", "thumbnail_url"]);
+    }
+    const live = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: "kakao:photo-live", search_query: "곱창" }),
+    }).then((r) => r.json());
+    expect(await fetch(`${BASE}/pins/${live.id}/photos`).then((r) => r.json())).toEqual([]);
+    expect((await fetch(`${BASE}/pins/nope/photos`)).status).toBe(404);
+  });
+
   it("#382 실시간 핀: 카카오 장소 ID·검색어·메모만 받고 이름·좌표는 없다. 같은 장소는 409", async () => {
     const body = { source: "live", category: "음식점", kakao_place_id: "kakao:live-1", search_query: "성수 곱창", memo: "여기 곱창 맛있대" };
     const res = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });

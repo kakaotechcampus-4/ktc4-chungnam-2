@@ -56,10 +56,16 @@ export default function PlaceReviews({ pin }: { pin: Pin }) {
           <h3 id="place-reviews" className="text-sm font-bold text-ink-900">
             장소 후기
           </h3>
-          <p className="mt-0.5 flex items-center gap-1.5 text-body text-ink-700">
-            {summary.average_rating !== null && <StarRating value={summary.average_rating} />}
-            {summaryText(summary)}
-          </p>
+          {/* 평점 요약 — 평균 숫자를 크게, 옆에 별과 후기 수(참고: 평점 요약 UI). */}
+          {summary.average_rating === null ? (
+            <p className="mt-0.5 text-body text-ink-700">{summaryText(summary)}</p>
+          ) : (
+            <p className="mt-0.5 flex items-center gap-1.5 text-body text-ink-700">
+              <span className="text-xl font-bold text-ink-900">{summary.average_rating}</span>
+              <StarRating value={summary.average_rating} size={14} />
+              <span>후기 {summary.count}개</span>
+            </p>
+          )}
         </div>
         {!guest && (
           <button type="button" onClick={() => setWriting(true)} className="btn-outline btn-sm shrink-0">

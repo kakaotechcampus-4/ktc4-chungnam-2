@@ -523,6 +523,48 @@
         stroke-dashoffset: 0;
     }
 }
+/* 방금 넣은 일정 줄 — 파랑 테두리가 번졌다 사라진다. 동작 줄이기면 번지지 않고 같은 시간 동안 서 있다가 꺼진다. */
+.flash-ring {
+    animation: flash-ring 1600ms ease-out;
+}
+@keyframes flash-ring {
+    0%, 45% { box-shadow: 0 0 0 2px var(--action-fill), 0 0 0 6px color-mix(in srgb, var(--action-fill) 18%, transparent); }
+}
+/* 완료 체크(DoneCheck) — 원이 커지며 나타나고 체크가 그려진다. */
+.done-check {
+    animation: done-pop 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.done-check path {
+    stroke-dasharray: 24;
+    animation: done-draw 360ms 200ms ease-out backwards;
+}
+@keyframes done-pop {
+    from { transform: scale(0.4); opacity: 0; }
+}
+@keyframes done-draw {
+    from { stroke-dashoffset: 24; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .done-check,
+    .done-check path {
+        animation: none;
+    }
+    .flash-ring {
+        animation-timing-function: step-end;
+    }
+}
+/* 코치마크(ui/CoachMark) 짚은 자리 — 둘레를 덮개 색으로 크게 덮어 그 자리만 밝게 남기고, 흰 테두리로 한 번 더 짚는다. */
+.coach-spot {
+    box-shadow: 0 0 0 2px var(--surface-card), 0 0 0 9999px var(--scrim);
+    animation: enter-fade 200ms ease-out;
+    transition: left 150ms ease-out, top 150ms ease-out, width 150ms ease-out, height 150ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+    .coach-spot {
+        animation: none;
+        transition: none;
+    }
+}
 @keyframes press-fill {
     to { stroke-dashoffset: 0; }
 }

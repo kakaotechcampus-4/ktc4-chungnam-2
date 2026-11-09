@@ -11,6 +11,7 @@ import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
+import BlogPhotos from '@/ui/BlogPhotos'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Mark from '@/ui/Mark'
 import ProgressBar from '@/ui/ProgressBar'
@@ -26,7 +27,7 @@ import PeopleProof from '@/ui/PeopleProof'
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
 import { asReactionType, authorName, FILTER_CATEGORIES, hasAiEvidence, inputExample, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
+import { useMyReactionMutation, usePinPhotosQuery, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
@@ -232,6 +233,17 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
   )
 }
 
+/** 블로그 사진 줄(#1157). 실시간 핀은 부르지 않고 그리지 않는다. */
+function PinPhotos({ pin }: { pin: Pin }) {
+  const photos = usePinPhotosQuery(pin)
+  if (pin.source === 'live') return null
+  return (
+    <div className="py-1">
+      <BlogPhotos photos={photos.data} loading={photos.isPending} failed={photos.isError} />
+    </div>
+  )
+}
+
 /** 핀 상세 본문(Figma 5절 '마킹된 장소 상세', 지금 탭 이름은 핀 찍기). */
 export function PinDetailBody({
   pin,
@@ -261,7 +273,8 @@ export function PinDetailBody({
           {pin.neighborhood && <span>· {pin.neighborhood}</span>}
           <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : <UnknownName text={`${authorName(pin)}님이 찍은 핀`} />}</span>
         </p>
-        {/* 주소, 사진, 영업시간은 원본 장소 페이지에서 본다(카카오 응답 저장 금지, #53). 바로 눈에 띄게 버튼 줄로 둔다. */}
+        <PinPhotos pin={pin} />
+        {/* 주소, 영업시간은 원본 장소 페이지에서 본다(카카오 응답 저장 금지, #53). 바로 눈에 띄게 버튼 줄로 둔다. 사진은 위 블로그 사진 줄(#1157). */}
         <div className="py-1">
           <MapAppLinks kakao={pin.place_url} naver={pin.naver_url} />
         </div>

@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Pin } from '@/features/map/model'
@@ -37,8 +38,17 @@ describe('내 의견 카드(#1547)', () => {
     expect(onShowLeft).toHaveBeenCalled()
   })
 
-  it('다 남겼으면(확정 핀은 빼고) 그리지 않는다', () => {
-    const { container } = render(<MyOpinionProgress pins={[pin('a', '일반', true), pin('d', '확정', false)]} onOpen={() => {}} onShowLeft={() => {}} />)
+  it('다 남겼으면(확정 핀은 빼고) 완료 카드와 AI 추천 가는 길, 주소가 없으면 그리지 않는다', () => {
+    const done = [pin('a', '일반', true), pin('d', '확정', false)]
+    const { container, unmount } = render(<MyOpinionProgress pins={done} onOpen={() => {}} onShowLeft={() => {}} />)
     expect(container).toBeEmptyDOMElement()
+    unmount()
+    render(
+      <MemoryRouter>
+        <MyOpinionProgress pins={done} onOpen={() => {}} onShowLeft={() => {}} recommendHref="/maps/m/recommend" />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('모든 핀에 의견을 남겼어요')
+    expect(screen.getByRole('link', { name: 'AI 추천 받기' })).toHaveAttribute('href', '/maps/m/recommend')
   })
 })

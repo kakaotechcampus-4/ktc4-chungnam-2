@@ -23,6 +23,9 @@ export const authorLabel = (item: Pick<ReviewItemDto, 'is_mine'>) => (item.is_mi
 export const summaryText = (summary: ReviewPageDto['summary']) =>
   summary.average_rating === null ? '아직 후기가 없어요' : `${summary.average_rating} · 후기 ${summary.count}개`
 
+/** 고른 별 수의 말(1~5점). 별만 보고는 3점이 좋다는 건지 아쉽다는 건지 갈리지 않아서 고른 자리 옆에 적는다. */
+export const RATING_WORDS = ['별로였어요', '아쉬웠어요', '괜찮았어요', '좋았어요', '최고였어요'] as const
+
 /** 글은 앞뒤 공백을 걷은 뒤 1자 이상. 상한은 입력칸이 limits.body_max로 막는다. */
 export const canSave = (rating: number | null, body: string) => rating !== null && body.trim() !== ''
 
