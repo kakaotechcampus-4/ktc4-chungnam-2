@@ -77,7 +77,7 @@ export function useRestorePinMutation(mapId: string) {
  * realtime 의 표(refetchTable)대로 다시 받는다 — 다시 받을 목록을 여기에 또 적지 않는다.
  * 알림의 「되돌리기」는 화면이 닫힌 뒤에도 눌리므로 훅이 아니라 함수다.
  */
-function restoreInto(queryClient: QueryClient, mapId: string, pinId: string): Promise<Pin> {
+export function restoreInto(queryClient: QueryClient, mapId: string, pinId: string): Promise<Pin> {
   return restorePin(pinId).then((pin) => {
     queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins && [...pins.filter((p) => p.id !== pin.id), pin])
     void queryClient.invalidateQueries({ queryKey: pinKeys.trash(mapId) })

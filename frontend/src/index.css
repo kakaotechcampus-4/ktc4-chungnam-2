@@ -526,6 +526,21 @@
 @keyframes press-fill {
     to { stroke-dashoffset: 0; }
 }
+/* 끌려고 집은 핀(#1549) — 살짝 커지며 몇 px 떠오르고 그림자가 진다. 끝을 붙든 채다. */
+.pin-lift {
+    transform-origin: 50% 100%;
+    transform: translateY(-6px) scale(1.08);
+    filter: drop-shadow(0 6px 4px rgba(20, 22, 31, 0.25));
+    animation: pin-lift 150ms cubic-bezier(0, 0, 0.2, 1);
+}
+@keyframes pin-lift {
+    from { transform: none; filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pin-lift {
+        animation: none;
+    }
+}
 @keyframes pin-wobble {
     from { transform: rotate(-4deg); }
     to { transform: rotate(4deg); }
