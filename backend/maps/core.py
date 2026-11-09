@@ -459,12 +459,14 @@ def purge_cutoff(now: datetime) -> datetime:
 
 
 def to_map_news(
-    since: datetime, new_pin_ids: list[str], reactions: list[dict], names: dict[str, str | None], *, truncated: bool
+    since: datetime, new_pin_ids: list[str], reactions: list[dict], names: dict[str, str | None], *, truncated: bool,
+    as_of: datetime,
 ) -> MapNews:
     """pins.api.list_new_since의 결과를 응답으로 옮긴다(#1556). 사유 글은 문장에 섞지 않고 칸으로 둔다(#717).
     이름을 못 구하면(users 행이 없음) 탈퇴한 구성원으로 표시한다 — 지어낸 이름을 쓰지 않는다."""
     return MapNews(
         since=since,
+        as_of=as_of,
         new_pin_ids=new_pin_ids,
         new_reactions=[
             NewReaction(
