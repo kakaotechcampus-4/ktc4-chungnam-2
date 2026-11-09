@@ -115,6 +115,10 @@ export default function MapLayout() {
   const search = useSearchStore()
   const [searchText, setSearchText] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
+  // 최근 검색을 펼칠지. 검색창을 누를 때마다(이미 포커스가 있어도, 검색어가 남아 있어도) 열고,
+  // 글을 치기 시작하면 닫는다(목록은 친 글로 거르지 않는다). 찾기를 시작하거나 Esc를 누르면 닫는다.
+  // 전에는 "포커스 + 빈 칸"일 때만 열어서, 한 번 찾고 나면 검색어가 남아 다시 눌러도 열리지 않았다.
+  const [recentWanted, setRecentWanted] = useState(false)
   const me = useMeQuery().data
   const unread = useNotificationsQuery().data?.pages[0]?.unread_count ?? 0
   const myId = me?.id
@@ -133,7 +137,7 @@ export default function MapLayout() {
     return () => document.removeEventListener('pointerdown', onDown, true)
   }, [searchFocused])
   const recent = useRecentSearches(myId)
-  const recentOpen = searchFocused && !searchText && recent.list.length > 0
+  const recentOpen = searchFocused && recentWanted && recent.list.length > 0
   // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
   // 받기 전(loadedPins 없음)에 떠나면 적지 않는다 — 빈 모습을 적으면 다음에 모든 핀이 새 핀으로 보인다.
   const { news } = useNewSince(mapId, loadedPins, myId)
@@ -215,6 +219,7 @@ export default function MapLayout() {
     if (!q) return
     // 찾기 시작하면 최근 검색 목록을 닫고 키보드를 내린다 — 결과 시트가 보이게.
     setSearchFocused(false)
+    setRecentWanted(false)
     document.getElementById('place-search')?.blur()
     // 검색은 마킹 탭의 일이다. 다른 탭에서 검색해도 마킹 탭으로 가서 결과를 보여준다.
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
@@ -230,9 +235,13 @@ export default function MapLayout() {
     setStage('map', 2)
   }
 
+  // 지우면 바로 다음 검색어를 치게 검색창에 포커스를 두고 최근 검색을 편다.
+  // ✕ 버튼이 사라지며 포커스가 빠지면 목록도 닫혀서, 다른 곳을 눌렀다 와야 다시 열렸다.
   function clearSearch() {
     setSearchText('')
     search.close()
+    setRecentWanted(true)
+    document.getElementById('place-search')?.focus()
   }
   const mapMoving = useSheetStore((s) => s.mapMoving)
   const setMapMoving = useSheetStore((s) => s.setMapMoving)
@@ -579,13 +588,18 @@ export default function MapLayout() {
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
           {/* 검색 결과는 화면에 보여 주기만 한다(#53). Enter 나 돋보기를 눌렀을 때만 부른다(호출 상한, api-spec). */}
           {/* 넓은 화면은 패널 안이라 그림자·흐림이 없다(그림자는 지도 위에 떠 있는 것에만). */}
-          {/* 포커스가 검색창이나 최근 검색 목록 안에 있는 동안만 목록을 연다. Esc는 닫는다. */}
+          {/* 포커스가 검색창이나 최근 검색 목록 안에 있고, 검색창을 누른 뒤 아직 글을 치지 않았을 때 목록을 연다. Esc는 닫는다. */}
           <div
             ref={searchBox}
             className="relative"
             onFocus={() => setSearchFocused(true)}
             onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setSearchFocused(false)}
-            onKeyDown={(e) => e.key === 'Escape' && setSearchFocused(false)}
+            // Esc는 목록만 닫는다. 검색칸(type=search)은 Esc에 글을 지우는 브라우저 기본 동작이 있어, 막지 않으면 빈 칸이 되며 목록이 다시 열린다.
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return
+              e.preventDefault()
+              setRecentWanted(false)
+            }}
           >
             <form
               role="search"
@@ -607,7 +621,12 @@ export default function MapLayout() {
                 // 브라우저(크롬·안드로이드 크롬) 입력 기록 목록이 「최근 검색」과 겹쳐 뜨지 않게 끈다.
                 autoComplete="off"
                 value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
+                onFocus={() => setRecentWanted(true)}
+                onClick={() => setRecentWanted(true)}
+                onChange={(e) => {
+                  setSearchText(e.target.value)
+                  setRecentWanted(!e.target.value)
+                }}
                 maxLength={2000}
                 placeholder="장소 이름 또는 지도 링크"
                 aria-label="장소 검색"
