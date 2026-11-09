@@ -173,7 +173,6 @@ function PinCard({
 /**
  * 할 일 카드의 바로 반응(#1696). "미확인"은 반응이 아니라 아직 안 남긴 사람 수라 버튼이 없다.
  * 버튼은 카드를 덮은 이름 버튼 위에 올라오고(relative z-10), 끌어서 버리기가 잡지 않게 data-no-drag 를 단다.
- * 버튼 이름은 반응을 앞에 둔다 — 카드 이름 버튼만 장소 이름으로 시작해야 장소로 카드를 찾을 수 있다(e2e pinRow).
  */
 function QuickReact({ mapId, pin, onAgainst }: { mapId: string; pin: Pin; onAgainst: () => void }) {
   const react = useMyReactionMutation(mapId, pin)
@@ -193,10 +192,10 @@ function QuickReact({ mapId, pin, onAgainst }: { mapId: string; pin: Pin; onAgai
   }
   return (
     <div data-no-drag className="relative z-10 mt-2.5 grid grid-cols-2 gap-1.5">
-      <button type="button" onClick={like} disabled={react.isPending} aria-label={`좋음, ${name}`} className="btn-neutral btn-sm bg-surface">
+      <button type="button" onClick={like} disabled={react.isPending} aria-label={`${name} 좋음`} className="btn-neutral btn-sm bg-surface">
         <span className={REACTION.like.color}>{REACTION.like.mark}</span> 좋음
       </button>
-      <button type="button" onClick={onAgainst} aria-label={`반대 이유 쓰기, ${name}`} className="btn-neutral btn-sm bg-surface">
+      <button type="button" onClick={onAgainst} aria-label={`${name} 반대, 이유 쓰기`} className="btn-neutral btn-sm bg-surface">
         <span className={REACTION.against.color}>{REACTION.against.mark}</span> 반대
       </button>
     </div>

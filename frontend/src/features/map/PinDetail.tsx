@@ -485,6 +485,18 @@ function MyOpinion({
   const [chips, setChips] = useState<string[]>(saved?.reason_chip_ids ?? [])
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
+  // 등록이 끝나면 버튼이 잠깐 초록 체크로 바뀐 뒤 닫는다(#1712). 바로 닫으면 누른 버튼에서 끝난 걸 볼 틈이 없었다.
+  // 등록 뒤 핀 목록을 다시 받으며 부모가 다시 그려져도 타이머가 처음부터 다시 돌지 않게 닫는 함수는 ref로 붙잡는다.
+  const [done, setDone] = useState(false)
+  const onDoneRef = useRef(onDone)
+  useEffect(() => {
+    onDoneRef.current = onDone
+  })
+  useEffect(() => {
+    if (!done) return
+    const t = setTimeout(() => onDoneRef.current(), DONE_MS)
+    return () => clearTimeout(t)
+  }, [done])
   const missingReason = type === 'against' && chips.length === 0 && text.trim() === ''
   // 사유 없이 반대를 누르면 버튼을 끄지 않고 이유를 입력칸 아래에 알린다 — 꺼진 버튼은 왜 막혔는지 읽히지 않는다(#959).
   const [triedEmpty, setTriedEmpty] = useState(false)
@@ -507,8 +519,9 @@ function MyOpinion({
     }
     react.mutate(body, {
       onSuccess: () => {
+        // 토스트는 바로 — 화면 읽기도 이 글로 알고, 닫은 뒤에도 남는다.
         showToast('의견을 남겼어요')
-        onDone()
+        setDone(true)
       },
       onError: (err) =>
         showToast(
@@ -559,7 +572,8 @@ function MyOpinion({
     })
   }
 
-  if (saved && !editing) {
+  // 남긴 직후에는 체크가 보이게 요약 카드로 바로 넘어가지 않는다(#1712) — DONE_MS 뒤 목록으로 돌아간다.
+  if (saved && !editing && !done) {
     const mine = asReactionType(saved.type)
     const labelOf = (id: string) => chipOptions.find((c) => c.id === id)?.label ?? id
     const reasons = [...(saved.reason_chip_ids ?? []).map(labelOf), ...(saved.reason_text ? [`“${saved.reason_text}”`] : [])]
@@ -665,8 +679,14 @@ function MyOpinion({
             describedBy={showMissing ? reasonErrorId : undefined}
           />
           {showMissing && <FieldError id={reasonErrorId}>{MISSING_REASON}</FieldError>}
-          <button aria-busy={react.isPending} type="button" onClick={submit} disabled={react.isPending} className="btn-primary btn-md w-full">
-            <BusyLabel busy={react.isPending} busyText="남기는 중…">
+          <button
+            aria-busy={react.isPending}
+            type="button"
+            onClick={() => !done && submit()}
+            disabled={react.isPending}
+            className={`btn-primary btn-md w-full ${done ? 'btn-done' : ''}`}
+          >
+            <BusyLabel busy={react.isPending} busyText="남기는 중…" done={done} doneText="남겼어요">
               {R[type].label} 남기기
             </BusyLabel>
           </button>
@@ -680,3 +700,6 @@ function MyOpinion({
     </section>
   )
 }
+
+/** 의견 등록 뒤 초록 체크를 보이는 시간(#1712). 그 뒤 목록으로 돌아간다. */
+const DONE_MS = 900

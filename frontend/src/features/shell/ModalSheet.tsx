@@ -34,6 +34,8 @@ export default function ModalSheet({
   const startY = useRef(0)
 
   function requestClose() {
+    // 끌던 값(dragY)이 남아 있으면 transition 클래스가 빠져 transitionend 가 오지 않는다. 그러면 onClose 가 불리지 않고 투명한 시트가 화면을 막는다.
+    setDragY(null)
     // 동작 줄이기면 transition 이 없어 transitionend 가 오지 않는다 — 바로 닫는다.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) onClose()
     else setClosing(true)

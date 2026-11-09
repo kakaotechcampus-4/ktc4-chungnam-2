@@ -52,7 +52,7 @@ describe('핀 찍기 목록의 할 일 묶음과 바로 반응(#1696)', () => {
     expect(screen.getByRole('region', { name: /나머지 핀/ })).toBeInTheDocument()
 
     const name = todo[0].place_name!
-    await userEvent.click(within(group).getByRole('button', { name: `반대 이유 쓰기, ${name}` }))
+    await userEvent.click(within(group).getByRole('button', { name: `${name} 반대, 이유 쓰기` }))
     expect(onSelect).toHaveBeenCalledWith(todo[0].id, { against: true })
   })
 
@@ -63,7 +63,7 @@ describe('핀 찍기 목록의 할 일 묶음과 바로 반응(#1696)', () => {
     const client = setup(<PinList mapId={MAP} pins={pins} memberCount={4} onSelect={() => {}} todoIds={ids} />, pins)
 
     const name = todo[0].place_name!
-    await userEvent.click(screen.getByRole('button', { name: `좋음, ${name}` }))
+    await userEvent.click(screen.getByRole('button', { name: `${name} 좋음` }))
     await vi.waitFor(() => expect(client.getQueryData<Pin[]>(pinKeys.list(MAP))!.find((p) => p.id === todo[0].id)!.my_reaction?.type).toBe('like'))
   })
 })
