@@ -9,10 +9,10 @@ import { PINGO_MARK } from './pingoMark'
 const MARK_IN_HEAD = 'translate(6.56 4.83) scale(0.34)'
 
 export type PinGlyph =
-  /** 일반 핀(올린 AI 추천 핀 포함). ratio 는 참여율 0~1. */
-  | { kind: 'normal'; ratio: number }
-  /** 확정 핀. order 가 있으면 ♥ 대신 순서 번호를 쓴다(온보딩의 동선 장면). */
-  | { kind: 'confirmed'; order?: number }
+  /** 일반 핀(올린 AI 추천 핀 포함). ratio 는 참여율 0~1. count 가 있으면 화면에서 겹친 핀 묶음이다(#1576). */
+  | { kind: 'normal'; ratio: number; count?: number }
+  /** 확정 핀. order 가 있으면 ♥ 대신 순서 번호를 쓴다(온보딩의 동선 장면). count 는 일반 핀과 같다. */
+  | { kind: 'confirmed'; order?: number; count?: number }
   /** 올리기 전 AI 후보(핑고 핀). */
   | { kind: 'candidate' }
 
@@ -29,6 +29,16 @@ export type PinGlyph =
  * 윤곽선 굵기는 세 핀이 같다(`PIN_OUTLINE`). 그림자는 없다. var()·color-mix() 는 SVG 속성보다 style 에서 확실히 해석된다.
  * 넣는 값은 상수와 숫자뿐이라 마크업으로 넣어도 된다 — 장소 이름 같은 사용자 글은 여기 들어오지 않는다.
  */
+/**
+ * 겹친 핀 묶음의 머리 — 점·하트 대신 흰 원에 곳 수(#1576). 핀 모양과 색은 묶음 안 핀을 따라서 지도에 찍힌 핀으로 읽히고,
+ * 숫자가 「여러 곳이 여기 겹쳐 있다」를 말한다(검색 묶음 핀이 검색 핀 모양에 숫자만 넣은 것과 같은 규칙). 두 자리까지 원 안에 든다.
+ */
+function countBadge(n: number, color: string) {
+  const label = n > 99 ? '99+' : String(Math.trunc(n))
+  return `<circle cx="12" cy="10" r="6.6" fill="#fff" />
+      <text x="12" y="10.4" text-anchor="middle" dominant-baseline="central" style="font:700 ${label.length > 1 ? 8 : 9.5}px var(--font-sans);fill:${color}">${label}</text>`
+}
+
 export function pinGlyph(g: PinGlyph): string {
   if (g.kind === 'candidate') {
     const { pin, hole, face, eyes } = PINGO_MARK
@@ -42,12 +52,15 @@ export function pinGlyph(g: PinGlyph): string {
   }
   if (g.kind === 'confirmed') {
     const mark =
-      g.order != null
+      g.count != null
+        ? countBadge(g.count, 'var(--pin-confirmed-mark)')
+        : g.order != null
         ? `<text x="12" y="13.5" text-anchor="middle" style="font:700 10px var(--font-sans);fill:var(--pin-confirmed-mark)">${Math.trunc(g.order)}</text>`
         : `<path d="${LIKE_PATH}" transform="translate(7.2 5.7) scale(.6)" style="fill:var(--pin-confirmed-heart)" />`
     return `<path d="${PIN_PATH}" stroke-linejoin="round" style="fill:var(--pin-confirmed);stroke:var(--pin-confirmed-mark);stroke-width:${PIN_OUTLINE}" />${mark}`
   }
   const fill = `color-mix(in oklch, var(--pin-fill-full) ${Math.round(g.ratio * 100)}%, var(--pin-fill-empty))`
+  const mark = g.count != null ? countBadge(g.count, 'var(--pin-outline)') : '<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />'
   return `<path d="${PIN_PATH}" stroke-linejoin="round" style="fill:${fill};stroke:var(--pin-outline);stroke-width:${PIN_OUTLINE}" />
-      <circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`
+      ${mark}`
 }

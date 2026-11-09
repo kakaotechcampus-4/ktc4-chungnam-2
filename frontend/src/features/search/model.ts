@@ -14,7 +14,11 @@ export type ExternalSearchDto = components['schemas']['ExternalSearch']
 export const isLinkInput = (text: string) => /^https?:\/\/\S+$/i.test(text)
 
 /** 출처마다 받은 장소. 링크면 링크에서 읽은 단서(`link`)도 같이 둔다. */
-export type SourcePlaces = { places: PlaceSearchResultDto[]; link?: LinkParseResultDto }
+/**
+ * 결과 시트의 장소. `nearby`는 지도 자리 메뉴(누른 곳)에서만 온다 — 자체 DB에 없는 근처 가게를
+ * 브라우저의 카카오 SDK로 찾은 것이다(#1549, 실시간 핀 후보).
+ */
+export type SourcePlaces = { places: PlaceSearchResultDto[]; link?: LinkParseResultDto; nearby?: PlaceSearchResultDto[] }
 export type LatLng = { lat: number; lng: number }
 
 /** 두 좌표 사이 직선거리(m). 하버사인 — 검색 결과의 "350m" 표시용이라 이 정도면 충분하다. */
@@ -37,6 +41,8 @@ export type SearchResultView = {
   meta: string
   address?: string
   url?: string
+  /** 「네이버 지도에서 보기」(#1554) — 서버가 핀과 같은 규칙으로 만든다. 없으면 숨긴다. */
+  naverUrl?: string
   /** 자체 DB에 짝이 없어 장소 정보가 있는 핀은 될 수 없다(#191). */
   unsupported: boolean
   /** 그래도 실시간 핀으로 남길 수 있다(#382) — 자체 DB에 없는 음식점·카페·관광지. 숙소·기타나 분류를 모르는 곳은 안 된다. */
@@ -66,6 +72,7 @@ export function toSearchResult(r: PlaceSearchResultDto, center: LatLng | null, p
     meta: [r.category, r.address, center && formatDistance(distanceM(center, r))].filter(Boolean).join(' · '),
     address: r.address,
     url: r.place_source?.url,
+    naverUrl: r.naver_url,
     // 분류를 모르면 핀을 만들 요청 자체를 못 채운다(category 필수).
     unsupported,
     canLeaveLive: unsupported && !!r.category && FILTER_CATEGORIES.includes(r.category),

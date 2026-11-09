@@ -12,6 +12,7 @@ import { ColorSheet, CoverSheet, MapCover } from '@/features/maps/MapLook'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery, useTrashQuery } from '@/features/maps/queries'
 import TrashSheet from '@/features/maps/TrashSheet'
+import { cardTint } from '@/features/maps/look'
 import NotificationBell from '@/features/notifications/NotificationBell'
 import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
 import ActionMenu, { type ActionMenuItem } from '@/features/shell/ActionMenu'
@@ -171,8 +172,10 @@ function NewMapLink({ className, blockedBy }: { className: string; blockedBy?: s
 }
 
 function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; empty?: string }) {
-  const [open, setOpen] = useState<{ kind: CardAction; map: MapView } | null>(null)
+  const [opened, setOpen] = useState<{ kind: CardAction; map: MapView } | null>(null)
   const close = () => setOpen(null)
+  // 창에는 연 순간의 지도가 아니라 목록의 최신 값을 준다 — 대표 이미지를 바꾼 뒤에도 창이 옛 그림을 보이지 않게(PM 점검 #1554).
+  const open = opened && { ...opened, map: maps.find((m) => m.id === opened.map.id) ?? opened.map }
   return (
     <section className="space-y-3">
       {title && (
@@ -182,7 +185,7 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
           <span className="ml-1 hidden font-normal text-ink-500 md:inline">{maps.length}</span>
         </h2>
       )}
-      {maps.length === 0 && empty && <p className="rounded-xl bg-white p-4 text-sm text-ink-500">{empty}</p>}
+      {maps.length === 0 && empty && <p className="rounded-xl bg-surface p-4 text-sm text-ink-500">{empty}</p>}
       <ul className="space-y-3 md:grid md:grid-cols-2 md:gap-4 md:space-y-0 lg:grid-cols-3">
         {maps.map((map) => (
           // 메뉴 버튼은 링크 안에 넣을 수 없어(버튼 안의 버튼) 카드 오른쪽 위에 겹쳐 둔다.
@@ -190,8 +193,8 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
             <Link
               to={`/maps/${map.id}`}
               // 지도 색은 카드 바탕이다(#1445). 고르지 않았으면 흰 카드다.
-              style={map.color ? { background: map.color } : undefined}
-              className="press block h-full overflow-hidden rounded-xl border border-ink-200 bg-white md:hover:border-brand-300"
+              style={map.color ? cardTint(map.color) : undefined}
+              className="press block h-full overflow-hidden rounded-xl border border-ink-200 bg-surface md:hover:border-brand-300"
             >
               <MapCover map={map} className="block aspect-[16/6] w-full" />
               <div className="p-4 pr-12 md:p-5 md:pr-14">
@@ -208,7 +211,7 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
               </div>
             </Link>
             {/* 메뉴 버튼은 그림 위라 흰 원 위에 둔다. */}
-            <div className="absolute right-2 top-2 rounded-full bg-white/90 shadow-float md:right-3 md:top-3">
+            <div className="absolute right-2 top-2 rounded-full bg-surface/90 shadow-float md:right-3 md:top-3">
               <ActionMenu label={`${map.title} 메뉴`} items={cardActions(map, (kind) => setOpen({ kind, map }))} />
             </div>
           </li>

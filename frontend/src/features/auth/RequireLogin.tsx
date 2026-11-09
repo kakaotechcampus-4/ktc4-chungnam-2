@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, Outlet, useSearchParams } from 'react-router'
+import { Link, Navigate, Outlet, useLocation, useSearchParams } from 'react-router'
 
 import { ChevronRight, CircleCheck, UserRound } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { FEATURES } from '@/features/onboarding/features'
+import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import MapIllustration from '@/ui/MapIllustration'
@@ -49,6 +50,7 @@ export default function RequireLogin() {
 
 function SessionGate() {
   const { isPending, error, data: me } = useMeQuery()
+  const { pathname } = useLocation()
   // 실패 안내는 여기서 읽는다. 게스트가 카카오 전환에 실패하면 게스트 세션은 그대로라 로그인 화면이 뜨지 않는다 —
   // 그때는 토스트로 알린다(LoginScreen 만 읽던 때는 아무 말 없이 목록으로 돌아왔다).
   const loginError = useLoginError()
@@ -58,6 +60,9 @@ function SessionGate() {
   }, [loggedIn, loginError])
 
   if (isPending) return <PingoLoading label="로그인 상태를 확인하는 중…" mood="space" className="min-h-dvh justify-center" />
+  // 이 기기에서 처음 온 사람은 로그인 화면보다 서비스 안내를 먼저 본다(#1576). 「시작하기」·「건너뛰기」로 여기 돌아온다.
+  // 첫 화면(/)으로 왔을 때만이다 — 받은 지도 주소로 바로 온 사람은 가려던 곳을 잃지 않게 로그인부터 한다.
+  if (isUnauthorized(error) && pathname === '/' && !loginError && !hasSeenWelcome()) return <Navigate to="/welcome" replace />
   if (isUnauthorized(error)) return <LoginScreen notice={loginError ?? undefined} />
   if (error) {
     return (
@@ -119,7 +124,7 @@ function LoginScreen({ notice }: { notice?: string }) {
   return (
     // 1024px 이상에선 틀이 두 칸이고, 입구 카드 모양은 오른쪽 칸이 넘겨받는다(lg: 값이 카드 값을 덮는다).
     <EntryFrame
-      className="bg-white px-5 pb-6 pt-14 lg:max-w-[960px] lg:flex-row lg:items-center lg:gap-16 lg:border-0 lg:bg-transparent lg:p-0"
+      className="bg-surface px-5 pb-6 pt-14 lg:max-w-[960px] lg:flex-row lg:items-center lg:gap-16 lg:border-0 lg:bg-transparent lg:p-0"
       after={
         <>
           {sheet === 'guest' && <GuestSheet onClose={close} />}
@@ -135,7 +140,7 @@ function LoginScreen({ notice }: { notice?: string }) {
           <LoginHero />
         </div>
 
-        <div className="flex flex-1 flex-col lg:max-w-[400px] lg:rounded-2xl lg:border lg:border-ink-200 lg:bg-white lg:px-8 lg:py-10">
+        <div className="flex flex-1 flex-col lg:max-w-[400px] lg:rounded-2xl lg:border lg:border-ink-200 lg:bg-surface lg:px-8 lg:py-10">
 
         <p className="mt-6 text-balance break-keep text-center text-sm text-ink-500 lg:mt-0">
           <Sentences text="3초면 시작해요. 이름은 카카오나 구글에서 가져와요" />
@@ -166,7 +171,7 @@ function LoginScreen({ notice }: { notice?: string }) {
             {FEATURES.map(({ Icon, text }) => (
               <li key={text} className="flex items-center gap-3 text-sm text-ink-700">
                 {/* 아이콘을 담는 면은 둥근 사각형(DESIGN.md Shapes). */}
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand-50 text-brand-600">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand-50 text-link">
                   <Icon size={16} aria-hidden="true" />
                 </span>
                 <span className="break-keep">{text}</span>
@@ -179,7 +184,7 @@ function LoginScreen({ notice }: { notice?: string }) {
         <p className="mt-auto pt-8 text-center text-xs leading-relaxed text-ink-500 md:mt-8 md:pt-0">
           카카오, 구글, 게스트로 시작하면
           <br />
-          <button type="button" onClick={() => setSheet('terms')} className="font-semibold text-brand-600 underline underline-offset-2">
+          <button type="button" onClick={() => setSheet('terms')} className="font-semibold text-link underline underline-offset-2">
             이용약관
           </button>
           에 동의하는 것으로 간주됩니다
@@ -221,9 +226,9 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
         <Sentences text="친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요." />
       </p>
       <ul className="mt-4 space-y-2 rounded-xl bg-ink-50 p-4 text-sm text-ink-700">
-        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />핀 찍기와 의견 남기기는 똑같이 쓸 수 있어요</li>
-        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />새 지도 만들기, AI 추천, AI 코스는 카카오나 구글로 로그인해야 쓸 수 있어요</li>
-        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />90일 동안 쓰지 않으면 기록이 정리돼요</li>
+        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-link" aria-hidden="true" />핀 찍기와 의견 남기기는 똑같이 쓸 수 있어요</li>
+        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-link" aria-hidden="true" />새 지도 만들기, AI 추천, AI 코스는 카카오나 구글로 로그인해야 쓸 수 있어요</li>
+        <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-link" aria-hidden="true" />90일 동안 쓰지 않으면 기록이 정리돼요</li>
       </ul>
       {invite && (
         <Link to={`/invites/${encodeURIComponent(invite)}`} className="btn-primary btn-lg mt-5 w-full">

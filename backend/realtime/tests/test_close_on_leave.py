@@ -16,8 +16,9 @@ from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
-from realtime.dispatcher import dispatcher
+from realtime.dispatcher import dispatcher, Dispatcher
 from realtime.router import private_events, public_events
+from realtime.tests.helpers import skip_presence
 
 MAP = "close-map"
 OTHER_MAP = "close-other-map"
@@ -33,6 +34,7 @@ class Row:
     recipient_user_id: str | None = None
 
 
+
 class _AliveRequest:
     async def is_disconnected(self) -> bool:
         return False   # 클라이언트는 계속 붙어 있다 — 서버가 닫아야만 끝난다
@@ -42,7 +44,7 @@ async def _open(endpoint, map_id: str, user_id: str):
     response = await endpoint(
         request=_AliveRequest(), mapId=map_id, user=CurrentUser(user_id=user_id), last_event_id=None
     )
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
     # 연결 직후 ping(#925)을 먼저 소비한다 — 이벤트 대기는 그다음 __anext__에서 시작된다.
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
     # 제너레이터는 다음 __anext__에서야 구독한다 — 큐 대기에 들어갈 때까지 돌려 둔다.

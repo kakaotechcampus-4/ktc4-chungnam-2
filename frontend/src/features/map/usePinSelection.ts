@@ -26,3 +26,22 @@ export function usePinSelection() {
 
   return { selectedPinId: params.get(PIN_PARAM), selectPin }
 }
+
+/** 겹친 핀 묶음의 핀 id 들(쉼표로 잇는다, #1576). 고른 핀처럼 주소에 둬서 뒤로가기로 목록이 닫히고, 목록에서 연 핀을 닫으면 목록으로 돌아온다. */
+export const PIN_GROUP_PARAM = 'pins'
+
+/** 지도에서 누른 겹친 핀 묶음(#1576). 가장 가까이 확대해도 겹쳐서 그 핀들만 목록으로 본다. */
+export function usePinGroup() {
+  const [params, setParams] = useSearchParams()
+  const showGroup = useCallback(
+    (pinIds: string[] | null) => {
+      const next = new URLSearchParams(params)
+      next.delete(PIN_PARAM)
+      if (pinIds) next.set(PIN_GROUP_PARAM, pinIds.join(','))
+      else next.delete(PIN_GROUP_PARAM)
+      setParams(next)
+    },
+    [params, setParams],
+  )
+  return { groupIds: params.get(PIN_GROUP_PARAM)?.split(',').filter(Boolean) ?? null, showGroup }
+}

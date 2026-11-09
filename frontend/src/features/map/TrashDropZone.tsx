@@ -64,7 +64,7 @@ export default function TrashDropZone({ mapId, placement }: { mapId: string; pla
         <div
           data-trash-bin
           className={`enter-pop flex h-12 items-center gap-2 rounded-full border-2 px-4 text-sm font-bold shadow-float transition-colors duration-200 ${
-            drag.over ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-transparent bg-white text-ink-700'
+            drag.over ? 'border-brand-600 bg-brand-50 text-selected' : 'border-transparent bg-surface text-ink-700'
           }`}
         >
           <TrashCan open={open} />

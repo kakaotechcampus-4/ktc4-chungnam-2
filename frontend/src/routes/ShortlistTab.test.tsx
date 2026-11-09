@@ -92,6 +92,22 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1']))
   })
 
+  it('카테고리 칩으로 리스트를 걸러 보고, 남은 곳이 없으면 알린다(#1559)', async () => {
+    renderTab()
+    await screen.findByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })
+    const chips = within(screen.getByRole('group', { name: '카테고리' }))
+
+    await userEvent.click(chips.getByRole('button', { name: '카페' }))
+    expect(screen.getByRole('button', { name: '카페 한라 첫째 날에 넣기' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })).not.toBeInTheDocument()
+
+    await userEvent.click(chips.getByRole('button', { name: '관광지' }))
+    expect(screen.getByText('이 분류에는 확정된 곳이 없어요')).toBeInTheDocument()
+
+    await userEvent.click(chips.getByRole('button', { name: '전체' }))
+    expect(screen.getByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })).toBeInTheDocument()
+  })
+
   it('일정 진행 막대 — 장소를 넣은 날 수와 가장 앞의 빈 날을 알린다(#1547)', async () => {
     renderTab()
     const bar = await screen.findByRole('progressbar', { name: /^일정/ })

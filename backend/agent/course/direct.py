@@ -5,18 +5,21 @@
 - 모델 호출이 실패하거나 쓸 수 없는 호출(상한 초과)이면 그 턴은 코드 규칙이 대신한다: 후보가 없으면 optimize, 있으면 가장 나은 후보로 finish.
 - 요청자에게 되묻지 않는다(#1131). 쉬는 날에 걸린 목표와 이동이 넘치는 날은 턴 앞에서 코드가 찾기 → 옮겨 보기 → 비교 → 결정으로 푼다
   (resolve_closure, resolve_split — 모델 호출을 쓰지 않는다). 영업시간을 모르는 곳은 여는 것으로 보고, 작업 기록에 가정 줄로 남긴다.
-DB·시간 말고는 순수하다. 모델 자리는 `decide`로 주입한다(deps.DirectDecider).
+- 실행 상한(#1609): 기준 시각(run의 created_at)을 받으면 모델을 부르기 전마다 남은 시간을 본다. 넘었으면 더 부르지 않고 그 턴부터
+  코드 규칙이 마무리한다(모델 실패 때와 같은 길, 이미 시작한 호출은 끊지 않는다). 기준 시각이 없으면(평가·시연) 상한이 없다.
+DB·시간 말고는 순수하다. 모델 자리는 `decide`로, 시계는 `clock`으로 주입한다(deps.DirectDecider).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
 from pydantic import ValidationError
 
 from agent.course import baseline, core, goals as goals_mod, optimize as opt, verify
-from agent.course.constants import DIRECT_MAX_TURNS, MODEL_FAILURES
+from agent.course.constants import DIRECT_MAX_TURNS, MODEL_FAILURES, RUN_LIMIT
 from agent.course.optimize import Candidate
 from agent.course.ports import OpeningHoursGateway
 from agent.course.schemas import MoveDay, ReorderDay
@@ -27,10 +30,13 @@ from llm.schemas import CourseDirectFinish, CourseDirectTurn, CourseLockCall, Co
 
 Decide = Callable[[dict[str, Any]], CourseDirectTurn]
 OnStep = Callable[["DirectStep", "DirectState"], None]
+Clock = Callable[[], datetime]
 UNUSABLE_ERRORS = ("LIMIT_EXCEEDED",)       # 이 오류가 나면 그 턴은 코드 규칙이 대신한다. 그 밖의 오류는 메시지가 계획에 도움이 된다
 MODEL_FAILED = "MODEL_FAILED"               # 모델 턴이 실패해 코드가 이어받았다(substituted_for.error, #1131 D안)
+RUN_DEADLINE = "RUN_DEADLINE"               # 실행 상한이 지나 모델을 부르지 않고 코드가 이어받았다(substituted_for.error, #1609)
 # 이어받은 원인의 종류 — 작업 기록 문구를 고르는 데만 쓴다. 예외 메시지와 모델 원문은 남기지 않는다
 TIMEOUT, BAD_FORMAT, NO_RESPONSE, UNUSABLE = "timeout", "format", "no_response", "unusable"
+DEADLINE = "deadline"                       # 실행 상한(모델 실패가 아니라 부르지 않은 것, #1609)
 _FAILURE_OF_REASON = {"timeout": TIMEOUT, "invalid_schema": BAD_FORMAT, "call_failed": NO_RESPONSE}   # llm AgentCallFailed.reason
 
 
@@ -43,6 +49,16 @@ def failure_kind(exc: BaseException) -> str:
         return TIMEOUT
     return BAD_FORMAT if isinstance(exc, ValidationError) else NO_RESPONSE
 RESOLVE_CLOSURE, RESOLVE_SPLIT = "resolve_closure", "resolve_split"     # 코드가 푸는 단계의 도구 이름(작업 기록이 이 이름으로 줄을 만든다)
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def past_limit(started_at: Optional[datetime], clock: Clock) -> bool:
+    """기준 시각(run의 created_at)부터 실행 상한(constants.RUN_LIMIT)이 지났다 — 모델을 더 부르지 않는다. 상한 판정은 여기 한 곳이다
+    (목표 세우기 앞은 runner, 지휘 턴 앞은 run_direct가 부른다). 기준 시각이 없으면(평가·시연) 상한이 없다."""
+    return started_at is not None and clock() - started_at >= RUN_LIMIT
 
 
 @dataclass(frozen=True)
@@ -84,6 +100,7 @@ class DirectResult:
     model_turns: int
     checks: tuple[dict, ...] = ()
     judgment: Optional[CourseReviewDecision] = None
+    timed_out: bool = False                # 실행 상한이 지나 모델을 더 부르지 않고 코드가 마무리했다(#1609)
 
     @property
     def asked_model(self) -> bool:
@@ -441,8 +458,11 @@ def _reference(before: DirectState, after: DirectState, call, result: ToolResult
 def run_direct(
     state: State, *, decide: Optional[Decide], hours: OpeningHoursGateway, unmatched_count: int = 0,
     on_step: Optional[OnStep] = None, review_input: Optional[Mapping[str, Any]] = None,
+    started_at: Optional[datetime] = None, clock: Clock = utc_now,
 ) -> DirectResult:
     """on_step(step, ds)는 단계가 하나 생길 때마다(순서대로, 그 단계가 반영된 상태와 함께) 부른다 — 진행 중 저장용.
+    started_at은 실행 상한의 기준 시각(run의 created_at)이다. 모델을 부르기 전마다 `past_limit`을 보고, 지났으면 그 턴부터 코드 규칙이
+    마무리하며 결과의 timed_out을 채운다.
     review_input은 다 넣은 일정(review 모드)의 점검 입력이다. 있으면 모델 입력에 `review`로 실리고 모델은 review 도구로 판단을 낸다(모델 턴 수 그대로)."""
     ds = DirectState(state, review_input=review_input)
     steps: list[DirectStep] = []
@@ -471,7 +491,7 @@ def run_direct(
         last = _check_result(ds)
         emit(DirectStep(0, "code", None, None, {"tool": "check_goals"}, last))
     use_model = decide is not None and bool(state.goals)       # 목표가 없으면 모델을 부르지 않는다
-    finished = False
+    finished = timed_out = False
 
     for turn in range(1, DIRECT_MAX_TURNS + 1):
         last = resolve_all(turn, last)
@@ -483,6 +503,9 @@ def run_direct(
             break
         thought = problem = substituted = raw_thought = None
         call, by = None, "baseline"
+        if use_model and past_limit(started_at, clock):         # 실행 상한 — 더 부르지 않고 이 턴부터 코드 규칙이 마무리한다(#1609)
+            use_model, timed_out = False, True
+            substituted = {"call": None, "error": RUN_DEADLINE, "failure": DEADLINE}
         if use_model:
             try:
                 reply = decide(direct_input(ds, last, turn, unmatched_count))
@@ -526,9 +549,9 @@ def run_direct(
     chosen = next(c for c in ds.candidates if c.candidate_id == chosen_id)
     trip = ds.state.trip
     return DirectResult(
-        outcome=core.outcome(chosen.violations, timed_out=False, checks=len(core.find_checks(trip, chosen.course, ds.state.hours))),
+        outcome=core.outcome(chosen.violations, timed_out=timed_out, checks=len(core.find_checks(trip, chosen.course, ds.state.hours))),
         chosen=chosen, course=chosen.course, violations=chosen.violations, soft=core.soft_scores(trip, chosen.course),
         goal_results=goals_mod.evaluate_all(trip, chosen.course, ds.state.goals), steps=tuple(steps),
         candidates=ds.candidates, state=ds.state,
-        model_turns=sum(s.by == "model" for s in steps), checks=ds.checks, judgment=ds.judgment,
+        model_turns=sum(s.by == "model" for s in steps), checks=ds.checks, judgment=ds.judgment, timed_out=timed_out,
     )

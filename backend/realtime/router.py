@@ -38,6 +38,8 @@ def _parse_last_event_id(raw: str | None) -> int | None:
 def _sse_format(row: EventLog) -> str:
     # docs/events.md: data는 페이로드 자체다(타입은 event:, 지도는 구독 경로가 이미 말해 준다).
     data = json.dumps(row.payload)
+    if row.seq is None:   # member.presence — 저장하지 않는 이벤트라 id를 주지 않는다(재연결 기준 id가 바뀌지 않는다)
+        return f"event: {row.type}\ndata: {data}\n\n"
     return f"id: {row.seq}\nevent: {row.type}\ndata: {data}\n\n"
 
 

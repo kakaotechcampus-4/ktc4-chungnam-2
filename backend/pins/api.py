@@ -131,6 +131,7 @@ def create_ai_pin(
         place_name=place.name if place else None,
         place_url=places_api.place_link(place) if place else None,   # AI 추천 핀은 늘 자체 DB 핀이다(#801)
         naver_url=places_api.naver_place_link(place.name, place.address) if place else None,
+        neighborhood=places_api.neighborhood(place.address) if place else None,   # #1564
         created_by_display_name=display_name,
         created_at=pin_row.created_at,
         checks=validated_checks,
@@ -210,6 +211,14 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     return core.to_pin_response(record, principal)
 
 
+def get_pin_responses_for_viewer(
+    db: Session, *, pin_ids: list[str], viewer_id: str, principal: Principal,
+) -> dict[str, Pin]:
+    """`get_pin_response_for_viewer`의 배치판(#1488) — 핀 id 목록을 한 번에 `{pin_id: Pin}`으로 돌려준다(쿼리 수가 핀 수와 상관없다).
+    각 Pin은 단건과 같은 조립이다. **없거나 삭제된 핀은 결과에 없다**(단건은 404) — 부르는 쪽이 키가 있는지 본다. 읽기 전용."""
+    return service.viewer_pin_responses(db, pin_ids, viewer_id, principal)
+
+
 def author_display_names(db: Session, author_ids: list[str], current_member_ids: set[str]) -> dict[str, str | None]:
     """작성자 id 배치의 표시 이름(#369 핀 작성자 규칙) — 탈퇴했으면 '탈퇴한 구성원', 이 지도에서 나갔으면
     '나간 구성원', 아니면 실명. recommend 근거 줄 작성자(#762)가 규칙을 복사하지 않고 이것을 부른다.
@@ -231,6 +240,26 @@ def count_public_pins_by_map(db: Session, map_ids: Sequence[str]) -> dict[str, i
     ).all()
     counts.update({map_id: n for map_id, n in rows})
     return counts
+
+
+def count_reactions_by_user(db: Session, *, map_id: str) -> dict[str, int]:
+    """maps의 구성원 목록(`Member.opinion_count`, #1562)이 쓴다 — 이 지도의 보이는 핀에 지금 남아 있는 ♥·🚫 반응 수를 사용자별로
+    돌려준다(반응이 없는 사람은 키가 없다 — 0으로 읽는다). 지운 핀의 반응은 세지 않고 「?」는 반응이 아니다. 쿼리 한 번.
+    `FilterCounts.members_with_opinion`과 같은 집계에서 나온다(그 수 = 이 값이 1 이상인 현재 구성원 수). 읽기 전용."""
+    return service.reaction_counts_by_user(db, map_id)
+
+
+def list_new_since(
+    db: Session, *, map_id: str, since: datetime, exclude_user_id: str, limit: int,
+) -> tuple[list[str], list[dict], bool]:
+    """maps의 `GET /maps/{mapId}/news`(#1556)가 쓴다 — `(new_pin_ids, new_reactions, truncated)`. 새 핀 id: created_at이 `since` 뒤이고
+    `exclude_user_id`가 찍지 않은, 지금 지도에 있는 핀, 최근 순. 새 반응: updated_at이 `since` 뒤이고 `exclude_user_id`의 것이 아닌,
+    지금 지도에 있는 핀의 반응(`pin_id`·`user_id`·`type`·`reason_text`·`reason_chip_ids`·`updated_at`), 최근 순. 각 목록 `limit`개까지이고
+    어느 한 쪽이라도 넘으면 `truncated=True`. `since`는 timezone-aware(memberships.last_seen_at)이고 null이면 부르지 않는다
+    (처음 연 지도는 빈 목록). 이름(display_name)은 maps가 채운다. 읽기 전용."""
+    if since.tzinfo is None:
+        raise ValueError("since는 timezone-aware여야 한다")
+    return service.list_new_since(db, map_id=map_id, since=since, exclude_user_id=exclude_user_id, limit=limit)
 
 
 def count_opinion_pins(db: Session, *, map_id: str, category: str) -> int:

@@ -79,16 +79,54 @@ def _visible_pins_clause(map_id: str):
     return and_(PinRow.map_id == map_id, PinRow.deleted_at.is_(None))
 
 
-def _count_members_with_opinion(db: Session, map_id: str) -> int:
-    """이 지도의 보이는 핀 중 하나에든 ♥·🚫를 남긴 서로 다른 현재 구성원 수. 삭제된 핀의 반응은 세지 않고
-    (「삭제된 핀은 세지 않는다」), 탈퇴한 사용자는 뺀다. 보이는 핀의 판정은 목록·집계와 같다."""
-    user_ids = db.execute(
-        select(ReactionRow.user_id)
+def reaction_counts_by_user(db: Session, map_id: str) -> dict[str, int]:
+    """이 지도의 보이는 핀에 지금 남아 있는 ♥·🚫 반응 수를 사용자별로 센다(#1562) — 쿼리 한 번. 반응은 핀 하나에 한 사람당 하나라
+    「의견을 남긴 핀 수」와 같다. 지운 핀(휴지통)의 반응은 세지 않는다. 보이는 핀의 판정은 목록·집계와 같다.
+    members_with_opinion(아래)도 이 값에서 나온다 — 한 곳에서 정한다."""
+    rows = db.execute(
+        select(ReactionRow.user_id, func.count())
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
         .where(_visible_pins_clause(map_id))
-        .distinct()
-    ).scalars().all()
+        .group_by(ReactionRow.user_id)
+    ).all()
+    return {user_id: n for user_id, n in rows}
+
+
+def _count_members_with_opinion(db: Session, map_id: str) -> int:
+    """이 지도의 보이는 핀 중 하나에든 ♥·🚫를 남긴 서로 다른 현재 구성원 수. 삭제된 핀의 반응은 세지 않고
+    (「삭제된 핀은 세지 않는다」), 탈퇴한 사용자는 뺀다."""
+    user_ids = list(reaction_counts_by_user(db, map_id))
     return len(set(user_ids) - auth_api.withdrawn_user_ids(db, user_ids))
+
+
+def list_new_since(
+    db: Session, *, map_id: str, since: datetime, exclude_user_id: str, limit: int,
+) -> tuple[list[str], list[dict], bool]:
+    """since 뒤의 새 핀·새 반응(#1556) — 지금 지도에 있는 핀만, exclude_user_id(요청자)가 찍거나 남긴 것은 뺀다. 최근 것부터 각 limit개이고
+    한 개 더 읽어 잘렸는지 안다. 새 핀은 created_at(AI 추천 핀은 게시 시각, 되살린 핀은 옛 시각이라 안 들어간다),
+    새 반응은 updated_at 기준이다. 이름은 이 모듈이 모른다(maps가 채운다)."""
+    pin_ids = db.execute(
+        select(PinRow.id)
+        .where(_visible_pins_clause(map_id), PinRow.created_at > since, PinRow.created_by != exclude_user_id)
+        .order_by(PinRow.created_at.desc(), PinRow.id.desc())
+        .limit(limit + 1)
+    ).scalars().all()
+    reactions = db.execute(
+        select(
+            ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
+            ReactionRow.reason_text, ReactionRow.reason_chip_ids, ReactionRow.updated_at,
+        )
+        .join(PinRow, PinRow.id == ReactionRow.pin_id)
+        .where(_visible_pins_clause(map_id), ReactionRow.updated_at > since, ReactionRow.user_id != exclude_user_id)
+        .order_by(ReactionRow.updated_at.desc(), ReactionRow.id.desc())
+        .limit(limit + 1)
+    ).all()
+    return (
+        [str(i) for i in pin_ids[:limit]],
+        [{"pin_id": str(r.pin_id), "user_id": r.user_id, "type": r.type, "reason_text": r.reason_text,
+          "reason_chip_ids": list(r.reason_chip_ids or []), "updated_at": r.updated_at} for r in reactions[:limit]],
+        len(pin_ids) > limit or len(reactions) > limit,
+    )
 
 
 def count_pins(db: Session, map_id: str, principal: Principal, members_total: int) -> FilterCounts:
@@ -206,6 +244,59 @@ def list_pins(
     return result
 
 
+def viewer_pin_responses(db: Session, pin_ids: list[str], viewer_id: str, principal: Principal) -> dict[str, Pin]:
+    """핀 id 배치의 요청자 기준 Pin 응답(#1488) — 단건(api.get_pin_response_for_viewer)과 같은 조립을 쿼리 수가 핀 수와 상관없게 한다
+    (핀·좌표·반응 수, 작성자 이름, 내 반응, 장소). 없거나 삭제된 핀은 결과에서 빠진다(단건은 404). 지도가 다른 핀이 섞여 있어도
+    구성원 집합은 지도마다 따로 구한다."""
+    uuids = []
+    for raw in dict.fromkeys(pin_ids):
+        try:
+            uuids.append(uuid.UUID(raw))
+        except ValueError:
+            continue
+    if not uuids:
+        return {}
+    lat_col, lng_col = _lat_lng_columns()
+    counts = (
+        select(
+            ReactionRow.pin_id.label("pin_id"),
+            func.count().filter(ReactionRow.type == "like").label("like"),
+            func.count().filter(ReactionRow.type == "against").label("against"),
+        )
+        .where(ReactionRow.pin_id.in_(uuids))
+        .group_by(ReactionRow.pin_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(
+            PinRow, lat_col, lng_col,
+            func.coalesce(counts.c.like, 0).label("like_count"),
+            func.coalesce(counts.c.against, 0).label("against_count"),
+        )
+        .outerjoin(counts, counts.c.pin_id == PinRow.id)
+        .where(PinRow.id.in_(uuids), PinRow.deleted_at.is_(None))
+    ).all()
+    pin_rows = [row[0] for row in rows]
+    members_by_map = {m: maps_api.DbMembershipGateway(db).current_member_ids(m) for m in {r.map_id for r in pin_rows}}
+    names_by_map = {
+        m: author_display_names(db, [r.created_by for r in pin_rows if r.map_id == m], members_by_map[m]) for m in members_by_map
+    }
+    my_reactions = my_reactions_for_pins(db, [r.id for r in pin_rows], viewer_id)
+    place_infos = places_api.get_places([r.place_id for r in pin_rows if r.place_id], db=db)
+    out: dict[str, Pin] = {}
+    for row in rows:
+        pin_row: PinRow = row[0]
+        record = record_from_row(
+            pin_row, lat=row.lat, lng=row.lng,
+            reaction_counts=core.ReactionCounts(like=row.like_count, against=row.against_count),
+            created_by_display_name=names_by_map[pin_row.map_id].get(pin_row.created_by),
+            my_reaction=my_reactions.get(pin_row.id),
+            place=place_infos.get(pin_row.place_id) if pin_row.place_id else None,
+        )
+        out[str(pin_row.id)] = core.to_pin_response(record, principal)
+    return out
+
+
 def list_trash(
     db: Session, map_id: str, principal: Principal, current_member_ids: set[str], *, now: datetime,
 ) -> core.PinTrash:
@@ -295,6 +386,7 @@ def record_from_row(
         place_url=_place_url(pin_row, place),
         naver_url=(places_api.naver_place_link(place.name, place.address)
                    if place and pin_row.source != "live" else None),
+        neighborhood=places_api.neighborhood(place.address) if place and pin_row.source != "live" else None,   # 규칙은 places.core 한 곳(#1564)
         created_by_display_name=created_by_display_name,
         created_at=pin_row.created_at,
         checks=pin_row.checks,

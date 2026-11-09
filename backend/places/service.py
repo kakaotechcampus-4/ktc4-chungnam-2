@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from common.errors import AppError
-from places import fallback
+from places import core, fallback
 from places.http import SourceError
 from places.schemas import PlaceSearchResult, PlaceSourceInfo
 from places.sources.base import PlaceSource, RawPlace
@@ -38,4 +38,5 @@ def to_result(place: RawPlace) -> PlaceSearchResult:
         category=place.category,       # 소스가 추정한 제안값 — 핀의 category는 사용자가 정한다
         address=place.address[:200] if place.address else None,
         place_source=PlaceSourceInfo(provider=place.source, url=place.place_url),
+        naver_url=core.naver_place_link(place.name, place.address),   # 응답에만 싣고 저장하지 않는다(#53)
     )

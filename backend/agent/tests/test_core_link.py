@@ -220,7 +220,8 @@ def _gap_snap(*, candidates=True, against=False):
                      react("r3", "c2", "u2", "like", NOW - hours(8))]
         if against:
             reactions.append(react("r4", "c1", "u1", "against", NOW - hours(7)))
-    return snap(pins=pins, reactions=reactions, shortlist=[item("f1"), item("f2")])
+    ready = ("카페",) if candidates else ()   # 후보에 의견이 있으면 카페는 추천 준비가 된 것이다(#1583)
+    return snap(pins=pins, reactions=reactions, shortlist=[item("f1"), item("f2")], ready_categories=ready)
 
 
 def _gap_signal(s):
@@ -234,7 +235,7 @@ def test_category_gap_uses_the_model_only_with_candidates():
     assert core.allowed_actions(with_pins) == ("open_pin", "open_recommend", "search_place")
     without = _gap_signal(_gap_snap(candidates=False))
     assert not core.uses_model(without)
-    assert core.allowed_actions(without) == ("open_recommend", "search_place")
+    assert core.allowed_actions(without) == ("search_place",)   # 핀이 없어 추천 준비가 안 됐다(#1583)
     # 다음 방법(6.9)은 지금처럼 템플릿이다
     assert not core.uses_model(replace(with_pins, features={**with_pins.features, "attempt": 1}))
 

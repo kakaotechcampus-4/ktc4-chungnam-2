@@ -72,7 +72,9 @@ memberships(
   id, map_id, user_id, role('member'|'owner'),   -- authz 참고. color는 9/4 결정 #26으로 폐기(구성원 구분에 색 불필요)
                                                  -- #369: role이 방장 판단의 정본이다. 방장이 나가면 joined_at이 가장 빠른
                                                  --   구성원(탈퇴자 제외, 같으면 id 순)에게 위임된다
-  joined_at
+  joined_at,
+  last_seen_at                                   -- #1556(2026-11-09): 이 사람이 이 지도를 마지막으로 본 때(POST /maps/{mapId}/seen). null이면 아직 안 봄.
+                                                 --   GET /maps/{mapId}/news의 기준 시각. 기기와 상관없이 한 사람에 하나다
 )
   unique(map_id, user_id)
   unique(map_id) where role = 'owner'   -- #369: 지도당 방장은 최대 1명. 위임은 한 트랜잭션에서 강등 후 승격
@@ -573,7 +575,6 @@ agent_course_runs(
   input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
   mode('plan'|'fill'|'review'),       -- 요청 때 서버가 확정 리스트의 일정 상태로 정한다(#1237). 진행 중에도 값이 있다
   snapshot_at, snapshot_version text, -- 요청 때 일정 version(shortlist, #1237 — 장소 집합·날짜 배정·순서·여행 기간). 지금과 다르면 응답의 stale=true. 0062 전 run은 'legacy'(→ stale)
-  snapshot_pin_ids jsonb default '[]', -- 지울 칸(deploy_rules.md, #1464). 이전 릴리스가 읽는 옛 stale 기준이다. 새 코드는 쓰지 않는다. 삭제는 #1465
   headline null, fixes jsonb, checked jsonb, -- 결과 머리 문구, 고칠 점 카드 [{id, kind, strength, text, moves:[{pin_id, from_date, to_date}], resolved_text, remaining_text, not_fixed_reason}], 점검 통과 [{kind, text}]. plan은 fixes·checked가 빈 배열
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
@@ -588,7 +589,7 @@ index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
 unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
 ```
 
-- 진행 중으로 15분 넘게 남은 run은 `failed(INTERRUPTED)`로 끝낸다. 새 요청과 조회(`GET /course-runs/{runId}`, `GET /maps/{mapId}/courses/latest`)가 같은 판정(`agent.course.service.fail_stale_runs`)을 부른다(#736). 늦게 끝난 계산은 `running`일 때만 저장하므로 끝낸 run을 덮지 않는다. 서버가 시작할 때도 진행 중인 run을 모두 같은 값으로 끝낸다(인스턴스 하나 전제, #168).
+- 실행은 `created_at`부터 실행 상한(`agent/course/constants.py`의 `RUN_LIMIT`) 안에서 끝난다. 상한이 지나면 모델을 더 부르지 않고 코드가 마무리해 `done`으로 저장한다(#1609). 그래서 상한에 여유를 더한 `STALE_AFTER`(같은 파일)보다 오래 진행 중(queued, running)인 run은 어느 프로세스의 것이든 죽은 것이고 `failed(INTERRUPTED)`로 끝낸다. 판정은 `agent.course.service.fail_stale_runs` 한 곳이고, 새 요청과 조회(`GET /course-runs/{runId}`, `GET /maps/{mapId}/courses/latest`, #736)와 서버 시작이 범위만 달리해 부른다. 서버 시작도 같은 값을 쓰므로 서버가 둘 이상이어도 다른 프로세스가 돌리는 run을 끝내지 않는다. 늦게 끝난 계산은 `running`일 때만 저장하므로 끝낸 run을 덮지 않는다.
 - 영업시간 칸이 places에 아직 없어(#580 6번) 지금은 모든 장소가 「확인 필요」(`checks`)다.
 
 ---

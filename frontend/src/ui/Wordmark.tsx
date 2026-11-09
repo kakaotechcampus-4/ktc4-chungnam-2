@@ -9,12 +9,12 @@ const GO = 'M25.3-2L25.3-2Q19.3-2 14.2-4.3Q9.1-6.6 6.1-11.9Q3-17.1 3-25.7L3-25.7
 /** go 는 글자 상자 가운데 높이(기준선 위 27.7)를 축으로 12° 기운다. */
 const go = (x: number) => `translate(${x} 0) translate(57 -27.7) skewX(-12) translate(-57 27.7)`
 
-/** `onFill`은 파란 면 위(PC 지도 패널 머리, #1538) — pin 은 흰색, go 는 brand-100 이다(파란 띠 위 대비 4.4:1, #1573). */
+/** `onFill`은 파란 면 위(PC 지도 패널 머리, #1538) — pin 은 흰색, go 는 brand-100 이다(파란 띠 위 대비 4.4:1, #1573). 파란 면은 다크에서도 같아서 밝은 값 그대로 둔다(#1412). */
 export default function Wordmark({ className = '', onFill = false }: { className?: string; onFill?: boolean }) {
   const pin = onFill ? 'var(--text-on-fill)' : 'var(--ink-900)'
   const goFill = onFill ? 'var(--brand-100)' : 'var(--brand-600)'
   return (
-    <svg viewBox="2 -74 514 96" role="img" aria-label="핑고핑고" className={className}>
+    <svg viewBox="2 -74 514 96" role="img" aria-label="핑고핑고" className={onFill ? `keep-light ${className}` : className}>
       <path d={PIN} fill={pin} />
       <path d={GO} transform={go(142)} fill={goFill} />
       <path d={PIN} transform="translate(255.1 0)" fill={pin} />

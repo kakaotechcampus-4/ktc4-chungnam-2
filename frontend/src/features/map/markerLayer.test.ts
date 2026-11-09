@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createMarkerLayer, LABEL_MAX_LEVEL, mapFade } from './markerLayer'
+import { createMarkerLayer, LABEL_MAX_LEVEL, mapFade, PIN_GROUP_PX } from './markerLayer'
 import type { Pin } from './model'
 
 /** 카카오 SDK 대신 쓰는 가짜. 위도·경도를 그대로 화면 좌표(px)로 쓴다 — lat 이 y, lng 가 x. */
@@ -69,22 +69,22 @@ afterEach(() => {
 describe('지도 핀 이름표', () => {
   it('떨어진 핀은 누르지 않아도 이름표가 다 보인다', () => {
     const { maps, map } = fakeMaps(4)
-    createMarkerLayer(maps, map, () => {}).sync([pin('1', 0, 100), pin('2', 300, 100)], 4)
+    createMarkerLayer(maps, map, () => {}, () => {}).sync([pin('1', 0, 100), pin('2', 300, 100)], 4)
     expect(labelShown('1')).toBe(true)
     expect(labelShown('2')).toBe(true)
   })
 
   it('이름표가 겹치면 확정 핀 쪽만 남는다', () => {
     const { maps, map } = fakeMaps(4)
-    createMarkerLayer(maps, map, () => {}).sync([pin('1', 100, 100), pin('2', 120, 102, { kind: '확정' })], 4)
+    createMarkerLayer(maps, map, () => {}, () => {}).sync([pin('1', 100, 100), pin('2', 130, 102, { kind: '확정' })], 4)
     expect(labelShown('2')).toBe(true)
     expect(labelShown('1')).toBe(false)
   })
 
   it('고른 핀은 겹쳐도 이름이 보이고, 그 자리의 다른 이름표가 비킨다', () => {
     const { maps, map } = fakeMaps(4)
-    const layer = createMarkerLayer(maps, map, () => {})
-    layer.sync([pin('1', 100, 100), pin('2', 120, 102, { kind: '확정' })], 4)
+    const layer = createMarkerLayer(maps, map, () => {}, () => {})
+    layer.sync([pin('1', 100, 100), pin('2', 130, 102, { kind: '확정' })], 4)
     layer.select('1')
     expect(labelShown('1')).toBe(true)
     expect(labelShown('2')).toBe(false)
@@ -92,7 +92,7 @@ describe('지도 핀 이름표', () => {
 
   it(`멀리 보면(레벨 ${LABEL_MAX_LEVEL + 1}) 고른 핀만 이름이 남고, 다시 가까이 오면 돌아온다`, () => {
     const { maps, map, raw, idle } = fakeMaps(LABEL_MAX_LEVEL + 1)
-    const layer = createMarkerLayer(maps, map, () => {})
+    const layer = createMarkerLayer(maps, map, () => {}, () => {})
     layer.sync([pin('1', 0, 100), pin('2', 300, 100)], 4)
     layer.select('2')
     expect(labelShown('1')).toBe(false)
@@ -101,6 +101,45 @@ describe('지도 핀 이름표', () => {
     raw.level = LABEL_MAX_LEVEL
     idle()
     expect(labelShown('1')).toBe(true)
+  })
+})
+
+describe('겹친 핀 묶음(#1576)', () => {
+  const groupButton = () => [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.getAttribute('aria-label')?.startsWith('핀 '))
+  const pinShown = (id: string) => {
+    const el = [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.getAttribute('aria-label')?.startsWith(`가게${id},`))
+    return Boolean(el) && el!.style.display !== 'none'
+  }
+
+  it(`핀 끝끼리 ${PIN_GROUP_PX}px 안이면 숫자 핀 하나로 묶이고, 누르면 그 핀들과 좌표를 넘긴다`, () => {
+    const { maps, map } = fakeMaps(4)
+    const onGroup = vi.fn()
+    createMarkerLayer(maps, map, () => {}, onGroup).sync([pin('1', 100, 100), pin('2', 110, 104, { kind: '확정' }), pin('3', 300, 100)], 4)
+    expect(groupButton()?.getAttribute('aria-label')).toBe('핀 2곳이 겹쳐 있어요 · 가게1, 가게2')
+    expect(groupButton()?.textContent).toContain('2')
+    expect(pinShown('1')).toBe(false)
+    expect(pinShown('2')).toBe(false)
+    expect(pinShown('3')).toBe(true)
+    groupButton()!.click()
+    expect(onGroup).toHaveBeenCalledWith(['1', '2'], [{ lat: 100, lng: 100 }, { lat: 104, lng: 110 }])
+  })
+
+  it('확대해서 벌어지면 풀리고, 고른 핀은 묶지 않는다', () => {
+    const { maps, map, raw, idle } = fakeMaps(4)
+    const layer = createMarkerLayer(maps, map, () => {}, () => {})
+    layer.sync([pin('1', 100, 100), pin('2', 110, 104)], 4)
+    layer.select('1')
+    expect(groupButton()).toBeUndefined()
+    expect(pinShown('2')).toBe(true)
+
+    layer.select(null)
+    expect(groupButton()).toBeDefined()
+    // 가짜 지도는 축척을 모른다 — 확대한 것처럼 좌표를 벌려 다시 넣는다.
+    raw.level = 3
+    layer.sync([pin('1', 100, 100), pin('2', 140, 104)], 4)
+    idle()
+    expect(groupButton()).toBeUndefined()
+    expect(pinShown('1')).toBe(true)
   })
 })
 

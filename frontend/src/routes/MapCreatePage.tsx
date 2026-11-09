@@ -34,7 +34,7 @@ export default function MapCreatePage() {
     // 넓은 화면은 입구 카드다(#1269) — 버튼은 맨 아래가 아니라 칸 바로 아래.
     <EntryFrame as="form" onSubmit={submit} className="bg-ink-50 px-4 pb-6 pt-4">
       <header className="mb-6 flex items-center gap-3">
-        <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-float">
+        <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-surface shadow-float">
           <ChevronLeft size={20} />
         </Link>
         <h1 className="text-2xl font-bold text-ink-900">새 지도</h1>

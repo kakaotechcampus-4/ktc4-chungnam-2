@@ -103,7 +103,7 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
               {current ? <span className="size-2 rounded-full bg-current" /> : <Mark kind="check" size={14} />}
             </span>
             {label}
-            {current && <span className="ml-auto text-xs text-brand-600">진행 중</span>}
+            {current && <span className="ml-auto text-xs text-link">진행 중</span>}
           </li>
         )
       })}
@@ -280,7 +280,7 @@ function RadiusPicker({
             type="button"
             onClick={() => setTyping(String(value / 1000))}
             aria-label={`찾는 범위 직접 넣기, 지금 ${radiusKm(value)}`}
-            className="hit-44 text-sm font-bold text-brand-700 underline decoration-dotted underline-offset-4"
+            className="hit-44 text-sm font-bold text-selected underline decoration-dotted underline-offset-4"
           >
             {radiusKm(value)}
           </button>
@@ -411,7 +411,7 @@ function ReadinessTile({ card, selected, onPick }: { card: ReadinessCard; select
       aria-pressed={selected}
       onClick={onPick}
       className={`press rounded-xl border px-3 py-2.5 text-left disabled:bg-ink-50 ${
-        selected ? 'border-brand-600 bg-[var(--selected-bg)] ring-1 ring-brand-600' : 'border-ink-200 bg-white'
+        selected ? 'border-brand-600 bg-[var(--selected-bg)] ring-1 ring-brand-600' : 'border-ink-200 bg-surface'
       }`}
     >
       <span className={`block font-bold ${card.ready ? 'text-ink-900' : 'text-ink-500'}`}>{card.category}</span>

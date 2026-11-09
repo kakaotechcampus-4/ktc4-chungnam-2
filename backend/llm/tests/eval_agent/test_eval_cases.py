@@ -8,8 +8,10 @@ agent 규칙이 바뀌어 기대값이 낡으면 여기서 먼저 깨진다.
 어느 규칙이 순서를 바꿨는지(rule_hits)까지 본다.
 
 미리 돌려 보기 케이스(#1180, 명세 6.7)는 case.preview에 정해 둔 수(0곳, 몇 곳, 절충 0곳, 절충 몇 곳)를 적는다.
+절충(different_axes)은 both_sides_count와 both_sides_confirmed_count다(#1600) — 어긋나지 않는 곳 0곳(e27, 🚫 쪽 조건에
+어긋나 0곳인 e42), 있지만 둘 다 확인된 곳 0곳(e41), 둘 다 있음(e28).
 운영에서 갈림은 충돌 종류와 상관없이 늘 미리 돌려 보므로(결정 #1317) 제안을 기대하는 갈림 케이스에는 preview가 있다.
-same_axis·unclear는 절충 키 없이 passed_count만이다. preview 없는 갈림은 e29 하나(카테고리의 다른 사유 ②가 실패한 경로)이고,
+same_axis·unclear는 두 의견의 조건 없이 passed_count만이다. preview 없는 갈림은 e29 하나(카테고리의 다른 사유 ②가 실패한 경로)이고,
 그래도 기대 첫 버튼은 「추천 받기」다(#1198 리뷰). 진단 입력과 도구 기록 p1에 들어가는지, 0곳이면 검증이 「추천 받기」를 빼는지,
 수가 p1 claim 슬롯으로만 문장에 나오는지 본다.
 
@@ -45,7 +47,7 @@ def test_cases_cover_both_model_types_and_silence():
     expects = [c["expect"] for c in CASES]
     targets = [e["target"] for e in expects if e["target"]]
 
-    assert len(CASES) == 40 and len({c["id"] for c in CASES}) == 40
+    assert len(CASES) == 42 and len({c["id"] for c in CASES}) == 42
     assert sum(t.startswith("stall") for t in targets) >= 7 and sum(t.startswith("split") for t in targets) >= 7
     assert sum(e["decision"] == "silent" for e in expects) >= 3
     assert sum(e["priority_source"] == "rules" for e in expects) >= 7
@@ -206,13 +208,18 @@ PREVIEW_CASES = [c for c in CASES if c.get("preview")]
 
 
 def test_preview_cases_cover_zero_some_and_compromise():
-    kinds = {(c["expect"]["target"].split(":")[0], c["preview"]["passed_count"] > 0, c["preview"].get("with_keys_count"))
+    kinds = {(c["expect"]["target"].split(":")[0], c["preview"]["passed_count"] > 0, c["preview"].get("both_sides_count"))
              for c in PREVIEW_CASES}
     assert ("stall", False, None) in kinds and ("stall", True, None) in kinds
     assert ("split", True, 0) in kinds and any(k[0] == "split" and (k[2] or 0) > 0 for k in kinds)
+    both = {(c["preview"]["both_sides_count"] > 0, c["preview"]["both_sides_confirmed_count"] > 0)
+            for c in PREVIEW_CASES if "both_sides_count" in c["preview"]}
+    assert both == {(False, False), (True, False), (True, True)}   # 0곳, 모름만 남음(M=0), 확인된 곳도 있음(#1600)
+    assert all(c["preview"]["both_sides_confirmed_count"] <= c["preview"]["both_sides_count"]
+               for c in PREVIEW_CASES if "both_sides_count" in c["preview"])
     axis = [c for c in PREVIEW_CASES if c["expect"]["conflict_type"] in ("same_axis", "unclear")]
     assert {c["preview"]["passed_count"] > 0 for c in axis} == {True, False}   # same_axis·unclear 0곳 하나, 몇 곳 하나 이상
-    assert all("with_keys_count" not in c["preview"] for c in axis)
+    assert all("both_sides_count" not in c["preview"] for c in axis)
     assert all(c["expect"]["decision"] == "suggest" for c in PREVIEW_CASES)
     for c in PREVIEW_CASES:   # 남는 곳이 있으면 「추천 받기」, 0곳이면 「장소 검색」만. 후속은 해 본 행동을 빼고 남은 것(6.9)
         expected = [a for a in _expected_order(c) if a not in _tried(c)][:1]
@@ -255,8 +262,10 @@ def test_preview_reaches_the_input_and_the_p1_record(case):
     assert tools.results["p1"]["passed_count"] == case["preview"]["passed_count"]
     assert "funnel" not in inp["preview"]   # 깔때기는 기록에만
     if inp["diagnosis"] == "split" and inp["comparison"]["conflict_type"] == "different_axes":
-        assert inp["preview"]["with_keys_count"] == case["preview"]["with_keys_count"]
-        assert len(inp["preview"]["with_labels"]) == 1   # ♥ 쪽이 원한 키 하나의 표시 이름
+        for k in ("both_sides_count", "both_sides_confirmed_count"):
+            assert inp["preview"][k] == case["preview"][k]
+        # 양쪽 조건의 표시 이름 하나씩 — 🚫 쪽 조건도 센다(#1600). 칩과 글이 같은 조건이면 한 번
+        assert (len(inp["preview"]["like_labels"]), len(inp["preview"]["against_labels"])) == (1, 1)
     elif inp["diagnosis"] == "split":   # same_axis·unclear는 절충 키 없이 그 카테고리 근거 전부로만 센다(#1317)
         assert set(inp["preview"]) == {"passed_count"}
     assert not any(p["name"] in json.dumps(inp, ensure_ascii=False) for p in case["pins"])   # 장소 이름은 입력에 없다
@@ -303,7 +312,7 @@ def test_every_suggested_split_has_a_preview_except_the_failure_path():
     assert missing == ["e29_split_diff_axes_no_preview"]
     for c in splits:
         if c.get("preview") and c["expect"]["conflict_type"] == "different_axes":
-            assert c["preview"]["passed_count"] >= 1 and c["preview"]["with_keys_count"] is not None, c["id"]
+            assert c["preview"]["passed_count"] >= 1 and c["preview"]["both_sides_count"] is not None, c["id"]
 
 
 def test_a_different_axes_split_without_a_preview_still_expects_recommend():

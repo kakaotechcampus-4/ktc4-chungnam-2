@@ -31,7 +31,7 @@ export default function SidePanel({ label, onClose, children }: { label: string;
       aria-label={label}
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
       style={{ left: panelOpen ? PANEL_GAP * 2 + panelW : PANEL_GAP, width: SIDE_PANEL_W }}
-      className="enter-fade fixed inset-y-3 z-30 flex flex-col overflow-hidden rounded-2xl bg-white shadow-float outline-none transition-[left] duration-300 ease-out motion-reduce:transition-none"
+      className="enter-fade fixed inset-y-3 z-30 flex flex-col overflow-hidden rounded-2xl bg-surface shadow-float outline-none transition-[left] duration-300 ease-out motion-reduce:transition-none"
     >
       <header className="flex items-center gap-2 border-b border-ink-200 py-2 pl-4 pr-2">
         <div className="min-w-0 flex-1">

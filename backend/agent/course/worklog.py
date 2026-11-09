@@ -13,7 +13,9 @@ from typing import Any, Optional, Sequence
 
 from agent.course import core, goals as goals_mod, verify
 from agent.course.constants import DAY_TRAVEL_MAX_MIN, DAY_WALK_MAX_MIN, LEG_MAX_MIN, MEAL_CATEGORY, MEALS_PER_DAY_MIN
-from agent.course.direct import BAD_FORMAT, NO_RESPONSE, RESOLVE_CLOSURE, RESOLVE_SPLIT, TIMEOUT, UNUSABLE, DirectResult, DirectStep
+from agent.course.direct import (
+    BAD_FORMAT, DEADLINE, NO_RESPONSE, RESOLVE_CLOSURE, RESOLVE_SPLIT, TIMEOUT, UNUSABLE, DirectResult, DirectStep,
+)
 from agent.course.korean import attach, candidate_name, goals_sentence
 
 MODEL, CODE, PERSON = "모델", "코드", "사람"
@@ -170,7 +172,10 @@ FAILURE_TEXT = {
     BAD_FORMAT: "모델 응답의 형식이 맞지 않아",
     NO_RESPONSE: "모델 응답이 없어",
     UNUSABLE: "모델이 고른 도구를 더 쓸 수 없어",
+    DEADLINE: "실행 시간 상한이 되어",
 }
+# 실행 상한으로 지휘 턴을 코드가 이어받은 줄(#1609). 이 턴부터 끝까지 모델을 부르지 않는다
+DEADLINE_TAKEN_OVER = "모델을 더 부르지 않고 여기부터 코드가 마무리해요."
 _TAKEN_OVER = {"optimize": "이번 단계는 코드가 이어서 짰어요.", "finish": "이번 단계는 코드가 이어서 골랐어요."}
 GOALS_FAILED_TEXT = "목표를 세우지 못했어요. 요청 목표 없이 기본 기준으로 짜요."
 
@@ -243,8 +248,9 @@ class Narrator:
             self.redo = True
             return resolved_records(trip, by_id, step)
         if step.substituted_for:                # 모델이 실패해 코드가 이어받았다(#1131 D안) — 원인 종류와 고정 문구만
-            out.append(_rec("대행", DIRECT, CODE, f"{FAILURE_TEXT[step.substituted_for.get('failure', NO_RESPONSE)]} "
-                            f"{_TAKEN_OVER.get(tool, '이번 단계는 코드가 이어받았어요.')}"))
+            failure = step.substituted_for.get("failure", NO_RESPONSE)
+            taken = DEADLINE_TAKEN_OVER if failure == DEADLINE else _TAKEN_OVER.get(tool, "이번 단계는 코드가 이어받았어요.")
+            out.append(_rec("대행", DIRECT, CODE, f"{FAILURE_TEXT[failure]} {taken}"))
         if tool == "check_goals":
             return out + [_rec("확인", VERIFY, CODE, sentence) for sentence in step.result.data["sentences"]]
         if step.thought:

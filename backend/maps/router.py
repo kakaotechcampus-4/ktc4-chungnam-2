@@ -24,9 +24,9 @@ from authz.core import Principal
 from authz.guard import require_map_member, require_on_map
 from common.settings import settings
 from maps import core, flows, service
-from maps.deps import DbSession
+from maps.deps import DbSession, get_optional_user
 from maps.schemas import (
-    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapUpdateRequest, Member, OwnerTransferRequest,
+    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapNews, MapUpdateRequest, Member, OwnerTransferRequest,
     TrashedMapList,
 )
 
@@ -194,6 +194,26 @@ def post_owner(
     return service.hand_over_owner(db, map_id=mapId, from_user_id=principal.user_id, to_user_id=body.user_id)
 
 
+@router.post("/maps/{mapId}/seen", status_code=204)
+def post_seen(
+    mapId: str = Path(...),
+    principal: Principal = MapForRead,
+    db=DbSession,
+):
+    # 이벤트를 보내지 않는다. 시각은 서버(DB)가 정한다(요청에 값을 받지 않는다).
+    service.mark_seen(db, map_id=mapId, user_id=principal.user_id)
+
+
+@router.get("/maps/{mapId}/news", response_model=MapNews)
+def get_news(
+    mapId: str = Path(...),
+    principal: Principal = MapForRead,
+    db=DbSession,
+):
+    # last_seen_at을 바꾸지 않는다 — 읽기만. since가 null인 응답도 칸이 있어야 해서 exclude_none을 쓰지 않는다.
+    return service.get_news(db, map_id=mapId, user_id=principal.user_id)
+
+
 @router.delete("/maps/{mapId}/members/me", status_code=204)
 def leave_map(
     mapId: str = Path(...),
@@ -244,9 +264,12 @@ def delete_invite(
     service.revoke_invite(db, token=token, user_id=user.user_id)
 
 
-@public_router.get("/invites/{token}", response_model=InviteSummary)
-def get_invite_summary(token: str = Path(...), db=DbSession):
-    return service.get_invite_summary(db, token=token)
+@public_router.get("/invites/{token}", response_model=InviteSummary, response_model_exclude_none=True)
+def get_invite_summary(
+    token: str = Path(...), user: CurrentUser | None = Depends(get_optional_user), db=DbSession
+):
+    # 로그인 없이도 열린다. 세션이 있고 이미 구성원이면 already_member_map_id를 싣는다(#1563).
+    return service.get_invite_summary(db, token=token, viewer_id=user.user_id if user else None)
 
 
 @router.post("/invites/{token}/accept", response_model=Map, response_model_exclude_none=True)

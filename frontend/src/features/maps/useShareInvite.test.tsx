@@ -6,6 +6,7 @@ import { http, HttpResponse } from 'msw'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import AloneInvite from '@/features/map/AloneInvite'
 import { OnboardingBody } from '@/features/map/Onboarding'
 import ProfileModal from '@/features/shell/ProfileModal'
 
@@ -38,6 +39,7 @@ function failFirstInvite() {
 const SCREENS = [
   { name: '온보딩', ui: <OnboardingBody mapId="map_1" kind="owner" onDone={() => {}} />, shareButton: '친구 초대하기' },
   { name: '프로필 모달', ui: <ProfileModal mapId="map_1" onClose={() => {}} />, shareButton: '초대 링크 공유하기' },
+  { name: '혼자일 때 초대 안내(#1560)', ui: <AloneInvite mapId="map_1" />, shareButton: '친구 초대하기' },
 ]
 
 describe.each(SCREENS)('$name 초대 링크', ({ ui, shareButton }) => {

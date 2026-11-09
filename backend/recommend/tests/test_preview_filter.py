@@ -123,10 +123,11 @@ def test_a_wanted_cuisine_in_a_against_reason_is_demoted_like_in_a_run(db_sessio
     text_lines = _world(db_session)
     only_spicy_and_korean = {"a", "b", "c", "d", "e", "f", "g"}
 
-    preview = _preview(db_session, text_lines, with_keys=["cuisine_bbq"])
+    preview = _preview(db_session, text_lines, with_conditions=[{"fact_key": "cuisine_bbq", "wants": True}])
 
     assert preview["passed_count"] == len(only_spicy_and_korean)
-    assert preview["with_keys_count"] == 0   # 고기구이가 참인 곳은 없다(g는 거짓, 나머지는 모름)
+    assert preview["both_sides_count"] == 6   # g만 고기구이가 거짓이라 빠지고, 나머지는 모름이라 남는다
+    assert preview["both_sides_confirmed_count"] == 0   # 고기구이가 참으로 확인된 곳은 없다
 
 
 def test_exclusions_are_neither_read_nor_applied(db_session, monkeypatch):
@@ -150,21 +151,66 @@ def test_exclusions_are_neither_read_nor_applied(db_session, monkeypatch):
     assert _preview(db_session, text_lines)["passed_count"] == 7
 
 
-def test_with_keys_counts_only_places_whose_labels_are_all_known_true(db_session):
+QUIET = {"fact_key": "quiet", "wants": True}            # ♥ 「조용해서 좋아요」
+NOT_SPICY = {"fact_key": "spicy_focused", "wants": False}  # 🚫 칩 「매워요」
+
+
+def test_both_sides_count_none_without_conditions(db_session):
     text_lines = _world(db_session)
 
-    assert _preview(db_session, text_lines)["with_keys_count"] is None   # 키가 없으면 세지 않는다
-    assert _preview(db_session, text_lines, with_keys=["quiet"])["with_keys_count"] == 2
-    assert _preview(db_session, text_lines, with_keys=["quiet", "quiet"])["with_keys_count"] == 2
-    assert _preview(db_session, text_lines, with_keys=["quiet", "spicy_focused"])["with_keys_count"] == 1
+    preview = _preview(db_session, text_lines)
+
+    assert (preview["both_sides_count"], preview["both_sides_confirmed_count"]) == (None, None)
+
+
+def test_like_side_unknown_counts_only_in_both_sides_count(db_session):
+    """♥ 쪽 조건: 조용함이 거짓으로 확인된 d만 빠지고, 모름(korean, e, f, g)은 both_sides_count에만 든다(#1600)."""
+    text_lines = _world(db_session)
+
+    preview = _preview(db_session, text_lines, with_conditions=[QUIET])
+
+    assert (preview["both_sides_count"], preview["both_sides_confirmed_count"]) == (6, 2)   # 확인은 a, spicy
+    assert _preview(db_session, text_lines, with_conditions=[QUIET, QUIET]) == preview   # 같은 조건은 한 번
+
+
+def test_against_side_condition_contradicted_leaves_both_counts(db_session):
+    """🚫 쪽 조건(맵지 않음): 매운 곳으로 확인된 spicy는 두 수 모두에서 빠지고, 모름인 f는 both_sides_count에만 든다. #1253 뒤
+    🚫 사유는 거르지 않으니 passed_count에는 spicy가 그대로 있다."""
+    text_lines = _world(db_session)
+
+    preview = _preview(db_session, text_lines, with_conditions=[NOT_SPICY])
+
+    assert preview["passed_count"] == 7
+    assert (preview["both_sides_count"], preview["both_sides_confirmed_count"]) == (6, 5)   # 확인은 a, korean, d, e, g
+
+
+def test_both_sides_sees_like_and_against_conditions_together(db_session):
+    """♥ 조용함 + 🚫 맵지 않음: spicy(매움)와 d(시끄러움)가 빠지고, 둘 다 확인된 곳은 a뿐이다."""
+    text_lines = _world(db_session)
+
+    preview = _preview(db_session, text_lines, with_conditions=[QUIET, NOT_SPICY])
+
+    assert (preview["both_sides_count"], preview["both_sides_confirmed_count"]) == (5, 1)
+
+
+def test_conditions_do_not_change_passed_count_or_the_funnel_of_a_run(db_session, monkeypatch):
+    """조건은 세기만 한다 — 같은 근거로 만든 run의 실격 단계까지 수와 깔때기가 그대로다(실격 규칙은 evidence_line_use 그대로)."""
+    text_lines = _world(db_session)
+    run = _executed_run(db_session, monkeypatch)
+    result_count = len(service.list_candidates(db_session, str(run.id)))
+
+    preview = _preview(db_session, text_lines, with_conditions=[QUIET, NOT_SPICY])
+
+    assert preview["passed_count"] == core.passed_count(result_count, core.keyed_funnel(run.last_funnel))
+    assert preview["funnel"] == _filter_stages(run.last_funnel)
 
 
 def test_returns_counts_only_without_place_names_or_ids(db_session):
     text_lines = _world(db_session)
 
-    preview = _preview(db_session, text_lines, with_keys=["quiet"])
+    preview = _preview(db_session, text_lines, with_conditions=[QUIET])
 
-    assert set(preview) == {"passed_count", "with_keys_count", "funnel"}
+    assert set(preview) == {"passed_count", "both_sides_count", "both_sides_confirmed_count", "funnel"}
     assert all(set(entry) == {"key", "removed_count"} for entry in preview["funnel"])
     dumped = json.dumps(preview, ensure_ascii=False)
     assert not any(f'"{pid}"' in dumped for pid in FACTS)
@@ -177,7 +223,7 @@ def test_writes_nothing(db_session):
     tables = (RecommendRun, Candidate, EvidenceLineRow, Region, Exclusion, EventLog)
     before = {m.__tablename__: db_session.execute(select(*m.__table__.columns)).all() for m in tables}
 
-    _preview(db_session, text_lines, with_keys=["quiet"])
+    _preview(db_session, text_lines, with_conditions=[QUIET, NOT_SPICY])
 
     assert not db_session.new and not db_session.dirty and not db_session.deleted
     assert {m.__tablename__: db_session.execute(select(*m.__table__.columns)).all() for m in tables} == before

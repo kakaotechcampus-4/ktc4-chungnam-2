@@ -11,7 +11,7 @@ export default function CourseMapLegend({ mapId }: { mapId: string }) {
 
   if (!shown) return null
   return (
-    <div className="mt-2 flex items-start gap-2 rounded-xl bg-white p-2.5 ring-1 ring-ink-200">
+    <div className="mt-2 flex items-start gap-2 rounded-xl bg-surface p-2.5 ring-1 ring-ink-200">
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold text-ink-900"><Sentences text="AI 코스를 지도에 보여 주고 있어요" /></p>
         <ul aria-label="날짜별 선" className="mt-1 flex flex-wrap gap-x-3 gap-y-1">

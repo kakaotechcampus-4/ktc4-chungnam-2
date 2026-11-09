@@ -1,8 +1,10 @@
 """optimize(강한 기준선 끝까지)와 지휘 루프 — 후보, 고정, 모델 없이 도는 길, 쓸 수 없는 호출 대행, 되묻지 않기(#1131)."""
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from agent.course import core, direct, goals as G, optimize as O
+from agent.course import core, direct, goals as G, optimize as O, worklog
+from agent.course.constants import RUN_LIMIT
 from agent.course.goals import Goal
 from agent.course.state import initial_state
 from agent.course.tests.fixtures import ALL_OPEN, COURSE, MON, PLACES, TRUE_HOURS, TUE, WED, place, trip
@@ -370,3 +372,54 @@ def test_review_tool_outside_review_mode_is_a_failed_result_and_the_turn_continu
     result = direct.run_direct(state([NIGHT_D1]), decide=decide, hours=TRUE_HOURS)
     assert acts(result)[0].result.error == "NOT_REVIEW_MODE" and seen[1]["last_result"]["error"] == "NOT_REVIEW_MODE"
     assert result.outcome in ("solved", "solved_with_checks")                 # 이어서 optimize·finish로 끝난다
+
+
+class TestRunLimit:
+    """실행 상한(#1609) — 기준 시각부터 RUN_LIMIT이 지나면 모델을 더 부르지 않고 코드 규칙이 마무리한다. 시계는 주입한다."""
+    T0 = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    OPT = {"tool": "optimize", "priority": [NIGHT_D1.id], "locks": []}
+    FIN = {"tool": "finish", "candidate_id": "c1"}
+
+    def clock(self, *elapsed):
+        """부를 때마다 T0 + elapsed[i]. 다 쓰면 마지막 값에 머문다."""
+        times = [self.T0 + e for e in elapsed]
+        return lambda: times.pop(0) if len(times) > 1 else times[0]
+
+    def run(self, decide, clock):
+        return direct.run_direct(state([NIGHT_D1]), decide=decide, hours=TRUE_HOURS, started_at=self.T0, clock=clock)
+
+    def test_past_the_limit_the_model_is_not_called_again_and_code_finishes(self):
+        decide = scripted(self.OPT, self.FIN)
+        result = self.run(decide, self.clock(timedelta(0), RUN_LIMIT))      # 첫 턴 앞은 안, 둘째 턴 앞에서 상한
+        assert len(decide.seen) == 1 and result.model_turns == 1 and result.timed_out
+        taken = acts(result)[1]
+        assert taken.by == "baseline" and taken.substituted_for == {"call": None, "error": direct.RUN_DEADLINE, "failure": direct.DEADLINE}
+        assert taken.call["tool"] == "finish" and taken.result.data["candidate_id"] == result.chosen.candidate_id
+        assert result.outcome in ("solved", "solved_with_checks")           # 결과는 끝까지 낸다(done)
+
+    def test_already_past_at_the_first_turn_never_calls_the_model(self):
+        decide = scripted(self.OPT, self.FIN)
+        result = self.run(decide, self.clock(RUN_LIMIT + timedelta(seconds=1)))
+        assert decide.seen == [] and result.model_turns == 0 and result.timed_out
+        assert [s.call["tool"] for s in acts(result)] == ["optimize", "finish"] and all(s.by == "baseline" for s in acts(result))
+        assert G.evaluate(result.state.trip, result.course, NIGHT_D1).met is True
+
+    def test_inside_the_limit_nothing_changes(self):
+        decide = scripted(self.OPT, self.FIN)
+        result = self.run(decide, self.clock(RUN_LIMIT - timedelta(seconds=1)))
+        assert len(decide.seen) == 2 and result.model_turns == 2 and not result.timed_out
+        assert not any(s.substituted_for for s in result.steps)
+
+    def test_without_a_start_time_there_is_no_limit(self):
+        """평가·시연은 기준 시각을 넘기지 않는다 — 시계를 보지도 않는다."""
+        def clock():
+            raise AssertionError("시계를 보면 안 된다")
+        decide = scripted(self.OPT, self.FIN)
+        result = direct.run_direct(state([NIGHT_D1]), decide=decide, hours=TRUE_HOURS, clock=clock)
+        assert result.model_turns == 2 and not result.timed_out
+
+    def test_work_log_says_code_finished_because_of_the_limit(self):
+        result = self.run(scripted(self.OPT, self.FIN), self.clock(timedelta(0), RUN_LIMIT))
+        lines = worklog.render(result.state.trip, result.state.goals, (), result)
+        taken = [l for l in lines if l.startswith("[대행]")]
+        assert taken == ["[대행] 지휘(코드) 실행 시간 상한이 되어 모델을 더 부르지 않고 여기부터 코드가 마무리해요."]

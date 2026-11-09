@@ -19,6 +19,7 @@ import Sentences from '@/ui/Sentences'
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 import { useSheetStore } from './sheetStore'
+import ThemeControl from './ThemeControl'
 
 type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | 'bug' | 'faq' | 'trash' | null
 
@@ -189,7 +190,7 @@ function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onCo
             <div>
               <p className="text-sm font-bold text-ink-900">계정</p>
               <p className="text-xs text-ink-500">
-                {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
+                {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '로그인됨 · '}
                 {me.data?.display_name}{' '}
                 <button type="button" onClick={() => onConfirm('name')} className="btn-link">
                   이름 바꾸기
@@ -205,6 +206,8 @@ function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onCo
             </button>
           </div>
           {me.data?.is_guest && <div className="mt-3"><GuestAccountNotice /></div>}
+          {/* 휴대폰에는 ☰ 메뉴가 없어서 화면 모드를 여기 둔다(#1412). 넓은 화면은 ☰ 「설정」이다. */}
+          <ThemeControl className="mt-4" />
           <HelpLinks onPick={onConfirm} />
         </>
       )}

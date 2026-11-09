@@ -83,6 +83,8 @@ class Membership(Base):
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # 이 사람이 이 지도를 마지막으로 본 때(#1556). POST /maps/{mapId}/seen이 서버 시각으로 바꾼다. NULL은 처음 연 지도.
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("map_id", "user_id", name="uq_memberships_map_user"),
