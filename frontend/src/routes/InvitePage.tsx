@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, Navigate, useNavigate, useParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
 import { isUnauthorized } from '@/features/auth/api'
@@ -53,6 +53,10 @@ export default function InvitePage() {
       </div>
     )
   }
+
+  // 이미 구성원이면 수락 카드 없이 그 지도로 간다(기획안 6절 구성원 흐름, #1563).
+  const memberOf = summary.data?.alreadyMemberMapId
+  if (memberOf) return <Navigate to={`/maps/${memberOf}`} replace />
 
   // 누구로 참여하는지는 버튼 글이 말한다 — 아래 작은 줄로 두면 안 보였다(#1427).
   const name = me.data?.display_name
