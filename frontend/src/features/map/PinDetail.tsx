@@ -422,7 +422,8 @@ function Opinions({ split, likes, unknown }: ReturnType<typeof toOpinions>) {
   return (
     <>
       {rows.length > 0 && (
-        <ul className="divide-y divide-ink-200 overflow-hidden rounded-xl bg-ink-50">
+        // 흰 면 + 테두리 — 시트 바탕(ink-50)과 같은 면이면 목록이 묻혔다.
+        <ul className="divide-y divide-ink-200 overflow-hidden rounded-xl border border-ink-200 bg-surface">
           {rows.map((o) => (
             <OpinionRow key={o.userId} o={o} name={o.name} />
           ))}
