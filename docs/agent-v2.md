@@ -1815,4 +1815,4 @@ CI(backend-test)는 실제 모델 테스트를 뺀 전부를 PostgreSQL과 PostG
 
 ### 21.8 동선 에이전트(AI 코스 짜기)
 
-이 문서의 기능은 아니지만 에이전트 품질 기록을 한곳에서 찾도록 위치만 적는다. 평가 지도 24개 비교(초안, 강한 기준선, 기준선 + 정답 목표, 에이전트)와 실패 분석은 `qa/results/2026-10-21-course-eval.md`(PR #624 측정 옮김), 요청 9개의 수동 점검은 `qa/results/2026-11-03-course-agentic.md`다. 실행기는 `backend/agent/course/eval/compare.py`다. 서비스 경로의 실행 상한과 끊긴 run 정리는 `docs/data-model.md`의 agent_course_runs 절과 `backend/agent/course/constants.py`(`RUN_LIMIT`, `STALE_AFTER`)에 있다(#1609).
+이 문서의 기능은 아니지만 에이전트 품질 기록을 한곳에서 찾도록 위치만 적는다. 평가 지도 24개 비교는 지금 버전으로 다시 잰 `qa/results/2026-11-10-course-eval.md`(초안, 강한 기준선, 기준선 + 정답 목표, 목표 세우기 + 코드, 에이전트, 3번 평균, #1615)가 최신이고, 10-21 측정과 구조를 바꾼 근거는 `qa/results/2026-10-21-course-eval.md`(PR #624 측정 옮김, course-direct-v5)다. 요청 9개의 수동 점검은 `qa/results/2026-11-03-course-agentic.md`다. 실행기는 `backend/agent/course/eval/compare.py`다. 서비스 경로의 실행 상한과 끊긴 run 정리는 `docs/data-model.md`의 agent_course_runs 절과 `backend/agent/course/constants.py`(`RUN_LIMIT`, `STALE_AFTER`)에 있다(#1609).
