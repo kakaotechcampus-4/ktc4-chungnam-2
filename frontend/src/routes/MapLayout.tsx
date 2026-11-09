@@ -24,7 +24,9 @@ import { boundaryCorners, useRegionBoundary } from '@/features/map/regionGeo'
 import MapSwitcher from '@/features/maps/MapSwitcher'
 import NotificationBell from '@/features/notifications/NotificationBell'
 import { AccountMenu } from '@/features/maps/AccountSheet'
-import { useMapQuery, useMapsQuery } from '@/features/maps/queries'
+import { othersOnline } from '@/features/maps/model'
+import { useMapQuery, useMapsQuery, useMembersQuery } from '@/features/maps/queries'
+import OnlineDot from '@/ui/OnlineDot'
 import { useAiStore } from '@/features/recommend/aiStore'
 import { useRecommendRadiusM, useResultQuery } from '@/features/recommend/queries'
 import { firstMapLink } from '@/features/kakaoImport/share'
@@ -75,6 +77,9 @@ export default function MapLayout() {
   const allPins = useMemo(() => loadedPins ?? [], [loadedPins])
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
+  // 나 말고 지금 이 지도를 열어 둔 사람(#1551) — 구성원 버튼에 접속 점을 단다.
+  const watching = othersOnline(useMembersQuery(mapId).data)
+  const membersLabel = `지도 정보와 구성원 ${memberCount}명${watching > 0 ? `, 지금 ${watching}명이 같이 보는 중` : ''}`
   useLivePinResolver(allPins, mapInfo?.regionCenter, useResolveLivePin(mapId))
   const desktop = useIsDesktop()
   const panelW = useIsPc() ? PANEL_W.pc : PANEL_W.tablet
@@ -541,11 +546,12 @@ export default function MapLayout() {
                 trigger={
                   <button
                     type="button"
-                    aria-label={`지도 정보와 구성원 ${memberCount}명`}
+                    aria-label={membersLabel}
                     className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-surface px-2.5 text-sm font-bold text-link press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
                   >
                     <Users size={16} aria-hidden="true" />
                     {memberCount > 0 && memberCount}
+                    {watching > 0 && <OnlineDot />}
                   </button>
                 }
               />
@@ -554,12 +560,13 @@ export default function MapLayout() {
                 <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
-                  aria-label={`지도 정보와 구성원 ${memberCount}명`}
+                  aria-label={membersLabel}
                   onClick={() => openProfile(true)}
                   className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-surface px-2.5 text-sm font-bold text-link shadow-float"
                 >
                   <Users size={16} aria-hidden="true" />
                   {memberCount > 0 && memberCount}
+                  {watching > 0 && <OnlineDot />}
                 </button>
               </div>
             )}
