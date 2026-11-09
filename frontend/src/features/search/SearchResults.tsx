@@ -8,6 +8,7 @@ import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
+import BlogPhotos from '@/ui/BlogPhotos'
 import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
@@ -18,7 +19,7 @@ import TextArea from '@/ui/TextArea'
 import Sentences from '@/ui/Sentences'
 
 import { livePinRequest, pinErrorMessage, searchPinRequest, toSearchResult, type SearchResultView } from './model'
-import { searchErrorMessage, useExternalSearchQuery, useSourcePlacesQuery } from './queries'
+import { searchErrorMessage, useExternalSearchQuery, usePlacePhotosQuery, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
 import { suggestQuery } from './typo'
 
@@ -188,7 +189,8 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
             <Sentences text="현재 보고 있는 지도 중심에서 멀리 있는 장소예요. 다른 지역의 같은 이름 장소일 수 있어요" />
           </p>}
         </div>
-        {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
+        {/* 핀 상세와 같은 블로그 사진 줄(#1681). 자체 DB에 없는 장소는 사진을 찾을 주소가 없어 그리지 않는다. */}
+        {!selected.unsupported && <ResultPhotos key={selected.id} placeId={selected.id} />}
         {(selected.address || selected.url || selected.naverUrl) && (
           <div className="space-y-2 rounded-xl bg-ink-50 p-3.5 text-body">
             {selected.address && <p className="text-ink-700">{selected.address}</p>}
@@ -411,5 +413,15 @@ function PinItButton({ result, filled = false, pending, onPin }: { result: Searc
     >
       {pending ? '찍는 중…' : '핀 찍기'}
     </button>
+  )
+}
+
+/** 검색 결과 상세의 블로그 사진 줄(#1681). 핀 상세의 `PinPhotos`와 같은 모양이다. */
+function ResultPhotos({ placeId }: { placeId: string }) {
+  const photos = usePlacePhotosQuery(placeId)
+  return (
+    <div className="py-1">
+      <BlogPhotos photos={photos.data} loading={photos.isPending} failed={photos.isError} />
+    </div>
   )
 }

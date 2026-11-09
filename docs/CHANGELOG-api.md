@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-10, 핀 찍기 전 검색 결과의 블로그 사진 — `GET /places/{placeId}/photos` (#1681)
+
+- **새 경로만 더한다.** 응답 모양은 핀 사진과 같은 `PinPhoto` 배열이다. 다른 응답은 그대로다.
+- `placeId`는 검색 결과의 `place_id` 그대로다. 자체 DB 결과(`own:<id>`)만 사진을 찾고, 카카오 결과는 상한을 세지 않고 빈 배열이다(자체 DB 짝이 있어도 지금은 없다). 사진을 고르는 규칙과 상한은 `GET /pins/{pinId}/photos`와 같다(`places.api.place_photos`, `check_photo_rate` 한 곳). 응답은 저장하거나 캐시하지 않는다(#53).
+- 오류: 401(로그인), 404 `NOT_FOUND`(`own:<id>`인데 자체 DB에 없는 장소), 429 `RATE_LIMITED`(핀 사진과 같은 몫을 센다), 503 `PLACES_UNAVAILABLE`.
+- 서버 구현: `backend/places/router.py`. 목 서버: 핀 사진과 같은 사진을 돌려준다. FE: 검색 결과 상세에 "블로그 사진" 줄. 타입 재생성 필요(`npm run gen:types`).
+
 ## 2026-11-10, 새 소식의 조회 시각 — `MapNews.as_of`, `POST /maps/{mapId}/seen` 본문 `seen_at` (#1672)
 
 새 소식을 받은 뒤 '확인'을 누르기 전에 생긴 의견이 본 것으로 적혀 사라지던 것을 막는다(#1587 리뷰 1번).

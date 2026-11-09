@@ -366,6 +366,11 @@ describe("에러 시나리오", () => {
     expect((await fetch(`${BASE}/pins/nope/photos`)).status).toBe(404);
   });
 
+  it("#1681 검색 결과 사진: 자체 DB에 짝이 있는 결과는 3장, 없는 결과는 빈 배열", async () => {
+    expect(await fetch(`${BASE}/places/kakao:mock-1/photos`).then((r) => r.json())).toHaveLength(3);
+    expect(await fetch(`${BASE}/places/kakao:mock-6/photos`).then((r) => r.json())).toEqual([]);
+  });
+
   it("#382 실시간 핀: 카카오 장소 ID·검색어·메모만 받고 이름·좌표는 없다. 같은 장소는 409", async () => {
     const body = { source: "live", category: "음식점", kakao_place_id: "kakao:live-1", search_query: "성수 곱창", memo: "여기 곱창 맛있대" };
     const res = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
