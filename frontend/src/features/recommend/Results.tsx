@@ -15,6 +15,7 @@ import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
 
 import { useAiStore } from './aiStore'
 import { AiChecks, AiFulfillment, AiReason } from './Evidence'
@@ -64,8 +65,10 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
         </div>
       </div>
       <div className="mt-2 flex gap-2">
-        <button type="button" disabled={!!busy} onClick={() => retry.mutate(run)} className="btn-outline btn-md flex-1">
-          <RotateCw size={16} aria-hidden="true" /> {busy ?? '다시 추천'}
+        <button type="button" disabled={!!busy} aria-busy={!!busy} onClick={() => retry.mutate(run)} className="btn-outline btn-md flex-1">
+          <BusyLabel busy={!!busy} busyText={busy ?? ''}>
+            <RotateCw size={16} aria-hidden="true" /> 다시 추천
+          </BusyLabel>
         </button>
         {/* 숫자는 GET /credits/me 그대로(#733). 못 받으면 비운다 — 다시 추천은 크레딧과 무관하게 된다. */}
         {credits && <CreditBox cost={0} credits={credits} />}
@@ -266,7 +269,7 @@ function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto;
       }
       className="btn-outline btn-sm"
     >
-      {publish.isPending ? '올리는 중…' : '지도에 올리기'}
+      <BusyLabel busy={publish.isPending} busyText="올리는 중…">지도에 올리기</BusyLabel>
     </button>
   )
 }
@@ -418,13 +421,14 @@ export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) 
         <p className="text-xs text-ink-600">잠시 후 다시 시도해 주세요</p>
       </div>
       <button
+        aria-busy={execute.isPending}
         type="button"
         disabled={execute.isPending}
         // 다시 '진행 중'으로 간다. 또 실패하면 이 화면으로, 다른 오류는 토스트로(요청 훅, #349).
         onClick={() => execute.mutate(run)}
         className="btn-outline btn-lg w-full"
       >
-        {execute.isPending ? '다시 찾는 중…' : '다시 시도'}
+        <BusyLabel busy={execute.isPending} busyText="다시 찾는 중…">다시 시도</BusyLabel>
       </button>
     </div>
   )

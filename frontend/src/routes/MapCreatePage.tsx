@@ -7,6 +7,7 @@ import { createMapErrorMessage, titleServerError, tripReady, type TripDraft } fr
 import { useCreateMapMutation, useMapsQuery } from '@/features/maps/queries'
 import TripFields from '@/features/maps/TripFields'
 import EntryFrame from '@/ui/EntryFrame'
+import BusyLabel from '@/ui/BusyLabel'
 
 /**
  * 지도 만들기 (#22, Figma 1절). 제목·날짜는 필수, 지역은 선택(시·도 목록).
@@ -46,11 +47,12 @@ export default function MapCreatePage() {
       {create.error && !titleServerError(create.error) && <ErrorText message={createMapErrorMessage(create.error)} error={create.error} />}
 
       <button
+        aria-busy={create.isPending}
         type="submit"
         disabled={!ready || create.isPending}
         className="btn-primary btn-lg mt-auto md:mt-8"
       >
-        {create.isPending ? '만드는 중…' : '지도 만들기'}
+        <BusyLabel busy={create.isPending} busyText="만드는 중…">지도 만들기</BusyLabel>
       </button>
     </EntryFrame>
   )

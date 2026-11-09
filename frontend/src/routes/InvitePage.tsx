@@ -19,6 +19,7 @@ import PingoLoading from '@/ui/PingoLoading'
 import MapIllustration from '@/ui/MapIllustration'
 import TextField from '@/ui/TextField'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
 
 /**
  * 초대 수락 (#4, Figma 2절). 로그인 전(C-1)·로그인 후 구성원 아님(C-2)·만료(C-3).
@@ -163,8 +164,8 @@ function GuestJoin({ token, onBroken }: { token: string; onBroken: (problem: Inv
         <Sentences text="게스트는 새 지도를 만들 수 없어요. 나중에 카카오로 가입하면 기록이 그대로 이어져요" />
       </p>
       {join.error && <ErrorText message={inviteErrorMessage(join.error)} error={join.error} />}
-      <button type="submit" disabled={!trimmed || join.isPending} className="btn-primary btn-md w-full">
-        {join.isPending ? '들어가는 중…' : '게스트로 참여하기'}
+      <button aria-busy={join.isPending} type="submit" disabled={!trimmed || join.isPending} className="btn-primary btn-md w-full">
+        <BusyLabel busy={join.isPending} busyText="들어가는 중…">게스트로 참여하기</BusyLabel>
       </button>
     </form>
   )

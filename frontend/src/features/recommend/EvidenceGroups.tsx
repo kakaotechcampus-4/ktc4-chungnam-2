@@ -7,6 +7,7 @@ import { josa } from '@/ui/josa'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import TextField from '@/ui/TextField'
+import BusyLabel from '@/ui/BusyLabel'
 
 import { evidenceLabel, evidenceLimitMessage, groupEvidence, mergeTags, notEnforcedNote, type EvidenceLineDto } from './model'
 import { usePatchEvidenceMutation } from './queries'
@@ -213,8 +214,8 @@ export default function EvidenceGroups({
               placeholder="예: 비 오면 실내로 가고 싶어요"
             />
           </div>
-          <button type="submit" disabled={patch.isPending || !draft.trim()} className="btn-link shrink-0 text-sm">
-            {patch.isPending ? '정리하는 중…' : '더하기'}
+          <button aria-busy={patch.isPending} type="submit" disabled={patch.isPending || !draft.trim()} className="btn-link shrink-0 text-sm">
+            <BusyLabel busy={patch.isPending} busyText="정리하는 중…">더하기</BusyLabel>
           </button>
         </form>
       ) : (

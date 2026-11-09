@@ -8,6 +8,7 @@ import { showToast } from '@/features/shell/toast'
 import RegionCover from '@/ui/RegionCover'
 import SheetTitle from '@/ui/SheetTitle'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
 
 import { cardTint, MAP_COLORS, shrinkImage } from './look'
 import type { MapView } from './model'
@@ -75,8 +76,8 @@ export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void
             e.target.value = ''
           }}
         />
-        <label htmlFor={inputId} className={`btn-primary btn-lg w-full ${cover.isPending ? 'pointer-events-none opacity-60' : 'cursor-pointer'}`}>
-          {cover.isPending ? '올리는 중…' : '사진 고르기'}
+        <label aria-busy={cover.isPending} htmlFor={inputId} className={`btn-primary btn-lg w-full ${cover.isPending ? 'pointer-events-none opacity-60' : 'cursor-pointer'}`}>
+          <BusyLabel busy={cover.isPending} busyText="올리는 중…">사진 고르기</BusyLabel>
         </label>
         {map.coverUrl && (
           <button
