@@ -11,7 +11,7 @@ import type { Pin } from './model'
 import { PinDetailBody } from './PinDetail'
 
 const MAP = 'map_1'
-const members = [{ userId: 'u_me', name: '나', initial: '나', isMe: true, isOwner: true }]
+const members = [{ userId: 'u_me', name: '나', initial: '나', isMe: true, isOwner: true, isGuest: false }]
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })

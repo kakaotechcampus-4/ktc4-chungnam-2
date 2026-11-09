@@ -10,6 +10,16 @@
 - 오류: 404(구성원 아님), 429 `RATE_LIMITED`(사용자당 상한, 장소 검색과 같은 값을 따로 센다), 503 `PLACES_UNAVAILABLE`(키 없음, 카카오 장애).
 - 서버 구현: `backend/places/photos.py`(검색어, 고르는 규칙, 호출), `places.api.place_photos`, `backend/pins`(경로, 권한은 반응 목록과 같다).
 - FE: 핀 상세에 "블로그 사진" 줄(작은 사진 3장, 출처 사이트 이름, 누르면 원문 새 창). 타입은 `npm run gen:types`로 다시 만든다.
+## 2026-11-10, 초대 화면과 링크 미리보기에 지도 대표 이미지 — `InviteSummary.region`·`cover_url`, `/invites/{token}/cover`·`preview`·`preview-image` (#1625)
+
+**늘리기만 한다.** 기존 응답 칸과 화면은 그대로 돈다.
+
+- **`InviteSummary.region`·`cover_url`**: 초대 카드 그림. 대표 이미지가 있으면 `cover_url`(`/invites/{token}/cover?v=`), 없으면 `region`으로 지역 기본 그림을 그린다. 링크만 가진 사람도 대표 이미지를 본다 — 제목을 이미 토큰으로 보여 주는 것과 같은 기준이다(사용자 결정, 2026-11-10).
+- **`GET /invites/{token}/cover`**: 로그인 없이, 토큰이 살아 있을 때만(404/410은 요약과 같다).
+- **`GET /invites/{token}/preview`**: 메신저 미리보기 봇 전용 HTML(og 태그). 앞단 Caddy가 봇(`kakaotalk-scrap` 등)의 `/invites/{token}`만 보낸다(`deploy/Caddyfile`). 더 쓸 수 없는 링크도 200으로 기본 미리보기다.
+- **`GET /invites/{token}/preview-image`**: 대표 이미지 1200×630 + 오른쪽 아래 워드마크 JPEG. 서버에 Pillow가 새로 들어온다(`requirements.txt`).
+- FE: 초대 카드가 대표 이미지(없으면 지역 그림)와 오른쪽 아래 핑고 얼굴을 그린다. 타입 재생성(`npm run gen:types`), 목 서버는 요약에 `region`·`cover_url`을 싣는다.
+- 배포: `deploy/Caddyfile`이 바뀐다. Caddy를 다시 읽어야 미리보기가 바뀐다(`deploy_rules.md`). 카톡은 한 번 읽은 미리보기를 한동안 저장해서, 이미 보낸 링크는 늦게 바뀐다.
 
 ## 2026-11-10, AI 코스 끊긴 run을 「실행 상한 + 여유」 뒤에 끝낸다 (#1609)
 

@@ -646,6 +646,36 @@ def test_map_cover_and_color_match_the_openapi_spec(clients):
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_invite_cover_and_preview_match_the_openapi_spec(clients, anon_client):
+    """초대 화면 대표 이미지와 링크 미리보기(#1625) — 로그인 없이 요약의 region·cover_url, 이미지 200, 미리보기 문서 200,
+    미리보기 그림 200(JPEG)과 에러 봉투(없는 토큰 404, 끈 링크 410)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    a, _b, problems = clients
+    map_id = a.post("/maps", json={"title": "속초", "start_date": "2026-12-01", "end_date": "2026-12-02",
+                                   "region": {"label": "강원", "lat": 38.2, "lng": 128.6}}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    photo = BytesIO()
+    Image.new("RGB", (400, 300), (10, 90, 160)).save(photo, "JPEG")
+    assert a.put(f"/maps/{map_id}/cover", content=photo.getvalue(), headers={"Content-Type": "image/jpeg"}).status_code == 200
+
+    summary = anon_client.get(f"/invites/{token}").json()
+    assert summary["region"]["label"] == "강원"
+    assert anon_client.get(summary["cover_url"]).content == photo.getvalue()
+    assert anon_client.get(f"/invites/{token}/preview").text.count("og:image") >= 1
+    assert anon_client.get(f"/invites/{token}/preview-image").headers["content-type"] == "image/jpeg"
+    assert anon_client.get("/invites/no-such-token/cover").status_code == 404
+    assert anon_client.get("/invites/no-such-token/preview-image").status_code == 404
+    assert a.delete(f"/invites/{token}").status_code == 204
+    assert anon_client.get(f"/invites/{token}/cover").status_code == 410
+    assert anon_client.get(f"/invites/{token}/preview-image").status_code == 410
+
+    unique = list(dict.fromkeys(problems + anon_client._problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_map_copy_matches_the_openapi_spec(clients, pin_body):
     """지도 복사(#1446) — 201(Map, 제목 「(1)」·핀 수), 에러 봉투(구성원 403, 모르는 지도 404)."""
     a, b, problems = clients

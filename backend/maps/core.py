@@ -219,6 +219,13 @@ def to_invite(
     )
 
 
+def _region(record: MapRecord) -> MapRegion | None:
+    """record.region_label이 있을 때만 조립한다 — DB의 CHECK 제약과 같은 "셋 다 있거나 셋 다 없거나"."""
+    if record.region_label is None:
+        return None
+    return MapRegion(label=record.region_label, lat=record.region_lat, lng=record.region_lng)
+
+
 def to_invite_summary(
     record: MapRecord,
     *,
@@ -227,6 +234,8 @@ def to_invite_summary(
     inviter_display_name: str | None,
     expires_at: datetime,
     already_member: bool = False,
+    token: str,
+    cover_updated_at: datetime | None,
 ) -> InviteSummary:
     """map_id와 핀 등 지도 내용은 싣지 않는다 — 토큰 소지자가 가입 전에 볼 수 있는 최소한만.
     초대자 이름을 못 구하면(users 행이 없음) '탈퇴한 구성원'으로 채운다(스펙 InviteSummary)."""
@@ -239,6 +248,8 @@ def to_invite_summary(
         inviter_display_name=inviter_display_name or WITHDRAWN_DISPLAY_NAME,
         expires_at=expires_at,
         already_member_map_id=record.id if already_member else None,
+        region=_region(record),
+        cover_url=invite_cover_url(token, cover_updated_at),
     )
 
 
@@ -306,9 +317,20 @@ def cover_url(map_id: str, updated_at: datetime | None) -> str | None:
     """API 기준 상대 주소. 갱신 시각(초)을 붙여 이미지가 바뀌면 주소도 바뀐다 — 그래서 GET이 영구 캐시를 허락할 수 있다."""
     if updated_at is None:
         return None
-    # 마이크로초(DB 시각의 정밀도) — 짧은 사이에 두 번 올려도 주소가 달라야 영구 캐시가 옛 이미지를 붙잡지 않는다.
-    # float 곱셈 대신 정수로 더해 반올림 오차가 없다.
-    return f"/maps/{map_id}/cover?v={int(updated_at.timestamp()) * 1_000_000 + updated_at.microsecond}"
+    return f"/maps/{map_id}/cover?v={cover_version(updated_at)}"
+
+
+def invite_cover_url(token: str, updated_at: datetime | None) -> str | None:
+    """초대 화면용(#1625) — 아직 구성원이 아닌 사람이 토큰으로 여는 같은 이미지. 캐시 규칙은 cover_url과 같다."""
+    if updated_at is None:
+        return None
+    return f"/invites/{token}/cover?v={cover_version(updated_at)}"
+
+
+def cover_version(updated_at: datetime) -> int:
+    """마이크로초(DB 시각의 정밀도) — 짧은 사이에 두 번 올려도 주소가 달라야 영구 캐시가 옛 이미지를 붙잡지 않는다.
+    float 곱셈 대신 정수로 더해 반올림 오차가 없다."""
+    return int(updated_at.timestamp()) * 1_000_000 + updated_at.microsecond
 
 
 def owner_successor(
@@ -384,15 +406,12 @@ def to_map_response(
 
     region은 record.region_label이 있을 때만 조립한다 — DB의 CHECK 제약과 같은 "셋 다 있거나
     셋 다 없거나" 전제를 core에서도 지킨다."""
-    region = None
-    if record.region_label is not None:
-        region = MapRegion(label=record.region_label, lat=record.region_lat, lng=record.region_lng)
     return Map(
         id=record.id,
         title=record.title,
         start_date=record.start_date,
         end_date=record.end_date,
-        region=region,
+        region=_region(record),
         member_count=member_count,
         pin_count=pin_count,
         confirmed_count=confirmed_count,

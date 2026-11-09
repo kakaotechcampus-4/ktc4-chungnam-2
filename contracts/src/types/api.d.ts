@@ -1237,6 +1237,148 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/invites/{token}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 초대 화면의 지도 대표 이미지(#1625) — 로그인 없이 연다. `InviteSummary.cover_url`이 가리키는 주소다.
+         *     `GET /maps/{mapId}/cover`와 같은 이미지·형식·캐시 규칙이고, 권한은 요약처럼 토큰이다.
+         *     없는 토큰 404, 끈·만료 링크 410, 올린 이미지가 없으면 404(화면은 `InviteSummary.region`으로 지역 기본 그림을 그린다).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 캐시 구분용 갱신 시각. 서버는 읽지 않는다 — `cover_url`을 그대로 쓴다 */
+                    v?: string;
+                };
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 이미지 바이트 */
+                200: {
+                    headers: {
+                        /** @description private, max-age=31536000, immutable */
+                        "Cache-Control"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "image/webp": string;
+                        "image/jpeg": string;
+                        "image/png": string;
+                    };
+                };
+                404: components["responses"]["InviteNotFound"];
+                410: components["responses"]["InviteGone"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/invites/{token}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 초대 링크 미리보기 문서(#1625) — 카톡 같은 메신저의 미리보기 봇 전용이다. 화면(FE)은 부르지 않는다.
+         *     메신저는 스크립트를 실행하지 않아 화면의 고정 og 태그만 읽는다. 그래서 앞단 Caddy가 미리보기 봇의 `/invites/{token}` 요청만
+         *     이 경로로 보낸다(`deploy/Caddyfile`). 사람이 여는 요청은 그대로 화면이다.
+         *     og 제목은 「{초대자}님이 {지도 제목} 지도에 초대했어요」, 설명은 날짜·구성원 수·핀 수, 그림은 대표 이미지가 있으면 `preview-image`, 없으면 기본 그림(`/og-image.png`)이다.
+         *     메타 태그에는 조각을 나눠 줄 자리가 없어 사용자 글을 문장에 넣고 HTML 이스케이프한다. 더 쓸 수 없는 링크도 200으로 서비스 기본 미리보기를 준다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description og 태그만 담은 HTML */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/html": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/invites/{token}/preview-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 초대 링크 미리보기 그림(#1625) — 대표 이미지를 1200×630으로 가운데 맞춰 자르고 오른쪽 아래에 워드마크를 얹은 JPEG.
+         *     `preview` 문서의 `og:image`가 `v`를 붙여 가리킨다(사진을 바꾸면 주소가 바뀌어 메신저가 새로 가져간다). 권한은 토큰이다.
+         *     없는 토큰·올린 이미지가 없음·열 수 없는 이미지 404, 끈·만료 링크 410.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description 캐시 구분용 갱신 시각. 서버는 읽지 않는다 */
+                    v?: string;
+                };
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 미리보기 그림 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "image/jpeg": string;
+                    };
+                };
+                404: components["responses"]["InviteNotFound"];
+                410: components["responses"]["InviteGone"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/invites/{token}/accept": {
         parameters: {
             query?: never;
@@ -4647,7 +4789,7 @@ export interface components {
             user_id: string;
             display_name: string;
         };
-        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다. 예외는 `already_member_map_id` 하나다 — 요청한 사람이 이미 그 지도의 구성원일 때만 준다(#1563) */
+        /** @description 초대 수락 전 화면용 요약. 대표 이미지와 여행 지역은 준다(#1625, 카드 그림). 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다. 예외는 `already_member_map_id` 하나다 — 요청한 사람이 이미 그 지도의 구성원일 때만 준다(#1563) */
         InviteSummary: {
             title: string;
             /** Format: date */
@@ -4661,6 +4803,10 @@ export interface components {
             inviter_display_name: string;
             /** Format: date-time */
             expires_at: string;
+            /** @description 지도의 여행 지역(#1625). 대표 이미지가 없을 때 화면이 지역 기본 그림을 그리는 데 쓴다. 지역 없이 만든 지도는 키가 없다 */
+            region?: components["schemas"]["MapRegion"];
+            /** @description 방장이 올린 대표 이미지 주소(#1625). API 기준 상대 경로 `/invites/{token}/cover?v=<갱신 시각(마이크로초)>` — `Map.cover_url`과 같은 v다. 올린 이미지가 없으면 키가 없다(null도 같은 뜻) */
+            cover_url?: string | null;
             /** @description 요청에 로그인 세션(게스트 포함)이 있고 그 사람이 **이미 이 지도의 구성원이면** 그 지도의 id(#1563). 화면은 수락 카드를 건너뛰고 바로 그 지도로 간다(기획안 6절 「구성원 흐름」). 세션이 없거나, 구성원이 아니거나, 이미 나간 사람에게는 **필드를 주지 않는다** — 링크만 가진 사람이 지도 id를 알아내지 못하게 하려는 원래 규칙 그대로다. 토큰이 만료(410)·없음(404)이면 지금처럼 오류다. 이 조회는 구성원 여부만 보고 아무것도 바꾸지 않는다(수락은 여전히 `POST /invites/{token}/accept`) */
             already_member_map_id?: string;
         };
