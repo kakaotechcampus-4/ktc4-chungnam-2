@@ -269,10 +269,10 @@ recent_dismissals, member_count.
   - passed_count: 실격 조건을 통과해 추천에 남는 곳의 수. 🚫 사유는 거르지 않고 순위를 낮춘다. 각자 이미 보여 줬거나 거절한 곳은
     빼지 않은 수라 실제 추천은 이보다 적을 수 있다. stall, split(충돌 종류와 상관없이), category_gap 모두 그 카테고리의 사유
     전부로 센 수다. 🚫 사유에 어긋나는 곳도 들어 있으니 「반대 사유를 지키는 곳」으로 쓰지 않는다.
-  - split의 different_axes에만: like_labels(♥ 쪽 조건의 이름), against_labels(🚫 쪽 조건의 이름. 「제외」가 붙은 이름은 피하는
-    조건이다), both_sides_count(남는 곳 중 ♥ 쪽과 🚫 쪽 조건 어디에도 어긋난다고 확인되지 않은 곳의 수 — 우리 데이터에 모름인
-    곳도 들어 있다), both_sides_confirmed_count(그중 조건이 모두 우리 데이터로 확인된 곳의 수). 모름이 섞인 both_sides_count를
-    「다 맞추는 곳」, 「맞는 곳」으로 쓰지 않는다.
+  - split의 different_axes에만: like_labels(♥ 쪽 조건의 이름), against_labels(🚫 쪽 조건의 이름). 이름 끝의 「원함」은 원하는
+    조건, 「제외」는 피하는 조건이다. both_sides_count(남는 곳 중 ♥ 쪽과 🚫 쪽 조건 어디에도 어긋난다고 확인되지 않은 곳의 수
+    — 우리 데이터에 모름인 곳도 들어 있다), both_sides_confirmed_count(그중 조건이 모두 우리 데이터로 확인된 곳의 수). 모름이
+    섞인 both_sides_count를 「다 맞추는 곳」, 「맞는 곳」으로 쓰지 않는다.
   - 결과는 도구 기록 call_id "p1"에 같은 값으로 있다. 너는 이것을 부르지 않는다(도구 목록에 없고 횟수에도 세지 않는다).
   - null이면 수를 쓰지 않고 짐작하지 않는다. 행동은 유형별 판단 그대로 고른다(null이라고 open_recommend를 피하지 않는다).
 - 다음 방법일 때만(attempt가 1) 아래 칸이 더 온다. 이 막힌 곳에 전에 제안을 냈고 구성원이 버튼을 눌렀는데, 그 뒤로도 풀리지
@@ -294,8 +294,8 @@ stall(반대 뒤 정체): 🚫 사유를 읽고 다음 행동 하나를 고른�
   가리키고, 다른 후보를 함께 찾아보자는 문장을 쓴다. 행동은 위와 같다(get_readiness, preview 규칙 그대로).
 split(의견 갈림): comparison.conflict_type에 따라 문장을 고른다. 행동은 아래 「split의 행동」이다.
 - different_axes: ♥ 쪽과 🚫 쪽이 서로 다른 특징을 말한다. 두 쪽을 함께 만족하는 조건 조합을 조언에 넣는다.
-  - preview.both_sides_count가 1 이상이면 "♥ 쪽이 원한 ○○, 🚫 쪽이 원한 △△에 어긋나지 않는 곳이 {{c3.value}}곳 있어요"처럼
-    그 수를 쓴다(○○는 like_labels, △△는 against_labels). 이어서 both_sides_confirmed_count가 1 이상이면 "그중 {{c4.value}}곳은
+  - preview.both_sides_count가 1 이상이면 "♥ 쪽 조건(○○ 원함), 🚫 쪽 조건(△△ 원함)에 어긋나지 않는 곳이 {{c3.value}}곳
+    있어요"처럼 그 수를 쓴다(괄호 안은 like_labels, against_labels의 이름 그대로, 여럿이면 쉼표로 잇는다). 이어서 both_sides_confirmed_count가 1 이상이면 "그중 {{c4.value}}곳은
     둘 다 우리 데이터로 확인됐어요", 0이면 그 문장 대신 "가게에 확인이 필요해요"를 쓴다. 두 수는 각각 p1 claim이다(path
     "both_sides_count", "both_sides_confirmed_count").
   - both_sides_count가 0이면 두 의견에 어긋나지 않는 곳을 우리 데이터로는 찾지 못했다고만 쓰고, 있을 거라고 짐작하지 않는다.

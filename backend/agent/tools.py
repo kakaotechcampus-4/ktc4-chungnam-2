@@ -389,7 +389,7 @@ def preview(
 
     with_conditions는 두 의견의 조건 `[{fact_key, wants, side}]`(core.compromise_conditions). 결과 `{passed_count, funnel}`,
     조건이 있으면 `both_sides_count`, `both_sides_confirmed_count`(#1600, 세는 법은 recommend)와 `like_labels`, `against_labels`
-    (♥ 쪽·🚫 쪽 조건의 표시 이름, core.condition_labels)도. 도구 기록에 p1로 남긴다(모델이 고르지 않아 도구 상한에 세지 않는다, 6.3 비교와
+    (♥ 쪽·🚫 쪽 조건의 표시 이름, core.preview_labels)도. 도구 기록에 p1로 남긴다(모델이 고르지 않아 도구 상한에 세지 않는다, 6.3 비교와
     같은 취급) — 모델은 수를 ToolClaim(call_id="p1")으로 가리킨다. run, 후보, 제외 목록은 다루지 않고 장소 이름과 id도 받지 않는다
     (2절 2번). ②가 실패하거나(UNAVAILABLE) 추천 대상이 아니거나 추천 준비가 안 됐으면 None — 기록하지 않고, 진단은 미리 돌려 보기
     없이 간다."""
@@ -416,7 +416,7 @@ def preview(
     if conditions:
         result |= {
             "both_sides_count": found["both_sides_count"], "both_sides_confirmed_count": found["both_sides_confirmed_count"],
-            **core.condition_labels(conditions, recommend_api.fact_labels()),
+            **core.preview_labels(conditions, recommend_api.fact_labels()),
         }
     result["funnel"] = found["funnel"]
     _record(ctx, PREVIEW_CALL_ID, "preview_filter", {"category": category, "with_conditions": conditions}, result, started)

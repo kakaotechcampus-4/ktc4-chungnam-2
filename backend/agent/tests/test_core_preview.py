@@ -14,7 +14,7 @@ DIFFERENT = {"conflict_type": "different_axes", "keys": [
     {"fact_key": "spicy_focused", "want": [], "avoid": [{"reaction_id": "r1", "side": "like"}]},
 ]}
 PREVIEW = {"passed_count": 4, "both_sides_count": 3, "both_sides_confirmed_count": 1,
-           "like_labels": ["조용한 곳", "매운맛 전문 제외"], "against_labels": ["주차 가능"],
+           "like_labels": ["조용한 곳 원함", "매운맛 전문 제외"], "against_labels": ["주차 가능 원함"],
            "funnel": [{"key": "pool", "removed_count": 0}, {"key": "radius", "removed_count": 2}]}
 C_PREVIEW = {"id": "c6", "kind": "tool_result", "call_id": "p1", "path": "passed_count", "value": 4}
 
@@ -44,13 +44,14 @@ def test_compromise_conditions_keep_one_of_each_and_skip_keys_without_a_side():
     ]
 
 
-def test_condition_labels_split_by_side_and_mark_avoided_ones():
+def test_preview_labels_split_by_side_with_the_condition_names_of_the_summary():
+    """이름은 condition_label(조건 요약과 같은 「원함」, 「제외」)이 정한다 — 여기서 다시 정하지 않는다."""
     labels = {"quiet": "조용한 곳", "spicy_focused": "매운맛 전문", "parking_available": "주차 가능"}
 
-    assert core.condition_labels([LIKE_QUIET, LIKE_NOT_SPICY, AGAINST_PARKING], labels) == {
-        "like_labels": ["조용한 곳", "매운맛 전문 제외"], "against_labels": ["주차 가능"],
+    assert core.preview_labels([LIKE_QUIET, LIKE_NOT_SPICY, AGAINST_PARKING], labels) == {
+        "like_labels": ["조용한 곳 원함", "매운맛 전문 제외"], "against_labels": ["주차 가능 원함"],
     }
-    assert core.condition_labels([LIKE_QUIET | {"fact_key": "unknown_key"}], labels) == {"like_labels": [], "against_labels": []}
+    assert core.preview_labels([LIKE_QUIET | {"fact_key": "unknown_key"}], labels) == {"like_labels": [], "against_labels": []}
 
 
 def test_preview_runs_for_a_stall_and_every_split_with_a_comparison():

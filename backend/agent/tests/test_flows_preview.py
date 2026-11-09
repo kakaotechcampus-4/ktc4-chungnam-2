@@ -158,7 +158,7 @@ def test_split_on_different_axes_counts_places_against_both_sides_conditions(wor
     assert inp["comparison"]["conflict_type"] == "different_axes"
     labels = recommend_api.fact_labels()
     assert inp["preview"] == {"passed_count": 4, "both_sides_count": 3, "both_sides_confirmed_count": 1,
-                              "like_labels": [labels["quiet"]], "against_labels": [labels["parking_available"]]}
+                              "like_labels": [f"{labels['quiet']} 원함"], "against_labels": [f"{labels['parking_available']} 원함"]}
     [call] = calls
     # 🚫 쪽 주차도 센다 — #1253 뒤 일반 🚫 사유는 거르지 않는다(#1600). recommend에는 방향까지만 넘긴다
     assert call["with_conditions"] == [{"fact_key": "quiet", "wants": True}, {"fact_key": "parking_available", "wants": True}]

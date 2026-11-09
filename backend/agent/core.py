@@ -1286,14 +1286,12 @@ def compromise_conditions(comparison: Mapping[str, Any] | None) -> list[dict[str
     return out
 
 
-def condition_labels(conditions: Sequence[Mapping[str, Any]], fact_labels: Mapping[str, str]) -> dict[str, list[str]]:
-    """미리 돌려 보기 결과의 like_labels, against_labels — 그쪽 조건의 표시 이름(recommend.api.fact_labels), 조건 순서. 피함은
-    근거 줄처럼 「<이름> 제외」다. 이름을 모르는 키는 뺀다(render_analysis와 같은 규칙)."""
+def preview_labels(conditions: Sequence[Mapping[str, Any]], fact_labels: Mapping[str, str]) -> dict[str, list[str]]:
+    """미리 돌려 보기 결과의 like_labels, against_labels — 그쪽 조건의 이름, 조건 순서. 이름은 condition_label(「<이름> 원함」,
+    「<이름> 제외」, 조건 요약과 같은 말)이 정한다. 이름을 모르는 키는 뺀다."""
     def names(side: str) -> list[str]:
-        return list(dict.fromkeys(
-            fact_labels[c["fact_key"]] + ("" if c["wants"] else " 제외")
-            for c in conditions if c["side"] == side and c["fact_key"] in fact_labels
-        ))
+        found = (condition_label(c["fact_key"], c["wants"], fact_labels) for c in conditions if c["side"] == side)
+        return list(dict.fromkeys(name for name in found if name is not None))
 
     return {"like_labels": names("like"), "against_labels": names("against")}
 
@@ -2621,7 +2619,7 @@ def render_summary(
         name = fact_labels.get(i["fact_key"])
         if name is None:
             return None
-        return AgentSummaryItem(fact_key=i["fact_key"], label=f"{name} {'원함' if i['wants'] else '제외'}",
+        return AgentSummaryItem(fact_key=i["fact_key"], label=condition_label(i["fact_key"], i["wants"], fact_labels),
                                 member_count=i["member_count"])
 
     def items(name: str) -> list[AgentSummaryItem]:
@@ -2745,11 +2743,13 @@ def evidence_kind(line: Mapping[str, Any]) -> str:
     return "not_filtered"
 
 
-def _condition_label(fact_key: str | None, wants: bool | None, fact_labels: Mapping[str, str]) -> str | None:
+def condition_label(fact_key: str | None, wants: bool | None, fact_labels: Mapping[str, str]) -> str | None:
+    """조건 하나의 이름 — 「<이름> 원함」, 「<이름> 제외」(방향이 없으면 이름만, 이름을 모르면 None). 조건 요약(render_summary),
+    추천 막힘 조언의 근거 줄, 미리 돌려 보기의 조건 이름(preview_labels)이 같이 쓴다."""
     name = fact_labels.get(fact_key) if fact_key else None
     if name is None or wants is None:
         return name
-    return f"{name} {'원함' if wants else '제외'}"   # 요약(render_summary)과 같은 말
+    return f"{name} {'원함' if wants else '제외'}"
 
 
 def advice_evidence(
@@ -2760,7 +2760,7 @@ def advice_evidence(
     effect는 recommend가 정한 쓰임 그대로다("filter" 후보를 거른다 | "score" 점수만 | None 안 쓰인다, #751)."""
     return [
         {"line_id": line["line_id"], "own": line["author_id"] == requester_id, "kind": evidence_kind(line),
-         "label": _condition_label(line["fact_key"], line["wants"], fact_labels), "is_active": line["is_active"],
+         "label": condition_label(line["fact_key"], line["wants"], fact_labels), "is_active": line["is_active"],
          "effect": line["effect"]}
         for line in lines
     ]

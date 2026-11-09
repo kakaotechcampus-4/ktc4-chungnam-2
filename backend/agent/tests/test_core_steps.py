@@ -148,7 +148,7 @@ def test_tool_that_returned_an_error_says_it_stopped(error):
 def test_compromise_preview_adds_the_places_against_neither_side_and_the_confirmed_ones():
     """「다 맞춘다」고 하지 않는다 — 모름이 섞인 수(#1600)라 어긋나지 않는 곳과 둘 다 확인된 곳을 나눠 쓴다."""
     preview = {"passed_count": 9, "both_sides_count": 3, "both_sides_confirmed_count": 1,
-               "like_labels": ["조용한 곳"], "against_labels": ["주차할 수 있음"], "funnel": {}}
+               "like_labels": ["조용한 곳 원함"], "against_labels": ["주차 가능 원함"], "funnel": {}}
     args = {"category": "카페", "with_conditions": [{"fact_key": "quiet", "wants": True, "side": "like"}]}
     run = _run(tool_calls=[_call("p1", "preview_filter", preview, args)])
 

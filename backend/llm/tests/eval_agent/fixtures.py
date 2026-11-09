@@ -7,7 +7,7 @@
   lines(②가 냈을 키와 방향)와 칩 표를 쓴다 — 평가 대상이 ②가 아니라서다.
 - 미리 돌려 보기(6.7, #1180)는 recommend를 부르지 않고 케이스의 preview(정해 둔 수)를 쓴다. 무엇을 돌릴지(stall 전부, split은
   비교가 있으면 전부, 두 의견의 조건은 different_axes만 — #1317, #1600)와 조건, 표시 이름, 진단 입력 칸은 운영과 같은
-  core.preview_target, compromise_conditions, condition_labels, diagnosis_input이다. 결과는 도구
+  core.preview_target, compromise_conditions, preview_labels, diagnosis_input이다. 결과는 도구
   기록 p1에 넣는다(운영의 tools.preview와 같은 모양). 케이스에 preview가 없으면 ② 실패처럼 null이다.
 - 후속 케이스(6.9, #1347)는 case.followup {h, action, label}에 target 신호의 첫 제안을 h시간 전에 그 버튼으로 수락했다고 적는다.
   이력에 그 제안(followup.status=watching, fingerprint는 target 신호 그대로)을 넣고, 후속 신호는 운영과 같은 core.detect_followups가
@@ -136,7 +136,7 @@ class World:
         if conditions:
             result |= {"both_sides_count": given["both_sides_count"],
                        "both_sides_confirmed_count": given["both_sides_confirmed_count"],
-                       **core.condition_labels(conditions, recommend_api.fact_labels())}
+                       **core.preview_labels(conditions, recommend_api.fact_labels())}
         return result | {"funnel": []}
 
     def diagnosis_input(self, key: str) -> dict[str, Any]:
