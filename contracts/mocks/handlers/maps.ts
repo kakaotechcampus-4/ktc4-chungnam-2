@@ -402,10 +402,16 @@ export const mapsHandlers = [
   }),
 
   // #1556 마지막으로 본 때 — 목 서버는 메모리에만 둔다(나 한 사람)
-  http.post("*/maps/:mapId/seen", ({ params }) => {
+  http.post("*/maps/:mapId/seen", async ({ params, request }) => {
     const mapId = params.mapId as string;
     if (!getMapOr404(mapId) || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
-    lastSeen[mapId] = new Date().toISOString();
+    // #1672 본문의 seen_at(받아 둔 as_of)은 지금보다 뒤로 못 가고, 적어 둔 값보다 앞이면 그대로 둔다
+    const raw = await request.text();
+    const body = (raw ? JSON.parse(raw) : {}) as { seen_at?: string };
+    const now = new Date().toISOString();
+    if (body.seen_at !== undefined && Number.isNaN(Date.parse(body.seen_at))) return apiError(422, "VALIDATION_ERROR", "seen_at이 날짜와 시각이 아니에요");
+    const at = body.seen_at && body.seen_at < now ? new Date(body.seen_at).toISOString() : now;
+    lastSeen[mapId] = lastSeen[mapId] && lastSeen[mapId] > at ? lastSeen[mapId] : at;
     return new HttpResponse(null, { status: 204 });
   }),
 
@@ -413,17 +419,18 @@ export const mapsHandlers = [
     const mapId = params.mapId as string;
     if (!getMapOr404(mapId) || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
     const since = lastSeen[mapId] ?? null;
-    if (since === null) return HttpResponse.json({ since: null, new_pin_ids: [], new_reactions: [], truncated: false });
+    const as_of = new Date().toISOString();   // #1672 이 응답을 만든 시각
+    if (since === null) return HttpResponse.json({ since: null, as_of, new_pin_ids: [], new_reactions: [], truncated: false });
     const pins = Object.values(store.pins).filter((p) => p.map_id === mapId);
     const newPins = pins.filter((p) => p.created_by !== ME_USER_ID && p.created_at > since)
       .sort((a, b) => b.created_at.localeCompare(a.created_at)).map((p) => p.id);
     const nameOf = (userId: string) => (store.members[mapId] ?? []).find((m) => m.user_id === userId)?.display_name ?? "구성원";
     const newReactions = pins.flatMap((p) => (store.reactions[p.id] ?? [])
-      .filter((r) => r.user_id !== ME_USER_ID && ((r as any).updated_at ?? "") > since)
+      .filter((r) => r.user_id !== ME_USER_ID && (r.updated_at ?? "") > since)
       .map((r) => ({ pin_id: p.id, user_id: r.user_id, display_name: nameOf(r.user_id), type: r.type, ...(r.reason_text ? { reason_text: r.reason_text } : {}),
-        reason_chip_ids: r.reason_chip_ids ?? [], updated_at: (r as any).updated_at as string })))
+        reason_chip_ids: r.reason_chip_ids ?? [], updated_at: r.updated_at as string })))
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-    return HttpResponse.json({ since, new_pin_ids: newPins.slice(0, 100), new_reactions: newReactions.slice(0, 100),
+    return HttpResponse.json({ since, as_of, new_pin_ids: newPins.slice(0, 100), new_reactions: newReactions.slice(0, 100),
       truncated: newPins.length > 100 || newReactions.length > 100 });
   }),
 

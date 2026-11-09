@@ -1434,6 +1434,8 @@ export interface paths {
          * 이 지도를 지금 본 것으로 적는다(#1556) — 요청한 사람의 「마지막으로 본 때」(`memberships.last_seen_at`)를 서버 시각으로 바꾼다.
          *     화면은 「확인」을 누를 때와 지도를 떠날 때(탭을 내릴 때 포함) 부른다. 구성원이면 누구나(게스트 포함). 이벤트를 보내지 않는다.
          *     기기와 상관없이 한 사람에 하나다 — PC에서 확인하면 휴대폰의 「새 소식」도 사라진다.
+         *     본문의 `seen_at`(#1672)은 화면이 본 새 소식의 `MapNews.as_of`다. 그 뒤에 생긴 핀과 의견은 다음 조회에 새것으로 남는다.
+         *     지금보다 뒤면 지금으로 자르고, 저장된 값보다 앞이면 바꾸지 않는다(다른 기기가 먼저 더 늦게 적었을 때). 본문이 없으면 지금 시각이다.
          */
         post: {
             parameters: {
@@ -1444,7 +1446,11 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["SeenRequest"];
+                };
+            };
             responses: {
                 /** @description 적었다 */
                 204: {
@@ -1454,6 +1460,15 @@ export interface paths {
                     content?: never;
                 };
                 404: components["responses"]["NotFound"];
+                /** @description 검증 실패 (VALIDATION_ERROR) — seen_at이 날짜와 시각이 아님 */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -5269,6 +5284,11 @@ export interface components {
         };
         /** @description 마지막으로 본 뒤 새로 생긴 핀·의견(#1556). 규칙은 GET /maps/{mapId}/news 설명 */
         MapNews: {
+            /**
+             * Format: date-time
+             * @description 서버가 이 응답을 만든 시각(DB 시각, #1672). 화면은 이 소식을 다 보면 POST /maps/{mapId}/seen 에 seen_at 으로 돌려준다 — 조회 뒤 확인 전에 생긴 의견을 본 것으로 적지 않게
+             */
+            as_of: string;
             /** @description 요청한 사람의 마지막으로 본 때(memberships.last_seen_at). 처음 연 지도면 null이고 두 목록은 비어 있다 */
             since: null | string;
             /** @description since 뒤에 지도에 올라온, 내가 찍지 않은 핀의 id. 최근 것부터 */
@@ -5277,6 +5297,14 @@ export interface components {
             new_reactions: components["schemas"]["NewReaction"][];
             /** @description 어느 한 목록이라도 100개를 넘어 잘렸으면 true. 화면은 「새 소식이 더 있어요」를 띄우고 지도를 다시 보게 한다 */
             truncated: boolean;
+        };
+        /** @description POST /maps/{mapId}/seen 본문(#1672). 비어 있으면 지금 시각으로 적는다 */
+        SeenRequest: {
+            /**
+             * Format: date-time
+             * @description 화면이 본 새 소식의 MapNews.as_of
+             */
+            seen_at?: string;
         };
         /** @description 새 의견 하나(#1556). Reaction에 이름과 시각을 더한 모양이다 */
         NewReaction: {

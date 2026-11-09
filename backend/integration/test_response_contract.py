@@ -192,7 +192,10 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
     assert a.post(f"/maps/{map_id}/seen").status_code == 204   # #1556
-    assert a.get(f"/maps/{map_id}/news").status_code == 200
+    news = a.get(f"/maps/{map_id}/news")
+    assert news.status_code == 200
+    # 다 본 소식의 as_of 를 돌려준다(#1672) — 본문 있는 요청도 지나간다
+    assert a.post(f"/maps/{map_id}/seen", json={"seen_at": news.json()["as_of"]}).status_code == 204
     # 방장 직접 넘기기(#468) — 구성원 403, 나 자신 422, 넘기고 되받는다(이후 단계는 a가 방장이라고 가정한다)
     assert b.post(f"/maps/{map_id}/owner", json={"user_id": "user_b"}).status_code == 403
     assert a.post(f"/maps/{map_id}/owner", json={"user_id": "user_a"}).status_code == 422

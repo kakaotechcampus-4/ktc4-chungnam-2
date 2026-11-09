@@ -2,6 +2,15 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-10, 새 소식의 조회 시각 — `MapNews.as_of`, `POST /maps/{mapId}/seen` 본문 `seen_at` (#1672)
+
+새 소식을 받은 뒤 '확인'을 누르기 전에 생긴 의견이 본 것으로 적혀 사라지던 것을 막는다(#1587 리뷰 1번).
+
+- **`MapNews.as_of`(필수)**: 서버가 이 응답을 만든 DB 시각. 목록을 읽기 전에 잡는다.
+- **`POST /maps/{mapId}/seen` 본문 `SeenRequest { seen_at? }`**: 화면은 다 본 소식의 `as_of`를 돌려준다. 지금보다 뒤면 지금으로 자르고, 적어 둔 값보다 앞이면 바꾸지 않는다(다른 기기가 더 늦게 적었을 때). 본문이 없으면 지금처럼 지금 시각이다. 날짜와 시각이 아니면 422.
+- 응답에 칸을 더하고 요청 본문은 선택이라 예전 화면도 그대로 돈다.
+- 서버 구현: `backend/maps`(router, service, schemas, core). 목 서버: `as_of`, `seen_at`을 흉내 내고 반응에 `updated_at`을 적는다(새 의견이 목 서버에서도 보인다). 타입 재생성 필요(`npm run gen:types`).
+
 ## 2026-11-10, 초대 화면과 링크 미리보기에 지도 대표 이미지 — `InviteSummary.region`·`cover_url`, `/invites/{token}/cover`·`preview`·`preview-image` (#1625)
 
 **늘리기만 한다.** 기존 응답 칸과 화면은 그대로 돈다.
