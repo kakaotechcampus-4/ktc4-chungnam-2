@@ -233,6 +233,26 @@ def count_public_pins_by_map(db: Session, map_ids: Sequence[str]) -> dict[str, i
     return counts
 
 
+def count_reactions_by_user(db: Session, *, map_id: str) -> dict[str, int]:
+    """maps의 구성원 목록(`Member.opinion_count`, #1562)이 쓴다 — 이 지도의 보이는 핀에 지금 남아 있는 ♥·🚫 반응 수를 사용자별로
+    돌려준다(반응이 없는 사람은 키가 없다 — 0으로 읽는다). 지운 핀의 반응은 세지 않고 「?」는 반응이 아니다. 쿼리 한 번.
+    `FilterCounts.members_with_opinion`과 같은 집계에서 나온다(그 수 = 이 값이 1 이상인 현재 구성원 수). 읽기 전용."""
+    return service.reaction_counts_by_user(db, map_id)
+
+
+def list_new_since(
+    db: Session, *, map_id: str, since: datetime, exclude_user_id: str, limit: int,
+) -> tuple[list[str], list[dict], bool]:
+    """maps의 `GET /maps/{mapId}/news`(#1556)가 쓴다 — `(new_pin_ids, new_reactions, truncated)`. 새 핀 id: created_at이 `since` 뒤이고
+    `exclude_user_id`가 찍지 않은, 지금 지도에 있는 핀, 최근 순. 새 반응: updated_at이 `since` 뒤이고 `exclude_user_id`의 것이 아닌,
+    지금 지도에 있는 핀의 반응(`pin_id`·`user_id`·`type`·`reason_text`·`reason_chip_ids`·`updated_at`), 최근 순. 각 목록 `limit`개까지이고
+    어느 한 쪽이라도 넘으면 `truncated=True`. `since`는 timezone-aware(memberships.last_seen_at)이고 null이면 부르지 않는다
+    (처음 연 지도는 빈 목록). 이름(display_name)은 maps가 채운다. 읽기 전용."""
+    if since.tzinfo is None:
+        raise ValueError("since는 timezone-aware여야 한다")
+    return service.list_new_since(db, map_id=map_id, since=since, exclude_user_id=exclude_user_id, limit=limit)
+
+
 def count_opinion_pins(db: Session, *, map_id: str, category: str) -> int:
     """recommend readiness(5-4, #360)가 쓴다 — 그 카테고리에서 ♥ 또는 🚫 의견이 달린 핀의 수. 삭제된 핀은
     세지 않고, 반응한 사람이 현재 구성원일 때만 센다(나간 사람은 멤버십 행이 없고, 탈퇴자는 행이 남아 있어
