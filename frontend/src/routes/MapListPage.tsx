@@ -21,6 +21,7 @@ import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import Avatar from '@/ui/Avatar'
 import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
+import Wordmark from '@/ui/Wordmark'
 
 /**
  * 로그인 직후 진입점 — 내 지도 목록 (#24, Figma 1절).
@@ -52,30 +53,34 @@ export default function MapListPage() {
   return (
     <div className="min-h-dvh bg-ink-50">
       <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col px-4 pb-6 pt-6 md:max-w-5xl md:px-8 md:pb-16 md:pt-12">
-        <header className="mb-4 flex items-center justify-between gap-4 md:mb-8">
+        {/* 첫 줄은 서비스 표시(워드마크)와 알림, 계정, 둘째 줄은 이 화면 제목이다(앱 첫 화면 머리, 2026-11-10). */}
+        <header className="mb-4 space-y-4 md:mb-8 md:space-y-6">
+          <div className="flex items-center justify-between gap-4">
+            <Wordmark className="h-6 w-auto md:h-8" />
+            {desktop ? (
+              <div className="flex shrink-0 items-center gap-3">
+                {!guest && <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />}
+                <NotificationBell />
+                <AccountMenu maps={maps ?? []} name={me?.display_name} />
+              </div>
+            ) : (
+              <div className="flex shrink-0 items-center gap-3">
+                <NotificationBell />
+                <button
+                  type="button"
+                  aria-label="계정"
+                  onClick={() => setAccountOpen(true)}
+                  className="hit-44 rounded-full"
+                >
+                  <Avatar name={me?.display_name} />
+                </button>
+              </div>
+            )}
+          </div>
           <div className="min-w-0">
             <h1 className="text-2xl font-bold text-ink-900">내 지도</h1>
             <MapCount list={list} hintId={full ? limitHintId : undefined} />
           </div>
-          {desktop ? (
-            <div className="flex shrink-0 items-center gap-3">
-              {!guest && <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />}
-              <NotificationBell />
-              <AccountMenu maps={maps ?? []} name={me?.display_name} />
-            </div>
-          ) : (
-            <div className="flex shrink-0 items-center gap-3">
-              <NotificationBell />
-              <button
-                type="button"
-                aria-label="계정"
-                onClick={() => setAccountOpen(true)}
-                className="hit-44 rounded-full"
-              >
-                <Avatar name={me?.display_name} />
-              </button>
-            </div>
-          )}
         </header>
 
         {isPending && <CardSkeleton count={2} />}

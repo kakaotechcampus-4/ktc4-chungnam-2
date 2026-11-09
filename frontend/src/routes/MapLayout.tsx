@@ -25,7 +25,9 @@ import MapSwitcher from '@/features/maps/MapSwitcher'
 import NotificationBell from '@/features/notifications/NotificationBell'
 import { useNotificationsQuery } from '@/features/notifications/queries'
 import { AccountMenu } from '@/features/maps/AccountSheet'
-import { useMapQuery, useMapsQuery } from '@/features/maps/queries'
+import { othersOnline } from '@/features/maps/model'
+import { useMapQuery, useMapsQuery, useMembersQuery } from '@/features/maps/queries'
+import OnlineDot from '@/ui/OnlineDot'
 import { useAiStore } from '@/features/recommend/aiStore'
 import { useRecommendRadiusM, useResultQuery } from '@/features/recommend/queries'
 import { firstMapLink } from '@/features/kakaoImport/share'
@@ -77,6 +79,9 @@ export default function MapLayout() {
   const allPins = useMemo(() => loadedPins ?? [], [loadedPins])
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
+  // 나 말고 지금 이 지도를 열어 둔 사람(#1551) — 구성원 버튼에 접속 점을 단다.
+  const watching = othersOnline(useMembersQuery(mapId).data)
+  const membersLabel = `지도 정보와 구성원 ${memberCount}명${watching > 0 ? `, 지금 ${watching}명이 같이 보는 중` : ''}`
   useLivePinResolver(allPins, mapInfo?.regionCenter, useResolveLivePin(mapId))
   const desktop = useIsDesktop()
   const panelW = useIsPc() ? PANEL_W.pc : PANEL_W.tablet
@@ -131,7 +136,7 @@ export default function MapLayout() {
   // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
   // 받기 전(loadedPins 없음)에 떠나면 적지 않는다 — 빈 모습을 적으면 다음에 모든 핀이 새 핀으로 보인다.
   const { news } = useNewSince(mapId, loadedPins, myId)
-  useSaveSeenOnLeave(mapId, loadedPins, myId)
+  useSaveSeenOnLeave(mapId, myId)
   const freshKey = [...news.keys()].sort().join(',')
   const freshPinIds = useMemo(() => new Set(freshKey ? freshKey.split(',') : []), [freshKey])
   // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
@@ -544,11 +549,12 @@ export default function MapLayout() {
                 trigger={
                   <button
                     type="button"
-                    aria-label={`지도 정보와 구성원 ${memberCount}명`}
+                    aria-label={membersLabel}
                     className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-surface px-2.5 text-sm font-bold text-link press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
                   >
                     <Users size={16} aria-hidden="true" />
                     {memberCount > 0 && memberCount}
+                    {watching > 0 && <OnlineDot />}
                   </button>
                 }
               />
@@ -557,12 +563,13 @@ export default function MapLayout() {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  aria-label={`지도 정보와 구성원 ${memberCount}명`}
+                  aria-label={membersLabel}
                   onClick={() => openProfile(true)}
                   className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-surface px-2.5 text-sm font-bold text-link shadow-float"
                 >
                   <Users size={16} aria-hidden="true" />
                   {memberCount > 0 && memberCount}
+                  {watching > 0 && <OnlineDot />}
                 </button>
               </div>
             )}

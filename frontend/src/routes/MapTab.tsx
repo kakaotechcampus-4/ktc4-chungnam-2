@@ -196,6 +196,7 @@ export default function MapTab() {
           since={newSince.since}
           newPins={[...newSince.news.values()].filter((n) => n.newPin).length}
           newOpinions={[...newSince.news.values()].reduce((sum, n) => sum + opinionCount(n), 0)}
+          truncated={newSince.truncated}
           onDismiss={newSince.dismiss}
         />
       )}
