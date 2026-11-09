@@ -189,6 +189,9 @@ components:
 - **coin-face, coin-rim, coin-shine** (`#FFC633`, `#C77A00`, `#FFF0B3`): 크레딧 동전 그림(`ui/Coin`, 동전을 든 핑고 `coin` — 지금 쓰는 곳은 없다)에만 쓴다. 확정 골드(`#F5B301`)보다 주황 쪽으로 진하게 갈라 놓았고, 면이나 버튼 바탕에는 쓰지 않는다 — 확정과 섞이지 않게 동전 모양이 뜻을 맡는다.
 - **coin-text** (`#8A4F00`, 흰 바탕 6.6:1): 「N 크레딧 사용」·「N 크레딧을 써요」처럼 쓸 크레딧을 알리는 글자에만 쓴다.
 
+### 별점 노랑
+- **rating-star · rating-star-line** (`#FFB400` · `#D98200`, #1701): 후기 별점의 켜진 별(`ui/StarRating`)에만 쓴다. 면·글자·버튼에는 쓰지 않는다. 확정 골드(`#F5B301`)와 값을 나누고 진한 앰버 선으로 흰 바탕에서 별 모양을 세운다. 별만으로 값을 전하지 않는다 — 보기에는 평균 숫자, 고르기에는 고른 점수의 말이 붙는다.
+
 ### Semantic
 - **좋음** (good-bg / good-line / good-text), **조율·주의** (warn-*), **반대** (bad-bg / pin-red / bad-text): 배경·선·글자가 한 세트다. 선 색을 글자에 쓰지 않는다. 주의 글자는 `#9C5A00`이다 — 라벤더 회색 위에서도 4.5:1을 넘기게 `#A35F00`에서 조금 어둡게 했다(#1521).
 
@@ -401,7 +404,7 @@ components:
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
 | 지금 지도를 열어 둔 사람 | `OnlineDot` (초록 `--good-line` 점 10px, 카드 면 테두리 2px). 아바타 오른쪽 아래(`Avatar online`)와 구성원 버튼의 인원 수 옆에 둔다. 점은 보이기만 하고 뜻은 버튼 이름이나 '지금 N명이 같이 보고 있어요' 글이 전한다(#1551) | `ui/OnlineDot` |
-| 별점(보기·고르기, #953) | `StarRating` (`onChange` 없으면 보기 — 평균은 가까운 별 수로 칠하고 숫자는 옆 글자로. 있으면 별 하나가 라디오, 누르는 곳 44px. 켜짐 `--action-fill` · 꺼짐 `--line-control`, 골드는 확정 전용이라 쓰지 않는다) | `ui/StarRating` |
+| 별점(보기·고르기, #953) | `StarRating` (`onChange` 없으면 보기 — 평균은 가까운 별 수로 칠하고 숫자는 옆 글자로. 있으면 별 하나가 라디오, 누르는 곳 44px. 켜짐은 별점 노랑 면 `--rating-star` + 앰버 선 `--rating-star-line`, 꺼짐 `--line-control`(#1701). 별점은 노란 별로 읽는 관습을 따르되 확정 골드 값은 쓰지 않는다 — 다섯 개 한 줄과 옆 숫자가 「★ 확정 리스트에 넣기」와 모양으로 가른다(크레딧 동전과 같은 방식)) | `ui/StarRating` |
 | 핀 상세 장소 후기(자체 DB 핀만, #953) | `PlaceReviews` (「장소 후기」 + 평점 요약(평균 숫자 20/700 + 별 14 + 「후기 N개」, 2026-11-10) + 「후기 쓰기」 `btn-outline btn-sm` · 목록 ink-50 면 줄마다 「나」/「핑고 사용자」·별·시각·「삭제」/「신고」 `btn-text` · 「더 보기」 `btn-link`), 작성은 `ReviewSheet`(사전 고지 + `StarRating` + 옆에 고른 점수의 말 14/700 파랑(「별로였어요」~「최고였어요」, 고르기 전 「별을 눌러 골라 주세요」 ink-500) + 여러 줄 입력 + 글자 수). 댓글·좋아요·프로필은 없다(SNS 아님) | `features/reviews` |
 | 서비스 피드백(#10) | `FeedbackSheet` (분류 칩 + 여러 줄 입력 + 「보내기」, 계정 시트·지도 정보의 글자 버튼에서 연다) | `features/feedback/FeedbackSheet` |
 | AI가 말하는 머리 | `AiHeader` (핑고 + `tag-ai`) | `features/recommend/Readiness` |
