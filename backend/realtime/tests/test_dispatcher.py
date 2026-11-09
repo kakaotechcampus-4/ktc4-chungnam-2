@@ -9,6 +9,7 @@ import asyncio
 import pytest
 
 from realtime.dispatcher import Dispatcher, Subscription
+from realtime.tests.helpers import drain_presence
 
 
 @pytest.fixture
@@ -42,11 +43,6 @@ def test_private_subscription_wants_only_matching_recipient(event_loop_policy_ro
     assert sub.wants(Row(3, "map1", "public", "x", {})) is False
 
 
-@pytest.fixture(autouse=True)
-def _quiet_presence(monkeypatch):
-    """이 파일은 행 전달·큐 상한·백오프를 본다 — member.presence 알림(test_presence.py가 본다)이 큐를 채우지 않게 한다."""
-    monkeypatch.setattr(Dispatcher, "_announce", lambda *a, **k: None)
-
 
 @pytest.mark.asyncio
 async def test_tick_never_leaks_private_event_to_public_subscriber(event_loop_policy_row):
@@ -56,6 +52,7 @@ async def test_tick_never_leaks_private_event_to_public_subscriber(event_loop_po
     public_sub = d.subscribe("map1", channel="public", user_id="u1")
     private_sub = d.subscribe("map1", channel="private", user_id="u1")
     other_private_sub = d.subscribe("map1", channel="private", user_id="u2")
+    drain_presence(public_sub, private_sub, other_private_sub)   # 접속 알림은 test_presence.py가 본다
 
     rows = [Row(1, "map1", "private", "pin.created", {"secret": True}, recipient_user_id="u1")]
     d._deliver(rows)
@@ -310,6 +307,7 @@ async def test_slow_subscriber_is_closed_at_queue_limit_and_others_unaffected(mo
     d = Dispatcher()
     slow = d.subscribe("map1", channel="public", user_id="u1")
     fast = d.subscribe("map1", channel="public", user_id="u2")
+    drain_presence(slow, fast)
 
     for row in _rows(10):
         d._deliver([row])
@@ -333,6 +331,7 @@ async def test_full_queue_still_receives_closed_on_member_left(monkeypatch):
     monkeypatch.setattr(module, "SUBSCRIBER_QUEUE_MAX", 2)
     d = Dispatcher()
     sub = d.subscribe("map1", channel="public", user_id="u1")
+    drain_presence(sub)
     sub.queue.put_nowait("a")
     sub.queue.put_nowait("b")
     d.close_subscriptions()   # 가득 차 있어도 QueueFull 없이 닫힌다
@@ -396,6 +395,7 @@ async def test_backlog_over_row_limit_is_delivered_in_order_without_loss(monkeyp
     d = Dispatcher()
     waits = _fake_clock(monkeypatch, d)
     sub = d.subscribe("map1", channel="public", user_id="u1")
+    drain_presence(sub)
     table = _rows(10)
     ticks = []
 
