@@ -596,7 +596,7 @@ export default function MapCanvas({
       path: [path(DIM_WORLD), ...rings.map(path)],
       strokeWeight: 0,
       strokeOpacity: 0,
-      fillColor: css.getPropertyValue('--ink-900').trim() || '#1A1C26',
+      fillColor: css.getPropertyValue('--map-dim').trim() || '#1A1C26',
       fillOpacity: 0.12,
       zIndex: 1,
     })

@@ -18,8 +18,16 @@
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="핑고핑고 워드마크와 지도 위를 날아가는 펭귄 핑고" />
-    <!-- 모바일 브라우저 주소창 색 — 지도 화면 위 흰 컨트롤과 이어지게 흰색. -->
+    <!-- 모바일 브라우저 주소창 색 — 지도 화면 위 컨트롤 면과 이어지게. 다크면 theme.ts 가 바꾼다. -->
     <meta name="theme-color" content="#FFFFFF" />
+    <!-- 화면 모드(#1412)를 그리기 전에 정한다 — 늦으면 다크 사용자에게 흰 화면이 한 번 번쩍인다. 규칙은 src/features/shell/theme.ts applyTheme 와 같다. -->
+    <script>
+      try {
+        var c = localStorage.getItem('pingo-theme')
+        var d = c === 'dark' || (c !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.dataset.theme = d ? 'dark' : 'light'
+      } catch (e) {}
+    </script>
     <!-- 홈 화면에 추가하면 주소창 없이 앱처럼 연다(#1493). 아이콘은 파랑 바탕 흰 핑고, 오프라인 캐시는 두지 않는다. -->
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />

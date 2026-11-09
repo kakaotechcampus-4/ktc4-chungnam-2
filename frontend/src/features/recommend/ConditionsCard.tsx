@@ -40,7 +40,7 @@ export default function ConditionsCard({
   const count = visibleConditionCount(applied ?? lines) // 쓰인 줄만, 칩과 같은 묶음으로(#742·#1143)
 
   return (
-    <section className="rounded-xl border border-ink-200 bg-white">
+    <section className="rounded-xl border border-ink-200 bg-surface">
       <button
         type="button"
         aria-expanded={open}

@@ -78,12 +78,12 @@ export default function AgentButton({
         </span>
         {bubble && (
           <span
-            className={`relative flex h-9 items-center rounded-xl bg-white px-3 text-sm font-bold text-brand-600 shadow-float transition-opacity ${
+            className={`relative flex h-9 items-center rounded-xl bg-surface px-3 text-sm font-bold text-link shadow-float transition-opacity ${
               fading ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
             }`}
           >
             {/* 말풍선 꼬리 — 핑고 쪽을 가리킨다. */}
-            <span aria-hidden="true" className="absolute -left-1 top-1/2 size-2.5 -translate-y-1/2 rotate-45 bg-white" />
+            <span aria-hidden="true" className="absolute -left-1 top-1/2 size-2.5 -translate-y-1/2 rotate-45 bg-surface" />
             핑고 AI 조언
           </span>
         )}
