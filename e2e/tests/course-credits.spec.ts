@@ -45,7 +45,7 @@ test('확정 장소 하나만 날짜에 넣고 코스를 짜면, 남은 곳을 �
 
   await test.step('크레딧이 코스 한 번 값만큼 줄었다', async () => {
     await planner.getByRole('link', { name: 'AI 코스' }).click()
-    await planner.getByRole('button', { name: '닫기' }).click()
+    await planner.getByRole('button', { name: '새로 짜기' }).click()
     // 크레딧 글은 두 줄(쓸 크레딧 / 남은 크레딧)이고 누르면 설명 풍선이 뜨는 버튼이다(#1571).
     await expect(planner.getByRole('button', { name: new RegExp(`${price} 크레딧 사용.*남은 크레딧 ${before.balance - price}/${before.max_balance}`) })).toBeVisible()
   })
