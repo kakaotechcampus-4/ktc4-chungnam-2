@@ -23,7 +23,7 @@ from maps.models import Map as MapRow
 from maps.models import MapCover as MapCoverRow
 from maps.models import Membership as MembershipRow
 from maps.schemas import (
-    Invite, InviteSummary, Map, MapCreateRequest, MapRegion, MapUpdateRequest, Member, TrashedMap,
+    Invite, InviteSummary, Map, MapCreateRequest, MapNews, MapRegion, MapUpdateRequest, Member, TrashedMap,
 )
 from notifications import api as notifications_api
 from pins import api as pins_api
@@ -134,12 +134,32 @@ def role_in_map(db: Session, *, map_id: str, user_id: str) -> Role | None:
     ).scalar_one_or_none()
 
 
-def mark_seen(db: Session, *, map_id: str, user_id: str, now: datetime) -> None:
-    """POST /maps/{mapId}/seen(#1556) — 요청한 구성원의 「마지막으로 본 때」를 now로 바꾼다. 구성원 여부는 라우터 가드가 이미 봤다."""
+def mark_seen(db: Session, *, map_id: str, user_id: str) -> None:
+    """POST /maps/{mapId}/seen(#1556) — 요청한 구성원의 「마지막으로 본 때」를 DB 시각으로 바꾼다. 구성원 여부는 라우터 가드가 이미 봤다.
+    /news가 비교하는 핀·반응의 created_at·updated_at이 DB now()라 같은 시계를 쓴다(앱 시각과 어긋나 새 소식이 새거나 빠지지 않게)."""
     db.execute(
         update(MembershipRow).where(MembershipRow.map_id == map_id, MembershipRow.user_id == user_id)
-        .values(last_seen_at=now)
+        .values(last_seen_at=func.now())
     )
+
+
+NEWS_LIMIT = 100   # GET /maps/{mapId}/news의 목록당 상한(스펙 maxItems). 넘으면 truncated=true
+
+
+def get_news(db: Session, *, map_id: str, user_id: str) -> MapNews:
+    """마지막으로 본 뒤 새로 생긴 핀·의견(#1556). 「무엇이 새것인가」는 pins.api.list_new_since가 정하고 여기는 기준 시각(내 last_seen_at)
+    과 이름만 채운다. 한 번도 본 적 없으면(since=null) 처음 연 지도라 빈 목록이다. last_seen_at을 바꾸지 않는다."""
+    since = db.execute(
+        select(MembershipRow.last_seen_at).where(MembershipRow.map_id == map_id, MembershipRow.user_id == user_id)
+    ).scalar_one_or_none()
+    if since is None:
+        return MapNews(since=None, new_pin_ids=[], new_reactions=[], truncated=False)
+    pin_ids, rows, truncated = pins_api.list_new_since(
+        db, map_id=map_id, since=since, exclude_user_id=user_id, limit=NEWS_LIMIT
+    )
+    roster, _ = roster_of(db, map_id)
+    names = pins_api.author_display_names(db, [r["user_id"] for r in rows], {m.user_id for m in roster})
+    return core.to_map_news(since, pin_ids, rows, names, truncated=truncated)
 
 
 def notify_owner_changed(db: Session, *, map_row: MapRow, new_owner_id: str, actor_id: str) -> None:

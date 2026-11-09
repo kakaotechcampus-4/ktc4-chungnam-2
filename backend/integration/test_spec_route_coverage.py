@@ -23,7 +23,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
     # #1556 계약 PR — maps 서버 PR이 두 경로를 만들면서 이 두 줄을 지운다.
-    ("get", "/maps/{}/news"): "#1556",
 }
 
 # 특정 환경에서만 붙는 경로 — main.py가 설정을 보고 include한다. 테스트 앱(PINGO_ENV=test)에는 없어야 한다.

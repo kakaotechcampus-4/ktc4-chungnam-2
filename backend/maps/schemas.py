@@ -105,6 +105,27 @@ class MapList(BaseModel):
     trip_max_days: int
 
 
+class NewReaction(BaseModel):
+    """새 의견 하나(#1556) — docs/api-spec.yaml NewReaction과 1:1. reason_text가 없으면 필드를 생략한다."""
+
+    pin_id: str
+    user_id: str
+    display_name: str = Field(max_length=50)
+    type: Literal["like", "against"]
+    reason_text: str | None = Field(default=None, max_length=140)
+    reason_chip_ids: list[str] = Field(default_factory=list, max_length=10)
+    updated_at: datetime
+
+
+class MapNews(BaseModel):
+    """GET /maps/{mapId}/news(#1556). since는 null일 수 있어 exclude_none을 쓰지 않는다(필수 칸)."""
+
+    since: datetime | None
+    new_pin_ids: list[str] = Field(max_length=100)
+    new_reactions: list[NewReaction] = Field(max_length=100)
+    truncated: bool
+
+
 class TrashedMap(BaseModel):
     """삭제한 지도 한 건(#464) — 복구하면 Map이 된다. docs/api-spec.yaml TrashedMap과 1:1."""
 
