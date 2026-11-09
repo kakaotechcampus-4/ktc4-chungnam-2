@@ -8,7 +8,7 @@ import { pinKeys } from './queries'
 /**
  * 마지막으로 본 뒤 새로 생긴 핀과 의견(#1454). 무엇이 새것인지는 서버가 정한다(#1556).
  * 지도를 열면 GET /maps/{mapId}/news 를 한 번 받고, 이번에 연 동안은 그 값으로 그린다.
- * '확인'을 누르거나 지도를 떠나면 POST /maps/{mapId}/seen 으로 본 때를 적는다.
+ * '확인'을 누르거나 지도를 떠나면 POST /maps/{mapId}/seen 으로 본 때를 적는다. 본 때는 받아 둔 소식의 as_of 다(#1672).
  * 기기와 상관없이 한 사람에 하나라 PC에서 확인하면 휴대폰의 표시도 사라진다.
  */
 export type PinNews = {
@@ -70,7 +70,8 @@ export function useNewSince(mapId: string, pins: Pin[] | undefined, myId: string
   const queryClient = useQueryClient()
   /** '확인' — 본 때를 적고 표시를 모두 지운다. 적기에 실패해도 이번 화면에서는 지운다(다음에 들어오면 다시 보인다). */
   function dismiss() {
-    void markMapSeen(mapId).catch((err) => console.error('[newSince] 본 때를 적지 못했어요', err))
+    if (!news.data) return
+    void markMapSeen(mapId, news.data.as_of).catch((err) => console.error('[newSince] 본 때를 적지 못했어요', err))
     queryClient.setQueryData<MapNewsDto>(newsKey(mapId), (d) => d && { ...d, new_pin_ids: [], new_reactions: [], truncated: false })
   }
 
@@ -86,8 +87,9 @@ export function useSaveSeenOnLeave(mapId: string, myId: string | undefined) {
   useEffect(() => {
     if (!myId) return
     const save = () => {
-      if (!queryClient.getQueryData(newsKey(mapId))) return
-      void markMapSeen(mapId, { keepalive: true }).catch((err) => console.error('[newSince] 본 때를 적지 못했어요', err))
+      const seen = queryClient.getQueryData<MapNewsDto>(newsKey(mapId))
+      if (!seen) return
+      void markMapSeen(mapId, seen.as_of, { keepalive: true }).catch((err) => console.error('[newSince] 본 때를 적지 못했어요', err))
     }
     const onHide = () => document.visibilityState === 'hidden' && save()
     document.addEventListener('visibilitychange', onHide)

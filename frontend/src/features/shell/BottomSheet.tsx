@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react'
 
-import { TAB_BAR_H } from './layout'
+import { TAB_BAR_SPACE } from './layout'
 import type { SheetStage } from './sheetStore'
 import { useIsDesktop } from './useIsDesktop'
 
@@ -8,11 +8,9 @@ import { useIsDesktop } from './useIsDesktop'
  * 단계별 시트 윗변(Figma iPhone 16 852px 기준을 화면 비율로 옮김).
  * 1단계는 손잡이 + 제목 줄만 보인다(66px), 2단계는 지도가 같이 보이는 절반, 3단계는 거의 전체.
  */
-/** 탭 바 + 홈 표시줄. 시트는 그 위에서 멈춘다. */
-const SHEET_BOTTOM = `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))`
-
 const STAGE_TOP: Record<SheetStage, string> = {
-  1: `calc(100dvh - ${SHEET_BOTTOM} - 66px)`,
+  // 시트는 바닥까지 깔리고 탭 바가 그 위에 뜬다. 1단계는 손잡이와 제목 줄이 탭 바 위에 보이는 높이.
+  1: `calc(100dvh - ${TAB_BAR_SPACE} - 66px)`,
   2: '41dvh',
   3: '39px',
 }
@@ -115,9 +113,8 @@ export default function BottomSheet({
       aria-label="바텀시트"
       style={{
         top: dragging ? `calc(${STAGE_TOP[stage]} + ${dragY}px)` : STAGE_TOP[stage],
-        bottom: SHEET_BOTTOM,
       }}
-      className={`fixed inset-x-0 z-30 flex flex-col rounded-t-2xl bg-[var(--surface-sheet)] shadow-sheet ${
+      className={`fixed inset-x-0 bottom-0 z-30 flex flex-col rounded-t-2xl bg-[var(--surface-sheet)] shadow-sheet ${
         dragging ? '' : 'transition-[top] duration-300 ease-out motion-reduce:transition-none'
       }`}
     >
@@ -152,8 +149,9 @@ export default function BottomSheet({
       <div
         hidden={stage === 1}
         {...expandHandlers}
-        // 아래 여백은 탭 바 위로 솟은 AI 버튼(32px)에 마지막 내용이 가리지 않게.
-        className={`min-h-0 flex-1 overscroll-contain px-4 pb-12 ${autoExpand ? 'overflow-hidden' : 'overflow-y-auto'}`}
+        // 내용은 떠 있는 탭 바 밑으로 지나간다. 마지막 줄이 탭 바에 가리지 않게 그 높이 + 16 만큼 아래를 비운다.
+        style={{ paddingBottom: `calc(${TAB_BAR_SPACE} + 16px)` }}
+        className={`min-h-0 flex-1 overscroll-contain px-4 ${autoExpand ? 'overflow-hidden' : 'overflow-y-auto'}`}
       >
         {children}
       </div>

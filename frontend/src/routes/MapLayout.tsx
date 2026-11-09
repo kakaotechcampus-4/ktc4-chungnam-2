@@ -24,6 +24,7 @@ import { usePinFilters } from '@/features/map/usePinFilters'
 import { boundaryCorners, useRegionBoundary } from '@/features/map/regionGeo'
 import MapSwitcher from '@/features/maps/MapSwitcher'
 import NotificationBell from '@/features/notifications/NotificationBell'
+import { useNotificationsQuery } from '@/features/notifications/queries'
 import { AccountMenu } from '@/features/maps/AccountSheet'
 import { othersOnline } from '@/features/maps/model'
 import { useMapQuery, useMapsQuery, useMembersQuery } from '@/features/maps/queries'
@@ -42,7 +43,7 @@ import { useRecentSearches } from '@/features/search/recentSearchStore'
 import RecentSearches from '@/features/search/RecentSearches'
 import { useSearchStore } from '@/features/search/searchStore'
 import AppMenu from '@/features/shell/AppMenu'
-import { PANEL_GAP, PANEL_W, panelCover, TAB_BAR_H } from '@/features/shell/layout'
+import { PANEL_GAP, PANEL_W, panelCover, TAB_BAR } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
 import { backAriaLabel, usePanelBackStore } from '@/features/shell/panelBack'
 import ProfileModal, { ProfileMenu } from '@/features/shell/ProfileModal'
@@ -52,6 +53,7 @@ import { ConnectionBanner } from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop, useIsPc } from '@/features/shell/useIsDesktop'
+import Avatar from '@/ui/Avatar'
 import ErrorBoundary from '@/ui/ErrorBoundary'
 import { PingoMark } from '@/ui/Pingo'
 import { ClearButton } from '@/ui/TextField'
@@ -118,6 +120,7 @@ export default function MapLayout() {
   // 전에는 "포커스 + 빈 칸"일 때만 열어서, 한 번 찾고 나면 검색어가 남아 다시 눌러도 열리지 않았다.
   const [recentWanted, setRecentWanted] = useState(false)
   const me = useMeQuery().data
+  const unread = useNotificationsQuery().data?.pages[0]?.unread_count ?? 0
   const myId = me?.id
   const myMaps = useMapsQuery().data?.items ?? []
   const searchBox = useRef<HTMLDivElement>(null)
@@ -451,7 +454,7 @@ export default function MapLayout() {
         route={routeDrawings}
         // 원은 준비 화면(run 없음)에만 그린다. 결과의 다시 추천·넓히기는 run을 만들 때의 가운데에서 찾아서, 지도를 따라가는 원은 그 범위와 어긋난다.
         recommendArea={onRecommendTab ? { boundary: regionBoundary, radiusM: run ? null : recommendRadiusM } : null}
-        // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 확정된 장소」로 돌아온다).
+        // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 장소 확정」으로 돌아온다).
         onSelect={(pinId) => {
           setPanelOpen(true)
           // 검색 결과를 보다가 핀을 고르면 매달린 핑고는 들어간다.
@@ -510,7 +513,7 @@ export default function MapLayout() {
                 <Wordmark onFill className="h-5 w-auto" />
               </div>
               <nav aria-label="지도 탭" className="mt-2 flex gap-1 pb-2">
-                {TABS.map((tab) => (
+                {TABS.filter((tab) => !tab.mobileOnly).map((tab) => (
                   <PanelTab key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} />
                 ))}
               </nav>
@@ -566,8 +569,8 @@ export default function MapLayout() {
                 }
               />
             ) : (
+              // 알림은 휴대폰에서 프로필 탭으로 옮겼다 — 오른쪽 위는 손이 닿기 어렵다(#1660). 안 읽은 점은 탭 아이콘에 붙는다.
               <div className="flex items-center gap-3">
-                <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
                   aria-label={membersLabel}
@@ -670,10 +673,12 @@ export default function MapLayout() {
           <Outlet context={context} />
         </ErrorBoundary>
 
+        {/* 바닥에서 띄운 알약(네이버 지도 시안). 시트 내용이 밑으로 비쳐 지나가게 살짝 비치고 흐리게 한다. */}
         {!desktop && (
           <nav
-            style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
-            className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 items-end border-t border-ink-100 bg-surface"
+            aria-label="지도 탭"
+            style={{ height: TAB_BAR.h, bottom: `calc(${TAB_BAR.gap}px + env(safe-area-inset-bottom, 0px))` }}
+            className="fixed inset-x-4 z-40 grid grid-cols-5 gap-1 rounded-full bg-surface/90 p-1.5 shadow-float ring-1 ring-ink-200/60 backdrop-blur-md"
           >
             {TABS.map((tab) => (
               <TabLink
@@ -681,7 +686,11 @@ export default function MapLayout() {
                 to={`/maps/${mapId}${tab.path}`}
                 end={tab.end}
                 label={tab.label}
-                icon={tab.Icon ? <tab.Icon size={24} /> : <PingoMark size={28} />}
+                icon={
+                  tab.path === '/me' ? <MeIcon name={me?.display_name} unread={unread > 0} />
+                  : tab.Icon ? <tab.Icon size={24} />
+                  : <PingoMark size={28} />
+                }
               />
             ))}
           </nav>
@@ -747,16 +756,34 @@ export default function MapLayout() {
  * 최종기획안 4절의 탭 3개에 「AI 코스」(#683, 확정 탭의 시트였던 것)를 더한 4개. 라벨은 고정 용어(9절). 하단 탭과 넓은 화면 패널 머리의 탭이 이 표 하나를 쓴다.
  * AI 는 선 아이콘 대신 핑고 얼굴(PingoMark)이다(Icon 없음).
  */
-const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null }[] = [
-  { path: '', end: true, label: '마킹된 장소', Icon: MapPin },
+const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null; mobileOnly?: true }[] = [
+  { path: '', end: true, label: '핀 찍기', Icon: MapPin },
   { path: '/recommend', label: 'AI 추천', Icon: null },
-  { path: '/shortlist', label: '확정된 장소', Icon: FileText },
+  { path: '/shortlist', label: '장소 확정', Icon: FileText },
   { path: '/course', label: 'AI 코스', Icon: Route },
+  // 휴대폰만(#1660). 넓은 화면은 오른쪽 위 계정 원이 같은 일을 한다. 아이콘은 내 이니셜 원이다.
+  { path: '/me', label: '프로필', Icon: null, mobileOnly: true },
 ]
+
+/** 프로필 탭 아이콘 — 내 이니셜 원, 안 읽은 알림이 있으면 오른쪽 위 빨간 점(종과 같은 점). */
+function MeIcon({ name, unread }: { name?: string; unread: boolean }) {
+  return (
+    // 지금 탭의 회색 알약 위에서도 원이 보이게 테두리를 두른다.
+    <span className="relative rounded-full ring-1 ring-ink-300">
+      <Avatar name={name} size={24} />
+      {unread && (
+        <>
+          <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />
+          <span className="sr-only">안 읽은 알림 있음,</span>
+        </>
+      )}
+    </span>
+  )
+}
 
 /**
  * 하단 탭 칸 하나 — 아이콘 + 11/500 라벨, 비활성 ink-500(흰 바탕 대비 약 5:1). AI 추천도 같은 모양이다(핑고 얼굴).
- * 3칸일 때 가운데에 두던 AI 원(48px, 떠 있음)은 4칸이 되며 둘째 칸에서 왼쪽으로 치우쳐 보여 뺐다(2026-11-03).
+ * 지금 탭은 칸 전체를 채운 회색 알약(muted) 위 파란 글자다(네이버 지도 시안).
  */
 function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
   return (
@@ -764,7 +791,7 @@ function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: s
       to={to}
       end={end}
       className={({ isActive }) =>
-        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-link' : 'text-ink-500'}`
+        `press flex flex-col items-center justify-center gap-0.5 rounded-full text-label font-medium ${isActive ? 'bg-muted text-link' : 'text-ink-500'}`
       }
     >
       {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 네 칸 높이를 맞춘다. */}

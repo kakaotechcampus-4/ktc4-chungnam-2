@@ -9,8 +9,12 @@ export const fetchPins = (mapId: string) => api<PinDto[]>(`/maps/${mapId}/pins`)
 export type MapNewsDto = components['schemas']['MapNews']
 /** 마지막으로 본 뒤 새로 생긴 핀과 의견(#1556). 본 때를 바꾸지 않는다. */
 export const fetchMapNews = (mapId: string) => api<MapNewsDto>(`/maps/${mapId}/news`)
-/** 지금 본 것으로 적는다(#1556). 페이지를 떠나는 중에도 보내지게 keepalive 를 넘길 수 있다. */
-export const markMapSeen = (mapId: string, init?: Pick<RequestInit, 'keepalive'>) => api<void>(`/maps/${mapId}/seen`, { method: 'POST', ...init })
+/**
+ * 본 것으로 적는다(#1556). seenAt 은 다 본 새 소식의 as_of 다 — 조회 뒤 확인 전에 생긴 의견이 다음에도 새것으로 남는다(#1672).
+ * 페이지를 떠나는 중에도 보내지게 keepalive 를 넘길 수 있다.
+ */
+export const markMapSeen = (mapId: string, seenAt: string, init?: Pick<RequestInit, 'keepalive'>) =>
+  api<void>(`/maps/${mapId}/seen`, { method: 'POST', body: JSON.stringify({ seen_at: seenAt }), ...init })
 
 export const fetchReactions = (pinId: string) => api<ReactionDto[]>(`/pins/${pinId}/reactions`)
 
