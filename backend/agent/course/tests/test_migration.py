@@ -22,8 +22,8 @@ MODEL_INDEXES = {i.name for i in AgentCourseRun.__table__.indexes}
 MODE_REVISION, MODE_PREVIOUS = "0062_course_run_modes", "0061_recommend_run_origin"
 MODE_COLUMNS = {"mode", "headline", "fixes", "checked", "snapshot_version"}    # 0062가 더한 칸
 KEEP_REVISION = "0067_course_run_pin_ids_keep"   # snapshot_pin_ids를 줄이기(#1465) 전까지 남긴다(#1464)
-KEPT_COLUMN = "snapshot_pin_ids"   # 모델에서는 뺐고 0067~0068 사이 DB에 남는다. 0069에서 지운다
-DROP_PIN_IDS_REVISION = "0069_course_run_pin_ids_drop"   # #1465
+KEPT_COLUMN = "snapshot_pin_ids"   # 모델에서는 뺐고 0067~0068 사이 DB에 남는다. 0070에서 지운다
+DROP_PIN_IDS_REVISION = "0070_course_run_pin_ids_drop"   # #1465
 MIG_DB = f"{TEST_DB_NAME}_course_mig"[:63]
 
 
@@ -165,7 +165,7 @@ def test_0067_restores_pin_ids_on_db_that_ran_old_0062_and_both_codes_insert(mig
         engine.dispose()
 
 
-def test_0069_drops_pin_ids_and_snapshot_version_default_and_downgrades(mig_url):
+def test_0070_drops_pin_ids_and_snapshot_version_default_and_downgrades(mig_url):
     """줄이기(#1465): 칸이 모델과 같아지고, 새 코드의 INSERT는 그대로 되며, version 없는 INSERT는 이제 거부된다. downgrade는 0067 모양이다."""
     cfg = _config()
     command.upgrade(cfg, KEEP_REVISION)

@@ -140,7 +140,7 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 | 테이블.칸 | 남긴 이유 | 줄이기 |
 |---|---|---|
 
-지금 남은 칸은 없다(`agent_course_runs.snapshot_pin_ids`는 0069에서 지웠다, #1465).
+지금 남은 칸은 없다(`agent_course_runs.snapshot_pin_ids`는 0070에서 지웠다, #1465).
 
 ## 데이터가 바뀔 때
 

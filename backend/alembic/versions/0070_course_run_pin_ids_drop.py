@@ -9,8 +9,8 @@
 
 from alembic import op
 
-revision = "0069_course_run_pin_ids_drop"
-down_revision = "0068_map_cover_color"
+revision = "0070_course_run_pin_ids_drop"
+down_revision = "0069_membership_last_seen_at"
 branch_labels = None
 depends_on = None
 
