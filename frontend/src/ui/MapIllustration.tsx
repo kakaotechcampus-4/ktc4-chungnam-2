@@ -8,7 +8,7 @@ function Pin({ x, y, glyph }: { x: number; y: number; glyph: PinGlyph }) {
 /** 로그인·초대 화면의 작은 지도 그림(Figma 1·2절). 실제 지도가 아니라 장식이라 스크린 리더에서 숨긴다. */
 export default function MapIllustration({ className = '' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 320 140" className={`w-full ${className}`} aria-hidden="true">
+    <svg viewBox="0 0 320 140" className={`keep-light w-full ${className}`} aria-hidden="true">
       <rect width="320" height="140" rx="12" fill="var(--ink-100)" />
       <path d="M0 98 L320 52 L320 66 L0 112 Z" fill="#fff" />
       <rect x="196" y="0" width="12" height="140" fill="#fff" />

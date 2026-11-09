@@ -19,7 +19,7 @@ export default function EntryFrame({
   after?: ReactNode
   children: ReactNode
 }) {
-  const frame = `mx-auto flex min-h-dvh w-full max-w-[480px] flex-col ${className} md:mx-0 md:min-h-0 md:max-w-[400px] md:rounded-2xl md:border md:border-ink-200 md:bg-white md:px-8 md:py-10`
+  const frame = `mx-auto flex min-h-dvh w-full max-w-[480px] flex-col ${className} md:mx-0 md:min-h-0 md:max-w-[400px] md:rounded-2xl md:border md:border-ink-200 md:bg-surface md:px-8 md:py-10`
   return (
     <div className="min-h-dvh md:flex md:items-center md:justify-center md:bg-ink-50 md:px-5 md:py-10">
       {Tag === 'form' ? (

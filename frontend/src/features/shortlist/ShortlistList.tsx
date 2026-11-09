@@ -59,7 +59,7 @@ function Row({
   const name = item.pin.place_name ?? '이 장소'
   const { handlers, dragging, ghost } = useScheduleDrag(item.pin.id, (spot) => onDrop?.(spot))
   return (
-    <li className={`rounded-xl border border-ink-200 bg-white py-1.5 pl-3 pr-1.5 ${dragging ? 'opacity-40' : ''}`}>
+    <li className={`rounded-xl border border-ink-200 bg-surface py-1.5 pl-3 pr-1.5 ${dragging ? 'opacity-40' : ''}`}>
       <div className="flex items-center gap-2">
         {/* 키보드·VoiceOver로도 열리게 버튼이다(검색 결과 줄과 같다, #959). */}
         <button type="button" onClick={onOpen} className="press -mx-1.5 min-w-0 flex-1 select-none rounded-md px-1.5 py-1 text-left">

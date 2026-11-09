@@ -70,7 +70,7 @@ function AdCard({ mapId, category, ad }: { mapId: string; category: RecommendCat
   }
 
   return (
-    <article className="space-y-1 rounded-xl bg-white p-3 ring-1 ring-ink-200">
+    <article className="space-y-1 rounded-xl bg-surface p-3 ring-1 ring-ink-200">
       <header className="flex items-start gap-2">
         <h3 className="min-w-0 flex-1 truncate text-body font-semibold text-ink-900">{place.name}</h3>
         <span className="tag tag-neutral shrink-0">광고</span>

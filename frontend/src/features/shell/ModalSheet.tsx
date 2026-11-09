@@ -89,7 +89,7 @@ export default function ModalSheet({
               <section
                 ref={sheetRef}
                 tabIndex={-1}
-                className="max-h-[90dvh] overflow-y-auto rounded-t-2xl bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 outline-none md:max-h-[85dvh] md:rounded-2xl md:p-5"
+                className="max-h-[90dvh] overflow-y-auto rounded-t-2xl bg-surface px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-2 outline-none md:max-h-[85dvh] md:rounded-2xl md:p-5"
               >
                 {/* 손잡이 줄만 끌린다 — 내용까지 끌게 하면 긴 목록(지역 고르기)의 스크롤과 부딪힌다. Esc·딤으로도 닫힌다. */}
                 <div

@@ -37,7 +37,7 @@ export default function NotificationBell({ floating = false, currentMapId }: { f
           // 알림함을 열 때 새로 받는다 — 실시간 푸시가 없다(api-spec GET /me/notifications).
           void list.refetch()
         }}
-        className={`hit-44 relative flex size-8 shrink-0 items-center justify-center rounded-full bg-white text-ink-900 ${
+        className={`hit-44 relative flex size-8 shrink-0 items-center justify-center rounded-full bg-surface text-ink-900 ${
           floating ? 'press pointer-events-auto shadow-float' : 'press border border-ink-200'
         }`}
       >

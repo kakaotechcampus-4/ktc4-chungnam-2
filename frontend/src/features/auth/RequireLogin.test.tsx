@@ -28,6 +28,7 @@ function show(entry = '/?login_pending=withdrawn_account') {
       <MemoryRouter initialEntries={[entry]}>
         <Search />
         <Routes>
+          <Route path="/welcome" element={<p>서비스 안내</p>} />
           <Route element={<RequireLogin />}>
             <Route path="/" element={<p>내 지도 목록</p>} />
           </Route>
@@ -131,6 +132,10 @@ describe('구글 로그인(#1514)', () => {
   const signedOut = () =>
     server.use(http.get('*/auth/me', () => HttpResponse.json({ code: 'UNAUTHORIZED', message: '로그인이 필요합니다' }, { status: 401 })))
 
+  // 아래 시험들은 서비스 안내를 이미 본 사람이다. 처음 온 사람은 맨 아래 시험이 본다.
+  beforeEach(() => localStorage.setItem('welcomeSeen', '1'))
+  afterEach(() => localStorage.removeItem('welcomeSeen'))
+
   it('로그인 화면에 카카오 아래 「Google로 시작하기」가 있다', async () => {
     signedOut()
     show('/')
@@ -143,5 +148,22 @@ describe('구글 로그인(#1514)', () => {
     show('/?login_error=google_unavailable')
     expect(await screen.findByRole('alert')).toHaveTextContent('구글 로그인은 아직 준비 중이에요. 카카오로 시작해 주세요')
     await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent(/^$/))
+  })
+})
+
+describe('처음 온 사람(#1576)', () => {
+  const signedOut = () =>
+    server.use(http.get('*/auth/me', () => HttpResponse.json({ code: 'UNAUTHORIZED', message: '로그인이 필요합니다' }, { status: 401 })))
+
+  it('로그인 전이면 로그인 화면보다 서비스 안내를 먼저 본다', async () => {
+    signedOut()
+    show('/')
+    expect(await screen.findByText('서비스 안내')).toBeInTheDocument()
+  })
+
+  it('로그인 실패로 돌아왔으면 안내로 보내지 않고 실패를 보인다', async () => {
+    signedOut()
+    show('/?login_error=google_unavailable')
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
   })
 })

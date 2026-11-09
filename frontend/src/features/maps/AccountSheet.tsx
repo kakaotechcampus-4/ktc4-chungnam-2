@@ -12,6 +12,7 @@ import FaqSheet from '@/features/help/FaqSheet'
 import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { HelpLinks } from '@/features/shell/ProfileModal'
+import ThemeControl from '@/features/shell/ThemeControl'
 import { showToast } from '@/features/shell/toast'
 import Avatar from '@/ui/Avatar'
 import Sentences from '@/ui/Sentences'
@@ -148,6 +149,8 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
         </>
       )}
 
+      {/* 내 지도 목록에는 ☰ 메뉴가 없어서 화면 모드를 계정에 둔다(#1412). */}
+      <ThemeControl className="mt-5" />
       <div className="mt-2">
         <HelpLinks onPick={onConfirm} />
       </div>

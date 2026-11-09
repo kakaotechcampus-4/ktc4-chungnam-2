@@ -2,7 +2,7 @@ import { isDesktopNow } from '@/features/shell/useIsDesktop'
 
 import { fitPadding, groupNear } from './camera'
 import { attachTrashDrag } from './pinDrag'
-import { createPinGroupMarkerElement, createPinMarkerElement, markSelected, setPinLabel, showPinLabel } from './pinMarker'
+import { createPinGroupMarkerElement, createPinMarkerElement, markSelected, PIN_LABEL, setPinLabel, showPinLabel } from './pinMarker'
 import { isPlaced, participationRatio, type Pin, type PlacedPin } from './model'
 
 export interface MarkerLayer {
@@ -43,9 +43,6 @@ export function mapFade(level: number): number {
 
 /** 핀 몸통 크기(px, pinMarker 의 svg 30×38). 이름표가 다른 핀을 덮지 않게 비킨다. */
 const BODY = { w: 30, h: 38 }
-/** 이름표 높이(px)와 핀 끝에서 떨어진 거리. 폭은 그려진 이름표에서 잰다. */
-const LABEL = { h: 20, gap: 4 }
-
 /**
  * 핀 끝(좌표)끼리 이만큼(px)보다 가까우면 숫자 핀 하나로 묶는다(#1576) — 핀 머리(지름 약 20)가 서로 덮이기 시작하는 거리다.
  * 확대할수록 화면 거리가 벌어져 묶음이 풀린다. MapCanvas 가 「확대로 풀리는지」를 잴 때도 이 값을 쓴다.
@@ -176,7 +173,7 @@ export function createMarkerLayer(
       if (!label) continue
       // 그려지기 전(지도 밖)이면 폭이 0이라 글자 수로 어림한다.
       const w = label.offsetWidth || Math.min(info.get(id)!.name.length, 8) * 12 + 16
-      const box = { l: p.x - w / 2, t: p.y + LABEL.gap, r: p.x + w / 2, b: p.y + LABEL.gap + LABEL.h }
+      const box = { l: p.x - w / 2, t: p.y + PIN_LABEL.gap, r: p.x + w / 2, b: p.y + PIN_LABEL.gap + PIN_LABEL.h }
       // 고른 핀은 언제나 보이고, 그 자리를 먼저 차지한다.
       const free =
         id === selected || (!far && !shown.some((s) => overlaps(s, box)) && !bodies.some((o) => o.id !== id && overlaps(o.box, box)))

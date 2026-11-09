@@ -66,7 +66,7 @@ export default function MapControls({
       hidden={hidden}
       style={{ right: CONTROLS.right }}
       // 고정일 때 부모(지도 영역 덧칠)는 지도를 끌 수 있게 누름을 통과시킨다. 버튼만 다시 받는다.
-      className={`absolute ${docked ? 'bottom-10' : 'bottom-[calc(100%+12px)]'} flex flex-col rounded-xl bg-white shadow-float transition-opacity ${
+      className={`absolute ${docked ? 'bottom-10' : 'bottom-[calc(100%+12px)]'} flex flex-col rounded-xl bg-surface shadow-float transition-opacity ${
         fading ? 'pointer-events-none opacity-0 duration-150' : `${docked ? 'pointer-events-auto ' : ''}opacity-100 delay-800 duration-300`
       }`}
     >
@@ -132,11 +132,11 @@ function ControlButton({
       style={{ width: CONTROLS.size, height: CONTROLS.size }}
       className={`press relative flex items-center justify-center first:rounded-t-xl last:rounded-b-xl ${
         divider ? 'border-t border-ink-100' : ''
-      } ${active ? 'bg-brand-50 text-brand-600' : 'text-brand-600'}`}
+      } ${active ? 'bg-brand-50 text-link' : 'text-link'}`}
     >
       {children}
       {tip && (
-        <span className="absolute right-full mr-2 whitespace-nowrap rounded-md bg-ink-900 px-2 py-1 text-xs text-white">
+        <span className="absolute right-full mr-2 whitespace-nowrap rounded-md bg-[var(--toast-bg)] px-2 py-1 text-xs text-white">
           {label}
         </span>
       )}

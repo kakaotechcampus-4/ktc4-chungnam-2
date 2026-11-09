@@ -125,7 +125,7 @@ function FixCard({
   }
 
   return (
-    <article className={`space-y-2 rounded-xl bg-white p-3 ring-1 ring-ink-200 ${fix.strength === 'hard' ? 'border-l-4 border-[var(--warn-line)]' : ''}`}>
+    <article className={`space-y-2 rounded-xl bg-surface p-3 ring-1 ring-ink-200 ${fix.strength === 'hard' ? 'border-l-4 border-[var(--warn-line)]' : ''}`}>
       <span className={`tag ${fix.strength === 'hard' ? 'tag-warn' : 'tag-neutral'}`}>{fix.strength === 'hard' ? '꼭 고칠 것' : '선호'}</span>
       <h3 className="break-keep text-base font-bold text-ink-900">{fix.text}</h3>
 

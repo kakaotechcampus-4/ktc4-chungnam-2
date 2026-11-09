@@ -54,7 +54,7 @@ export default function DayRoute({ mapId, onOpen }: { mapId: string; onOpen: (pi
   return (
     <div className="space-y-3 pb-[100px]">
       {/* 넣을 날짜와 같은 달력이다. 장소를 넣은 날은 숫자 아래 점, 읽는 이름에는 「둘째 날, 2곳」. */}
-      <div role="group" aria-labelledby="route-day-label" className="rounded-xl border border-ink-200 bg-white p-3">
+      <div role="group" aria-labelledby="route-day-label" className="rounded-xl border border-ink-200 bg-surface p-3">
         <p id="route-day-label" className="mb-1 flex items-baseline justify-between gap-2 text-sm font-bold text-ink-900">
           볼 날짜
           <span className="text-xs font-semibold text-[var(--selected-text)]">{dayOrdinal(index)}</span>

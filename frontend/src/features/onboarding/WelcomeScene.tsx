@@ -1,7 +1,8 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { Coins, Lock, Search, Trash2 } from 'lucide-react'
+import { Lock, Search, Trash2 } from 'lucide-react'
 
 import Mark from '@/ui/Mark'
+import Coin from '@/ui/Coin'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import { pinGlyph, type PinGlyph } from '@/ui/pinGlyph'
 
@@ -18,7 +19,7 @@ export type SceneKind = 'pin' | 'reaction' | 'ai' | 'shortlist' | 'together' | '
 export default function WelcomeScene({ kind, className = 'w-full' }: { kind: SceneKind; className?: string }) {
   const Scene = SCENES[kind]
   return (
-    <div aria-hidden="true" className={`relative aspect-[4/3] select-none overflow-hidden rounded-2xl bg-ink-100 ${className}`}>
+    <div aria-hidden="true" className={`keep-light relative aspect-[4/3] select-none overflow-hidden rounded-2xl bg-ink-100 ${className}`}>
       {/* 지도 그림의 길(MapIllustration 과 같은 결). */}
       <svg viewBox="0 0 320 240" className="absolute inset-0 size-full">
         <path d="M0 176L320 112V130L0 194Z" fill="#fff" />
@@ -86,7 +87,7 @@ function PinSvg({ glyph }: { glyph: PinGlyph }) {
 }
 
 /** 판 위 작은 흰 카드(검색창·의견·확정 리스트). 지도 위에 뜬 것이라 그림자를 준다. */
-const CARD = 'rounded-xl bg-white shadow-float'
+const CARD = 'rounded-xl bg-surface shadow-float'
 
 /** ① 검색창 → ② 「핀 찍기」 눌림 → ③ 핑고가 든 핀이 지도에 꽂힘 → ④ 흐려지며 처음으로. */
 const PIN_PHASES = [800, 500, 1600, 400]
@@ -312,7 +313,7 @@ function TogetherScene() {
             <div className="enter-drop relative">
               <ScenePin />
               {phase === 4 && (
-                <span className="enter-pop absolute -right-3 -top-2 flex size-5 items-center justify-center rounded-full bg-white shadow-float">
+                <span className="enter-pop absolute -right-3 -top-2 flex size-5 items-center justify-center rounded-full bg-surface shadow-float">
                   <Mark kind="like" size={11} />
                 </span>
               )}
@@ -409,14 +410,14 @@ function CreditsScene() {
             추천 받기
           </span>
           <span className={`${CARD} flex h-8 items-center gap-1 px-2 text-label font-bold text-ink-700`}>
-            <Coins size={14} aria-hidden="true" className="text-[var(--pin-confirmed)]" /> 크레딧
+            <Coin size={14} /> 크레딧
           </span>
         </div>
       </At>
       {phase === 1 && (
         <At x={80} y={18} anchor="center">
           <span className="enter-fade block opacity-0 transition-transform duration-500 ease-in motion-reduce:transition-none" style={{ transform: 'translateX(-120px)' }}>
-            <Coins size={16} aria-hidden="true" className="text-[var(--pin-confirmed)]" />
+            <Coin size={16} />
           </span>
         </At>
       )}
@@ -430,7 +431,7 @@ function CreditsScene() {
               ))}
             </p>
             <span className="enter-pop mt-1 inline-flex items-center gap-0.5 rounded-full bg-[var(--confirmed-bg)] px-1.5 py-0.5 text-label font-bold text-[var(--pin-confirmed-mark)]" style={{ animationDelay: '500ms', animationFillMode: 'backwards' }}>
-              <Coins size={11} aria-hidden="true" /> 크레딧 받음
+              <Coin size={11} /> 크레딧 받음
             </span>
           </div>
         </At>
@@ -447,7 +448,7 @@ function LoginScene() {
   return (
     <>
       <At x={6} y={8} anchor="top-left">
-        <span className={`${CARD} flex h-8 items-center gap-1 px-2.5 text-label font-bold ${phase === 2 ? 'text-brand-600' : 'text-ink-500'}`}>
+        <span className={`${CARD} flex h-8 items-center gap-1 px-2.5 text-label font-bold ${phase === 2 ? 'text-link' : 'text-ink-500'}`}>
           {phase === 2 ? <span className="enter-pop">AI 추천 열림</span> : <><Lock size={12} aria-hidden="true" /> AI 추천</>}
         </span>
       </At>
@@ -458,7 +459,7 @@ function LoginScene() {
           >
             카카오로 시작하기
           </span>
-          <span className="flex h-7 items-center justify-center rounded-lg border border-ink-200 bg-white text-label font-bold text-ink-900">
+          <span className="flex h-7 items-center justify-center rounded-lg border border-ink-200 bg-surface text-label font-bold text-ink-900">
             Google로 시작하기
           </span>
         </div>
@@ -491,7 +492,7 @@ function TrashScene() {
         <At x={6} y={8} anchor="top-left" className="w-[58%]">
           <div className={`${CARD} enter-pop flex items-center justify-between gap-1 px-2 py-1.5`}>
             <span className="text-label font-bold text-ink-900">삭제한 핀</span>
-            <span className="rounded-md border border-brand-600 px-1.5 py-0.5 text-label font-bold text-brand-600">되돌리기</span>
+            <span className="rounded-md border border-brand-600 px-1.5 py-0.5 text-label font-bold text-link">되돌리기</span>
           </div>
         </At>
       )}

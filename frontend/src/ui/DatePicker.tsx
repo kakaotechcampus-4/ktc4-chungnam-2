@@ -75,7 +75,7 @@ export default function DatePicker({
           sideOffset={8}
           collisionPadding={16}
           onOpenAutoFocus={(e) => e.preventDefault()}
-          className="z-50 rounded-2xl border border-ink-200 bg-white p-4 shadow-float outline-none"
+          className="z-50 rounded-2xl border border-ink-200 bg-surface p-4 shadow-float outline-none"
         >
           <Calendar
             autoFocus

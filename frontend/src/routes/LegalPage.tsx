@@ -16,7 +16,7 @@ export default function LegalPage({ doc }: { doc: LegalDocKey }) {
   return (
     <main className="mx-auto min-h-dvh w-full max-w-[480px] bg-ink-50 px-4 pb-10 pt-4">
       <header className="mb-6 flex items-center gap-3">
-        <Link to="/" aria-label="처음 화면으로" className="hit-44 flex size-8 shrink-0 items-center justify-center rounded-full bg-white shadow-float">
+        <Link to="/" aria-label="처음 화면으로" className="hit-44 flex size-8 shrink-0 items-center justify-center rounded-full bg-surface shadow-float">
           <ChevronLeft size={20} />
         </Link>
         <h1 className="text-2xl font-bold break-keep text-ink-900">{title}</h1>

@@ -44,7 +44,7 @@ export default function PendingAccountScreen({ onDone, onExpired }: { onDone: ()
   const { display_name, days_left, restore_until } = pending.data
   return (
     <EntryFrame
-      className="bg-white px-5 pb-6 pt-14"
+      className="bg-surface px-5 pb-6 pt-14"
       after={
         confirmRestart && (
           <ConfirmDialog
