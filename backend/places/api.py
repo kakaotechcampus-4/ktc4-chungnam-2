@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 
 from common.database import SessionLocal
 from common.settings import settings
-from places import core, linkfetch, linkparse, matching, repository
-from places.http import CallStats, SourceHttp
+from places import core, linkfetch, linkparse, matching, photos, repository
+from places.http import CallStats, SourceError, SourceHttp
 from common.errors import AppError
 from places.ratelimit import SlidingWindowLimiter
 from places.samples import search_samples
@@ -34,6 +34,7 @@ log = logging.getLogger("pingo.places")
 _STATS = CallStats()
 search_limiter = SlidingWindowLimiter(settings.places_search_per_min)   # 사용자당 분당 상한, 인메모리
 link_limiter = SlidingWindowLimiter(settings.places_search_per_min)     # POST /places/from-link — 검색과 같은 상한, 따로 센다(#474)
+photo_limiter = SlidingWindowLimiter(settings.places_search_per_min)    # GET /pins/{pinId}/photos — 검색과 같은 상한, 따로 센다(#1157)
 
 
 def build_sources(http: SourceHttp) -> dict[str, PlaceSource]:
@@ -341,6 +342,44 @@ def get_open_status_on_weekdays(place_ids: Sequence[str], weekdays: Sequence[int
     """장소별 open_status_on_weekdays를 place_hours 한 번 조회로(#747). 행이 없는 장소는 키에서 뺀다(= 모름). 읽기 전용."""
     return {pid: core.open_status_on_weekdays(week, weekdays) for pid, week in get_week_open_status(place_ids, db=db).items()}
 
+
+
+# ---- 장소 블로그 사진 (GET /pins/{pinId}/photos, #1157) ----
+# 다음 이미지 검색 응답은 화면에 넘기고 버린다(#53과 같은 규칙). 검색어와 고르는 규칙은 places/photos.py 한 곳이다.
+
+PlacePhoto = photos.PlacePhoto
+
+
+def check_photo_rate(user_id: str) -> None:
+    """사진 조회의 사용자당 호출 상한. 캐시를 할 수 없어 핀 상세를 열 때마다 부르므로, 쿼터를 지키려고 서버에서 센다."""
+    if not photo_limiter.allow(user_id):
+        raise AppError("RATE_LIMITED")
+
+
+@lru_cache(maxsize=1)
+def _image_search() -> photos.KakaoImageSearch:
+    client = httpx.Client(timeout=settings.places_http_timeout_s)
+    return photos.KakaoImageSearch(SourceHttp(client, _STATS, retries=settings.places_http_retries), settings.kakao_rest_api_key)
+
+
+def place_photos(place_id: str, *, db: Session | None = None) -> list[PlacePhoto]:
+    """자체 DB 장소 하나의 블로그 사진(최대 photos.PHOTO_LIMIT장). 검색어는 그 장소의 상호명과 구, 도로명 주소다.
+    장소나 주소가 없으면 빈 목록 — 상호명만으로는 다른 지점 사진이 섞인다. 개발 모드는 카카오를 부르지 않고 빈 목록이다.
+    카카오 호출이 실패하거나 키가 없으면 PLACES_UNAVAILABLE(503)."""
+    if _is_dev():
+        return []
+    info = get_places([place_id], db=db).get(place_id)
+    query = photos.photo_query(info.name, info.address) if info else None
+    if query is None:
+        return []
+    search = _image_search()
+    if not search.is_configured():
+        raise AppError("PLACES_UNAVAILABLE")
+    try:
+        return photos.pick(search.search(query))
+    except SourceError as exc:
+        log.warning("places.photos 실패: %s", exc)
+        raise AppError("PLACES_UNAVAILABLE") from exc
 
 # ---- 지도 링크 해석 (POST /places/from-link, #474) ----
 # parse-only: 아무것도 저장하지 않는다. 링크의 좌표·이름은 자체 DB를 찾는 데만 쓰고 응답·로그에 싣지 않는다.

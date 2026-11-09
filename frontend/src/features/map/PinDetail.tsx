@@ -12,6 +12,7 @@ import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
+import BlogPhotos from '@/ui/BlogPhotos'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Mark from '@/ui/Mark'
 import ProgressBar from '@/ui/ProgressBar'
@@ -26,7 +27,7 @@ import PeopleProof from '@/ui/PeopleProof'
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
 import { asReactionType, authorName, FILTER_CATEGORIES, hasAiEvidence, inputExample, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
+import { useMyReactionMutation, usePinPhotosQuery, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
@@ -232,6 +233,17 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
   )
 }
 
+/** 블로그 사진 줄(#1157). 실시간 핀은 부르지 않고 그리지 않는다. */
+function PinPhotos({ pin }: { pin: Pin }) {
+  const photos = usePinPhotosQuery(pin)
+  if (pin.source === 'live') return null
+  return (
+    <div className="py-1">
+      <BlogPhotos photos={photos.data} loading={photos.isPending} failed={photos.isError} />
+    </div>
+  )
+}
+
 /** 핀 상세 본문(Figma 5절 '마킹된 장소 상세'). */
 export function PinDetailBody({
   pin,
@@ -258,7 +270,7 @@ export function PinDetailBody({
         <p className="flex flex-wrap items-center gap-x-1 text-body text-ink-600">
           {pin.category}
           <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : <UnknownName text={`${authorName(pin)}님이 찍은 핀`} />}</span>
-          {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
+          {/* 주소, 전화는 핀 응답에 없다(카카오 응답 저장 금지, #53). 자세한 정보는 카카오맵 새 창으로, 사진은 아래 블로그 사진 줄(#1157). */}
           {(pin.place_url || pin.naver_url) && (
             <span className="ml-auto flex flex-wrap justify-end gap-x-3">
               {pin.place_url && (
@@ -275,6 +287,7 @@ export function PinDetailBody({
             </span>
           )}
         </p>
+        <PinPhotos pin={pin} />
         <PinMemo pin={pin} mapId={mapId} />
         {isLive(pin) && <LiveInfo pin={pin} />}
         {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}
