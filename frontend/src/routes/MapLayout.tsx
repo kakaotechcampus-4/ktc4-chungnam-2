@@ -10,7 +10,7 @@ import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
 import { useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { mapTapAction } from '@/features/map/mapTap'
-import { usePinSelection } from '@/features/map/usePinSelection'
+import { PIN_GROUP_PARAM, usePinGroup, usePinSelection } from '@/features/map/usePinSelection'
 import { authorName, byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
@@ -69,6 +69,7 @@ export default function MapLayout() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { selectedPinId, selectPin } = usePinSelection()
+  const { showGroup } = usePinGroup()
   const { data: loadedPins } = usePinsQuery(mapId)
   const allPins = useMemo(() => loadedPins ?? [], [loadedPins])
   const mapInfo = useMapQuery(mapId).data
@@ -410,6 +411,13 @@ export default function MapLayout() {
           // 탭 안에서 열 때는 주소의 다른 값(카테고리·필터)을 남긴다. 주소를 통째로 바꾸면 켜 둔 필터가 풀린다.
           if (onMarkingTab || onConfirmedTab) selectPin(pinId)
           else navigate(`/maps/${mapId}?pin=${encodeURIComponent(pinId)}`)
+        }}
+        // 가장 가까이 확대해도 겹친 핀 묶음(#1576) — 마킹 탭 목록에 그 핀들만 보인다. 다른 탭에서 눌렀으면 마킹 탭으로 간다.
+        onPinGroup={(ids) => {
+          setPanelOpen(true)
+          useSearchStore.getState().select(null)
+          if (onMarkingTab) showGroup(ids)
+          else navigate(`/maps/${mapId}?${PIN_GROUP_PARAM}=${encodeURIComponent(ids.join(','))}`)
         }}
         onResultGroup={(ids) => {
           useSearchStore.getState().showGroup(ids)

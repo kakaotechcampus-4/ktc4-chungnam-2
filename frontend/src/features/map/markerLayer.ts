@@ -1,8 +1,8 @@
 import { isDesktopNow } from '@/features/shell/useIsDesktop'
 
-import { fitPadding } from './camera'
+import { fitPadding, groupNear } from './camera'
 import { attachTrashDrag } from './pinDrag'
-import { createPinMarkerElement, markSelected, setPinLabel, showPinLabel } from './pinMarker'
+import { createPinGroupMarkerElement, createPinMarkerElement, markSelected, setPinLabel, showPinLabel } from './pinMarker'
 import { isPlaced, participationRatio, type Pin, type PlacedPin } from './model'
 
 export interface MarkerLayer {
@@ -46,6 +46,12 @@ const BODY = { w: 30, h: 38 }
 /** 이름표 높이(px)와 핀 끝에서 떨어진 거리. 폭은 그려진 이름표에서 잰다. */
 const LABEL = { h: 20, gap: 4 }
 
+/**
+ * 핀 끝(좌표)끼리 이만큼(px)보다 가까우면 숫자 핀 하나로 묶는다(#1576) — 핀 머리(지름 약 20)가 서로 덮이기 시작하는 거리다.
+ * 확대할수록 화면 거리가 벌어져 묶음이 풀린다. MapCanvas 가 「확대로 풀리는지」를 잴 때도 이 값을 쓴다.
+ */
+export const PIN_GROUP_PX = 24
+
 type Box = { l: number; t: number; r: number; b: number }
 const overlaps = (a: Box, b: Box) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
 
@@ -65,17 +71,62 @@ export function createMarkerLayer(
   maps: typeof kakao.maps,
   map: kakao.maps.Map,
   onSelect: (pinId: string) => void,
+  /** 겹친 핀 묶음을 눌렀다(#1576). 좌표는 묶음 안 핀들이다. */
+  onGroup: (pinIds: string[], points: { lat: number; lng: number }[]) => void,
 ): MarkerLayer {
   const overlays = new Map<string, kakao.maps.CustomOverlay>()
   const signatures = new Map<string, string>()
   /** 이름표와 겹침 정리 순서에 쓰는 값. */
-  const info = new Map<string, { name: string; lat: number; lng: number; confirmed: boolean; ratio: number; created: number }>()
+  const info = new Map<string, { name: string; lat: number; lng: number; confirmed: boolean; ratio: number; created: number; fresh: boolean }>()
   const elements = new Map<string, HTMLElement>()
   /** 휴지통으로 끌기를 뗀다(#1012). 끄는 도중 마커가 다시 그려지면 끌기도 끝낸다. */
   const detachDrag = new Map<string, () => void>()
   /** 한 번 떨어진 핀. 의견이 달려 마커를 다시 그려도 또 떨어지지 않게 한다. */
   const dropped = new Set<string>()
   let selected: string | null = null
+  /** 겹쳐서 묶음 핀 뒤로 숨은 핀(#1576). */
+  const grouped = new Set<string>()
+  let groups: { overlay: kakao.maps.CustomOverlay; lat: number; lng: number }[] = []
+  let groupKey = ''
+
+  /**
+   * 화면에서 겹친 핀을 숫자 핀 하나로 묶는다(#1576). 고른 핀은 묶지 않는다 — 상세를 연 핀은 언제나 제 모양으로 보인다.
+   * 겹침은 축척에만 달려서 확대·축소, 핀 목록, 고른 핀이 바뀔 때만 다시 묶고, 묶음이 그대로면 다시 그리지 않는다.
+   */
+  function regroup() {
+    const proj = map.getProjection()
+    const ids = [...info.keys()].filter((id) => id !== selected)
+    const px = ids.map((id) => proj.containerPointFromCoords(new maps.LatLng(info.get(id)!.lat, info.get(id)!.lng)))
+    const sets = groupNear(px, PIN_GROUP_PX)
+      .filter((g) => g.length > 1)
+      .map((g) => g.map((i) => ids[i]))
+    grouped.clear()
+    for (const id of sets.flat()) grouped.add(id)
+    for (const [id, el] of elements) el.style.display = grouped.has(id) ? 'none' : ''
+    const key = sets.map((g) => g.map((id) => `${id}:${signatures.get(id)}`).join(',')).join('|')
+    if (key === groupKey) return
+    groupKey = key
+    for (const g of groups) g.overlay.setMap(null)
+    groups = sets.map((g) => {
+      const members = g.map((id) => info.get(id)!)
+      const lat = members.reduce((sum, m) => sum + m.lat, 0) / members.length
+      const lng = members.reduce((sum, m) => sum + m.lng, 0) / members.length
+      const el = createPinGroupMarkerElement(
+        {
+          names: members.map((m) => m.name || '이름 없는 핀'),
+          confirmed: members.every((m) => m.confirmed),
+          ratio: Math.max(...members.map((m) => m.ratio)),
+          fresh: members.some((m) => m.fresh),
+        },
+        () => onGroup(g, members.map(({ lat, lng }) => ({ lat, lng }))),
+      )
+      // 묶음은 낱개 핀 위에, 고른 핀(10) 아래에 둔다.
+      const overlay = new maps.CustomOverlay({ position: new maps.LatLng(lat, lng), content: el, yAnchor: 1, clickable: true, zIndex: 5 })
+      overlay.setMap(map)
+      return { overlay, lat, lng }
+    })
+  }
+  maps.event.addListener(map, 'zoom_changed', regroup)
 
   /** 지도 위에서 어느 핀을 보고 있는지 보이게 한다(#308). 다시 그려진 마커에도 다시 건다. */
   function mark(pinId: string, on: boolean) {
@@ -98,8 +149,13 @@ export function createMarkerLayer(
     const far = map.getLevel() > LABEL_MAX_LEVEL
     const proj = map.getProjection()
     const at = new Map<string, { x: number; y: number }>()
-    for (const [id, p] of info) at.set(id, proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)))
-    const bodies = [...at].map(([id, { x, y }]) => ({ id, box: { l: x - BODY.w / 2, t: y - BODY.h, r: x + BODY.w / 2, b: y } }))
+    for (const [id, p] of info) if (!grouped.has(id)) at.set(id, proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)))
+    const body = (id: string, { x, y }: { x: number; y: number }) => ({ id, box: { l: x - BODY.w / 2, t: y - BODY.h, r: x + BODY.w / 2, b: y } })
+    // 묶음 핀도 이름표가 덮으면 안 되는 몸통이다. 묶음 핀은 이름표가 없다 — 이름은 누르면 나오는 목록에 있다.
+    const bodies = [
+      ...[...at].map(([id, p]) => body(id, p)),
+      ...groups.map((g, i) => body(`group:${i}`, proj.containerPointFromCoords(new maps.LatLng(g.lat, g.lng)))),
+    ]
 
     const order = [...info.keys()].sort((a, b) => {
       const pa = info.get(a)!
@@ -173,7 +229,7 @@ export function createMarkerLayer(
         overlays.set(pin.id, overlay)
         signatures.set(pin.id, sig)
         const name = pin.place_name ?? ''
-        info.set(pin.id, { name, lat: pin.lat, lng: pin.lng, confirmed: pin.kind === '확정', ratio, created: Date.parse(pin.created_at) })
+        info.set(pin.id, { name, lat: pin.lat, lng: pin.lng, confirmed: pin.kind === '확정', ratio, created: Date.parse(pin.created_at), fresh: isFresh })
         elements.set(pin.id, el)
         setPinLabel(el, name, 'quiet')
         if (pin.id === selected) mark(pin.id, true)
@@ -182,6 +238,7 @@ export function createMarkerLayer(
       for (const pinId of [...overlays.keys()]) {
         if (!alive.has(pinId)) drop(pinId)
       }
+      regroup()
       relabel()
     },
 
@@ -189,6 +246,7 @@ export function createMarkerLayer(
       if (selected) mark(selected, false)
       selected = pinId
       if (pinId) mark(pinId, true)
+      regroup()
       relabel()
     },
 
@@ -207,6 +265,8 @@ export function createMarkerLayer(
 
     destroy() {
       maps.event.removeListener(map, 'idle', relabel)
+      maps.event.removeListener(map, 'zoom_changed', regroup)
+      for (const g of groups) g.overlay.setMap(null)
       for (const pinId of [...overlays.keys()]) drop(pinId)
     },
   }

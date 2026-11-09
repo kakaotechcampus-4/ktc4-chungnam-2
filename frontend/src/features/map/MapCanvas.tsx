@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { allInside, dragHeading, fitCenter, fitLevel, fitPadding, groupNear, view, zoomSteps } from './camera'
-import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
+import { createMarkerLayer, mapFade, PIN_GROUP_PX, type MarkerLayer } from './markerLayer'
 import { usePinDragStore } from './pinDrag'
 import {
   createCandidateMarkerElement,
@@ -120,6 +120,7 @@ export default function MapCanvas({
   route = [],
   onSelect,
   onResultGroup,
+  onPinGroup,
   onReady,
   onMovingChange,
   onMapClick,
@@ -144,6 +145,8 @@ export default function MapCanvas({
   onSelect: (pinId: string) => void
   /** 화면에서 겹쳐 하나로 묶인 검색 결과 핀을 눌렀다(#1174). 시트에 그곳들만 보인다. */
   onResultGroup: (ids: string[]) => void
+  /** 화면에서 겹친 핀 묶음을 눌렀는데 가장 가까이 확대해도 겹친다(#1576). 그 핀들만 목록으로 보인다. */
+  onPinGroup: (pinIds: string[]) => void
   onReady: (controller: MapController) => void
   /** 사용자가 지도를 끌기 시작하면 true, 멈추면 false. */
   onMovingChange: (moving: boolean) => void
@@ -162,9 +165,9 @@ export default function MapCanvas({
   const containerRef = useRef<HTMLDivElement>(null)
   const layerRef = useRef<MarkerLayer | null>(null)
   // 콜백이 바뀔 때마다 지도를 다시 만들면 깜빡인다. 최신 참조만 갈아끼운다.
-  const callbacks = useRef({ onSelect, onResultGroup, onReady, onMovingChange, onMapClick })
+  const callbacks = useRef({ onSelect, onResultGroup, onPinGroup, onReady, onMovingChange, onMapClick })
   useLayoutEffect(() => {
-    callbacks.current = { onSelect, onResultGroup, onReady, onMovingChange, onMapClick }
+    callbacks.current = { onSelect, onResultGroup, onPinGroup, onReady, onMovingChange, onMapClick }
   })
   const fittedRef = useRef(false)
   // 첫 화면을 지역 가운데로 옮겼거나(started) 사용자가 지도를 움직였으면(moved) 지역으로 다시 옮기지 않는다 — 시야를 뺏지 않는다.
@@ -197,7 +200,20 @@ export default function MapCanvas({
           center: new maps.LatLng(start.lat, start.lng),
           level: 5,
         })
-        const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId))
+        // 겹친 핀 묶음(#1576): 확대해서 풀리면 풀릴 만큼만 확대하고, 가장 가까이(레벨 1)서도 겹치면 목록을 연다.
+        // 한 레벨 들어갈 때마다 화면 거리가 두 배라, 지금 가장 먼 두 핀 사이가 묶는 거리의 두 배가 되는 레벨까지 간다.
+        // 끝까지(레벨 1) 들어가면 골목 하나가 화면을 채워 주변을 잃는다.
+        let controller: MapController | null = null
+        const openGroup = (ids: string[], points: { lat: number; lng: number }[]) => {
+          const proj = map.getProjection()
+          const px = points.map((p) => proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)))
+          const spread = Math.max(...px.flatMap((a) => px.map((b) => Math.hypot(a.x - b.x, a.y - b.y))))
+          const level = map.getLevel()
+          if (!controller || level <= 1 || spread * 2 ** (level - 1) < PIN_GROUP_PX) return callbacks.current.onPinGroup(ids)
+          const to = Math.min(level - 1, Math.max(1, Math.floor(level - Math.log2((2 * PIN_GROUP_PX) / Math.max(spread, 1)))))
+          controller.fitPins(points, { force: true, closest: to })
+        }
+        const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId), openGroup)
         // 가까이 볼수록 바탕 지도를 옅게 한다(index.css .map-base). 멀리 볼 땐 바탕 그대로다.
         const container = containerRef.current
         const fade = () => container.style.setProperty('--map-fade', String(mapFade(map.getLevel())))
@@ -295,7 +311,7 @@ export default function MapCanvas({
           const p = proj.containerPointFromCoords(to)
           return proj.coordsFromContainerPoint(new maps.Point(p.x - coverShift(), p.y + sheetLift()))
         }
-        callbacks.current.onReady({
+        controller = {
           // 축척은 그대로 두고 부드럽게 옮긴다(화면보다 먼 곳은 카카오가 바로 옮긴다).
           panTo: (lat, lng) => {
             movedRef.current = true
@@ -349,7 +365,8 @@ export default function MapCanvas({
             }
             runMoves(to < level ? [panMove(center), ...zoomMoves(to, center)] : [...zoomMoves(to), panMove(center)])
           },
-        })
+        }
+        callbacks.current.onReady(controller)
         setReady(true)
       })
       .catch((err: unknown) => {
