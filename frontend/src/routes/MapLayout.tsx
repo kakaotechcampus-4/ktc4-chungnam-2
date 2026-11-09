@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Sear
 
 import AgentButton from '@/features/agent/AgentButton'
 import { useMeQuery } from '@/features/auth/queries'
+import CourseRunWatcher from '@/features/course/CourseRunWatcher'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
 import { MIN_LEVEL } from '@/features/map/camera'
 import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
@@ -749,6 +750,8 @@ export default function MapLayout() {
       {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
       {/* 카톡 가져오기 시트는 탭 화면 밖 한 자리에서 그린다 — 목록 머리가 바뀌어도 함께 사라지지 않게(#1045). */}
       <ImportSheetHost mapId={mapId} />
+      {/* 짜는 중인 AI 코스를 탭 밖에서도 지켜본다(#1719). */}
+      <CourseRunWatcher mapId={mapId} />
       {/* 핀을 지도 위에 끌어다 놓아 옮기기(#1549). 화면 크기와 상관없이 하나만 둔다. */}
       <PinMoveHost mapId={mapId} />
       {/* 확정 탭 「일정 짜기」 패널(넓은 화면만) — 탭을 떠나면 닫힌다. */}
