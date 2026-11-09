@@ -8,7 +8,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 from authz.schemas import Permissions
 
@@ -115,6 +115,15 @@ class NewReaction(BaseModel):
     reason_text: str | None = Field(default=None, max_length=140)
     reason_chip_ids: list[str] = Field(default_factory=list, max_length=10)
     updated_at: datetime
+
+    @model_serializer(mode="wrap")
+    def _omit_missing_reason(self, handler):
+        """사유가 없으면 reason_text 칸을 생략한다(스펙: 없으면 필드 생략, null 아님). MapNews는 since=null을 남겨야 해서
+        응답 전체에 exclude_none을 쓰지 못하므로 이 필드만 여기서 뺀다."""
+        data = handler(self)
+        if data.get("reason_text") is None:
+            data.pop("reason_text", None)
+        return data
 
 
 class MapNews(BaseModel):

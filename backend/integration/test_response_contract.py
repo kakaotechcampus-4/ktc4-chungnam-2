@@ -363,6 +363,11 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert opinions.status_code == 200 and len(opinions.json()) == 2
     mine = [p for p in a.get(f"/maps/{map_id}/pins").json() if p["id"] == pins[0]][0]
     assert mine["my_reaction"]["type"] == "like"
+    # 새 소식(#1556) — a가 위에서 지도를 본 뒤 b가 남긴 사유 없는 ♥와 사유 있는 🚫가 지나간다. 사유 없는 반응은 reason_text 칸을 생략한다(null 아님).
+    news = a.get(f"/maps/{map_id}/news")
+    assert news.status_code == 200
+    by_pin = {r["pin_id"]: r for r in news.json()["new_reactions"]}
+    assert "reason_text" not in by_pin[pins[0]] and by_pin[pins[1]]["reason_text"] == "별로"
     assert b.delete(f"/pins/{pins[0]}/reaction").status_code == 204
 
     # 추천: 근거 수정 → 실행 → 반경 넓히기(15→20→25→30분, 그다음 409) → 다시 추천 → 게시

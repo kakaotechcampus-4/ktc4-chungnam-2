@@ -66,6 +66,19 @@ def test_news_has_others_new_pins_and_reactions_only(app_client, db_session):
     assert body["since"] and body["truncated"] is False
 
 
+def test_reaction_without_reason_omits_reason_text_but_since_null_stays(app_client, db_session):
+    map_id = _create_map(app_client)
+    _join(app_client, map_id, "user_2")
+    assert "since" in _news(app_client, map_id).json()   # 처음 연 지도: since는 null로 남는다
+    _seen(app_client, map_id, "user_1")
+    pin = _pin(db_session, map_id, created_by="user_1")
+    at = datetime.now(timezone.utc) + AFTER
+    db_session.add(ReactionRow(pin_id=pin, user_id="user_2", type="like", created_at=at, updated_at=at))
+    db_session.commit()
+    [reaction] = _news(app_client, map_id).json()["new_reactions"]
+    assert "reason_text" not in reaction and reaction["reason_chip_ids"] == []
+
+
 def test_news_does_not_move_last_seen_and_is_per_person(app_client, db_session):
     map_id = _create_map(app_client)
     _join(app_client, map_id, "user_2")

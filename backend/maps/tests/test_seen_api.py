@@ -1,6 +1,6 @@
 """POST /maps/{mapId}/seen(#1556) — 구성원의 「마지막으로 본 때」를 서버 시각으로 적는다."""
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from common.events import EventLog
 from maps.models import Membership as MembershipRow
@@ -45,3 +45,25 @@ def test_seen_non_member_404_anonymous_401_deleted_map_404(app_client, db_sessio
     assert app_client.post(f"/maps/{map_id}/seen").status_code == 401
     assert app_client.delete(f"/maps/{map_id}", cookies=_auth("user_1")).status_code == 204
     assert app_client.post(f"/maps/{map_id}/seen", cookies=_auth("user_1")).status_code == 404
+
+
+def test_seen_time_comes_from_the_database_clock_not_the_app(app_client, db_session):
+    """/news가 비교하는 핀·반응의 created_at·updated_at은 DB now()다 — 앱 시각이 섞이면 시계가 어긋나 새 소식이 새거나 빠진다(#1556).
+    그래서 UPDATE가 시각을 바인딩 값으로 받지 않고 SQL의 now()로 적는지 본다."""
+    map_id = _create_map(app_client)
+    statements = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("UPDATE MEMBERSHIPS") and "last_seen_at" in statement:
+            statements.append((statement, parameters))
+
+    engine = db_session.get_bind()
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        assert app_client.post(f"/maps/{map_id}/seen", cookies=_auth("user_1")).status_code == 204
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    [(statement, parameters)] = statements
+    assert "now()" in statement.lower()
+    assert not any(hasattr(v, "tzinfo") for v in (parameters.values() if isinstance(parameters, dict) else parameters))
