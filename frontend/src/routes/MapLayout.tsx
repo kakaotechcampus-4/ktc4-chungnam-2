@@ -297,9 +297,9 @@ export default function MapLayout() {
   }, [onRecommendTab, mapReady, run, result])
 
   // 지도 빈 곳 누르기는 어느 탭이든 같다(#1028, 멘토 리뷰 #816). 고른 것(핀 상세·검색 결과·AI 후보)이 있으면 풀고,
-  // 없으면 누른 자리에 「신규 핀 찍기」 말풍선을 띄운다 — 둘러보다 누른 것이 바로 검색이 되지 않게. 지도는 그대로 둔다.
+  // 없으면 누른 자리를 가운데로 옮긴다(#1613). 「신규 핀 찍기」 메뉴는 우클릭·길게 누르기로만 연다(#1549).
   const [tapAt, setTapAt] = useState<{ lat: number; lng: number; style: 'bubble' | 'menu' } | null>(null)
-  // 탭을 바꾸거나 무엇을 고르거나 검색이 열리면 말풍선은 닫는다(렌더 중에 맞춘다 — 위 lastQuery 와 같은 방식).
+  // 탭을 바꾸거나 무엇을 고르거나 검색이 열리면 메뉴는 닫는다(렌더 중에 맞춘다 — 위 lastQuery 와 같은 방식).
   const tapContext = `${pathname}|${selectedPinId}|${search.source ? 'search' : ''}|${candidateFocus?.id ?? ''}`
   const [lastTapContext, setLastTapContext] = useState(tapContext)
   if (lastTapContext !== tapContext) {
@@ -315,8 +315,11 @@ export default function MapLayout() {
       if (search.selectedId) search.select(null)
       if (ai.focus) ai.blurCandidate()
     }
-    setTapAt(action === 'open' && at ? { ...at, style: 'bubble' } : null)
-    if (action === 'open') showMapMenuHintOnce()
+    setTapAt(null)
+    if (action === 'center' && at) {
+      controller.current?.panTo(at.lat, at.lng)
+      showMapMenuHintOnce()
+    }
   }
   /** PC 우클릭은 커서 자리 메뉴, 빈 지도 길게 누르기는 말풍선이다(#1549). 고른 것이 있어도 바로 연다 — 일부러 부른 메뉴라서. */
   function onMapMenu(at: { lat: number; lng: number }, how: 'rightclick' | 'longpress') {

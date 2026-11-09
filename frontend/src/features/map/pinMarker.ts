@@ -147,8 +147,9 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
 
 /**
  * 지도 자리 메뉴(#1549) — 항목은 「신규 핀 찍기」 하나다. 부르는 법만 넷이다(왼쪽 클릭·짧게 누르기·길게 누르기는 말풍선, PC 우클릭은 메뉴).
- * - `bubble`: 누른 자리 위 말풍선(#1028). 아래 작은 점이 누른 자리다(오버레이 yAnchor 1 → 점 가운데가 좌표).
- * - `menu`: 커서 자리의 작은 메뉴(오버레이 xAnchor·yAnchor 0 → 왼쪽 위가 좌표). 키보드로 고를 수 있게 열리면 항목에 포커스를 둔다.
+ * 둘 다 brand-600 「누른 자리 점」이 누른 자리를 짚는다(#1613).
+ * - `bubble`: 길게 누른 자리 위 말풍선 — 손가락에 가리지 않게 위로 띄운다. 점은 아래(오버레이 yAnchor 1 → 점 가운데가 좌표).
+ * - `menu`: 우클릭 커서 자리의 작은 메뉴(오버레이 xAnchor·yAnchor 0 → 왼쪽 위가 좌표, 점은 그 모서리). 키보드로 고를 수 있게 열리면 항목에 포커스를 둔다.
  * 버튼은 btn-outline btn-sm 부품이다.
  */
 export function createTapBubbleElement(onPress: () => void, style: 'bubble' | 'menu' = 'bubble'): HTMLElement {
@@ -159,19 +160,22 @@ export function createTapBubbleElement(onPress: () => void, style: 'bubble' | 'm
   button.addEventListener('click', onPress)
   const box = document.createElement('div')
   box.className = 'enter-pop'
-  if (style === 'menu') {
-    box.setAttribute('role', 'menu')
-    box.setAttribute('aria-label', '지도 메뉴')
-    box.style.cssText = 'transform-origin:0 0;margin:4px 0 0 4px'
-    button.setAttribute('role', 'menuitem')
-    box.append(button)
-    return box
-  }
-  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
   const dot = document.createElement('span')
   dot.setAttribute('aria-hidden', 'true')
   dot.style.cssText =
-    'width:12px;height:12px;margin-bottom:-6px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff;box-shadow:0 1px 3px rgba(20,22,31,.3)'
+    'width:12px;height:12px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff;box-shadow:0 1px 3px rgba(20,22,31,.3)'
+  if (style === 'menu') {
+    box.setAttribute('role', 'menu')
+    box.setAttribute('aria-label', '지도 메뉴')
+    // margin 바깥 모서리가 커서 자리다. 점(12px)의 가운데를 그 모서리에 맞춘다(#1613).
+    box.style.cssText = 'position:relative;transform-origin:0 0;margin:8px 0 0 8px'
+    dot.style.cssText += ';position:absolute;left:-14px;top:-14px'
+    button.setAttribute('role', 'menuitem')
+    box.append(dot, button)
+    return box
+  }
+  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
+  dot.style.marginBottom = '-6px'
   box.append(button, dot)
   return box
 }
