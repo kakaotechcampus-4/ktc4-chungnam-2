@@ -135,11 +135,14 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
   const hoursTag = showHoursKnown(run)
   const unchecked = uncheckedPlaceCount(run)
   const mode = modeOf(run)
+  // 머리 둘째 줄 — 할 일과 문제의 수(#1714). 없으면 예전 안내 문구.
+  const fixCount = mode === 'plan' ? 0 : (run.fixes?.length ?? 0)
+  const summary = [fixCount > 0 && `고칠 점 ${fixCount}`, run.violations.length > 0 && `지키지 못한 조건 ${run.violations.length}`].filter(Boolean).join(', ')
 
   return (
     <div className="space-y-4">
       {/* 머리 문구는 서버 headline 그대로(#1237). 없으면(실서버 구현 전) 예전 outcome 문구. */}
-      <AiHeader title={run.headline ?? (run.outcome ? outcomeText(run.outcome) : '코스를 짰어요')} sub={mode === 'review' ? undefined : '날짜별 순서와 이동 시간이에요'} mood="proud" />
+      <AiHeader title={run.headline ?? (run.outcome ? outcomeText(run.outcome) : '코스를 짰어요')} sub={summary || (mode === 'review' ? undefined : '날짜별 순서와 이동 시간이에요')} mood="proud" />
 
       {run.stale && (
         <Notice
@@ -153,24 +156,21 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
         </Notice>
       )}
 
-      {run.goals.length > 0 && (
-        <Section title="요청 사항">
-          <ul className="space-y-1.5">
-            {run.goals.map((g) => {
-              const state = goalState(g)
-              return (
-                <li key={g.id} className="flex items-start gap-2 text-body text-ink-900">
-                  <span className={`tag mt-px ${state.tag}`}>{state.label}</span>
-                  <span className="min-w-0 break-keep">{g.label}</span>
-                </li>
-              )
-            })}
+      {/* 지키지 못한 조건은 할 일보다 먼저 알린다(#1714, 배너). 예전엔 날짜별 순서 아래 맨 끝이었다. */}
+      {run.violations.length > 0 && (
+        <section aria-labelledby="course-violations" className="space-y-1.5 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] p-3">
+          <h3 id="course-violations" className="text-sm font-bold text-[var(--warn-text)]">
+            지키지 못한 조건 {run.violations.length}
+          </h3>
+          <ul className="space-y-1">
+            {run.violations.map((v, i) => (
+              <li key={i} className="flex items-start gap-2 text-body text-ink-900">
+                <span className="tag mt-px bg-surface text-[var(--warn-text)]">{VIOLATION_LABEL[v.kind]}</span>
+                <span className="min-w-0 break-keep">{v.text}</span>
+              </li>
+            ))}
           </ul>
-        </Section>
-      )}
-
-      {run.unmatched.length > 0 && (
-        <p className="break-keep text-body text-ink-700">반영하지 못한 요청: {run.unmatched.join(', ')}</p>
+        </section>
       )}
 
       {mode !== 'plan' && <FixCards mapId={mapId} run={run} names={names} onRetry={onRetry} />}
@@ -207,17 +207,25 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
         </Section>
       )}
 
-      {run.violations.length > 0 && (
-        <Section title="지키지 못한 조건">
+
+      {run.goals.length > 0 && (
+        <Section title="요청 사항">
           <ul className="space-y-1.5">
-            {run.violations.map((v, i) => (
-              <li key={i} className="flex items-start gap-2 text-body text-ink-900">
-                <span className="tag tag-bad mt-px">{VIOLATION_LABEL[v.kind]}</span>
-                <span className="min-w-0 break-keep">{v.text}</span>
-              </li>
-            ))}
+            {run.goals.map((g) => {
+              const state = goalState(g)
+              return (
+                <li key={g.id} className="flex items-start gap-2 text-body text-ink-900">
+                  <span className={`tag mt-px ${state.tag}`}>{state.label}</span>
+                  <span className="min-w-0 break-keep">{g.label}</span>
+                </li>
+              )
+            })}
           </ul>
         </Section>
+      )}
+
+      {run.unmatched.length > 0 && (
+        <p className="break-keep text-body text-ink-700">반영하지 못한 요청: {run.unmatched.join(', ')}</p>
       )}
 
       {run.excluded.length > 0 && (
@@ -232,16 +240,18 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
         </Section>
       )}
 
-      <div>
-        <button type="button" aria-expanded={showLog} onClick={() => setShowLog(!showLog)} className="btn-link text-sm">
-          {showLog ? '작업 기록 접기' : '작업 기록 보기'}
-        </button>
+      <div className="space-y-2">
+        {/* "닫기"는 탭 안이라 무엇을 닫는지 모호했다 — 하는 일(입력으로 돌아가 새로 짜기)을 이름으로(#1714). */}
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" aria-expanded={showLog} onClick={() => setShowLog(!showLog)} className="btn-link text-sm">
+            {showLog ? '작업 기록 접기' : '작업 기록 보기'}
+          </button>
+          <button type="button" onClick={onClose} className="btn-outline btn-md">
+            새로 짜기
+          </button>
+        </div>
         {showLog && <WorkLog steps={run.steps} running={false} />}
       </div>
-
-      <button type="button" onClick={onClose} className="btn-neutral btn-lg w-full">
-        닫기
-      </button>
     </div>
   )
 }

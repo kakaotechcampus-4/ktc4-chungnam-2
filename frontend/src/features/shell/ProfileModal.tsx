@@ -16,6 +16,8 @@ import ModalSheet from './ModalSheet'
 import { useSheetStore } from './sheetStore'
 
 type Confirm = 'leave' | 'delete' | 'edit' | 'owner' | 'trash' | null
+/** 지도 정보에서 띄우는 확인 창. 휴대폰 프로필 탭은 머리와 내용을 탭 시트 두 자리에 나눠 넣고 이 상태를 같이 쓴다(#1710). */
+export type ProfileConfirmKind = Confirm
 
 /**
  * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
@@ -33,10 +35,12 @@ export default function ProfileModal({ mapId, onClose }: { mapId: string; onClos
   }, [setModalOpen])
   return (
     <ModalSheet label="지도 정보" fullWidth onClose={onClose} overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}>
+      <ProfileHead mapId={mapId} onConfirm={setConfirm} />
       <ProfileBody mapId={mapId} onConfirm={setConfirm} />
     </ModalSheet>
   )
 }
+
 
 /** 넓은 화면의 지도 정보 — 바닥 시트(끌 수 없는 손잡이가 달린) 대신 구성원 버튼 바로 아래에 붙는다. */
 export function ProfileMenu({ mapId, trigger }: { mapId: string; trigger: ReactNode }) {
@@ -48,12 +52,13 @@ export function ProfileMenu({ mapId, trigger }: { mapId: string; trigger: ReactN
       holdOpen={confirm !== null}
       overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}
     >
+      <ProfileHead mapId={mapId} onConfirm={setConfirm} />
       <ProfileBody mapId={mapId} onConfirm={setConfirm} />
     </MenuPopover>
   )
 }
 
-function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Confirm; onCancel: () => void }) {
+export function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Confirm; onCancel: () => void }) {
   const map = useMapQuery(mapId).data
   const members = useMembersQuery(mapId).data
   if (which === 'leave') return <LeaveMapConfirm mapId={mapId} nextOwnerName={map?.nextOwnerName} onCancel={onCancel} />
@@ -64,8 +69,30 @@ function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Conf
   return null
 }
 
+/** 지도 정보 머리: 지도 제목, 날짜와 구성원 수, 수정. */
+export function ProfileHead({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
+  const map = useMapQuery(mapId).data
+  if (!map) return null
+  return (
+    <header className="mb-4 flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        <h2 className="text-xl font-bold text-ink-900">{map.title}</h2>
+        <p className="text-sm text-ink-500">
+          {map.dates}, 구성원 {map.memberCount}명
+        </p>
+      </div>
+      {/* 제목·날짜·지역 수정은 방장만(#465). */}
+      {map.canEdit && (
+        <button type="button" onClick={() => onConfirm('edit')} aria-label="지도 정보 수정" className="btn-link shrink-0">
+          수정
+        </button>
+      )}
+    </header>
+  )
+}
+
 /** 지도 정보 시트와 메뉴 공통 내용: 초대 링크, 구성원, 핀 휴지통, 나가기와 삭제. */
-function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
+export function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
   const map = useMapQuery(mapId)
   const members = useMembersQuery(mapId)
   const { url, token, status: inviteStatus, error: inviteError, retry: retryInvite, copied, copy, share } = useShareInvite(mapId)
@@ -73,22 +100,6 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
 
   return (
     <>
-      {map.data && (
-        <header className="mb-4 flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <h2 className="text-xl font-bold text-ink-900">{map.data.title}</h2>
-            <p className="text-sm text-ink-500">
-              {map.data.dates}, 구성원 {map.data.memberCount}명
-            </p>
-          </div>
-          {/* 제목·날짜·지역 수정은 방장만(#465). */}
-          {map.data.canEdit && (
-            <button type="button" onClick={() => onConfirm('edit')} aria-label="지도 정보 수정" className="btn-link shrink-0">
-              수정
-            </button>
-          )}
-        </header>
-      )}
       {map.error && <ErrorText message="지도 정보를 불러오지 못했어요" error={map.error} />}
 
       <button
