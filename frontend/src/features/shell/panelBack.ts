@@ -32,7 +32,7 @@ export function usePanelBack(label: string, onBack: () => void, enabled: boolean
   }, [label, enabled])
 }
 
-/** 헤더 ‹ 의 스크린리더 이름 — 「마킹된 장소로 돌아가기」. */
+/** 헤더 ‹ 의 스크린리더 이름 — 「핀 찍기로 돌아가기」. */
 export function backAriaLabel(label: string) {
   return `${label}${josa(label, '으로', '로')} 돌아가기`
 }

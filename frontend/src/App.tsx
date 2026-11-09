@@ -14,6 +14,7 @@ import NotFoundPage from '@/routes/NotFoundPage'
 import RecommendTab from '@/routes/RecommendTab'
 import ShortlistTab from '@/routes/ShortlistTab'
 import CourseTab from '@/routes/CourseTab'
+import MeTab from '@/routes/MeTab'
 import WelcomePage from '@/routes/WelcomePage'
 import ErrorBoundary from '@/ui/ErrorBoundary'
 
@@ -42,6 +43,7 @@ export default function App() {
               <Route path="recommend" element={<RecommendTab />} />
               <Route path="shortlist" element={<ShortlistTab />} />
               <Route path="course" element={<CourseTab />} />
+              <Route path="me" element={<MeTab />} />
             </Route>
           </Route>
 

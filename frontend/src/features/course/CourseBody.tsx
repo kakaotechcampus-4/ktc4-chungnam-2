@@ -20,6 +20,7 @@ import CardSkeleton from '@/ui/CardSkeleton'
 import Notice from '@/ui/Notice'
 import EmptyState from '@/ui/EmptyState'
 import TextField from '@/ui/TextField'
+import BusyLabel from '@/ui/BusyLabel'
 import CoachMark from '@/ui/CoachMark'
 
 import { useCourseViewStore } from './courseMapStore'
@@ -86,11 +87,11 @@ function NotEnough({ mapId }: { mapId: string }) {
       title={NOT_ENOUGH}
       action={
         <Link to={`/maps/${mapId}/shortlist`} className="btn-outline btn-md">
-          확정된 장소 보기
+          장소 확정 탭 보기
         </Link>
       }
     >
-      마킹된 장소 탭에서 가고 싶은 곳들을 확정 리스트에 먼저 담아 보세요.
+      핀 찍기 탭에서 가고 싶은 곳들을 확정 리스트에 먼저 담아 보세요.
     </EmptyState>
   )
 }
@@ -174,8 +175,8 @@ function Entry({
       <div className="space-y-1">
         {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭으로 간다). 확정 장소가 모자라면 막는다. */}
         <CreditGate feature="course" mapId={mapId} error={error} onCharged={() => clearFail(mapId)}>
-          <button type="submit" disabled={create.isPending || routable < 2} data-coach="course-run" className="btn-primary btn-lg w-full">
-            {create.isPending ? '요청하는 중…' : '코스 짜기'}
+          <button type="submit" disabled={create.isPending || routable < 2} data-coach="course-run" aria-busy={create.isPending} className="btn-primary btn-lg w-full">
+            <BusyLabel busy={create.isPending} busyText="요청하는 중…">코스 짜기</BusyLabel>
           </button>
         </CreditGate>
         <CoachMark id="course-run" target="course-run" title="확정한 장소로 날짜별 동선을 짜요">

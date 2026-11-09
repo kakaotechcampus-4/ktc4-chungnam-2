@@ -126,10 +126,17 @@ class NewReaction(BaseModel):
         return data
 
 
+class SeenRequest(BaseModel):
+    """POST /maps/{mapId}/seen 본문(#1672). 비어 있으면 지금 시각으로 적는다."""
+
+    seen_at: datetime | None = None
+
+
 class MapNews(BaseModel):
     """GET /maps/{mapId}/news(#1556). since는 null일 수 있어 exclude_none을 쓰지 않는다(필수 칸)."""
 
     since: datetime | None
+    as_of: datetime   # 이 응답을 만든 DB 시각(#1672). 화면이 다 본 뒤 POST /seen 의 seen_at 으로 돌려준다
     new_pin_ids: list[str] = Field(max_length=100)
     new_reactions: list[NewReaction] = Field(max_length=100)
     truncated: bool

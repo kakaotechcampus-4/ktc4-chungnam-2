@@ -18,7 +18,7 @@ test('확정 장소 하나만 날짜에 넣고 코스를 짜면, 남은 곳을 �
   })
 
   await test.step('확정 탭에서 한 곳만 첫째 날에 넣는다', async () => {
-    await planner.getByRole('link', { name: '확정된 장소' }).click()
+    await planner.getByRole('link', { name: '장소 확정' }).click()
     // 넣을 날짜는 처음에 첫째 날이 골라져 있다(#1455).
     await planner.getByRole('button', { name: `${PLACES[0]} 첫째 날에 넣기` }).click()
     // 머리 글의 「N곳」은 아직 일정에 넣지 않은 곳이다(DESIGN.md 「확정 리스트 = 아직 안 넣은 곳」).
@@ -39,7 +39,7 @@ test('확정 장소 하나만 날짜에 넣고 코스를 짜면, 남은 곳을 �
   await test.step('「남은 곳 한 번에 넣기」를 누르면 일정에 저장된다', async () => {
     await planner.getByRole('button', { name: '남은 2곳 한 번에 넣기' }).click()
     await expect(planner.getByText('반영했어요')).toHaveCount(2)
-    await planner.getByRole('link', { name: '확정된 장소' }).click()
+    await planner.getByRole('link', { name: '장소 확정' }).click()
     await expect(planner.getByText(/모든 장소를 일정에 넣었어요/)).toBeVisible()
   })
 

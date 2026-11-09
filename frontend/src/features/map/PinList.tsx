@@ -20,7 +20,7 @@ const ORDER = ['like', 'against', 'unknown'] as const
 /** 마지막으로 본 뒤 새로 생긴 것(#1454) — 카드에 「새 핀」 태그와 새 의견 줄로 단다. */
 export type CardNews = { newPin: boolean; lines: string[] }
 
-/** 마킹된 장소 목록(Figma 5절). "마킹됨" 배지는 넣지 않는다 — 여기엔 마킹된 장소만 올라온다. */
+/** 핀 찍기 탭 목록(Figma 5절 마킹된 장소). "마킹됨" 배지는 넣지 않는다 — 여기엔 마킹된 장소만 올라온다. */
 export default function PinList({
   pins,
   memberCount,

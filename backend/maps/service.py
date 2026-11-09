@@ -135,12 +135,19 @@ def role_in_map(db: Session, *, map_id: str, user_id: str) -> Role | None:
     ).scalar_one_or_none()
 
 
-def mark_seen(db: Session, *, map_id: str, user_id: str) -> None:
+def mark_seen(db: Session, *, map_id: str, user_id: str, seen_at: datetime | None = None) -> None:
     """POST /maps/{mapId}/seen(#1556) — 요청한 구성원의 「마지막으로 본 때」를 DB 시각으로 바꾼다. 구성원 여부는 라우터 가드가 이미 봤다.
-    /news가 비교하는 핀·반응의 created_at·updated_at이 DB now()라 같은 시계를 쓴다(앱 시각과 어긋나 새 소식이 새거나 빠지지 않게)."""
+    /news가 비교하는 핀·반응의 created_at·updated_at이 DB now()라 같은 시계를 쓴다(앱 시각과 어긋나 새 소식이 새거나 빠지지 않게).
+    seen_at(#1672)은 화면이 본 새 소식의 as_of다 — 조회 뒤 확인 전에 생긴 의견을 본 것으로 적지 않는다. 지금보다 뒤면 지금으로 자르고,
+    저장된 값보다 앞이면 그대로 둔다(다른 기기가 더 늦게 적었을 때 되돌리지 않게)."""
+    if seen_at is None:
+        value = func.now()
+    else:
+        bounded = func.least(seen_at, func.now())
+        value = func.greatest(func.coalesce(MembershipRow.last_seen_at, bounded), bounded)
     db.execute(
         update(MembershipRow).where(MembershipRow.map_id == map_id, MembershipRow.user_id == user_id)
-        .values(last_seen_at=func.now())
+        .values(last_seen_at=value)
     )
 
 
@@ -153,14 +160,16 @@ def get_news(db: Session, *, map_id: str, user_id: str) -> MapNews:
     since = db.execute(
         select(MembershipRow.last_seen_at).where(MembershipRow.map_id == map_id, MembershipRow.user_id == user_id)
     ).scalar_one_or_none()
+    # 목록보다 먼저 시각을 잡는다 — 이 시각 뒤에 생긴 것은 seen_at 으로 돌려받아도 다음 조회에 남는다(#1672)
+    as_of = db.execute(select(func.now())).scalar_one()
     if since is None:
-        return MapNews(since=None, new_pin_ids=[], new_reactions=[], truncated=False)
+        return MapNews(since=None, as_of=as_of, new_pin_ids=[], new_reactions=[], truncated=False)
     pin_ids, rows, truncated = pins_api.list_new_since(
         db, map_id=map_id, since=since, exclude_user_id=user_id, limit=NEWS_LIMIT
     )
     roster, _ = roster_of(db, map_id)
     names = pins_api.author_display_names(db, [r["user_id"] for r in rows], {m.user_id for m in roster})
-    return core.to_map_news(since, pin_ids, rows, names, truncated=truncated)
+    return core.to_map_news(since, pin_ids, rows, names, truncated=truncated, as_of=as_of)
 
 
 def notify_owner_changed(db: Session, *, map_row: MapRow, new_owner_id: str, actor_id: str) -> None:

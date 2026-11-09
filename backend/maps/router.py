@@ -29,7 +29,7 @@ from common.settings import settings
 from maps import core, flows, preview, service
 from maps.deps import DbSession, get_optional_user
 from maps.schemas import (
-    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapNews, MapUpdateRequest, Member, OwnerTransferRequest,
+    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapNews, MapUpdateRequest, Member, OwnerTransferRequest, SeenRequest,
     TrashedMapList,
 )
 
@@ -201,12 +201,13 @@ def post_owner(
 
 @router.post("/maps/{mapId}/seen", status_code=204)
 def post_seen(
+    body: SeenRequest | None = None,
     mapId: str = Path(...),
     principal: Principal = MapForRead,
     db=DbSession,
 ):
-    # 이벤트를 보내지 않는다. 시각은 서버(DB)가 정한다(요청에 값을 받지 않는다).
-    service.mark_seen(db, map_id=mapId, user_id=principal.user_id)
+    # 이벤트를 보내지 않는다. 시각은 서버(DB)가 정한다 — 본문의 seen_at 은 서버가 준 as_of 이고 지금보다 뒤로 가지 못한다(#1672).
+    service.mark_seen(db, map_id=mapId, user_id=principal.user_id, seen_at=body.seen_at if body else None)
 
 
 @router.get("/maps/{mapId}/news", response_model=MapNews)

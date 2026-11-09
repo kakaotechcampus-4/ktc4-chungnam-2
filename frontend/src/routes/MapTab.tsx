@@ -35,7 +35,7 @@ import TabSheet from '@/features/shell/TabSheet'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 
 /**
- * 마킹된 장소 탭은 조립만 한다. 실제 내용은 전부 `features/map/` 안에 있다.
+ * 핀 찍기 탭은 조립만 한다. 실제 내용은 전부 `features/map/` 안에 있다.
  * 새 기능은 이 파일을 키우지 말고 `features/map/` 에 파일을 더해서 여기서 끼운다.
  */
 export default function MapTab() {
@@ -139,7 +139,7 @@ export default function MapTab() {
         tab="map"
         header={
           <>
-            <PanelBackLink label="마킹된 장소" onBack={() => showGroup(null)} />
+            <PanelBackLink label="핀 찍기" onBack={() => showGroup(null)} />
             <SheetTitle>이 자리의 핀 {groupPins.length}곳</SheetTitle>
           </>
         }
@@ -155,7 +155,7 @@ export default function MapTab() {
       header={
         <>
           <div className="flex items-center justify-between gap-2">
-            <SheetTitle>마킹된 장소</SheetTitle>
+            <SheetTitle>핀 찍기</SheetTitle>
             <ImportButton mapId={mapId} />
           </div>
           {/* 넓은 화면은 단계가 없고 칩이 지도 영역 왼쪽 위에 있다(#338). */}

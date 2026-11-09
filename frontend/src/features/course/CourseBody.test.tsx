@@ -333,7 +333,7 @@ describe('AI 코스 짜기 시트', () => {
     resetScenario('happy-path') // 확정 리스트가 빈 상태로
     renderSheet()
     expect(await screen.findByText(wholeText('코스를 짜려면 확정된 장소가 2곳 이상 필요해요'))).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '확정된 장소 보기' })).toHaveAttribute('href', '/maps/map_1/shortlist')
+    expect(screen.getByRole('link', { name: '장소 확정 탭 보기' })).toHaveAttribute('href', '/maps/map_1/shortlist')
     expect(screen.queryByRole('button', { name: '코스 짜기' })).not.toBeInTheDocument()
   })
 
