@@ -333,6 +333,7 @@ def record_from_row(
         place_url=_place_url(pin_row, place),
         naver_url=(places_api.naver_place_link(place.name, place.address)
                    if place and pin_row.source != "live" else None),
+        neighborhood=places_api.neighborhood(place.address) if place and pin_row.source != "live" else None,   # 규칙은 places.core 한 곳(#1564)
         created_by_display_name=created_by_display_name,
         created_at=pin_row.created_at,
         checks=pin_row.checks,
