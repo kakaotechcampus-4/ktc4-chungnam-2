@@ -78,7 +78,7 @@ export async function opposeWithChip(page: Page, chip: string) {
   await page.getByRole('radio', { name: '반대' }).click()
   await page.getByRole('button', { name: chip, exact: true }).click()
   await page.getByRole('button', { name: '반대 남기기' }).click()
-  // 토스트 글자만 맞춘다. 다 남기면 뜨는 완료 카드(「모든 핀에 의견을 남겼어요」, #1659)도 status라 함께 걸린다.
+  // 토스트 글자만 맞춘다. 다 남기면 뜨는 완료 카드("모든 핀에 의견을 남겼어요", #1659)도 status라 함께 걸린다.
   await expect(page.getByRole('status').filter({ hasText: /^의견을 남겼어요$/ })).toBeVisible()
 }
 

@@ -607,6 +607,8 @@ function MyOpinion({
           </button>
         )}
       </div>
+      {/* 고르면 아래에 사유 칸이 펼쳐지는 버튼만 시트를 3단계로 편다(#1694, BottomSheet data-sheet-expand).
+          처음 남기는 ♥는 바로 등록하고 목록으로 돌아가므로 펴지 않는다 — 펴면 3단계인 채로 목록이 열린다(#1696). */}
       <div role="radiogroup" aria-label="내 의견" className="grid grid-cols-2 gap-1.5">
         {TYPES.map((t) => {
           const on = type === t
@@ -616,6 +618,7 @@ function MyOpinion({
               type="button"
               role="radio"
               aria-checked={on}
+              data-sheet-expand={fresh && t === 'like' ? undefined : true}
               disabled={react.isPending}
               onClick={() => pick(t)}
               className="press flex h-11 items-center justify-center gap-1.5 rounded-xl border text-sm font-bold"

@@ -6,8 +6,8 @@ const STARS = Array.from({ length: STAR_COUNT }, (_, i) => i + 1)
 
 /**
  * 별점(#953). `onChange` 가 없으면 보기용(평균 4.3 같은 값은 가까운 별 수로 칠하고 숫자는 옆에 따로 적는다),
- * 있으면 고르기용(별 하나가 라디오 하나, 누르는 곳 44px). 켜진 별은 UI 파랑, 꺼진 별은 컨트롤 선 회색이다 —
- * 골드는 확정 전용이라 쓰지 않는다(DESIGN.md 색 영역). 별만으로 값을 전하지 않게 보기용은 읽는 글을 붙인다.
+ * 있으면 고르기용(별 하나가 라디오 하나, 누르는 곳 44px). 켜진 별은 별점 노랑 면 + 앰버 선(`--rating-star`, #1701), 꺼진 별은 컨트롤 선 회색이다.
+ * 확정 골드 값은 쓰지 않는다 — 별점 전용 토큰이다. 별만으로 값을 전하지 않게 보기용은 읽는 글을, 고르기용은 고른 점수의 말을 붙인다.
  */
 export default function StarRating({
   value,
@@ -26,8 +26,8 @@ export default function StarRating({
     <Star
       size={size}
       aria-hidden="true"
-      className={n <= filled ? 'text-[var(--action-fill)]' : 'text-[var(--line-control)]'}
-      fill={n <= filled ? 'currentColor' : 'none'}
+      className={n <= filled ? 'text-[var(--rating-star-line)]' : 'text-[var(--line-control)]'}
+      fill={n <= filled ? 'var(--rating-star)' : 'none'}
     />
   )
 
