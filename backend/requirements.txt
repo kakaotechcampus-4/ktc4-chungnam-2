@@ -8,5 +8,8 @@ geoalchemy2==0.15.2
 python-dotenv==1.2.2
 httpx==0.27.2
 pyyaml==6.0.2
+pillow==12.3.0
+numpy==2.4.6                      # 블로그 사진 얼굴 거르기(opencv가 쓴다, #1157)
+opencv-python-headless==5.0.0.93  # 블로그 사진 얼굴 거르기 — YuNet 검출(places/photos.py, #1157)
 openai==3.22.1
 pyproj==3.6.1

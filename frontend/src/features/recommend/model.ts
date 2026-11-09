@@ -97,6 +97,20 @@ export function mergeTags(lines: EvidenceLineDto[]) {
   return [...tags].map(([tag, v]) => ({ tag, ...v }))
 }
 
+/**
+ * 합친 태그 칩의 쓴 사람 — 첫 줄 작성자만 쓰면 남의 이름 옆에 내 × 가 붙는다.
+ * 한 사람이면 그 이름(내 것이면 「(나)」), 여럿이면 「나 외 N명」·「민재 외 N명」.
+ */
+export function tagAuthor(all: EvidenceLineDto[]): Pick<EvidenceLineDto, 'author_display_name' | 'author_id'> {
+  const myLine = all.find((l) => l.permissions.can_disable)
+  const others = [...new Set(all.filter((l) => !l.permissions.can_disable).map((l) => l.author_display_name))].filter(Boolean)
+  if (others.length === 0 && myLine) return { author_display_name: myLine.author_display_name, author_id: myLine.author_id }
+  if (others.length === 1 && !myLine) return { author_display_name: others[0], author_id: '' }
+  const first = myLine ? '나' : others[0]
+  const rest = others.length - (myLine ? 0 : 1)
+  return { author_display_name: rest > 0 ? `${first} 외 ${rest}명` : first, author_id: '' }
+}
+
 /** 화면에 보이는 조건 수 — 꼭은 줄마다, 선호는 같은 태그끼리 합쳐 센다(EvidenceGroups와 같은 묶음, #1143). */
 export function visibleConditionCount(lines: EvidenceLineDto[]): number {
   const g = groupEvidence(lines)

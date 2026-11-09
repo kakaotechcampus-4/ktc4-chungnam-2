@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { History, LocateFixed, Scan } from 'lucide-react'
 
-import MapGestureHelp from '@/features/map/MapGestureHelp'
-
 import { CONTROLS } from './layout'
 
 export type ControlKey = 'locate' | 'recent' | 'fit'
@@ -14,7 +12,7 @@ const BUTTONS: { key: ControlKey; label: string; icon: ReactNode }[] = [
 ]
 
 /**
- * 지도 버튼 묶음 — 맨 위 「지도 쓰는 법」(#1613) + 지도 옮기기 3개(Figma 참고 '지도 버튼 3개'). 시트 윗변에 붙어서 시트와 같이 오르내린다.
+ * 지도 버튼 3개(Figma 참고 '지도 버튼 3개'). 시트 윗변에 붙어서 시트와 같이 오르내린다.
  * 넓은 화면(`docked`)에서는 지도 영역 우하단에 고정한다(#338). 바닥은 카카오 로고·축척(약 20px)이 있어 40px 띄운다(#1538).
  * 화면에 글자 설명은 붙이지 않는다 — aria-label 과 길게 누르면 뜨는 툴팁만 둔다.
  */
@@ -45,7 +43,7 @@ export default function MapControls({
     const header = document.querySelector('[data-map-header]')
     if (!sheet || !header) return
     // 숨겨진 동안에도 잰다 — 버튼 자리가 아니라 시트 윗변과 상단 UI 아래끝 사이를 본다.
-    // stackHeight 는 버튼 4개 + 시트와의 틈(12)이다. 상단 UI와는 4px만 떨어져 있으면 보인다(Figma 같은 식).
+    // stackHeight 는 버튼 3개 + 시트와의 틈(12)이다. 상단 UI와는 4px만 떨어져 있으면 보인다(Figma 같은 식).
     const check = () =>
       onCrampedChange(sheet.getBoundingClientRect().top - CONTROLS.stackHeight < header.getBoundingClientRect().bottom + 4)
     check()
@@ -72,12 +70,12 @@ export default function MapControls({
         fading ? 'pointer-events-none opacity-0 duration-150' : `${docked ? 'pointer-events-auto ' : ''}opacity-100 delay-800 duration-300`
       }`}
     >
-      <MapGestureHelp tabIndex={fading ? -1 : 0} />
-      {BUTTONS.map((b) => (
+      {BUTTONS.map((b, i) => (
         <ControlButton
           key={b.key}
           label={b.label}
           active={active === b.key}
+          divider={i > 0}
           onPress={() => onPress(b.key)}
           tabIndex={fading ? -1 : 0}
         >
@@ -91,12 +89,14 @@ export default function MapControls({
 function ControlButton({
   label,
   active,
+  divider,
   onPress,
   tabIndex,
   children,
 }: {
   label: string
   active: boolean
+  divider: boolean
   onPress: () => void
   tabIndex: number
   children: ReactNode
@@ -130,7 +130,9 @@ function ControlButton({
       // 길게 눌러 설명만 본 경우엔 동작하지 않는다.
       onClick={() => !longPressed.current && onPress()}
       style={{ width: CONTROLS.size, height: CONTROLS.size }}
-      className={`press relative flex items-center justify-center border-t border-ink-100 last:rounded-b-xl ${active ? 'bg-brand-50 text-link' : 'text-link'}`}
+      className={`press relative flex items-center justify-center first:rounded-t-xl last:rounded-b-xl ${
+        divider ? 'border-t border-ink-100' : ''
+      } ${active ? 'bg-brand-50 text-link' : 'text-link'}`}
     >
       {children}
       {tip && (

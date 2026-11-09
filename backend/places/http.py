@@ -87,3 +87,29 @@ class SourceHttp:
                     source, endpoint, status, attempt, (time.monotonic() - started) * 1000, source, total,
                 )
         raise SourceError(f"{source} {endpoint}: {last}")   # 도달 불가에 가깝지만 안전망
+
+    def request_bytes(self, source: str, endpoint: str, url: str, *, max_bytes: int) -> bytes:
+        """이미지 같은 바이너리를 한 번 받는다(재시도 없음). max_bytes를 넘으면 받다가 멈춘다.
+        호출 횟수와 상태만 로그에 남기고 주소는 남기지 않는다."""
+        started = time.monotonic()
+        status: int | str = "error"
+        try:
+            with self._client.stream("GET", url) as resp:
+                status = resp.status_code
+                if status >= 400:
+                    raise SourceError(f"{source} {endpoint}: HTTP {status}")
+                body = bytearray()
+                for chunk in resp.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > max_bytes:
+                        raise SourceError(f"{source} {endpoint}: {max_bytes}바이트 초과")
+                return bytes(body)
+        except httpx.TransportError as exc:
+            status = type(exc).__name__
+            raise SourceError(f"{source} {endpoint}: {status}") from exc
+        finally:
+            total = self._stats.incr(source)
+            log.info(
+                "places.call source=%s endpoint=%s status=%s attempt=1 ms=%d total_calls[%s]=%d",
+                source, endpoint, status, (time.monotonic() - started) * 1000, source, total,
+            )

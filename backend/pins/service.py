@@ -39,6 +39,7 @@ from pins.schemas import (
     PinCreateLive,
     PinCreateRequest,
     PinCreateSearch,
+    PinPhoto,
     PinKind,
     PinLinkRef,
     PinResolveRequest,
@@ -436,6 +437,15 @@ def list_reactions(db: Session, pin: PinRow) -> list[Reaction]:
     ).scalars().all()
     names = auth_api.display_names(db, [row.user_id for row in rows])
     return [_reaction_from_row(row, names.get(row.user_id)) for row in rows]
+
+
+def pin_photos(db: Session, pin: PinRow, viewer_id: str) -> list[PinPhoto]:
+    """GET /pins/{pinId}/photos — 핀이 가리키는 자체 DB 장소의 블로그 사진(#1157). 실시간 핀은 주소를 저장하지 않아
+    찾을 수 없으므로 빈 배열이다(#382). 사용자당 호출 상한은 places 가 센다."""
+    if pin.source == "live" or not pin.place_id:
+        return []
+    places_api.check_photo_rate(viewer_id)
+    return [PinPhoto(thumbnail_url=p.thumbnail_url, link_url=p.link_url, site_name=p.site_name) for p in places_api.place_photos(pin.place_id, db=db)]
 
 
 def _find_existing_pin_id(db: Session, map_id: str, place_id: str) -> str | None:

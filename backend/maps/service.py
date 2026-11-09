@@ -517,7 +517,26 @@ def get_invite_summary(db: Session, *, token: str, viewer_id: str | None = None)
         inviter_display_name=inviter_name,
         expires_at=invite_row.expires_at,
         already_member=viewer_id is not None and role_in_map(db, map_id=map_row.id, user_id=viewer_id) is not None,
+        token=token,
+        cover_updated_at=_cover_versions(db, [map_row.id]).get(map_row.id),
     )
+
+
+def get_invite_cover(db: Session, *, token: str) -> tuple[bytes, str]:
+    """초대 화면의 대표 이미지(#1625). 요약과 같이 토큰이 살아 있어야 한다(없음 404, 끔·만료 410). 이미지가 없으면 404."""
+    invite_row = _acceptable_invite_or_raise(db, token)
+    return get_cover(db, map_id=invite_row.map_id)
+
+
+def get_invite_preview(db: Session, *, token: str) -> tuple[InviteSummary, bytes | None] | None:
+    """링크 미리보기용(#1625) — (요약, 대표 이미지 바이트 또는 None). 더 쓸 수 없는 링크면 None이고,
+    부르는 쪽이 기본 미리보기를 낸다(봇에게 오류 화면을 보이지 않는다)."""
+    try:
+        summary = get_invite_summary(db, token=token)
+        cover = get_invite_cover(db, token=token)[0] if summary.cover_url else None
+    except AppError:
+        return None
+    return summary, cover
 
 
 def accept_invite(db: Session, *, token: str, user_id: str) -> Map:

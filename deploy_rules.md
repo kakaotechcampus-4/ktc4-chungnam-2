@@ -108,6 +108,7 @@
 
 - **스테이징**: develop에 머지하면 `images.yml`이 이미지를 만들고 스테이징에 올린다. 따로 할 일이 없다.
   - 배포로 API·화면 컨테이너가 다시 뜨는 10~30초 동안 앞단 프록시(Caddy)는 연결을 최대 30초 다시 시도한다(`deploy/Caddyfile`의 `lb_try_duration 30s`, #1403). 그동안 요청은 느려질 뿐 502로 실패하지 않는다. 연결을 잡고 있던 SSE는 끊기고 FE가 마지막 `id`로 다시 연결한다. Caddy 설정은 `sync.sh`가 배포 때마다 다시 읽는다(`caddy reload`).
+  - 초대 링크 미리보기(#1625): Caddy가 메신저 미리보기 봇(카톡 `kakaotalk-scrap` 등)의 `/invites/{token}`만 API의 `/invites/{token}/preview`로 보낸다. Caddyfile을 바꾼 배포 뒤에는 `curl -A "kakaotalk-scrap/1.0" <주소>/invites/<토큰>`이 og 태그만 담은 짧은 문서를, 봇 이름 없는 `curl <주소>/invites/<토큰>`이 화면(index.html)을 돌려주는지 본다. `caddy reload`가 실패하면 Caddy는 옛 설정으로 계속 돈다 — `sync.sh` 출력에서 reload 오류를 본다.
 - **운영(릴리스)**: 1) develop → main PR(멘토 리뷰)을 머지한다. 2) Actions의 `deploy`를 스테이징, `sha-<main 커밋 7자리>`로 돌린다. 3) Actions의 `staging-check`(QA 하네스를 서버의 스테이징 컨테이너 안에서 공개 주소로 돈다, 비밀은 서버 밖으로 나오지 않는다)를 그 커밋으로 돌린다. 매일 06:00에도 develop으로 돈다. 4) 통과하면 그 main 커밋에 `v0.x.y` 태그를 단다 → `images.yml`이 그 태그로 이미지를 만든다. 5) `deploy`를 운영, `v0.x.y`로 돌린다. 운영은 배포 직전에 DB를 덤프한다(`deploy/backup.sh`). 6) 아래 「지울 칸」 표를 본다. 줄의 칸을 읽던 코드가 방금 올린 태그에 없으면 그 줄의 줄이기 이슈를 진행한다. 이 태그가 이제 이전 릴리스 호환 검사의 기준이라 그 칸을 지우는 PR이 통과한다(#1465).
 - **롤백**: `deploy`를 운영, 이전 `v` 태그로 돌린다. 버그는 그 버전 위에서 고치지 않고 develop에서 고쳐 다음 버전으로 올린다(멘토). 건강 확인에 실패한 배포는 `deploy.sh`가 이전 태그로 되돌린다.
 - **환경 변수를 바꿀 때**: 서버의 `deploy/env/<환경>.env`를 고치고 그 환경을 다시 올린다. 새 키를 더한 PR은 `backend/.env.example`과 `deploy/env/*.env.example`을 같이 고친다. 값은 저장소나 채팅에 남기지 않는다.

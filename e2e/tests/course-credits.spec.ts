@@ -56,7 +56,7 @@ test('크레딧이 0이면 추천받기를 눌렀을 때 서버의 잔액 부족
   await pinPlace(broke, '성수 매운집')
   await opposeWithChip(broke, '매워요')
 
-  await broke.getByRole('link', { name: 'AI 추천' }).click()
+  await broke.getByRole('link', { name: 'AI 추천', exact: true }).click()
   await broke.getByRole('button', { name: '음식점 추천받기' }).click()
   // 화면은 잔액으로 미리 막지 않는다 — 판정은 서버(402) 한 곳이다(CreditGate)
   await broke.getByRole('alertdialog').getByRole('button', { name: '추천받기' }).click()
