@@ -537,7 +537,8 @@ function MyOpinion({
           </button>
         )}
       </div>
-      <div role="radiogroup" aria-label="내 의견" className="grid grid-cols-2 gap-1.5">
+      {/* 의견을 고르면 아래에 사유 칸이 펼쳐진다. 휴대폰 시트 2단계에서는 그 칸이 탭 막대 뒤에 가려져서, 고른 뒤 시트를 3단계로 편다(#1694, BottomSheet data-sheet-expand). */}
+      <div role="radiogroup" aria-label="내 의견" data-sheet-expand className="grid grid-cols-2 gap-1.5">
         {TYPES.map((t) => {
           const on = type === t
           return (

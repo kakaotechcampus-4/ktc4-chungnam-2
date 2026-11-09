@@ -100,6 +100,9 @@ export default function BottomSheet({
         // 누르는 순간(포커스) 시트가 움직여 손을 뗄 때 다른 자리에 떨어지면 그 누름이 버튼에 가지 않았다(e2e 「반대」, #1675).
         // 그 구분이 :focus-visible 이다(입력칸은 눌러도 참, 버튼은 키보드일 때만 참).
         onFocusCapture: (e: React.FocusEvent) => focusVisible(e.target) && onStageChange(3),
+        // 누르면 아래에 내용이 펼쳐지는 자리(`data-sheet-expand`, 핀 상세 의견 고르기)는 누름이 끝난 뒤(click) 3단계로 편다.
+        // 2단계는 안쪽 스크롤이 막혀 펼쳐진 사유 칸이 탭 막대 뒤에 가려졌다(#1694). 손을 뗀 뒤라 누름이 빗나가지 않는다.
+        onClickCapture: (e: React.MouseEvent) => (e.target as Element).closest?.('[data-sheet-expand]') && onStageChange(3),
         onTouchStart: (e: React.TouchEvent) => (touchY.current = e.touches[0].clientY),
         onTouchMove: (e: React.TouchEvent) => {
           if (touchY.current !== null && touchY.current - e.touches[0].clientY > TAP_SLOP) {
