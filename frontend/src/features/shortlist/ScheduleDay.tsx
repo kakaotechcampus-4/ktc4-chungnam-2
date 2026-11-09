@@ -17,7 +17,7 @@ export function ScheduleDayBox({ day, title, count, children }: { day: string; t
       data-day={day}
       aria-label={title}
       data-over={hover?.day === day}
-      className="drop-target rounded-xl border border-ink-200 bg-white p-3"
+      className="drop-target rounded-xl border border-ink-200 bg-surface p-3"
     >
       <h3 className="text-sm font-bold text-ink-900">
         {title} <span className="font-normal text-ink-500">{count}곳</span>
@@ -116,7 +116,7 @@ function ScheduleRow({
     </>
   )
   return (
-    <li data-pin={pinId} className={`flex items-center gap-2 rounded-xl bg-white py-0.5 pl-2 pr-0.5 ring-1 ring-ink-200 ${dragging ? 'opacity-40' : ''}`}>
+    <li data-pin={pinId} className={`flex items-center gap-2 rounded-xl bg-surface py-0.5 pl-2 pr-0.5 ring-1 ring-ink-200 ${dragging ? 'opacity-40' : ''}`}>
       {/* 번호 원은 AI 코스 날짜별 카드와 같다(ink-100 면). 순서는 목록(ol)이 읽어 준다. */}
       <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-100 text-xs font-bold text-ink-700">
         {n}

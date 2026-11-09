@@ -14,7 +14,7 @@ export default function ProgressBar({ label, value, max, className = '' }: { lab
     <div className={className}>
       <div className="mb-1 flex items-baseline justify-between gap-2 text-xs font-bold">
         <span id={id} className="text-ink-600">{label}</span>
-        <span aria-hidden="true" className="shrink-0 text-brand-600">{pct}%</span>
+        <span aria-hidden="true" className="shrink-0 text-link">{pct}%</span>
       </div>
       <ProgressTrack value={value} max={max} labelledBy={id} />
     </div>

@@ -177,7 +177,7 @@ export function setPinLabel(el: HTMLElement, name: string, mode: 'quiet' | 'sele
   if (!mode || !name) return
   const tone = LABEL_TONE[(el.dataset.pinTone as PinTone | undefined) ?? 'normal']
   const filled = mode === 'selected'
-  const bg = filled ? tone.fill : '#fff'
+  const bg = filled ? tone.fill : 'var(--surface-card)' // 다크에서는 카드 면(#1412)
   const label = document.createElement('span')
   label.dataset.pinName = mode
   label.setAttribute('aria-hidden', 'true')

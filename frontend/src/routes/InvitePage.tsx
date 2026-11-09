@@ -70,7 +70,7 @@ export default function InvitePage() {
     <EntryFrame as="div" className="bg-ink-50 px-4 pb-6 pt-4">
       <div className="h-8">
         {loggedIn && (
-          <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-float">
+          <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-surface shadow-float">
             <ChevronLeft size={20} />
           </Link>
         )}
@@ -155,7 +155,7 @@ function GuestJoin({ token, onBroken }: { token: string; onBroken: (problem: Inv
           onError: (err) => onBroken(inviteProblem(err)),
         })
       }}
-      className="space-y-2 rounded-xl border border-ink-200 bg-white p-3 text-left"
+      className="space-y-2 rounded-xl border border-ink-200 bg-surface p-3 text-left"
     >
       <label htmlFor="guest-name" className="block text-sm font-semibold text-ink-900">
         구성원에게 보일 이름
@@ -180,7 +180,7 @@ function InviteCard({ invite }: { invite: InviteView }) {
     <>
       <p className="mb-3 text-center text-sm text-ink-500">{invite.inviter}님이 초대했어요</p>
       {/* 넓은 화면은 바깥이 이미 카드라 테두리를 빼 카드 안 카드가 되지 않게 한다. */}
-      <div className="rounded-xl border border-ink-200 bg-white p-4 text-center md:border-0 md:p-0">
+      <div className="rounded-xl border border-ink-200 bg-surface p-4 text-center md:border-0 md:p-0">
         <MapIllustration />
         <h1 className="mt-4 text-2xl font-bold text-ink-900">{invite.title}</h1>
         <p className="mt-1 text-sm text-ink-500">{invite.dates}</p>

@@ -19,7 +19,7 @@ const MARK = {
  */
 export function AiReason({ text }: { text: string }) {
   return (
-    <p className="flex gap-2 rounded-xl border border-brand-300 bg-white p-2.5 text-body text-ink-900">
+    <p className="flex gap-2 rounded-xl border border-brand-300 bg-surface p-2.5 text-body text-ink-900">
       <MessageSquare size={14} className="mt-0.5 shrink-0 text-ink-500" aria-hidden="true" />
       {text}
     </p>
@@ -52,7 +52,7 @@ export function AiFulfillment({ evidence, members }: { evidence: AiEvidence; mem
   const f = evidence.member_fulfillment
   return (
     <>
-      <p className="flex items-center gap-1.5 text-xs font-bold text-brand-700">
+      <p className="flex items-center gap-1.5 text-xs font-bold text-selected">
         {f && (
           <>
             <Users size={14} aria-hidden="true" /> {f.total}명 중 {f.satisfied}명이 조건에 맞아요

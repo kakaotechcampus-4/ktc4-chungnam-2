@@ -9,7 +9,7 @@ import RegionCover from '@/ui/RegionCover'
 import SheetTitle from '@/ui/SheetTitle'
 import Sentences from '@/ui/Sentences'
 
-import { MAP_COLORS, shrinkImage } from './look'
+import { cardTint, MAP_COLORS, shrinkImage } from './look'
 import type { MapView } from './model'
 import { useCoverMutation, useUpdateMapMutation } from './queries'
 
@@ -117,7 +117,7 @@ export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void
       <SheetTitle>색상 변경</SheetTitle>
       <p className="mt-1 text-sm text-ink-600"><Sentences text="내 지도 목록의 카드 바탕 색이에요. 구성원 모두에게 같은 색이 보여요" /></p>
       {/* 목록 카드(MapListPage)와 같은 모양이다. 고른 색이 없으면 흰 카드다. */}
-      <div aria-hidden="true" style={color ? { background: color } : undefined} className="mt-4 overflow-hidden rounded-xl border border-ink-200 bg-white">
+      <div aria-hidden="true" style={color ? cardTint(color) : undefined} className="mt-4 overflow-hidden rounded-xl border border-ink-200 bg-surface">
         <MapCover map={map} className="block aspect-[16/6] w-full" />
         <div className="p-4">
           <p className="truncate text-title font-bold text-ink-900">{map.title}</p>

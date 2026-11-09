@@ -32,7 +32,7 @@ export default function TaskProgress({
 }) {
   const id = useId()
   return (
-    <section aria-labelledby={id} className="space-y-2.5 rounded-xl bg-white p-3.5 ring-1 ring-ink-200">
+    <section aria-labelledby={id} className="space-y-2.5 rounded-xl bg-surface p-3.5 ring-1 ring-ink-200">
       <div className="flex items-baseline justify-between gap-2">
         <p id={id} className="text-sm font-bold text-ink-900">
           {title}
@@ -74,7 +74,7 @@ function TaskRow({ item }: { item: TaskItem }) {
       <Check size={12} strokeWidth={3} aria-hidden="true" />
     </span>
   ) : (
-    <span className="size-[18px] shrink-0 rounded-full border-[1.5px] border-ink-300 bg-white" aria-hidden="true" />
+    <span className="size-[18px] shrink-0 rounded-full border-[1.5px] border-ink-300 bg-surface" aria-hidden="true" />
   )
   const text = <span className={`min-w-0 flex-1 truncate ${item.done ? 'text-ink-500' : 'font-semibold text-ink-900'}`}>{item.label}</span>
   // 상태를 앞에 둔다 — 「성수 매운집 …」으로 시작하면 아래 핀 카드와 이름이 겹친다(화면 읽기·e2e).

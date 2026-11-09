@@ -24,7 +24,7 @@ export default function SegmentedControl<T extends string>({
       {options.map((o) => (
         <label
           key={o.key}
-          className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-lg px-2 text-center text-sm font-semibold text-ink-500 transition-colors hover:text-ink-700 has-[:checked]:bg-white has-[:checked]:font-bold has-[:checked]:text-brand-600 has-[:checked]:shadow-float has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--line-focus)]"
+          className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-lg px-2 text-center text-sm font-semibold text-ink-500 transition-colors hover:text-ink-700 has-[:checked]:bg-surface has-[:checked]:font-bold has-[:checked]:text-link has-[:checked]:shadow-float has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--line-focus)]"
         >
           <input type="radio" name={name} checked={value === o.key} onChange={() => onChange(o.key)} className="sr-only" />
           {o.label}

@@ -147,7 +147,7 @@ export function hasRegionCover(region?: string) {
 /** 하늘은 늘 ink-100 이다 — 지도 색은 카드 바탕에만 쓴다(#1537). */
 export default function RegionCover({ region, className = '' }: { region?: string; className?: string }) {
   return (
-    <svg viewBox="0 0 320 140" preserveAspectRatio="xMidYMid slice" className={className} aria-hidden="true">
+    <svg viewBox="0 0 320 140" preserveAspectRatio="xMidYMid slice" className={`keep-light ${className}`} aria-hidden="true">
       <rect width="320" height="140" fill="var(--ink-100)" />
       <Backdrop />
       {(region && BY_REGION[region]) ?? Fallback}

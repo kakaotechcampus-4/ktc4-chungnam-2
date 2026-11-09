@@ -111,7 +111,7 @@ export function FilterSelect({
 }) {
   const current = options.find((o) => o.value === value) ?? options[0]
   return (
-    <div className="relative flex h-8 min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white pl-2.5 pr-6 text-xs has-[select:focus-visible]:outline-2 has-[select:focus-visible]:outline-offset-2 has-[select:focus-visible]:outline-[var(--line-focus)]">
+    <div className="relative flex h-8 min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-surface pl-2.5 pr-6 text-xs has-[select:focus-visible]:outline-2 has-[select:focus-visible]:outline-offset-2 has-[select:focus-visible]:outline-[var(--line-focus)]">
       {/* 읽어 주는 건 select(이름 + 고른 값)가 맡는다 — 보이는 글자는 스크린리더에서 뺀다. */}
       {label && (
         <span aria-hidden="true" className="shrink-0 text-ink-500">

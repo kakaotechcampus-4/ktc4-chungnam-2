@@ -247,7 +247,8 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
       // 반짝임·물음표 같은 꾸밈은 그림 틀 밖으로 조금 나간다. 틀은 몸 크기로 두어 놓인 자리를 바꾸지 않는다.
       overflow={peek ? undefined : 'visible'}
       aria-hidden="true"
-      className={`shrink-0 ${motion}`}
+      // 캐릭터 색은 다크에서도 그대로다(#1412).
+      className={`keep-light shrink-0 ${motion}`}
     >
       {fly && <path d="M-24 18H-10M-25 30H-14M-22 42H-12" stroke="var(--brand-300)" strokeWidth="2" strokeLinecap="round" />}
       {/* 우주복은 천천히 오르내리며 좌우로 기운다(가운데를 축으로). */}
@@ -307,7 +308,7 @@ export function PingoMark({ size = 28 }: { size?: number }) {
   const hole = 'white'
   const { pin, hole: h, face: f, eyes } = PINGO_MARK
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="shrink-0">
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="keep-light shrink-0">
       <path d={pin} fill={face} />
       <circle cx={h.cx} cy={h.cy} r={h.r} fill={hole} />
       <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={f.rx} fill={face} />

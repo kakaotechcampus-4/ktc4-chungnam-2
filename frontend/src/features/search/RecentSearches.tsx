@@ -23,7 +23,7 @@ export default function RecentSearches({
     <div
       onMouseDown={(e) => e.preventDefault()}
       // 검색창 바로 밑에 붙어 한 덩어리로 보인다(검색창이 아래 모서리를 편다). 지도 위에서는 그림자가 위로 번져 이음매를 덮지 않게 위쪽을 자른다.
-      className={`absolute inset-x-0 top-full z-30 rounded-b-xl border border-t-0 border-brand-600 bg-white pb-2 pt-1 ${floating ? 'pointer-events-auto shadow-float [clip-path:inset(0_-12px_-12px_-12px)]' : ''}`}
+      className={`absolute inset-x-0 top-full z-30 rounded-b-xl border border-t-0 border-brand-600 bg-surface pb-2 pt-1 ${floating ? 'pointer-events-auto shadow-float [clip-path:inset(0_-12px_-12px_-12px)]' : ''}`}
     >
       <div className="flex items-center justify-between px-4 pb-1">
         <h2 className="text-xs font-semibold text-ink-500">최근 검색</h2>

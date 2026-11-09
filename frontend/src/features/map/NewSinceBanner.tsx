@@ -20,7 +20,7 @@ export default function NewSinceBanner({
   return (
     <div role="status" className="mb-2.5 flex items-start gap-2 rounded-xl border border-brand-300 bg-brand-50 p-3">
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-bold text-brand-700">{timeAgo(since)}에 본 뒤로 새로 생겼어요</p>
+        <p className="text-sm font-bold text-selected">{timeAgo(since)}에 본 뒤로 새로 생겼어요</p>
         <p className="mt-0.5 text-xs text-ink-600">{what}</p>
         <p className="text-xs text-ink-600">지도에 파란 점이 찍힌 핀이에요</p>
       </div>

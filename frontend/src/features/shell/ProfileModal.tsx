@@ -19,6 +19,7 @@ import Sentences from '@/ui/Sentences'
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 import { useSheetStore } from './sheetStore'
+import ThemeControl from './ThemeControl'
 
 type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | 'bug' | 'faq' | 'trash' | null
 
@@ -205,6 +206,8 @@ function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onCo
             </button>
           </div>
           {me.data?.is_guest && <div className="mt-3"><GuestAccountNotice /></div>}
+          {/* 휴대폰에는 ☰ 메뉴가 없어서 화면 모드를 여기 둔다(#1412). 넓은 화면은 ☰ 「설정」이다. */}
+          <ThemeControl className="mt-4" />
           <HelpLinks onPick={onConfirm} />
         </>
       )}

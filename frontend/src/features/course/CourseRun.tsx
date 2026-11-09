@@ -245,7 +245,7 @@ function DayCard({ day, index, names, points, hoursTag }: { day: CourseRunDto['d
   const summary = daySummary(stops.flatMap((s) => (s.leg ? [s.leg] : [])))
   const links = walkLinks(stops)
   return (
-    <article className="rounded-xl bg-white p-3 ring-1 ring-ink-200">
+    <article className="rounded-xl bg-surface p-3 ring-1 ring-ink-200">
       <h4 className="text-base font-bold text-ink-900">{dayTitle(day.date, index)}</h4>
       {summary && <p className="text-xs text-ink-500">{summary}</p>}
       {stops.length === 0 ? (
