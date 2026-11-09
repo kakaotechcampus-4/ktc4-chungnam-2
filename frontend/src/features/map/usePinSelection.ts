@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router'
 
 /** 고른 핀 id 를 담는 주소 쿼리 이름. 다른 탭에서 핀 카드를 열 때(핑고 조언 open_pin)도 이 이름으로 간다. */
 export const PIN_PARAM = 'pin'
-/** 목록 카드의 「✕ 반대」로 열 때만 붙는다 — 상세가 반대를 고른 채로 사유 입력부터 연다(#1696). 핀을 바꾸거나 닫으면 지운다. */
+/** 목록 카드의 "✕ 반대"로 열 때만 붙는다 — 상세가 반대를 고른 채로 사유 입력부터 연다(#1696). 핀을 바꾸거나 닫으면 지운다. */
 export const REACT_PARAM = 'react'
 
 /**

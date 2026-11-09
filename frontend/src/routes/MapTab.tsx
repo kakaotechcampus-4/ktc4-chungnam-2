@@ -62,7 +62,7 @@ export default function MapTab() {
   const { filters, setFilter, clear } = usePinFilters()
   const sorted = pins && filterPins(pins, filters, memberCount)
   // 순서는 필터·정렬을 바꾸거나 핀이 늘고 줄 때만 다시 매긴다. 의견 수만 바뀌었을 땐 그대로 둬서
-  // 방금 의견을 남긴 카드가 맨 위로 튀지 않게 한다(#308). 「의견 남길 핀」 묶음(#1696)도 같은 때만 다시 정한다 —
+  // 방금 의견을 남긴 카드가 맨 위로 튀지 않게 한다(#308). "의견 남길 핀" 묶음(#1696)도 같은 때만 다시 정한다 —
   // 목록에서 ♥를 누른 카드가 아래 묶음으로 튀지 않는다. 할 일 핀은 묶음 안에서도 원래 순서(정렬)를 지킨다.
   const orderKey = sorted ? `${filters.category}|${filters.createdBy}|${filters.kind}|${filters.opinion}|${filters.sort}|${sorted.map((p) => p.id).sort().join(',')}` : ''
   const [order, setOrder] = useState<{ key: string; ids: string[]; todo: Set<string> } | null>(null)
@@ -98,7 +98,7 @@ export default function MapTab() {
 
   // 핀을 고르면 상세가 2단계로 올라온다(최종기획안 4절 "핀 상세"). 겹친 핀 목록도 같다(#1576).
   const groupKey = groupIds?.join(',')
-  // 목록의 「✕ 반대」로 열면 사유 입력까지 보이게 3단계로 연다(#1696).
+  // 목록의 "✕ 반대"로 열면 사유 입력까지 보이게 3단계로 연다(#1696).
   useEffect(() => {
     if (selectedPinId || groupKey) setStage('map', startAgainst ? 3 : 2)
   }, [selectedPinId, groupKey, startAgainst, setStage])

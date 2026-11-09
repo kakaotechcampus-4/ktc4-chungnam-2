@@ -40,7 +40,7 @@ function setup(ui: ReactNode, pins: Pin[]) {
 }
 
 describe('핀 찍기 목록의 할 일 묶음과 바로 반응(#1696)', () => {
-  it('할 일 핀을 「의견 남길 핀」으로 위에 묶고, ✕ 반대는 상세를 반대로 연다', async () => {
+  it('할 일 핀을 "의견 남길 핀"으로 위에 묶고, ✕ 반대는 상세를 반대로 연다', async () => {
     const pins = await fetchPins(MAP)
     const todo = pins.filter(isTodo)
     expect(todo.length).toBeGreaterThan(0)
@@ -87,7 +87,7 @@ describe('핀 상세 내 의견(#1696)', () => {
     expect(screen.getByRole('button', { name: '반대 남기기' })).toBeInTheDocument()
   })
 
-  it('남긴 의견은 한 줄로 접히고 「고치기」로 다시 연다', async () => {
+  it('남긴 의견은 한 줄로 접히고 "고치기"로 다시 연다', async () => {
     const pin = (await fetchPins(MAP)).find((p) => p.my_reaction)!
     setup(<PinDetailBody pin={pin} mapId={MAP} members={members} onDone={() => {}} />, [pin])
 

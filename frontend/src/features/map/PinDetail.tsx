@@ -249,8 +249,8 @@ function PinPhotos({ pin }: { pin: Pin }) {
 
 /**
  * 핀 상세 본문(Figma 5절 '마킹된 장소 상세', 지금 탭 이름은 핀 찍기). 위에서부터 할 일 → 정보 순서다(#1696).
- * 내 의견(할 일 카드) → 구성원 의견(막대 + 펼친 목록) → 장소 정보(사진·지도 링크·AI 근거) → 후기.
- * 사진과 링크가 먼저 있으면 2단계에서 「내 의견」이 아래로 밀려 안 보였다.
+ * 내 의견(할 일 카드) → 구성원 의견(막대 + 펼친 목록) → 장소 정보(사진, 지도 링크, AI 근거) → 후기.
+ * 사진과 링크가 먼저 있으면 2단계에서 "내 의견"이 아래로 밀려 안 보였다.
  */
 export function PinDetailBody({
   pin,
@@ -262,7 +262,7 @@ export function PinDetailBody({
   pin: Pin
   mapId: string
   members: MemberView[]
-  /** 목록 카드의 「✕ 반대」로 열었다 — 반대를 고른 채로 사유 입력부터 보인다(#1696). */
+  /** 목록 카드의 "✕ 반대"로 열었다 — 반대를 고른 채로 사유 입력부터 보인다(#1696). */
   startAgainst?: boolean
   /** 의견을 등록하면 목록으로 돌아간다(Figma '의견 등록 후'). */
   onDone: () => void
@@ -284,9 +284,9 @@ export function PinDetailBody({
         {isLive(pin) && <LiveInfo pin={pin} />}
       </div>
 
-      {/* 2단계에서 바로 보이게 「내 의견」을 맨 위에 둔다(#308, #1696). */}
+      {/* 2단계에서 바로 보이게 "내 의견"을 맨 위에 둔다(#308, #1696). */}
       {pin.permissions.can_react ? (
-        // 핀마다 새로 그린다. 의견을 취소해도 고른 의견·사유는 남겨 다시 누르면 되돌아간다(#959).
+        // 핀마다 새로 그린다. 의견을 취소해도 고른 의견, 사유는 남겨 다시 누르면 되돌아간다(#959).
         <MyOpinion
           key={`${pin.id}-${startAgainst}`}
           pin={pin}
@@ -369,8 +369,8 @@ function DeletePin({ pin, mapId, onDone }: { pin: Pin; mapId: string; onDone: ()
 }
 
 /**
- * 구성원 의견(#1696) — 머리 「구성원 의견 · N명 중 M명이 남겼어요」, 좋음·반대·아직 비율 막대, 그 아래 숫자 줄과 의견 목록.
- * 막대는 색만으로 읽히지 않게 숫자 줄을 늘 같이 둔다(colors.md 3절 한계). 「아직」은 아직 의견을 안 남긴 사람 수다(「미확인」과 같은 값).
+ * 구성원 의견(#1696) — 머리 "구성원 의견, N명 중 M명이 남겼어요", 좋음, 반대, 아직 비율 막대, 그 아래 숫자 줄과 의견 목록.
+ * 막대는 색만으로 읽히지 않게 숫자 줄을 늘 같이 둔다(colors.md 3절 한계). "아직"은 아직 의견을 안 남긴 사람 수다("미확인"과 같은 값).
  */
 function MemberOpinions({ pin, members, children }: { pin: Pin; members: MemberView[]; children: ReactNode }) {
   const total = members.length
@@ -405,7 +405,7 @@ function MemberOpinions({ pin, members, children }: { pin: Pin; members: MemberV
         <span className="flex items-center gap-1 text-ink-600">
           아직 <b className="text-base">{none}</b>
         </span>
-        {/* 「미확인」이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
+        {/* "미확인"이 장소 정보가 확인 안 됐다는 말로 읽히지 않게 뜻을 그 자리에서 연다(#1030). */}
         <span className="ml-auto">
           <ReactionHelp />
         </span>
@@ -415,7 +415,7 @@ function MemberOpinions({ pin, members, children }: { pin: Pin; members: MemberV
   )
 }
 
-/** 구성원 의견 목록 — 반대를 먼저, 이어서 좋음. 사유가 바로 보이게 펼쳐 둔다(#1696, 예전엔 좋음을 「펼치기」로 숨겼다). 내 의견은 위 카드에 있어 뺀다. */
+/** 구성원 의견 목록 — 반대를 먼저, 이어서 좋음. 사유가 바로 보이게 펼쳐 둔다(#1696, 예전엔 좋음을 "펼치기"로 숨겼다). 내 의견은 위 카드에 있어 뺀다. */
 function Opinions({ split, likes, unknown }: ReturnType<typeof toOpinions>) {
   const rows = [...split, ...likes].filter((o) => !o.isMe)
   const waiting = unknown.filter((m) => !m.isMe)
@@ -456,11 +456,11 @@ function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
 
 /**
  * 내 의견(#1696). 세 모양이다.
- * - 아직 없음: 할 일 카드(연파랑 면, 목록 카드와 같다) 「이곳 어때요?」. ♥는 누르면 바로 등록하고(목록과 같다) 목록으로 돌아간다.
- *   ✕는 사유가 있어야 등록되므로(가드레일 3) 카드 안에 사유 칩·입력이 펼쳐지고 「반대 남기기」로 등록한다.
- * - 남김: 흰 카드 한 줄 「내 의견 ✕ 반대 · 매워요」 + 「고치기」. 좋음에 사유가 없으면 「좋은 점 적기」도 둔다.
- * - 고치는 중: 고르면 아래에 사유가 펼쳐지고 「○○ 남기기」로 저장한다. 「의견 취소」는 여기서만 보인다.
- * 이 화면의 채움 버튼은 「○○ 남기기」 하나다.
+ * - 아직 없음: 할 일 카드(연파랑 면, 목록 카드와 같다) "이곳 어때요?". ♥는 누르면 바로 등록하고(목록과 같다) 목록으로 돌아간다.
+ *   ✕는 사유가 있어야 등록되므로(가드레일 3) 카드 안에 사유 칩, 입력이 펼쳐지고 "반대 남기기"로 등록한다.
+ * - 남김: 흰 카드 한 줄 "내 의견 ✕ 반대, 매워요" + "고치기". 좋음에 사유가 없으면 "좋은 점 적기"도 둔다.
+ * - 고치는 중: 고르면 아래에 사유가 펼쳐지고 "○○ 남기기"로 저장한다. "의견 취소"는 여기서만 보인다.
+ * 이 화면의 채움 버튼은 "○○ 남기기" 하나다.
  */
 function MyOpinion({
   pin,
