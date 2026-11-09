@@ -8,12 +8,15 @@ import { useShortlistExport } from './queries'
 
 type Kind = 'copy' | ExportFormat
 
-/** 타일 셋 — 무엇을 받는지 그림으로 먼저 알아보게 한다. 엑셀은 초록 표, 글자 파일은 회색 문서, 복사는 파랑. */
-const TILES: { kind: Kind; title: string; sub: string; Icon: LucideIcon; tone: string }[] = [
-  { kind: 'copy', title: '텍스트 복사', sub: '단톡방에 붙여 넣기', Icon: Copy, tone: 'bg-brand-50 text-link' },
-  { kind: 'txt', title: '메모장 파일', sub: '.txt', Icon: FileText, tone: 'bg-ink-100 text-ink-700' },
-  // 엑셀 표의 초록 — 좋음 토큰을 빌려 다크 모드도 따라간다.
-  { kind: 'csv', title: '엑셀 파일', sub: '.csv', Icon: FileSpreadsheet, tone: 'bg-[var(--good-bg)] text-[var(--good-line)]' },
+/**
+ * 타일 셋 — 무엇을 받는지 그림 모양으로 먼저 알아보게 한다. 아이콘 칸은 셋 다 회색이다(#1680) —
+ * 파랑·회색·초록 세 색은 뜻 없이 화면을 어수선하게 했고, 엑셀 초록이 위 완료 카드의 초록과 같은 뜻처럼 읽혔다.
+ */
+const TILE_TONE = 'bg-ink-100 text-ink-700'
+const TILES: { kind: Kind; title: string; sub: string; Icon: LucideIcon }[] = [
+  { kind: 'copy', title: '텍스트 복사', sub: '단톡방에 붙여 넣기', Icon: Copy },
+  { kind: 'txt', title: '메모장 파일', sub: '.txt', Icon: FileText },
+  { kind: 'csv', title: '엑셀 파일', sub: '.csv', Icon: FileSpreadsheet },
 ]
 
 /** 끝났다는 표시(체크 + 「복사했어요」)를 타일에 남기는 시간. */
@@ -71,7 +74,7 @@ export default function ShortlistExport({ mapId }: { mapId: string }) {
         내보내기
       </h3>
       <ul className="grid grid-cols-3 gap-2">
-        {TILES.map(({ kind, title, sub, Icon, tone }) => (
+        {TILES.map(({ kind, title, sub, Icon }) => (
           <li key={kind}>
             <button
               type="button"
@@ -79,7 +82,7 @@ export default function ShortlistExport({ mapId }: { mapId: string }) {
               onClick={() => void start(kind)}
               className="press flex h-full w-full flex-col items-center gap-1.5 rounded-xl bg-surface px-1 py-3 text-center ring-1 ring-ink-200 disabled:opacity-60"
             >
-              <span aria-hidden="true" className={`flex size-10 items-center justify-center rounded-xl ${done === kind ? 'bg-[var(--good-bg)] text-[var(--good-line)]' : tone}`}>
+              <span aria-hidden="true" className={`flex size-10 items-center justify-center rounded-xl ${done === kind ? 'bg-[var(--good-bg)] text-[var(--good-line)]' : TILE_TONE}`}>
                 {busy === kind ? <Loader2 size={20} className="animate-spin motion-reduce:animate-none" /> : done === kind ? <Check size={20} strokeWidth={3} className="done-check" /> : <Icon size={20} />}
               </span>
               <span className="text-body font-bold text-ink-900">{busy === kind ? '받는 중…' : done === kind ? (kind === 'copy' ? '복사했어요' : '받았어요') : title}</span>
