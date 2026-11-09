@@ -82,7 +82,7 @@ export async function opposeWithChip(page: Page, chip: string) {
   await expect(page.getByRole('status').filter({ hasText: /^의견을 남겼어요$/ })).toBeVisible()
 }
 
-/** 「마킹된 장소」 목록의 핀 줄. 접근성 이름이 「장소 이름 …」으로 시작한다. */
+/** 「핀 찍기」 목록의 핀 줄. 접근성 이름이 「장소 이름 …」으로 시작한다. */
 export function pinRow(page: Page, name: string) {
   return page.getByRole('main', { name: '바텀시트' }).getByRole('button', { name: new RegExp(`^${name} `) })
 }

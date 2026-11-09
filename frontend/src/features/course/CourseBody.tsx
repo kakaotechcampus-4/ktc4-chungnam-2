@@ -86,11 +86,11 @@ function NotEnough({ mapId }: { mapId: string }) {
       title={NOT_ENOUGH}
       action={
         <Link to={`/maps/${mapId}/shortlist`} className="btn-outline btn-md">
-          확정된 장소 보기
+          장소 확정 탭 보기
         </Link>
       }
     >
-      마킹된 장소 탭에서 가고 싶은 곳들을 확정 리스트에 먼저 담아 보세요.
+      핀 찍기 탭에서 가고 싶은 곳들을 확정 리스트에 먼저 담아 보세요.
     </EmptyState>
   )
 }

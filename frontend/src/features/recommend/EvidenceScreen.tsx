@@ -3,7 +3,7 @@ import { ChevronLeft } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
-import { TAB_BAR_H } from '@/features/shell/layout'
+import { TAB_BAR_SPACE } from '@/features/shell/layout'
 import { usePanelBack } from '@/features/shell/panelBack'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
@@ -51,8 +51,7 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
   return (
     // 넓은 화면에서는 패널 안 탭 아래를 채운다 — 위쪽 헤더·탭은 그대로 보인다(#338).
     <div
-      className={desktop ? 'relative flex min-h-0 flex-1 flex-col bg-surface' : 'fixed inset-x-0 top-0 z-30 flex flex-col bg-surface'}
-      style={desktop ? undefined : { bottom: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
+      className={desktop ? 'relative flex min-h-0 flex-1 flex-col bg-surface' : 'fixed inset-0 z-30 flex flex-col bg-surface'}
     >
       <header className="flex items-center gap-2 border-b border-ink-100 px-4 py-3">
         {!desktop && (
@@ -87,7 +86,11 @@ export default function EvidenceScreen({ mapId, run }: { mapId: string; run: Rec
       </div>
 
       {/* 이 화면은 시트가 없어서 토스트를 아래 버튼 줄 위에 띄운다. 넓은 화면은 지도 영역 토스트 하나만 쓴다. */}
-      <div className="relative grid grid-cols-2 gap-2 border-t border-ink-100 p-4">
+      {/* 모바일은 화면 바닥까지 깔리고 탭 바가 위에 뜬다 — 버튼이 탭 바 위에 오게 그 높이만큼 아래를 비운다. */}
+      <div
+        className="relative grid grid-cols-2 gap-2 border-t border-ink-100 p-4"
+        style={desktop ? undefined : { paddingBottom: `calc(${TAB_BAR_SPACE} + 16px)` }}
+      >
         {!desktop && <Toaster controlsVisible={false} />}
         <button type="button" onClick={() => setRun(mapId, undefined)} className="btn-neutral btn-lg">
           취소

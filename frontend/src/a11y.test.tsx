@@ -31,7 +31,7 @@ describe('#959', () => {
     render(
       <>
         <input aria-label="검색" autoFocus />
-        <SheetTitle>마킹된 장소</SheetTitle>
+        <SheetTitle>핀 찍기</SheetTitle>
       </>,
     )
     expect(screen.getByRole('textbox', { name: '검색' })).toHaveFocus()
