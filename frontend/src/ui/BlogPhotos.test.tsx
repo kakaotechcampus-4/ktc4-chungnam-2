@@ -22,12 +22,18 @@ it('블로그 사진이라고 밝히고, 사진마다 출처와 새 창을 읽�
   expect(screen.getByText('네이버블로그')).toBeInTheDocument()
 })
 
-it('불러오는 동안은 빈 칸, 실패하면 짧은 글, 사진이 없으면 아무것도 그리지 않는다', () => {
+it('불러오는 동안은 빈 칸, 실패와 없음은 같은 높이의 빈 칸과 짧은 글이다(화면이 밀리지 않게)', () => {
   const { container, rerender } = render(<BlogPhotos loading />)
   expect(screen.queryByRole('link')).toBeNull()
   expect(container.querySelectorAll('.animate-pulse')).toHaveLength(3)
   rerender(<BlogPhotos failed />)
   expect(screen.getByText('사진을 불러오지 못했어요')).toBeInTheDocument()
   rerender(<BlogPhotos photos={[]} />)
-  expect(container).toBeEmptyDOMElement()
+  expect(screen.getByText('블로그 사진을 찾지 못했어요')).toBeInTheDocument()
+  expect(screen.queryByRole('link')).toBeNull()
+  // 세 상태 모두 72px 칸(size-18)을 가진다
+  for (const state of [{ loading: true }, { failed: true }, { photos: [] }]) {
+    rerender(<BlogPhotos {...state} />)
+    expect(container.querySelector('.size-18')).not.toBeNull()
+  }
 })
