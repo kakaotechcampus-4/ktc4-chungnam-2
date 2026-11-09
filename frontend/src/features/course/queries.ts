@@ -31,8 +31,14 @@ export function useCourseRunQuery(runId: string) {
 }
 
 /** 시트를 열 때 「최근 코스 보기」가 있는지. 없으면 null. */
+/** 최근 코스. 짜는 중이면 끝날 때까지 다시 받는다 — 입력 화면의 최근 코스 카드와 "코스 짜기" 막기가 이 값을 본다(#1713). */
 export function useLatestCourseQuery(mapId: string) {
-  return useQuery({ queryKey: courseKeys.latest(mapId), queryFn: () => fetchLatestCourse(mapId), refetchOnWindowFocus: false })
+  return useQuery({
+    queryKey: courseKeys.latest(mapId),
+    queryFn: () => fetchLatestCourse(mapId),
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) => (query.state.data && !isFinished(query.state.data) ? POLL_MS : false),
+  })
 }
 
 export function useCreateCourseMutation(mapId: string) {
