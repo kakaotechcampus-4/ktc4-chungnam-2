@@ -210,6 +210,14 @@ def get_pin_response_for_viewer(db: Session, *, pin_id: str, viewer_id: str, pri
     return core.to_pin_response(record, principal)
 
 
+def get_pin_responses_for_viewer(
+    db: Session, *, pin_ids: list[str], viewer_id: str, principal: Principal,
+) -> dict[str, Pin]:
+    """`get_pin_response_for_viewer`의 배치판(#1488) — 핀 id 목록을 한 번에 `{pin_id: Pin}`으로 돌려준다(쿼리 수가 핀 수와 상관없다).
+    각 Pin은 단건과 같은 조립이다. **없거나 삭제된 핀은 결과에 없다**(단건은 404) — 부르는 쪽이 키가 있는지 본다. 읽기 전용."""
+    return service.viewer_pin_responses(db, pin_ids, viewer_id, principal)
+
+
 def author_display_names(db: Session, author_ids: list[str], current_member_ids: set[str]) -> dict[str, str | None]:
     """작성자 id 배치의 표시 이름(#369 핀 작성자 규칙) — 탈퇴했으면 '탈퇴한 구성원', 이 지도에서 나갔으면
     '나간 구성원', 아니면 실명. recommend 근거 줄 작성자(#762)가 규칙을 복사하지 않고 이것을 부른다.

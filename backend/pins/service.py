@@ -244,6 +244,59 @@ def list_pins(
     return result
 
 
+def viewer_pin_responses(db: Session, pin_ids: list[str], viewer_id: str, principal: Principal) -> dict[str, Pin]:
+    """핀 id 배치의 요청자 기준 Pin 응답(#1488) — 단건(api.get_pin_response_for_viewer)과 같은 조립을 쿼리 수가 핀 수와 상관없게 한다
+    (핀·좌표·반응 수, 작성자 이름, 내 반응, 장소). 없거나 삭제된 핀은 결과에서 빠진다(단건은 404). 지도가 다른 핀이 섞여 있어도
+    구성원 집합은 지도마다 따로 구한다."""
+    uuids = []
+    for raw in dict.fromkeys(pin_ids):
+        try:
+            uuids.append(uuid.UUID(raw))
+        except ValueError:
+            continue
+    if not uuids:
+        return {}
+    lat_col, lng_col = _lat_lng_columns()
+    counts = (
+        select(
+            ReactionRow.pin_id.label("pin_id"),
+            func.count().filter(ReactionRow.type == "like").label("like"),
+            func.count().filter(ReactionRow.type == "against").label("against"),
+        )
+        .where(ReactionRow.pin_id.in_(uuids))
+        .group_by(ReactionRow.pin_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(
+            PinRow, lat_col, lng_col,
+            func.coalesce(counts.c.like, 0).label("like_count"),
+            func.coalesce(counts.c.against, 0).label("against_count"),
+        )
+        .outerjoin(counts, counts.c.pin_id == PinRow.id)
+        .where(PinRow.id.in_(uuids), PinRow.deleted_at.is_(None))
+    ).all()
+    pin_rows = [row[0] for row in rows]
+    members_by_map = {m: maps_api.DbMembershipGateway(db).current_member_ids(m) for m in {r.map_id for r in pin_rows}}
+    names_by_map = {
+        m: author_display_names(db, [r.created_by for r in pin_rows if r.map_id == m], members_by_map[m]) for m in members_by_map
+    }
+    my_reactions = my_reactions_for_pins(db, [r.id for r in pin_rows], viewer_id)
+    place_infos = places_api.get_places([r.place_id for r in pin_rows if r.place_id], db=db)
+    out: dict[str, Pin] = {}
+    for row in rows:
+        pin_row: PinRow = row[0]
+        record = record_from_row(
+            pin_row, lat=row.lat, lng=row.lng,
+            reaction_counts=core.ReactionCounts(like=row.like_count, against=row.against_count),
+            created_by_display_name=names_by_map[pin_row.map_id].get(pin_row.created_by),
+            my_reaction=my_reactions.get(pin_row.id),
+            place=place_infos.get(pin_row.place_id) if pin_row.place_id else None,
+        )
+        out[str(pin_row.id)] = core.to_pin_response(record, principal)
+    return out
+
+
 def list_trash(
     db: Session, map_id: str, principal: Principal, current_member_ids: set[str], *, now: datetime,
 ) -> core.PinTrash:
