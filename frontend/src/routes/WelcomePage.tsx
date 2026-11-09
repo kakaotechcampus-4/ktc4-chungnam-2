@@ -40,6 +40,7 @@ export default function WelcomePage() {
 
   return (
     <div className="min-h-dvh bg-surface md:flex md:items-center md:justify-center md:bg-ink-50 md:px-8 md:py-10">
+      <title>서비스 안내 | 핑고핑고</title>
       <main
         // 옆으로 미는 손가락은 이 화면이 받는다(세로 스크롤만 브라우저에 맡긴다).
         onPointerDown={(e) => (startX.current = e.clientX)}
