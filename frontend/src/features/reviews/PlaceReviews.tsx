@@ -29,10 +29,11 @@ export default function PlaceReviews({ pin }: { pin: Pin }) {
   const [asking, setAsking] = useState<{ kind: 'delete' } | { kind: 'report'; item: ReviewItemDto } | null>(null)
   const guest = guestOf(creditBlock(credits.error)) ?? guestOf(creditBlock(report.error))
 
-  // 받는 동안 비워 두면 한꺼번에 나타나며 아래 내용을 민다 — 머리 줄과 후기 한 줄 자리를 먼저 그린다(#1675).
+  // 받는 데 오래 걸리면 머리 줄과 후기 한 줄 자리를 먼저 그린다(#1675). 금방 오면(0.3초 안) 그리지 않는다 —
+  // 핀 상세는 사진·의견 칸도 함께 자리를 잡는 중이라, 뼈대가 번쩍였다 사라지면 위아래가 한 번 더 움직였다(e2e에서 「반대」 누름이 비껴갔다).
   if (reviews.isPending) {
     return (
-      <Skeleton label="후기를 불러오는 중…" className="space-y-2.5">
+      <Skeleton label="후기를 불러오는 중…" delayMs={300} className="space-y-2.5">
         <div className="flex items-center justify-between gap-2">
           <div className="space-y-1.5">
             <Bone className="h-4 w-16" />
