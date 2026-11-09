@@ -186,7 +186,7 @@ components:
 - **pingo-alert** (`#DC6A6A`, 캐릭터 시안 Alert Pink): 핑고 ALERT(의견 부족·주의)의 모자·머리 핀·물음표에만 쓴다. 글자·면·버튼에는 쓰지 않는다.
 
 ### 크레딧 동전
-- **coin-face · coin-rim · coin-shine** (`#FFC633` · `#C77A00` · `#FFF0B3`): 크레딧 동전 그림(`ui/Coin`)에만 쓴다. 확정 골드(`#F5B301`)보다 주황 쪽으로 진하게 갈라 놓았고, 면·버튼 바탕에는 쓰지 않는다 — 확정과 섞이지 않게 동전 모양이 뜻을 맡는다.
+- **coin-face, coin-rim, coin-shine** (`#FFC633`, `#C77A00`, `#FFF0B3`): 크레딧 동전 그림(`ui/Coin`, 동전을 든 핑고 `coin` — 지금 쓰는 곳은 없다)에만 쓴다. 확정 골드(`#F5B301`)보다 주황 쪽으로 진하게 갈라 놓았고, 면이나 버튼 바탕에는 쓰지 않는다 — 확정과 섞이지 않게 동전 모양이 뜻을 맡는다.
 - **coin-text** (`#8A4F00`, 흰 바탕 6.6:1): 「N 크레딧 사용」·「N 크레딧을 써요」처럼 쓸 크레딧을 알리는 글자에만 쓴다.
 
 ### Semantic
@@ -384,7 +384,8 @@ components:
 | 넓은 화면 ☰ 메뉴(내 지도로 돌아가기 · 자주 묻는 질문 · 버그 신고하기 · 의견 보내기 · 설정) | `AppMenu` | `features/shell/AppMenu` |
 | 핀은 있는데 구성원이 나 하나일 때 초대 안내(마킹 탭 목록 위) | `AloneInvite` (핑고 물 면 · 핑고 40 · 「아직 나 혼자예요」 14/700 · `btn-outline btn-sm` 「친구 초대하기」, 버튼 글자는 온보딩과 같다, #1560) | `features/map/AloneInvite` |
 | 자주 묻는 질문 | `FaqSheet` (글은 `features/help/faq`, 정책 숫자는 적지 않는다. 답 위에 `WelcomeScene` 장면, 폭 최대 280) | `features/help/FaqSheet` |
-| 지도 대표 이미지(올린 사진 또는 지역 명소 그림), 이미지·색 편집 창 | `MapCover` · `CoverSheet` · `ColorSheet`. 이미지 창은 사진 고르기·「기본 그림으로」가 미리보기만 바꾸고, 맨 아래 「닫기」(btn-neutral) · 「저장」(btn-primary, 바꾼 게 없으면 누를 수 없음)이 반반이다. 「저장」이 올리고 창을 닫는다(#1643). 기본 그림은 `RegionCover`(320×140, 평면 2D 명소: 서울 광화문 · 부산 광안대교 · 대구 83타워 · 광주 무등산 서석대 · 대전 한빛탑 · 춘천 소양강 스카이워크, 그 밖은 길 위 핀 둘). 핑고 캐릭터는 넣지 않는다. 지도 색 견본은 `features/maps/look`의 파스텔 8색 | `features/maps/MapLook`, `ui/RegionCover` |
+| 지도 대표 이미지(올린 사진 또는 지역 명소 그림), 이미지·색 편집 창 | `MapCover` · `CoverSheet` · `ColorSheet`. 이미지 창은 사진 고르기·「기본 그림으로」가 미리보기만 바꾸고, 맨 아래 「닫기」(btn-neutral) · 「저장」(btn-primary, 바꾼 게 없으면 누를 수 없음)이 반반이다. 「저장」이 올리고 창을 닫는다(#1643). 색 창도 같다 — 견본·직접 고르기·「색 없음」은 미리보기 카드만 바꾸고 「저장」이 저장한다. 기본 그림은 `RegionCover`(320×140, 평면 2D 명소: 서울 광화문 · 부산 광안대교 · 대구 83타워 · 광주 무등산 서석대 · 대전 한빛탑 · 춘천 소양강 스카이워크, 그 밖은 길 위 핀 둘). 핑고 캐릭터는 넣지 않는다. 지도 색 견본은 `features/maps/look`의 파스텔 8색 | `features/maps/MapLook`, `ui/RegionCover` |
+| 초대 화면 대표 이미지 위 핑고 얼굴(오른쪽 아래 흰 원 32, 얼굴 22) | `CoverPingo`. 초대 카드(2:1)에만 얹는다 — 내 지도 카드에는 얹지 않는다. 카톡 미리보기 그림은 같은 자리에 워드마크다(서버 `maps/preview.py`, #1625) | `ui/CoverPingo` |
 | 카드 구석 「⋯」 동작 메뉴(내 지도 카드) | `ActionMenu` (radix DropdownMenu, 항목 높이 44, 위험 동작은 `--action-danger` 글자로 맨 끝, 고르면 바로 닫힘) | `features/shell/ActionMenu` |
 | 지도 바꾸기(넓은 화면 패널 제목) | `MapSwitcher` | `features/maps/MapSwitcher` |
 | 삭제한 지도 휴지통(목록 끝 `btn-text` 입구 + 바닥 시트, 줄마다 「복구」 `btn-outline btn-sm`) | `TrashSheet` | `features/maps/TrashSheet` |

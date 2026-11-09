@@ -139,7 +139,8 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
   }
   // 게스트는 묻지 않는다 — 버튼 자리에 이미 카카오 안내가 있고, 실행해도 403 이다.
   const guest = creditBlock(useCreditsQuery().error)?.kind === 'guest'
-  useAgentStart(cards, (category) => {
+  // 캐시에 남은 예전 준비 상태로 고르지 않는다 — 처음 열 때 다시 받는 중이면 끝난 값을 기다린다(#1583).
+  useAgentStart(readiness.isFetching ? [] : cards, (category) => {
     setPicked(mapId, category)
     if (!guest) ask(category, true)
   })

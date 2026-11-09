@@ -260,7 +260,16 @@ export function inviteErrorMessage(err: unknown): string {
   return INVITE_ERROR_MESSAGES[err.code] ?? '참여하지 못했어요'
 }
 
-export type InviteView = { title: string; dates: string; memberCount: number; pinCount: number; inviter: string }
+export type InviteView = {
+  title: string
+  dates: string
+  memberCount: number
+  pinCount: number
+  inviter: string
+  /** 카드 그림(#1625) — 대표 이미지가 없으면 지역 그림이다. MapCover 가 그린다. */
+  region?: string
+  coverUrl?: string
+}
 
 export function toInviteView(invite: InviteSummaryDto): InviteView {
   return {
@@ -269,6 +278,8 @@ export function toInviteView(invite: InviteSummaryDto): InviteView {
     memberCount: invite.member_count,
     pinCount: invite.pin_count,
     inviter: invite.inviter_display_name,
+    region: invite.region?.label,
+    coverUrl: invite.cover_url ?? undefined,
   }
 }
 
