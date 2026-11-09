@@ -3003,6 +3003,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pins/{pinId}/photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 핀 상세 블로그 사진(#1157) — 핀이 가리키는 자체 DB 장소를 다룬 블로그 사진의 미리보기 최대 3장.
+         *     서버가 그 장소의 상호명과 구, 도로명 주소로 카카오(다음) 이미지 검색을 부르고, 이모티콘, 지도 캡처, 링크 미리보기, 작은 사진, **사람 얼굴이 보이는 사진**을 뺀다(얼굴은 미리보기를 받아 메모리에서 검출하고 버린다)
+         *     (규칙은 `places/photos.py` 한 곳). **응답은 저장하거나 캐시하지 않고 넘기기만 한다**(#53과 같은 규칙) — 열 때마다 새로 부른다.
+         *     화면은 "블로그 사진"으로 밝히고 출처 사이트 이름을 붙이며, 누르면 `link_url`(원문 글)을 새 창으로 연다.
+         *     실시간 핀(`source: live`)은 주소를 저장하지 않아 빈 배열이다. 주소가 없는 장소, 개발 모드(PLACES_MODE=dev)도 빈 배열이다.
+         *     구성원 누구나 조회한다(반응 목록과 같은 권한). 사용자당 호출 상한이 있다(초과 시 429, 장소 검색과 같은 상한을 따로 센다).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    pinId: components["parameters"]["PinId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 없으면 빈 배열 — 지어내지 않는다 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PinPhoto"][];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["PlacesUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/recommend/readiness": {
         parameters: {
             query?: never;
@@ -5295,6 +5343,15 @@ export interface components {
              * @description 그 반응을 남기거나 마지막으로 바꾼 시각
              */
             updated_at: string;
+        };
+        /** @description 블로그 사진 한 장(#1157). 카카오가 만든 미리보기 주소와 원문 글 주소, 출처 사이트 이름. 저장하지 않는다(#53과 같은 규칙) */
+        PinPhoto: {
+            /** @description 카카오 미리보기 이미지 주소. 사진 원본 주소가 아니다 */
+            thumbnail_url: string;
+            /** @description 사진이 실린 원문 글 주소. 새 창으로 연다 */
+            link_url: string;
+            /** @description 출처 사이트 이름(예 네이버블로그). 모르면 빈 문자열 */
+            site_name: string;
         };
         Reaction: {
             pin_id: string;

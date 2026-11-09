@@ -4,6 +4,8 @@ import { ApiError } from '@/api'
 import { UNKNOWN_NAME } from '@/ui/UnknownName'
 
 export type PinDto = components['schemas']['Pin']
+/** 핀 상세 블로그 사진 한 장(#1157) — 카카오 미리보기 주소, 원문 글 주소, 출처 사이트 이름. */
+export type PinPhotoDto = components['schemas']['PinPhoto']
 /** 지금은 응답 그대로다. 화면용으로 바꿀 게 생기면(반응 집계 등) 여기서 바꾸고 화면은 그대로 둔다. */
 export type Pin = PinDto
 
