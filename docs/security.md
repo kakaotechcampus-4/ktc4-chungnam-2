@@ -8,7 +8,7 @@
 | 영역 | 내용 | 근거 |
 |---|---|---|
 | 세션 | 무상태 HMAC-SHA256 서명 토큰, TTL 30일. 로그아웃·탈퇴는 `users.sessions_valid_after`로 이전 토큰을 무효화 | `docs/tech-stack.md`, `backend/auth/` |
-| 쿠키 | `session`·`kakao_oauth_state`·`pending_account` 모두 HttpOnly, SameSite=Lax. 운영은 Secure 강제 | `backend/auth/router.py`, `backend/common/settings.py`(COOKIE_SECURE 가드) |
+| 쿠키 | `session`·`kakao_oauth_state`·`google_oauth_state`(#1514)·`pending_account` 모두 HttpOnly, SameSite=Lax. 운영은 Secure 강제 | `backend/auth/router.py`, `backend/common/settings.py`(COOKIE_SECURE 가드) |
 | 로그인 CSRF | 서버가 만든 `state`를 서명 쿠키에 넣고 콜백에서 대조. 콜백 링크는 한 번만 쓴다 | `docs/CHANGELOG-api.md`(로그인 CSRF 항목) |
 | 운영 설정 가드 | CORS `*` 금지, 비밀값 32자 이상·기본값 금지, DB TLS(sslmode), 주소 https·호스트 일치 | `backend/common/settings.py`(#1210) |
 | 요청 제한 | 검색·링크 가져오기·피드백·게스트 입장에 인메모리 슬라이딩 윈도 | `backend/common/ratelimit.py` — 프로세스 재시작 시 초기화, 인스턴스가 여럿이면 각자 센다 |
@@ -19,7 +19,7 @@
 
 | # | 빈 곳 | 상태 |
 |---|---|---|
-| 1 | 의존성 취약점 점검이 CI에 없었다 | **이 PR(#1430)에서 알림 전용으로 추가**(`.github/workflows/security-audit.yml`) |
+| 1 | 의존성 취약점 점검이 CI에 없었다 | **#1430에서 추가**(`.github/workflows/security-audit.yml`, 알림 전용. PR과 매주, 의존성 파일이 바뀔 때 pip-audit·npm audit) |
 | 2 | 보안 응답 헤더(HSTS, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, CSP) | `deploy/Caddyfile`에는 `X-Robots-Tag`뿐이다. 카카오 로그인 리다이렉트·카카오맵 SDK에 영향이 있을 수 있어 스테이징에서 확인 후 적용 |
 | 3 | 요청 제한이 닿지 않는 엔드포인트(로그인·초대 수락·일반 쓰기 등) | 전수 점검 안 함(확인 못 함). 인메모리라 다중 인스턴스에서 약하다 — 앞단(Caddy) IP 기준 제한 검토 |
 | 4 | 보안 이벤트(로그인 실패·권한 거부·429 급증) 감사 로그와 알림 | 모으는 곳을 확인하지 못함 |

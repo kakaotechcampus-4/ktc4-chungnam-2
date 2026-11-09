@@ -108,7 +108,7 @@ describe('겹친 핀 묶음(#1576)', () => {
   const groupButton = () => [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.getAttribute('aria-label')?.startsWith('핀 '))
   const pinShown = (id: string) => {
     const el = [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.getAttribute('aria-label')?.startsWith(`가게${id},`))
-    return Boolean(el) && el!.style.display !== 'none'
+    return Boolean(el) && !el!.hidden
   }
 
   it(`핀 끝끼리 ${PIN_GROUP_PX}px 안이면 숫자 핀 하나로 묶이고, 누르면 그 핀들과 좌표를 넘긴다`, () => {
@@ -122,6 +122,14 @@ describe('겹친 핀 묶음(#1576)', () => {
     expect(pinShown('3')).toBe(true)
     groupButton()!.click()
     expect(onGroup).toHaveBeenCalledWith(['1', '2'], [{ lat: 100, lng: 100 }, { lat: 104, lng: 110 }])
+  })
+
+  it('묶음을 정리해도 낱개 핀의 가운데 정렬(display:flex)은 그대로다 — 비우면 핀 그림만 왼쪽 위로 붙어 이름표 꼬리가 어긋났다', () => {
+    const { maps, map } = fakeMaps(4)
+    createMarkerLayer(maps, map, () => {}, () => {}).sync([pin('1', 100, 100), pin('2', 110, 104), pin('3', 300, 100)], 4)
+    const el = [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.getAttribute('aria-label')?.startsWith('가게3,'))!
+    expect(el.hidden).toBe(false)
+    expect(el.style.display).toBe('flex')
   })
 
   it('확대해서 벌어지면 풀리고, 고른 핀은 묶지 않는다', () => {

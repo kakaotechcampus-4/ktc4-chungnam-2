@@ -28,3 +28,13 @@ export function formatRestoreUntil(iso: string): string {
   const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   return `${d.getMonth() + 1}.${d.getDate()} (${'일월화수목금토'[d.getDay()]}) ${time}`
 }
+
+/**
+ * 초대 링크(`https://…/invites/<토큰>`)나 토큰만 붙여 넣은 글에서 토큰을 꺼낸다(#1631).
+ * 붙여 넣은 주소로 직접 가지 않고 이 토큰으로 앱 안의 초대 화면에 간다. 그래서 다른 사이트 주소는 밖으로 나가지 않는다.
+ * 토큰은 서버의 `secrets.token_urlsafe(32)`(43자, 영문, 숫자, `-`, `_`)다. 토큰만 넣은 글은 16자 이상이어야 받는다.
+ */
+export function inviteToken(text: string): string | null {
+  const t = text.trim()
+  return t.match(/\/invites\/([\w-]+)/)?.[1] ?? (/^[\w-]{16,}$/.test(t) ? t : null)
+}

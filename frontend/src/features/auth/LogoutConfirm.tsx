@@ -12,6 +12,7 @@ export default function LogoutConfirm({ onCancel }: { onCancel: () => void }) {
       title="로그아웃할까요?"
       body="지도와 핀은 그대로 남아요."
       ok="로그아웃"
+      danger
       pending={logout.isPending}
       onCancel={onCancel}
       // 캐시를 비웠는데 지금 주소가 '/'(내 지도 목록)이면 navigate 로는 다시 그려지지 않아 로그인한 채 화면이 남는다 — 새로 읽는다.

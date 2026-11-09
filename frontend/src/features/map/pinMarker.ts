@@ -195,10 +195,10 @@ type PinTone = 'normal' | 'confirmed' | 'candidate' | 'search'
 
 /** 이름표 색 — 핀의 윤곽선 색(line)으로 테두리·글자를, 고르면 핀의 채움 색(fill)으로 채우고 그 위 글자(on). */
 const LABEL_TONE: Record<PinTone, { line: string; fill: string; on: string }> = {
-  normal: { line: 'var(--pin-outline)', fill: 'var(--pin-outline)', on: '#fff' },
-  confirmed: { line: 'var(--pin-confirmed-mark)', fill: 'var(--pin-confirmed)', on: 'var(--pin-confirmed-mark)' },
-  candidate: { line: 'var(--brand-700)', fill: 'var(--brand-500)', on: '#fff' },
-  search: { line: 'var(--pin-stroke)', fill: 'var(--pin-stroke)', on: '#fff' },
+  normal: { line: 'var(--pin-label-normal)', fill: 'var(--pin-outline)', on: '#fff' },
+  confirmed: { line: 'var(--pin-label-confirmed)', fill: 'var(--pin-confirmed)', on: 'var(--pin-confirmed-mark)' },
+  candidate: { line: 'var(--pin-label-candidate)', fill: 'var(--brand-500)', on: '#fff' },
+  search: { line: 'var(--pin-label-search)', fill: 'var(--pin-stroke)', on: '#fff' },
 }
 
 /** 이름표 자리(px) — 핀 끝에서 띄우는 거리(꼬리 높이 포함)와 높이. 겹침 정리(markerLayer)도 이 값으로 잰다. */
