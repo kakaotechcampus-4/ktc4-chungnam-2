@@ -355,3 +355,6 @@ export function kmInputToM(text: string, min: number, max: number, step: number)
   const m = Math.round((km * 1000) / step) * step
   return m >= min && m <= max ? m : null
 }
+
+/** 다른 탭에 있는 동안 추천이 끝났을 때 AI 추천 탭 위 말풍선 글(#1704). 0곳일 수도 있어 "도착" 대신 "결과가 나왔어요"다. */
+export const runNewsText = (category: string, found: boolean) => (found ? `${category} 추천 결과가 나왔어요` : `${category} 추천을 찾지 못했어요`)

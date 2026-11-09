@@ -12,7 +12,6 @@ import { usePinsQuery } from '@/features/map/queries'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
-import { showToast } from '@/features/shell/toast'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import DayRoute from '@/features/shortlist/DayRoute'
 import { useShortlistQuery } from '@/features/shortlist/queries'
@@ -31,6 +30,7 @@ import SheetTitle from '@/ui/SheetTitle'
 import Mark from '@/ui/Mark'
 import Sentences from '@/ui/Sentences'
 import TaskProgress from '@/ui/TaskProgress'
+import TipBubble from '@/ui/TipBubble'
 
 /**
  * 장소 확정 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 위에서 날을 고른 뒤 줄의 「넣기」로 그날에 넣는다.
@@ -54,6 +54,13 @@ export default function ShortlistTab() {
   const [putDay, setPutDay] = useState<string | null>(null)
   // 리스트를 분류로 걸러 본다(기획안 5-3, #1559). 일정·넣기는 거르지 않은 리스트 그대로다.
   const [category, setCategory] = useState<PinFilters['category']>(null)
+  // 아직 못 쓰는 동선 보기를 누르면 이유를 그 버튼 아래 말풍선으로 잠깐 보인다(#1704, 전에는 화면 아래 토스트).
+  const [routeTip, setRouteTip] = useState(false)
+  useEffect(() => {
+    if (!routeTip) return
+    const t = setTimeout(() => setRouteTip(false), ROUTE_TIP_MS)
+    return () => clearTimeout(t)
+  }, [routeTip])
 
   // 확정 탭을 떠나면 「일정 짜기」 패널을 닫는다.
   useEffect(() => () => leaveScheduleTab(), [mapId])
@@ -87,7 +94,7 @@ export default function ShortlistTab() {
   }
 
   function toggleRoute() {
-    if (!routeOn && scheduled === 0) return showToast('장소를 날짜별 일정에 넣으면 동선을 확인할 수 있어요')
+    if (!routeOn && scheduled === 0) return setRouteTip(true)
     setRouteOn(!routeOn)
   }
 
@@ -129,9 +136,16 @@ export default function ShortlistTab() {
               {/* AI 코스 짜기는 따로 탭이다(「AI 코스」). 「일정 짜기」 패널은 넓은 화면에만 있다 — 휴대폰은 줄의 「넣기」로 넣고 동선 보기로 고친다. */}
               {/* 다 넣었으면 완료 카드에 같은 버튼이 있어 여기서는 뺀다(#1680). 켜져 있을 때는 끄는 자리라 남긴다. */}
               {(routeOn || !allPlaced) && (
-                <button type="button" aria-pressed={routeOn} aria-disabled={!routeOn && scheduled === 0} onClick={toggleRoute} className="chip">
-                  동선 보기{routeOn && <Mark kind="check" size={14} />}
-                </button>
+                <span className="relative">
+                  <button type="button" aria-pressed={routeOn} aria-disabled={!routeOn && scheduled === 0} onClick={toggleRoute} className="chip">
+                    동선 보기{routeOn && <Mark kind="check" size={14} />}
+                  </button>
+                  {routeTip && (
+                    <TipBubble side="bottom" align="end">
+                      장소를 날짜별 일정에 넣으면 동선을 확인할 수 있어요
+                    </TipBubble>
+                  )}
+                </span>
               )}
               {desktop && (
                 // 다시 누르면 닫힌다(패널의 ✕·Esc와 같다).
@@ -250,6 +264,9 @@ export default function ShortlistTab() {
 
 /** 장소를 하나도 넣지 않은 여행 날 수. */
 const emptyDays = (dates: string[], days: Record<string, string[]>) => dates.filter((d) => !days[d]?.length).length
+
+/** 동선 보기 말풍선이 떠 있는 시간. */
+const ROUTE_TIP_MS = 3000
 
 /** 일정 카드에 보이는 날 수. 넘치면 「외 N일」로 줄인다. */
 const DAY_ROWS = 4
