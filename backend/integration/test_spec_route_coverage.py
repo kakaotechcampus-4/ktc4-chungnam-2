@@ -23,7 +23,6 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 # (method, 경로 — 파라미터는 {}로 정규화) -> 추적 이슈
 KNOWN_MISSING: dict[tuple[str, str], str] = {
     # #1556 계약 PR — maps 서버 PR이 두 경로를 만들면서 이 두 줄을 지운다.
-    ("post", "/maps/{}/seen"): "#1556",
     ("get", "/maps/{}/news"): "#1556",
 }
 
