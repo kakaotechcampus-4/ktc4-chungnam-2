@@ -23,6 +23,7 @@ import { usePinFilters } from '@/features/map/usePinFilters'
 import { boundaryCorners, useRegionBoundary } from '@/features/map/regionGeo'
 import MapSwitcher from '@/features/maps/MapSwitcher'
 import NotificationBell from '@/features/notifications/NotificationBell'
+import { useNotificationsQuery } from '@/features/notifications/queries'
 import { AccountMenu } from '@/features/maps/AccountSheet'
 import { useMapQuery, useMapsQuery } from '@/features/maps/queries'
 import { useAiStore } from '@/features/recommend/aiStore'
@@ -49,6 +50,7 @@ import { ConnectionBanner } from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop, useIsPc } from '@/features/shell/useIsDesktop'
+import Avatar from '@/ui/Avatar'
 import ErrorBoundary from '@/ui/ErrorBoundary'
 import { PingoMark } from '@/ui/Pingo'
 import { ClearButton } from '@/ui/TextField'
@@ -108,6 +110,7 @@ export default function MapLayout() {
   const [searchText, setSearchText] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
   const me = useMeQuery().data
+  const unread = useNotificationsQuery().data?.pages[0]?.unread_count ?? 0
   const myId = me?.id
   const myMaps = useMapsQuery().data?.items ?? []
   const searchBox = useRef<HTMLDivElement>(null)
@@ -495,7 +498,7 @@ export default function MapLayout() {
                 <Wordmark onFill className="h-5 w-auto" />
               </div>
               <nav aria-label="지도 탭" className="mt-2 flex gap-1 pb-2">
-                {TABS.map((tab) => (
+                {TABS.filter((tab) => !tab.mobileOnly).map((tab) => (
                   <PanelTab key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} />
                 ))}
               </nav>
@@ -550,8 +553,8 @@ export default function MapLayout() {
                 }
               />
             ) : (
+              // 알림은 휴대폰에서 「내 프로필」 탭으로 옮겼다 — 오른쪽 위는 손이 닿기 어렵다(#1660). 안 읽은 점은 탭 아이콘에 붙는다.
               <div className="flex items-center gap-3">
-                <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
                   aria-label={`지도 정보와 구성원 ${memberCount}명`}
@@ -642,7 +645,7 @@ export default function MapLayout() {
           <nav
             aria-label="지도 탭"
             style={{ height: TAB_BAR.h, bottom: `calc(${TAB_BAR.gap}px + env(safe-area-inset-bottom, 0px))` }}
-            className="fixed inset-x-4 z-40 grid grid-cols-4 gap-1 rounded-full bg-surface/90 p-1.5 shadow-float ring-1 ring-ink-200/60 backdrop-blur-md"
+            className="fixed inset-x-4 z-40 grid grid-cols-5 gap-1 rounded-full bg-surface/90 p-1.5 shadow-float ring-1 ring-ink-200/60 backdrop-blur-md"
           >
             {TABS.map((tab) => (
               <TabLink
@@ -650,7 +653,11 @@ export default function MapLayout() {
                 to={`/maps/${mapId}${tab.path}`}
                 end={tab.end}
                 label={tab.label}
-                icon={tab.Icon ? <tab.Icon size={24} /> : <PingoMark size={28} />}
+                icon={
+                  tab.path === '/me' ? <MeIcon name={me?.display_name} unread={unread > 0} />
+                  : tab.Icon ? <tab.Icon size={24} />
+                  : <PingoMark size={28} />
+                }
               />
             ))}
           </nav>
@@ -710,12 +717,30 @@ export default function MapLayout() {
  * 최종기획안 4절의 탭 3개에 「AI 코스」(#683, 확정 탭의 시트였던 것)를 더한 4개. 라벨은 고정 용어(9절). 하단 탭과 넓은 화면 패널 머리의 탭이 이 표 하나를 쓴다.
  * AI 는 선 아이콘 대신 핑고 얼굴(PingoMark)이다(Icon 없음).
  */
-const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null }[] = [
+const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null; mobileOnly?: true }[] = [
   { path: '', end: true, label: '핀 찍기', Icon: MapPin },
   { path: '/recommend', label: 'AI 추천', Icon: null },
   { path: '/shortlist', label: '장소 확정', Icon: FileText },
   { path: '/course', label: 'AI 코스', Icon: Route },
+  // 휴대폰만(#1660). 넓은 화면은 오른쪽 위 계정 원이 같은 일을 한다. 아이콘은 내 이니셜 원이다.
+  { path: '/me', label: '내 프로필', Icon: null, mobileOnly: true },
 ]
+
+/** 「내 프로필」 탭 아이콘 — 내 이니셜 원, 안 읽은 알림이 있으면 오른쪽 위 빨간 점(종과 같은 점). */
+function MeIcon({ name, unread }: { name?: string; unread: boolean }) {
+  return (
+    // 지금 탭의 회색 알약 위에서도 원이 보이게 테두리를 두른다.
+    <span className="relative rounded-full ring-1 ring-ink-300">
+      <Avatar name={name} size={24} />
+      {unread && (
+        <>
+          <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />
+          <span className="sr-only">안 읽은 알림 있음,</span>
+        </>
+      )}
+    </span>
+  )
+}
 
 /**
  * 하단 탭 칸 하나 — 아이콘 + 11/500 라벨, 비활성 ink-500(흰 바탕 대비 약 5:1). AI 추천도 같은 모양이다(핑고 얼굴).

@@ -2,12 +2,6 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import EditNameDialog from '@/features/auth/EditNameDialog'
-import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
-import LogoutConfirm from '@/features/auth/LogoutConfirm'
-import { useMeQuery } from '@/features/auth/queries'
-import FeedbackSheet from '@/features/feedback/FeedbackSheet'
-import FaqSheet from '@/features/help/FaqSheet'
 import PinTrashSheet from '@/features/map/PinTrashSheet'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import InviteLinks from '@/features/maps/InviteLinks'
@@ -19,14 +13,14 @@ import Sentences from '@/ui/Sentences'
 import MenuPopover from './MenuPopover'
 import ModalSheet from './ModalSheet'
 import { useSheetStore } from './sheetStore'
-import ThemeControl from './ThemeControl'
 
-type Confirm = 'logout' | 'leave' | 'delete' | 'edit' | 'name' | 'owner' | 'feedback' | 'bug' | 'faq' | 'trash' | null
+type Confirm = 'leave' | 'delete' | 'edit' | 'owner' | 'trash' | null
 
 /**
  * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
  * 검정 32% 딤이 지도·상단 버튼·하단 바까지 덮고, 시트는 화면 바닥에 붙는다.
  * 넓은 화면은 같은 내용을 패널 헤더 구성원 버튼 아래 메뉴로 연다(ProfileMenu). 강퇴는 v2라 버튼이 없다.
+ * 계정(이름, 로그아웃, 화면 모드, 도움 줄)은 휴대폰은 「내 프로필」 탭, 넓은 화면은 오른쪽 위 계정 원에 있다.
  */
 export default function ProfileModal({ mapId, onClose }: { mapId: string; onClose: () => void }) {
   const [confirm, setConfirm] = useState<Confirm>(null)
@@ -53,8 +47,7 @@ export function ProfileMenu({ mapId, trigger }: { mapId: string; trigger: ReactN
       holdOpen={confirm !== null}
       overlay={<ProfileConfirm mapId={mapId} which={confirm} onCancel={() => setConfirm(null)} />}
     >
-      {/* 넓은 화면의 계정은 지도 오른쪽 위 계정 원과 ☰ 메뉴에 있다(#1538). */}
-      <ProfileBody mapId={mapId} onConfirm={setConfirm} account={false} />
+      <ProfileBody mapId={mapId} onConfirm={setConfirm} />
     </MenuPopover>
   )
 }
@@ -62,26 +55,20 @@ export function ProfileMenu({ mapId, trigger }: { mapId: string; trigger: ReactN
 function ProfileConfirm({ mapId, which, onCancel }: { mapId: string; which: Confirm; onCancel: () => void }) {
   const map = useMapQuery(mapId).data
   const members = useMembersQuery(mapId).data
-  if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'leave') return <LeaveMapConfirm mapId={mapId} nextOwnerName={map?.nextOwnerName} onCancel={onCancel} />
   if (which === 'delete' && map) return <DeleteMapConfirm mapId={mapId} title={map.title} onCancel={onCancel} />
   if (which === 'edit' && map) return <EditMapDialog map={map} onCancel={onCancel} />
-  if (which === 'name') return <EditNameDialog onCancel={onCancel} />
   if (which === 'owner' && members) return <TransferOwnerConfirm mapId={mapId} members={members} onCancel={onCancel} />
-  if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
-  if (which === 'bug') return <FeedbackSheet mapId={mapId} initialCategory="bug" onClose={onCancel} />
-  if (which === 'faq') return <FaqSheet onClose={onCancel} />
   if (which === 'trash') return <PinTrashSheet mapId={mapId} onClose={onCancel} />
   return null
 }
 
-/** 지도 정보 시트·메뉴 공통 내용 — 초대 링크, 구성원, 핀 휴지통, 나가기·삭제, 계정(`account`, 휴대폰만). */
-function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onConfirm: (which: Confirm) => void; account?: boolean }) {
+/** 지도 정보 시트와 메뉴 공통 내용: 초대 링크, 구성원, 핀 휴지통, 나가기와 삭제. */
+function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: Confirm) => void }) {
   const map = useMapQuery(mapId)
   const members = useMembersQuery(mapId)
   const { url, token, status: inviteStatus, error: inviteError, retry: retryInvite, copied, copy, share } = useShareInvite(mapId)
   const isOwner = map.data?.isOwner === true
-  const me = useMeQuery()
 
   return (
     <>
@@ -183,39 +170,11 @@ function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onCo
           )}
         </div>
       )}
-
-      {account && (
-        <>
-          <div className="mt-4 flex items-center justify-between border-t border-ink-200 pt-4">
-            <div>
-              <p className="text-sm font-bold text-ink-900">계정</p>
-              <p className="text-xs text-ink-500">
-                {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '로그인됨 · '}
-                {me.data?.display_name}{' '}
-                <button type="button" onClick={() => onConfirm('name')} className="btn-link">
-                  이름 바꾸기
-                </button>
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onConfirm('logout')}
-              className="btn-neutral btn-sm"
-            >
-              로그아웃
-            </button>
-          </div>
-          {me.data?.is_guest && <div className="mt-3"><GuestAccountNotice /></div>}
-          {/* 휴대폰에는 ☰ 메뉴가 없어서 화면 모드를 여기 둔다(#1412). 넓은 화면은 ☰ 「설정」이다. */}
-          <ThemeControl className="mt-4" />
-          <HelpLinks onPick={onConfirm} />
-        </>
-      )}
     </>
   )
 }
 
-/** 계정 칸 아래 도움 줄(휴대폰) — 자주 묻는 질문 · 버그 신고하기 · 의견 보내기. 넓은 화면은 ☰ 메뉴에 있다(#1538). */
+/** 계정 칸 아래 도움 줄(휴대폰 「내 프로필」 탭, 내 지도 목록 계정 시트): 자주 묻는 질문, 버그 신고하기, 의견 보내기. 넓은 화면은 ☰ 메뉴에 있다(#1538). */
 export function HelpLinks({ onPick }: { onPick: (which: 'faq' | 'bug' | 'feedback') => void }) {
   return (
     <div className="mt-3 flex justify-center gap-4">

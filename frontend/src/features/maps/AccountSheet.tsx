@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
@@ -58,18 +58,32 @@ export function AccountMenu({ maps, name }: { maps: MapView[]; name?: string }) 
   )
 }
 
-function AccountConfirm({ which, onCancel }: { which: Confirm; onCancel: () => void }) {
+/**
+ * 지도 화면 「내 프로필」 탭(휴대폰)의 계정 칸. 시트·메뉴 없이 탭 시트 안에 그대로 놓는다.
+ * `links`는 이름 줄 바로 아래 바로 가기 자리, `mapId`는 의견 보내기에 지금 지도를 붙인다.
+ */
+export function AccountSection({ maps, mapId, links }: { maps: MapView[]; mapId?: string; links?: ReactNode }) {
+  const [confirm, setConfirm] = useState<Confirm>(null)
+  return (
+    <>
+      <AccountBody maps={maps} onConfirm={setConfirm} links={links} />
+      <AccountConfirm which={confirm} mapId={mapId} onCancel={() => setConfirm(null)} />
+    </>
+  )
+}
+
+function AccountConfirm({ which, mapId, onCancel }: { which: Confirm; mapId?: string; onCancel: () => void }) {
   if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'withdraw') return <WithdrawConfirm onCancel={onCancel} />
   if (which === 'name') return <EditNameDialog onCancel={onCancel} />
-  if (which === 'feedback') return <FeedbackSheet onClose={onCancel} />
-  if (which === 'bug') return <FeedbackSheet initialCategory="bug" onClose={onCancel} />
+  if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
+  if (which === 'bug') return <FeedbackSheet mapId={mapId} initialCategory="bug" onClose={onCancel} />
   if (which === 'faq') return <FaqSheet onClose={onCancel} />
   return null
 }
 
 /** 계정 시트·메뉴 공통 내용. 지도마다 초대 링크가 따로라 줄마다 복사 버튼을 둔다. */
-function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: Confirm) => void }) {
+function AccountBody({ maps, onConfirm, links }: { maps: MapView[]; onConfirm: (which: Confirm) => void; links?: ReactNode }) {
   const me = useMeQuery().data
   const invite = useCreateInviteMutation()
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -121,6 +135,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
           이름 바꾸기
         </button>
       </div>
+      {links}
       {me?.is_guest && <div className="mb-5 mt-1"><GuestAccountNotice /></div>}
 
       {maps.length > 0 && (
