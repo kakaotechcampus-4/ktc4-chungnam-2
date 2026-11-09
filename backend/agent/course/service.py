@@ -31,8 +31,7 @@ from agent import service as agent_service
 from agent.course import goals as goals_mod, runner, worklog
 from agent.course.api_schemas import CourseRequest, CourseRun
 from agent.course.constants import (
-    COURSE_DAYS_MAX, STARTUP_ORPHAN_AFTER, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE,
-    MAP_SUMMARY_SECTIONS, MAX_PLACES, MIN_PLACES,
+    COURSE_DAYS_MAX, EXCLUDED_OVER_LIMIT, EXCLUDED_OVER_LIMIT_MESSAGE, MAP_SUMMARY_SECTIONS, MAX_PLACES, MIN_PLACES, STALE_AFTER,
 )
 from agent.course.core import MemberConstraint
 from agent.course.gateways import CourseLlm
@@ -51,10 +50,6 @@ from shortlist import api as shortlist_api
 log = logging.getLogger("pingo.agent.course")
 
 CREDIT_FEATURE = "course"      # credits 가격표의 키(= llm_calls.feature 라벨). 가격은 credits/constants.py에서 찾는다
-
-# 진행 중으로 남은 run이 이 시간을 넘기면 죽은 것으로 보고 끝낸다 — 서버 재시작이 정리해 주지 못한 경우(여러 인스턴스 등)에도
-# 사용자가 영영 COURSE_IN_PROGRESS에 막히지 않게 한다. 모델 호출 상한(약 1분)보다 충분히 길다
-STALE_AFTER = timedelta(minutes=15)
 
 
 # ---------------------------------------------------------------- 지도 읽기
@@ -151,6 +146,7 @@ class CourseJob:
     run_id: str
     build: TripBuild
     request_text: str
+    created_at: datetime   # run의 created_at — 실행 상한의 기준 시각이다(끊긴 run 판정과 같은 기준, #1609)
     map_id: str            # 사용량 기록(llm_calls, #870)의 라벨
     requested_by: str
     map_items: tuple[goals_mod.SummaryItem, ...] = ()     # 우리 조건 요약 줄(지도 목표 후보의 근거, #1131 B안)
@@ -173,11 +169,12 @@ def read_map_items(db: Session, map_id: str) -> tuple[goals_mod.SummaryItem, ...
 
 def fail_stale_runs(
     db: Session, *, now: datetime, map_id: Optional[str] = None, requested_by: Optional[str] = None,
-    run_id: Optional[uuid.UUID] = None, after: timedelta = STALE_AFTER,
+    run_id: Optional[uuid.UUID] = None,
 ) -> int:
-    """`after`(기본 STALE_AFTER)를 넘겨 진행 중으로 남은 run을 INTERRUPTED로 끝내고 그 run마다 크레딧을 돌려준다. 오래됐다는 판정은
-    여기 한 곳이다 — 요청(지도+사람)과 조회(run id, 또는 지도+사람)는 범위만 달리해서, 서버 시작은 전체 범위에 더 짧은 `after`로 부른다.
-    이미 끝난 run과 `after` 안의 run은 걸리지 않는다. 환불은 끝내기와 같은 트랜잭션이고 멱등이다(#950). 끝낸 수. 커밋은 호출부."""
+    """시작(created_at) 뒤 STALE_AFTER(실행 상한 + 여유, constants)가 지나도록 진행 중으로 남은 run을 INTERRUPTED로 끝내고 그 run마다
+    크레딧을 돌려준다. 살아 있는 run은 상한 안에 끝나므로 이 run은 어느 프로세스의 것이든 죽은 것이다(#1609). 끊긴 run 판정은 여기
+    한 곳이다 — 요청(지도+사람), 조회(run id, 또는 지도+사람), 서버 시작(전체)이 범위만 달리해 부른다. 이미 끝난 run과 STALE_AFTER 안의
+    run은 걸리지 않는다. 환불은 끝내기와 같은 트랜잭션이고 멱등이다(#950). 끝낸 수. 커밋은 호출부."""
     scope = [
         col == value for col, value in (
             (AgentCourseRun.map_id, map_id), (AgentCourseRun.requested_by, requested_by), (AgentCourseRun.id, run_id),
@@ -185,7 +182,7 @@ def fail_stale_runs(
     ]
     ended = db.execute(
         update(AgentCourseRun)
-        .where(*scope, AgentCourseRun.status.in_(ACTIVE_STATUSES), AgentCourseRun.created_at < now - after)
+        .where(*scope, AgentCourseRun.status.in_(ACTIVE_STATUSES), AgentCourseRun.created_at < now - STALE_AFTER)
         .values(status="failed", failure_code="INTERRUPTED", finished_at=now)
         .returning(AgentCourseRun.id)
     ).scalars().all()
@@ -237,7 +234,7 @@ def request_course(db: Session, *, map_id: str, requested_by: str, body: CourseR
     except IntegrityError:      # 동시 요청이 확인을 함께 통과했다 — 부분 유니크 인덱스가 하나만 남긴다
         raise AppError("COURSE_IN_PROGRESS") from None
     credits_api.charge(db, user_id=requested_by, feature=CREDIT_FEATURE, run_id=str(row.id))
-    return CourseJob(str(row.id), build, text, map_id=map_id, requested_by=requested_by, map_items=read_map_items(db, map_id))
+    return CourseJob(str(row.id), build, text, now, map_id=map_id, requested_by=requested_by, map_items=read_map_items(db, map_id))
 
 
 # ---------------------------------------------------------------- 실행 (백그라운드)
@@ -249,7 +246,7 @@ def execute_run(
     돌려준다. 저장까지 실패해 running으로 남은 run은 fail_stale_runs가 INTERRUPTED로 끝내며 돌려준다.
 
     세션은 짧게 여러 번이다: ① running 표시, ② 단계가 생길 때마다 steps 저장(progress_writer), ③ 결과 저장. 사이에서 모델을
-    부른다 — 그동안 연결을 잡지 않는다."""
+    부른다 — 그동안 연결을 잡지 않는다. 실행 상한(constants.RUN_LIMIT)은 run의 created_at부터 센다(큐 대기 포함, #1609)."""
     run_id = uuid.UUID(job.run_id)
     try:
         with session_factory() as db:
@@ -265,7 +262,7 @@ def execute_run(
                 computed = runner.run_course(
                     job.build, job.request_text, map_items=job.map_items,
                     goals_planner=llm.goals_planner, direct_planner=llm.direct_planner, gateway=gateway,
-                    on_step=progress_writer(session_factory, run_id),
+                    on_step=progress_writer(session_factory, run_id), started_at=job.created_at,
                 )
             values = _done_values(computed)
         except Exception as exc:   # noqa: BLE001 — 엔진 오류가 run을 running으로 남기면 안 된다. 클래스 이름만 로그(사유·요청 원문 금지)
@@ -279,7 +276,7 @@ def execute_run(
             if saved and values["status"] == "failed":     # 결과 없이 끝났다 — 끝내기와 같은 트랜잭션에서 돌려준다
                 refund_credit(db, run_id)
             db.commit()
-    except Exception as exc:   # noqa: BLE001 — DB 오류 등. 남은 running은 STALE_AFTER 뒤 다음 요청이 정리한다
+    except Exception as exc:   # noqa: BLE001 — DB 오류 등. 남은 running은 STALE_AFTER 뒤 요청·조회가 정리한다
         log.warning("course run %s 저장 실패: %s", job.run_id, type(exc).__name__)
 
 
@@ -312,11 +309,11 @@ def _done_values(c: runner.Computation) -> dict:
 
 
 def interrupt_unfinished_runs(session_factory: Callable[[], Session], *, now: Optional[datetime] = None) -> int:
-    """서버 시작 때 부른다 — 죽은 프로세스가 남긴 진행 중(queued·running) run을 INTERRUPTED로 끝낸다. 시작한 지
-    STARTUP_ORPHAN_AFTER가 안 된 run은 다른 프로세스에서 아직 도는 것일 수 있어 두고, 오래됐다는 판정은 `fail_stale_runs`와
-    같다(임계만 짧다, #813) — 크레딧 환불도 거기서 한다. 남은 run은 STALE_AFTER 뒤 요청과 조회가 정리한다. 끝낸 수를 돌려준다."""
+    """서버 시작 때 부른다 — 죽은 프로세스가 남긴 진행 중(queued·running) run을 INTERRUPTED로 끝낸다. 판정과 환불은 요청·조회와 같은
+    `fail_stale_runs`이고 범위만 전체다(#1609). STALE_AFTER 안의 run은 다른 프로세스에서 아직 도는 것일 수 있어 두고, 그 run이 끊긴
+    것이었다면 STALE_AFTER 뒤 요청과 조회가 끝낸다. 끝낸 수를 돌려준다."""
     with session_factory() as db:
-        n = fail_stale_runs(db, now=now or datetime.now(timezone.utc), after=STARTUP_ORPHAN_AFTER)
+        n = fail_stale_runs(db, now=now or datetime.now(timezone.utc))
         db.commit()
     return n
 
