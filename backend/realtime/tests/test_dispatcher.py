@@ -42,6 +42,12 @@ def test_private_subscription_wants_only_matching_recipient(event_loop_policy_ro
     assert sub.wants(Row(3, "map1", "public", "x", {})) is False
 
 
+@pytest.fixture(autouse=True)
+def _quiet_presence(monkeypatch):
+    """이 파일은 행 전달·큐 상한·백오프를 본다 — member.presence 알림(test_presence.py가 본다)이 큐를 채우지 않게 한다."""
+    monkeypatch.setattr(Dispatcher, "_announce", lambda *a, **k: None)
+
+
 @pytest.mark.asyncio
 async def test_tick_never_leaks_private_event_to_public_subscriber(event_loop_policy_row):
     """가장 중요한 테스트: private 이벤트가 public 구독자 큐에 들어가지 않는다."""

@@ -13,6 +13,12 @@ from realtime.dispatcher import Dispatcher
 from realtime.router import public_events
 
 
+@pytest.fixture(autouse=True)
+def _quiet_presence(monkeypatch):
+    """이 파일은 구독 종료·ping·재전송을 본다 — member.presence 알림(test_presence.py가 본다)이 첫 청크를 가로채지 않게 한다."""
+    monkeypatch.setattr(Dispatcher, "_announce", lambda *a, **k: None)
+
+
 class _AliveRequest:
     async def is_disconnected(self) -> bool:
         return False   # 클라이언트는 계속 붙어 있다 — 종료 신호만이 연결을 끊을 수 있다

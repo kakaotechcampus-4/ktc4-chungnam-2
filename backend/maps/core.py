@@ -224,6 +224,7 @@ def to_invite_summary(
     pin_count: int,
     inviter_display_name: str | None,
     expires_at: datetime,
+    already_member: bool = False,
 ) -> InviteSummary:
     """map_id와 핀 등 지도 내용은 싣지 않는다 — 토큰 소지자가 가입 전에 볼 수 있는 최소한만.
     초대자 이름을 못 구하면(users 행이 없음) '탈퇴한 구성원'으로 채운다(스펙 InviteSummary)."""
@@ -235,6 +236,7 @@ def to_invite_summary(
         pin_count=pin_count,
         inviter_display_name=inviter_display_name or WITHDRAWN_DISPLAY_NAME,
         expires_at=expires_at,
+        already_member_map_id=record.id if already_member else None,
     )
 
 

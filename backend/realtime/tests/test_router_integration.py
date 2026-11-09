@@ -14,8 +14,14 @@ import pytest
 import realtime.router as router_module
 from auth.schemas import CurrentUser
 from common.events import EventLog
-from realtime.dispatcher import dispatcher
+from realtime.dispatcher import dispatcher, Dispatcher
 from realtime.router import private_events, public_events
+
+
+@pytest.fixture(autouse=True)
+def _quiet_presence(monkeypatch):
+    """이 파일은 구독 종료·ping·재전송을 본다 — member.presence 알림(test_presence.py가 본다)이 첫 청크를 가로채지 않게 한다."""
+    monkeypatch.setattr(Dispatcher, "_announce", lambda *a, **k: None)
 
 
 class _FakeRequest:
