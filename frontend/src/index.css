@@ -497,6 +497,35 @@
         }
     }
 }
+/* 빈 지도 길게 누르기(#1549) — 손가락 둘레 원이 누르는 시간(--hold) 동안 차오른다. 동작 줄이기면 다 찬 원이 그대로 서 있다. */
+.press-ring {
+    position: absolute;
+    z-index: 5;
+    width: 48px;
+    height: 48px;
+    margin: -24px 0 0 -24px;
+    pointer-events: none;
+}
+.press-ring circle {
+    fill: none;
+    stroke: var(--brand-600);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+    transform: rotate(-90deg);
+    transform-origin: center;
+    animation: press-fill var(--hold, 500ms) linear forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+    .press-ring circle {
+        animation: none;
+        stroke-dashoffset: 0;
+    }
+}
+@keyframes press-fill {
+    to { stroke-dashoffset: 0; }
+}
 @keyframes pin-wobble {
     from { transform: rotate(-4deg); }
     to { transform: rotate(4deg); }

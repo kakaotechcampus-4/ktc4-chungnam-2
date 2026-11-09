@@ -3,12 +3,28 @@ import { useQuery } from '@tanstack/react-query'
 import { ApiError } from '@/api'
 
 import { externalSearch, nearestPlaces, parseLink, searchPlaces } from './api'
+import { nearbyKakaoPlaces } from './kakaoNearby'
 import type { LatLng, SourcePlaces } from './model'
 import type { SearchSource } from './searchStore'
 
+/** 카카오 근처 장소(#1549)를 기다리는 한도(ms). */
+const NEARBY_WAIT_MS = 3000
+
 async function fetchSource(source: SearchSource, near: LatLng | null): Promise<SourcePlaces> {
   if (source.kind === 'name') return { places: await searchPlaces(source.query, near) }
-  if (source.kind === 'tap') return { places: await nearestPlaces(source.at) }
+  if (source.kind === 'tap') {
+    const places = await nearestPlaces(source.at)
+    // 카카오를 못 띄워도 자체 DB 결과는 보인다 — 근처 가게 칸만 빈다.
+    // 카카오가 늦어도 자체 DB 결과를 붙잡아 두지 않게 NEARBY_WAIT_MS 까지만 기다린다.
+    const nearby = await Promise.race([
+      nearbyKakaoPlaces(source.at, places),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), NEARBY_WAIT_MS)),
+    ]).catch((err: unknown) => {
+      console.warn('[search] 카카오 근처 장소를 찾지 못했어요', err)
+      return []
+    })
+    return { places, nearby }
+  }
   const link = await parseLink(source.url)
   return { places: link.matches, link }
 }

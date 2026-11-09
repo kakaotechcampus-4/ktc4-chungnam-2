@@ -62,7 +62,8 @@ declare namespace kakao.maps {
   namespace event {
     /** click 의 인자 — 누른 자리. dragstart·drag·idle·zoom_changed·center_changed 는 인자가 없다. */
     type MouseEvent = { latLng: LatLng }
-    type MapEventType = 'dragstart' | 'drag' | 'idle' | 'click' | 'zoom_changed' | 'center_changed'
+    /** rightclick 은 PC 우클릭이다(지도 자리 메뉴, #1549). 인자는 click 과 같다. */
+    type MapEventType = 'dragstart' | 'drag' | 'idle' | 'click' | 'rightclick' | 'zoom_changed' | 'center_changed'
     /** click 은 지도 빈 곳을 눌렀을 때만 온다 — clickable 오버레이(핀 등)를 누르거나 끌고 놓으면 오지 않는다. */
     function addListener(target: Map, type: MapEventType, handler: (e?: MouseEvent) => void): void
     function removeListener(target: Map, type: MapEventType, handler: (e?: MouseEvent) => void): void
@@ -135,7 +136,8 @@ interface Window {
 }
 
 /**
- * 키워드 장소 검색(`libraries=services`). 실시간 핀(#382)의 위치를 지도를 열 때마다 다시 찾는 데만 쓴다.
+ * 장소 검색(`libraries=services`). 실시간 핀(#382)의 위치를 지도를 열 때마다 다시 찾고(키워드),
+ * 지도 자리 메뉴에서 누른 곳 근처 가게를 보여 준다(분류, #1549).
  * 응답(이름·좌표)은 메모리에서만 쓰고 서버·저장소로 보내지 않는다(카카오 약관, #53).
  */
 declare namespace kakao.maps.services {
@@ -152,6 +154,8 @@ declare namespace kakao.maps.services {
     address_name: string
     /** 도로명 주소. 없으면 빈 문자열이다. */
     road_address_name: string
+    /** 음식점 FD6 · 카페 CE7 · 관광명소 AT4 … 분류가 없으면 빈 문자열이다. */
+    category_group_code: string
   }
 
   interface Pagination {
@@ -174,6 +178,12 @@ declare namespace kakao.maps.services {
         /** 음식점 FD6 · 카페 CE7 · 관광명소 AT4 */
         category_group_code?: string
       },
+    ): void
+    /** 분류로 근처 장소 찾기. 지도 자리 메뉴의 「카카오에서 찾은 근처 장소」(#1549)에 쓴다. */
+    categorySearch(
+      code: string,
+      callback: (data: PlaceResult[], status: Status, pagination: Pagination) => void,
+      options: { location: kakao.maps.LatLng; radius?: number; sort?: SortBy; size?: number },
     ): void
   }
 
