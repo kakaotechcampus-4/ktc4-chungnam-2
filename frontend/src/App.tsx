@@ -10,6 +10,7 @@ import MapCreatePage from '@/routes/MapCreatePage'
 import MapLayout from '@/routes/MapLayout'
 import MapListPage from '@/routes/MapListPage'
 import MapTab from '@/routes/MapTab'
+import NotFoundPage from '@/routes/NotFoundPage'
 import RecommendTab from '@/routes/RecommendTab'
 import ShortlistTab from '@/routes/ShortlistTab'
 import CourseTab from '@/routes/CourseTab'
@@ -43,6 +44,9 @@ export default function App() {
               <Route path="course" element={<CourseTab />} />
             </Route>
           </Route>
+
+          {/* 없는 주소. 이게 없으면 빈 화면이었다(#1677). */}
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </AppBoundary>
     </BrowserRouter>
