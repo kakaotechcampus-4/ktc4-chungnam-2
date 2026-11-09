@@ -12,7 +12,7 @@ import TaskProgress from '@/ui/TaskProgress'
 import AloneInvite from '@/features/map/AloneInvite'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
-import { filterPins, type Pin } from '@/features/map/model'
+import { filterPins, isTodo, type Pin } from '@/features/map/model'
 import ReactionHelp from '@/features/map/ReactionHelp'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
 import NewSinceBanner from '@/features/map/NewSinceBanner'
@@ -40,7 +40,7 @@ import { useIsDesktop } from '@/features/shell/useIsDesktop'
  */
 export default function MapTab() {
   const { mapId } = useShell()
-  const { selectedPinId, selectPin } = usePinSelection()
+  const { selectedPinId, startAgainst, selectPin } = usePinSelection()
   const { groupIds, showGroup } = usePinGroup()
   const { data: pins, isPending, error, refetch } = usePinsQuery(mapId)
   const counts = useCountsQuery(mapId).data
@@ -62,10 +62,14 @@ export default function MapTab() {
   const { filters, setFilter, clear } = usePinFilters()
   const sorted = pins && filterPins(pins, filters, memberCount)
   // 순서는 필터·정렬을 바꾸거나 핀이 늘고 줄 때만 다시 매긴다. 의견 수만 바뀌었을 땐 그대로 둬서
-  // 방금 의견을 남긴 카드가 맨 위로 튀지 않게 한다(#308).
+  // 방금 의견을 남긴 카드가 맨 위로 튀지 않게 한다(#308). 「의견 남길 핀」 묶음(#1696)도 같은 때만 다시 정한다 —
+  // 목록에서 ♥를 누른 카드가 아래 묶음으로 튀지 않는다. 할 일 핀은 묶음 안에서도 원래 순서(정렬)를 지킨다.
   const orderKey = sorted ? `${filters.category}|${filters.createdBy}|${filters.kind}|${filters.opinion}|${filters.sort}|${sorted.map((p) => p.id).sort().join(',')}` : ''
-  const [order, setOrder] = useState<{ key: string; ids: string[] } | null>(null)
-  if (sorted && order?.key !== orderKey) setOrder({ key: orderKey, ids: sorted.map((p) => p.id) })
+  const [order, setOrder] = useState<{ key: string; ids: string[]; todo: Set<string> } | null>(null)
+  if (sorted && order?.key !== orderKey) {
+    const todo = new Set(sorted.filter(isTodo).map((p) => p.id))
+    setOrder({ key: orderKey, ids: [...sorted.filter((p) => todo.has(p.id)), ...sorted.filter((p) => !todo.has(p.id))].map((p) => p.id), todo })
+  }
   const shown = sorted && order?.key === orderKey ? order.ids.map((id) => sorted.find((p) => p.id === id)).filter((p) => p !== undefined) : sorted
   const search = useSearchStore()
   const sourced = useSourcePlacesQuery(search.source, search.near).data
@@ -94,9 +98,10 @@ export default function MapTab() {
 
   // 핀을 고르면 상세가 2단계로 올라온다(최종기획안 4절 "핀 상세"). 겹친 핀 목록도 같다(#1576).
   const groupKey = groupIds?.join(',')
+  // 목록의 「✕ 반대」로 열면 사유 입력까지 보이게 3단계로 연다(#1696).
   useEffect(() => {
-    if (selectedPinId || groupKey) setStage('map', 2)
-  }, [selectedPinId, groupKey, setStage])
+    if (selectedPinId || groupKey) setStage('map', startAgainst ? 3 : 2)
+  }, [selectedPinId, groupKey, startAgainst, setStage])
 
   const selectedPin = pins?.find((pin) => pin.id === selectedPinId)
   // 목록을 다 받은 뒤에도 없으면 볼 수 없는 핀이다. 로딩 중이나 실패 중에는 판단하지 않는다.
@@ -126,7 +131,7 @@ export default function MapTab() {
         expandOnScroll
         header={<PinDetailHeader pin={selectedPin} mapId={mapId} onBack={() => selectPin(null)} />}
       >
-        <PinDetailBody pin={selectedPin} mapId={mapId} members={members} onDone={() => selectPin(null)} />
+        <PinDetailBody pin={selectedPin} mapId={mapId} members={members} startAgainst={startAgainst} onDone={() => selectPin(null)} />
       </TabSheet>
     )
   }
@@ -144,7 +149,7 @@ export default function MapTab() {
           </>
         }
       >
-        <PinList pins={groupPins} memberCount={memberCount} onSelect={selectPin} news={cardNews} />
+        <PinList mapId={mapId} pins={groupPins} memberCount={memberCount} onSelect={selectPin} news={cardNews} />
       </TabSheet>
     )
   }
@@ -206,7 +211,7 @@ export default function MapTab() {
       {pins && filters.opinion !== 'none' && (
         <MyOpinionProgress pins={pins} onOpen={selectPin} onShowLeft={() => setFilter('opinion', 'none')} recommendHref={`/maps/${mapId}/recommend`} />
       )}
-      {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} />}
+      {shown && shown.length > 0 && <PinList mapId={mapId} pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} todoIds={order?.todo} />}
     </TabSheet>
   )
 }
@@ -234,7 +239,7 @@ const TASK_ROWS = 3
 /**
  * 「내가 남긴 의견 2/3곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547).
  * 다 남기면 완료 카드 「모든 핀에 의견을 남겼어요」 + AI 추천으로 가는 버튼이다(#1659, 빈 화면 「모두 완료」). 확정되지 않은 핀이 없으면 그리지 않는다.
- * 확정된 핀은 의견을 안 남겨도 할 일로 보지 않는다(목록 카드의 「의견 남기기」와 같은 기준).
+ * 확정된 핀은 의견을 안 남겨도 할 일로 보지 않는다(목록 카드와 같은 기준 `isTodo`).
  * 줄은 끝낸 곳 하나(있으면)와 남은 곳 — 남은 곳을 누르면 그 핀이 열린다.
  */
 export function MyOpinionProgress({
@@ -251,7 +256,7 @@ export function MyOpinionProgress({
 }) {
   const open = pins.filter((p) => p.kind !== '확정')
   const doneList = open.filter((p) => p.my_reaction)
-  const leftList = open.filter((p) => !p.my_reaction)
+  const leftList = open.filter(isTodo)
   if (open.length === 0 || (leftList.length === 0 && !recommendHref)) return null
   if (leftList.length === 0) {
     return (

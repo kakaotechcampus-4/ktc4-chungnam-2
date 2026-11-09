@@ -109,6 +109,8 @@ export function attachTrashDrag(el: HTMLElement, getPin: () => Pin, ghost: () =>
     // 모바일은 길게 누르거나 끈 뒤 click 이 오지 않을 때가 많다 — 지난번 놓기의 막기가 다음 탭을 먹지 않게 새로 누를 때 푼다.
     swallowClick = false
     if (e.button !== 0 || store().drag) return
+    // 카드 안의 바로 반응 버튼(#1696)에서 시작한 누름은 끌기가 아니다 — 잡으면 click 이 버튼 대신 카드로 간다.
+    if ((e.target as Element).closest?.('[data-no-drag]')) return
     const touch = e.pointerType !== 'mouse'
     start = { x: e.clientX, y: e.clientY, id: e.pointerId, touch }
     // 지도 위로 나가도 움직임을 계속 받는다.
