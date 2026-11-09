@@ -13,11 +13,6 @@ from realtime.dispatcher import Dispatcher
 from realtime.router import public_events
 
 
-@pytest.fixture(autouse=True)
-def _quiet_presence(monkeypatch):
-    """이 파일은 구독 종료·ping·재전송을 본다 — member.presence 알림(test_presence.py가 본다)이 첫 청크를 가로채지 않게 한다."""
-    monkeypatch.setattr(Dispatcher, "_announce", lambda *a, **k: None)
-
 
 class _AliveRequest:
     async def is_disconnected(self) -> bool:
@@ -101,7 +96,11 @@ async def test_lifespan_leaves_no_closed_state_behind(monkeypatch):
         pass
     sub = d.subscribe("m-after", channel="public", user_id="u1")
     try:
-        assert sub.queue.empty()
+        from realtime.dispatcher import CLOSED
+
+        items = [sub.queue.get_nowait() for _ in range(sub.queue.qsize())]
+        assert CLOSED not in items   # 닫힌 채로 나오지 않는다(자기 member.presence만 있을 수 있다)
+        assert all(getattr(i, "type", None) == "member.presence" for i in items)
     finally:
         d.unsubscribe("m-after", sub)
 

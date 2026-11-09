@@ -18,6 +18,7 @@ from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
 from realtime.dispatcher import dispatcher, Dispatcher
 from realtime.router import private_events, public_events
+from realtime.tests.helpers import skip_presence
 
 MAP = "close-map"
 OTHER_MAP = "close-other-map"
@@ -33,11 +34,6 @@ class Row:
     recipient_user_id: str | None = None
 
 
-@pytest.fixture(autouse=True)
-def _quiet_presence(monkeypatch):
-    """이 파일은 구독 종료·ping·재전송을 본다 — member.presence 알림(test_presence.py가 본다)이 첫 청크를 가로채지 않게 한다."""
-    monkeypatch.setattr(Dispatcher, "_announce", lambda *a, **k: None)
-
 
 class _AliveRequest:
     async def is_disconnected(self) -> bool:
@@ -48,7 +44,7 @@ async def _open(endpoint, map_id: str, user_id: str):
     response = await endpoint(
         request=_AliveRequest(), mapId=map_id, user=CurrentUser(user_id=user_id), last_event_id=None
     )
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
     # 연결 직후 ping(#925)을 먼저 소비한다 — 이벤트 대기는 그다음 __anext__에서 시작된다.
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
     # 제너레이터는 다음 __anext__에서야 구독한다 — 큐 대기에 들어갈 때까지 돌려 둔다.

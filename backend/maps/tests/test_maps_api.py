@@ -104,11 +104,27 @@ def test_list_members_returns_only_honest_fields(app_client):
     assert resp.status_code == 200
     members = resp.json()
     assert {m["user_id"] for m in members} == {"user_1", "user_2"}
-    # online을 채울 데이터 출처가 없다 — 응답에 키 자체가 없어야 한다
-    # (False로 채우는 거짓 fallback을 만들지 않았다는 증거). display_name은 users 행에서 온다.
+    # online은 realtime의 접속 집계(#1551)로 채운다 — 아무도 연결하지 않았으면 모두 false. display_name은 users 행에서 온다.
     for m in members:
-        assert set(m.keys()) == {"user_id", "role", "display_name", "is_guest", "opinion_count"}
+        assert set(m.keys()) == {"user_id", "role", "display_name", "online", "is_guest", "opinion_count"}
+        assert m["online"] is False
         assert m["opinion_count"] == 0   # 반응이 없는 사람은 키가 없는 집계라도 0이다(#1562)
+
+
+def test_list_members_online_comes_from_realtime_and_only_for_members(app_client, monkeypatch):
+    body = _create_map(app_client, user_id="user_1")
+    map_id = body["id"]
+    invite = app_client.post(f"/maps/{map_id}/invite", cookies=_auth("user_1")).json()
+    app_client.post(f"/invites/{invite['token']}/accept", cookies=_auth("user_2"))
+    asked = []
+    # user_2는 접속 중, user_1은 아님, outsider는 접속 중이지만 구성원이 아니다
+    monkeypatch.setattr(
+        "maps.service.realtime_api.online_user_ids", lambda mid: asked.append(mid) or {"user_2", "outsider"}
+    )
+
+    members = app_client.get(f"/maps/{map_id}/members", cookies=_auth("user_1")).json()
+    assert {m["user_id"]: m["online"] for m in members} == {"user_1": False, "user_2": True}
+    assert asked == [map_id]   # 구성원 수만큼 부르지 않는다
 
 
 def test_list_members_marks_creator_as_owner_and_joiner_as_member(app_client):
@@ -132,7 +148,9 @@ def test_list_members_includes_display_name_when_user_row_exists(app_client, db_
     resp = app_client.get(f"/maps/{body['id']}/members", cookies=_auth("user_1"))
     assert resp.status_code == 200
     members = resp.json()
-    assert members == [{"user_id": "user_1", "role": "owner", "display_name": "철수", "is_guest": False, "opinion_count": 0}]
+    assert members == [
+        {"user_id": "user_1", "role": "owner", "display_name": "철수", "online": False, "is_guest": False, "opinion_count": 0}
+    ]
 
 
 def test_list_members_as_non_member_is_404(app_client):

@@ -16,21 +16,19 @@ from auth.schemas import CurrentUser
 from common.events import EventLog
 from realtime.dispatcher import dispatcher, Dispatcher
 from realtime.router import private_events, public_events
+from realtime.tests.helpers import skip_presence
 
-
-@pytest.fixture(autouse=True)
-def _quiet_presence(monkeypatch):
-    """이 파일은 구독 종료·ping·재전송을 본다 — member.presence 알림(test_presence.py가 본다)이 첫 청크를 가로채지 않게 한다."""
-    monkeypatch.setattr(Dispatcher, "_announce", lambda *a, **k: None)
 
 
 class _FakeRequest:
-    def __init__(self):
+    def __init__(self, alive_checks: int = 1):
         self.calls = 0
+        # 전체 채널 스트림은 연결하면 자기 member.presence가 첫 반복을 쓴다 — 그런 시험은 한 번 더 살아 있다고 답한다.
+        self.alive_checks = alive_checks
 
     async def is_disconnected(self) -> bool:
         self.calls += 1
-        return self.calls > 1   # 첫 호출(구독 직후)엔 살아있다고 답하고, 그다음엔 끊겼다고 답한다
+        return self.calls > self.alive_checks   # 첫 호출(구독 직후)엔 살아있다고 답하고, 그다음엔 끊겼다고 답한다
 
 
 @pytest.fixture(autouse=True)
@@ -57,11 +55,11 @@ async def test_public_events_replays_then_streams_live_event(db_session):
     db_session.flush()
     after_seq = old.seq
 
-    request = _FakeRequest()
+    request = _FakeRequest(alive_checks=2)   # 첫 반복은 자기 member.presence
     response = await public_events(
         request=request, mapId="int-map", user=CurrentUser(user_id="user-a"), last_event_id=str(after_seq)
     )
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
 
     # 실시간 tail에 새 이벤트가 하나 들어올 것 — subscribe 이후에 넣어야 구독자가 받는다.
     async def _emit_live_event_soon():
@@ -104,7 +102,7 @@ async def test_private_events_never_leaks_other_users_row(db_session):
     response = await private_events(
         request=request, mapId="int-map2", user=user, last_event_id=str(old_row.seq - 1)
     )
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
 
     async def _emit_wrong_then_right_recipient():
         await asyncio.sleep(0.05)
@@ -144,7 +142,7 @@ def _put(map_id, row):
 async def test_ping_is_sent_without_id_when_idle(monkeypatch):
     monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
     response = await public_events(request=_Alive(), mapId="ping-map", user=CurrentUser(user_id="user-a"), last_event_id=None)
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
     try:
         for _ in range(2):   # 간격마다 반복해서 나온다
             chunk = await asyncio.wait_for(agen.__anext__(), timeout=1)
@@ -162,7 +160,7 @@ async def test_ping_is_not_mixed_into_replay(db_session, monkeypatch):
     db_session.add(old)
     db_session.flush()
     response = await public_events(request=_Alive(), mapId="ping-replay", user=CurrentUser(user_id="user-a"), last_event_id=str(old.seq - 1))
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
     try:
         # 연결 직후 ping(#925)이 재전송보다 앞이다. 그 뒤 다음 청크가 재전송 이벤트이고 ping이 섞이지 않는다.
         assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)
@@ -179,7 +177,7 @@ async def test_ping_is_not_mixed_into_replay(db_session, monkeypatch):
 async def test_event_between_pings_is_delivered_and_not_lost(monkeypatch):
     monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
     response = await public_events(request=_Alive(), mapId="ping-live", user=CurrentUser(user_id="user-a"), last_event_id=None)
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
     try:
         assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
         first = await asyncio.wait_for(agen.__anext__(), timeout=1)   # 구독 뒤 간격 ping — 이후에야 구독돼 있다
@@ -208,7 +206,7 @@ async def test_closed_subscription_ends_ping_loop(monkeypatch, channel):
         response = await private_events(
             request=_Alive(), mapId="ping-close", user=CurrentUser(user_id="user-a"), last_event_id=None
         )
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 구독 뒤 간격 ping
     dispatcher.close_subscriptions()
@@ -223,8 +221,8 @@ async def test_closed_subscription_ends_ping_loop(monkeypatch, channel):
 @pytest.mark.asyncio
 async def test_disconnect_while_waiting_ends_ping_loop(monkeypatch):
     monkeypatch.setattr(router_module, "PING_INTERVAL", 0.05)
-    response = await public_events(request=_FakeRequest(), mapId="ping-dc", user=CurrentUser(user_id="user-a"), last_event_id=None)
-    agen = response.body_iterator
+    response = await public_events(request=_FakeRequest(alive_checks=2), mapId="ping-dc", user=CurrentUser(user_id="user-a"), last_event_id=None)
+    agen = skip_presence(response.body_iterator)
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 구독 뒤 간격 ping
     with pytest.raises(StopAsyncIteration):   # 다음 반복의 is_disconnected()가 True
@@ -242,7 +240,7 @@ async def test_closing_outer_generator_cancels_pending_get_task(monkeypatch, cha
         response = await public_events(request=_Alive(), mapId="ping-aclose", user=user, last_event_id=None)
     else:
         response = await private_events(request=_Alive(), mapId="ping-aclose", user=user, last_event_id=None)
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 연결 직후 ping(#925)
     assert "ping" in await asyncio.wait_for(agen.__anext__(), timeout=1)   # 구독 뒤 간격 ping
     me = asyncio.current_task()
@@ -263,7 +261,7 @@ async def test_first_byte_is_sent_immediately_on_new_connection(monkeypatch, han
     """#925: 새 연결은 PING_INTERVAL을 기다리지 않고 바로 첫 ping을 낸다(id 없음)."""
     monkeypatch.setattr(router_module, "PING_INTERVAL", 60.0)
     response = await handler(request=_Alive(), mapId="open-now", user=CurrentUser(user_id="user-a"), last_event_id=None)
-    agen = response.body_iterator
+    agen = skip_presence(response.body_iterator)
     try:
         chunk = await asyncio.wait_for(agen.__anext__(), timeout=0.5)
         assert chunk == _OPEN
