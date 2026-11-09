@@ -264,3 +264,149 @@ def test_readers_in_other_threads_never_see_dict_changed_during_iteration():
         for t in threads:
             t.join()
     assert errors == []
+
+
+# ── 후속(#1551): 나가기·탈퇴, 만료 뒤 재연결, 종료 중 구독, 실제 순서 ──
+
+
+def test_member_left_drops_presence_without_grace_and_without_offline_event(d, clock):
+    from types import SimpleNamespace
+
+    watcher = d.subscribe("m1", channel="public", user_id="u2")
+    leaver = d.subscribe("m1", channel="public", user_id="u1")
+    _drain(watcher)
+    row = SimpleNamespace(seq=1, map_id="m1", channel="public", type="member.left",
+                          payload={"map_id": "m1", "user_id": "u1", "new_owner_user_id": None},
+                          recipient_user_id=None)
+    d._deliver([row])
+    assert d.presence.online_user_ids("m1") == {"u2"}   # 유예 없이 바로 빠진다
+    assert [t for t, _ in _drain(watcher)] == ["member.left"]
+    d.unsubscribe("m1", leaver)   # 늦게 끝나는 옛 연결
+    clock.now += GRACE * 10
+    d.expire_presence()
+    assert _drain(watcher) == []   # offline 이벤트 없음
+
+
+def test_old_connection_closing_late_does_not_cut_a_new_connection_of_the_same_user(d, clock):
+    from types import SimpleNamespace
+
+    old = d.subscribe("m1", channel="public", user_id="u1")
+    d._deliver([SimpleNamespace(seq=1, map_id="m1", channel="public", type="member.left",
+                                payload={"map_id": "m1", "user_id": "u1"}, recipient_user_id=None)])
+    new = d.subscribe("m1", channel="public", user_id="u1")   # 다시 들어와 곧바로 붙음
+    d.unsubscribe("m1", old)                                   # 옛 연결이 뒤늦게 끝남
+    clock.now += GRACE * 10
+    d.expire_presence()
+    assert d.presence.online_user_ids("m1") == {"u1"}
+    d.unsubscribe("m1", new)
+
+
+def test_map_deleted_drops_the_whole_map_from_presence(d, clock):
+    from types import SimpleNamespace
+
+    a = d.subscribe("m1", channel="public", user_id="u1")
+    b = d.subscribe("m1", channel="public", user_id="u2")
+    d._deliver([SimpleNamespace(seq=1, map_id="m1", channel="public", type="map.deleted",
+                                payload={"map_id": "m1"}, recipient_user_id=None)])
+    assert d.presence.online_user_ids("m1") == set()
+    d.unsubscribe("m1", a)
+    d.unsubscribe("m1", b)
+    clock.now += GRACE * 10
+    assert d.presence.expire() == []   # 지도가 사라진 뒤 유예 표에 남지 않는다
+
+
+def test_reconnect_after_grace_ended_but_before_expire_sends_false_then_true(d, clock):
+    watcher = d.subscribe("m1", channel="public", user_id="u2")
+    gone = d.subscribe("m1", channel="public", user_id="u1")
+    _drain(watcher)
+    d.unsubscribe("m1", gone)
+    clock.now += GRACE + 1   # 유예가 끝났지만 폴링 루프가 아직 expire를 안 돌렸다
+    d.subscribe("m1", channel="public", user_id="u1")
+    assert _drain(watcher) == [
+        ("member.presence", {"user_id": "u1", "online": False}),
+        ("member.presence", {"user_id": "u1", "online": True}),
+    ]
+
+
+def test_subscription_made_while_closing_is_not_counted_as_online(d):
+    d.close_subscriptions()
+    sub = d.subscribe("m1", channel="public", user_id="u1")
+    assert d.presence.online_user_ids("m1") == set()
+    d.unsubscribe("m1", sub)
+    assert d.presence.online_user_ids("m1") == set()   # 짝이 맞아 유예도 생기지 않는다
+
+
+def test_closing_subscription_does_not_cut_another_counted_connection(d):
+    live = d.subscribe("m1", channel="public", user_id="u1")
+    d.close_subscriptions()
+    late = d.subscribe("m1", channel="public", user_id="u1")   # 종료 중이라 세지 않는다
+    d.unsubscribe("m1", late)
+    assert d.presence.online_user_ids("m1") == {"u1"}          # live의 연결 수는 그대로
+    d.unsubscribe("m1", live)
+
+
+@pytest.mark.asyncio
+async def test_real_stream_order_replay_then_own_presence_then_live_and_member_left(db_session, monkeypatch):
+    """재전송 뒤 첫 live 이벤트는 자기 member.presence, member.left 뒤 그 사람의 유예 offline은 오지 않는다."""
+    import asyncio
+
+    import realtime.router as router_module
+    from auth.schemas import CurrentUser
+    from common.events import EventLog
+    from realtime.dispatcher import dispatcher
+    from realtime.router import public_events
+
+    class _Ctx:
+        def __enter__(self):
+            return db_session
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(router_module, "SessionLocal", lambda: _Ctx())
+    clk = Clock()
+    monkeypatch.setattr(dispatcher, "presence", Presence(clk))
+
+    old = EventLog(map_id="order-map", channel="public", type="pin.created", payload={"n": 1})
+    db_session.add(old)
+    db_session.flush()
+    replayed = EventLog(map_id="order-map", channel="public", type="pin.updated", payload={"n": 2})
+    db_session.add(replayed)
+    db_session.flush()
+
+    class Alive:
+        async def is_disconnected(self):
+            return False
+
+    async def chunk(agen):
+        return await asyncio.wait_for(agen.__anext__(), timeout=1)
+
+    resp_b = await public_events(request=Alive(), mapId="order-map", user=CurrentUser(user_id="user-b"),
+                                 last_event_id=str(old.seq))
+    b = resp_b.body_iterator
+    assert "ping" in await chunk(b)                     # 연결 직후 ping
+    assert "pin.updated" in await chunk(b)              # 재전송
+    own = await chunk(b)                                # 구독 뒤 첫 live 이벤트는 자기 접속
+    assert own == 'event: member.presence\ndata: {"user_id": "user-b", "online": true}\n\n'.replace("\n", "\n")
+
+    resp_a = await public_events(request=Alive(), mapId="order-map", user=CurrentUser(user_id="user-a"),
+                                 last_event_id=None)
+    a = resp_a.body_iterator
+    assert "ping" in await chunk(a)
+    await chunk(a)                                      # a의 자기 접속
+    assert '"user-a"' in await chunk(b)                 # b가 a의 접속을 받는다
+
+    left = EventLog(seq=None, map_id="order-map", channel="public", type="member.left",
+                    payload={"map_id": "order-map", "user_id": "user-a", "new_owner_user_id": None})
+    left.seq = 10**9
+    dispatcher._deliver([left])
+    assert "member.left" in await chunk(b)
+    assert "member.left" in await chunk(a)              # a도 자기 member.left를 먼저 받고
+    with pytest.raises(StopAsyncIteration):             # 그 뒤 스트림이 닫힌다
+        await chunk(a)
+    assert dispatcher.presence.online_user_ids("order-map") == {"user-b"}   # 유예 없이 바로 빠진다
+    clk.now += GRACE * 10
+    dispatcher.expire_presence()
+    with pytest.raises(asyncio.TimeoutError):           # 나간 사람의 offline은 오지 않는다
+        await asyncio.wait_for(b.__anext__(), timeout=0.1)
+    await b.aclose()

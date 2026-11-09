@@ -27,6 +27,7 @@ from maps.schemas import (
 )
 from notifications import api as notifications_api
 from pins import api as pins_api
+from realtime import api as realtime_api
 from shortlist import api as shortlist_api
 
 INVITE_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) — 256비트, 소지자가 곧 가입 권한을 갖는
@@ -580,9 +581,12 @@ def list_members(db: Session, *, map_id: str) -> list[Member]:
     # 배치 조회 — N명에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
     names = auth_api.display_names(db, [m.user_id for m in entries])
     guests = guest_ids_of(db, entries)
+    # realtime은 DB를 읽지 않고 구성원인지 모른다 — 구성원 여부는 위 entries가 정한다(접속 중인 비구성원은 목록에 없다, #1551).
+    online = realtime_api.online_user_ids(map_id)
     return [
         core.to_member_response(
-            m.user_id, role=m.role, display_name=names.get(m.user_id), online=None, is_guest=m.user_id in guests
+            m.user_id, role=m.role, display_name=names.get(m.user_id), online=m.user_id in online,
+            is_guest=m.user_id in guests,
         )
         for m in entries
     ]
