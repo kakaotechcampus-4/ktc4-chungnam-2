@@ -4552,6 +4552,7 @@ export interface components {
              */
             role: "owner" | "member";
             display_name?: string;
+            /** @description 「접속 중」은 그 지도의 전체 채널 SSE(`GET /maps/{mapId}/events`)에 연결이 하나라도 열려 있는 구성원이다(#1551). 같은 사람이 탭·기기를 여러 개 열어도 한 명이다. 마지막 연결이 끊기고 30초 안에 다시 붙지 않으면 접속 아님이다(새로고침·짧은 끊김에 깜빡이지 않게). 위치가 아니라 「지도를 열어 두었는가」만 본다 — 실시간 위치 공유(범위 밖)가 아니다. 지도를 처음 열 때 이 값으로 그리고, 그 뒤 변화는 `member.presence` 이벤트로 받는다. 서버가 채우기 전에는 없다 — 없으면 접속 점을 그리지 않는다(지어낸 값을 쓰지 않는다) */
             online?: boolean;
         };
         /** @description 내 지도 목록과 상한(#623). 2026-10-19 전에는 Map 배열이었다 */
@@ -5981,7 +5982,10 @@ export interface components {
             };
         };
         EvtMemberPresence: components["schemas"]["SseEnvelope"] & {
-            /** @constant */
+            /**
+             * @description 접속 상태가 바뀔 때만 보낸다(#1551). 판정 규칙은 Member.online
+             * @constant
+             */
             event: "member.presence";
             data: {
                 user_id: string;
