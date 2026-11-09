@@ -1,7 +1,8 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { Coins, Lock, Search, Trash2 } from 'lucide-react'
+import { Lock, Search, Trash2 } from 'lucide-react'
 
 import Mark from '@/ui/Mark'
+import Coin from '@/ui/Coin'
 import Pingo, { type PingoMood } from '@/ui/Pingo'
 import { pinGlyph, type PinGlyph } from '@/ui/pinGlyph'
 
@@ -409,14 +410,14 @@ function CreditsScene() {
             추천 받기
           </span>
           <span className={`${CARD} flex h-8 items-center gap-1 px-2 text-label font-bold text-ink-700`}>
-            <Coins size={14} aria-hidden="true" className="text-[var(--pin-confirmed)]" /> 크레딧
+            <Coin size={14} /> 크레딧
           </span>
         </div>
       </At>
       {phase === 1 && (
         <At x={80} y={18} anchor="center">
           <span className="enter-fade block opacity-0 transition-transform duration-500 ease-in motion-reduce:transition-none" style={{ transform: 'translateX(-120px)' }}>
-            <Coins size={16} aria-hidden="true" className="text-[var(--pin-confirmed)]" />
+            <Coin size={16} />
           </span>
         </At>
       )}
@@ -430,7 +431,7 @@ function CreditsScene() {
               ))}
             </p>
             <span className="enter-pop mt-1 inline-flex items-center gap-0.5 rounded-full bg-[var(--confirmed-bg)] px-1.5 py-0.5 text-label font-bold text-[var(--pin-confirmed-mark)]" style={{ animationDelay: '500ms', animationFillMode: 'backwards' }}>
-              <Coins size={11} aria-hidden="true" /> 크레딧 받음
+              <Coin size={11} /> 크레딧 받음
             </span>
           </div>
         </At>

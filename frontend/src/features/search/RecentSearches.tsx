@@ -2,6 +2,7 @@ import { Clock, X } from 'lucide-react'
 
 /**
  * 검색창 아래 「최근 검색」(검색창에 포커스가 있고 비어 있을 때). 누르면 그 검색어로 바로 찾는다.
+ * 검색창과 붙어 한 덩어리다 — 검색창 쪽 모양(아래 모서리 펴기)은 MapLayout 이 같이 바꾼다.
  * 목록을 누르는 동안 입력칸 포커스를 뺏지 않는다(onMouseDown) — Safari는 버튼을 눌러도 포커스를 옮기지 않아,
  * 그대로 두면 blur로 목록이 먼저 닫혀 누른 것이 사라진다.
  */
@@ -21,7 +22,8 @@ export default function RecentSearches({
   return (
     <div
       onMouseDown={(e) => e.preventDefault()}
-      className={`absolute inset-x-0 top-full z-30 mt-2 rounded-xl border border-ink-200 bg-white py-2 ${floating ? 'pointer-events-auto shadow-float' : ''}`}
+      // 검색창 바로 밑에 붙어 한 덩어리로 보인다(검색창이 아래 모서리를 편다). 지도 위에서는 그림자가 위로 번져 이음매를 덮지 않게 위쪽을 자른다.
+      className={`absolute inset-x-0 top-full z-30 rounded-b-xl border border-t-0 border-brand-600 bg-white pb-2 pt-1 ${floating ? 'pointer-events-auto shadow-float [clip-path:inset(0_-12px_-12px_-12px)]' : ''}`}
     >
       <div className="flex items-center justify-between px-4 pb-1">
         <h2 className="text-xs font-semibold text-ink-500">최근 검색</h2>

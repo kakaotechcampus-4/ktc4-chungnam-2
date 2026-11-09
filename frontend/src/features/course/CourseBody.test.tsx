@@ -141,7 +141,8 @@ describe('AI 코스 짜기 시트', () => {
     const before = await credits()
     const user = userEvent.setup({ delay: null })
     renderSheet()
-    expect(await screen.findByText(`${before.prices.course} 크레딧 사용 · 남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
+    expect(await screen.findByText(`${before.prices.course} 크레딧 사용`)).toBeInTheDocument()
+    expect(screen.getByText(`남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '코스 짜기' }))
 

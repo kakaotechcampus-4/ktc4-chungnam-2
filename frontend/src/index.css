@@ -68,6 +68,7 @@
     --color-ink-900: var(--ink-900);
     --color-danger: var(--action-danger);
     --color-warn-text: var(--warn-text);
+    --color-coin-text: var(--coin-text);
     --color-scrim: var(--scrim);
 }
 
