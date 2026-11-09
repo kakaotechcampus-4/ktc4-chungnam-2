@@ -1,7 +1,7 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
 import { ApiError } from '@/api'
-import { isPlaced, type Pin } from '@/features/map/model'
+import { isPlaced, timeAgo, type Pin } from '@/features/map/model'
 import { KAKAO_ROUTE_MAX, kakaoTrafficUrl, kakaoWalkUrl, type KakaoPoint, type RouteDrawing } from '@/features/shortlist/model'
 
 export type CourseRunDto = components['schemas']['CourseRun']
@@ -26,6 +26,20 @@ export const REQUEST_MAX = 100
 export const POLL_MS = 2000
 
 export const isFinished = (run: Pick<CourseRunDto, 'status'> | undefined): boolean => run?.status === 'done' || run?.status === 'failed'
+
+/**
+ * 입력 화면 최근 코스 카드의 한 줄(#1713). 짜는 중: "3분 전에 시작했어요". 끝남: "2시간 전, 3일 8곳, 고칠 점 2". 실패: "2시간 전, 짜지 못했어요".
+ */
+export function latestLine(run: Pick<CourseRunDto, 'status' | 'created_at' | 'days' | 'fixes'>, now = Date.now()): string {
+  const ago = timeAgo(run.created_at, now)
+  if (!isFinished(run)) return ago === '방금 전' ? '방금 시작했어요' : `${ago}에 시작했어요`
+  if (run.status === 'failed') return `${ago}, 짜지 못했어요`
+  // 구버전 서버는 fixes 가 없다(#1322 전) — 없으면 고칠 점을 말하지 않는다.
+  const days = run.days ?? []
+  const fixes = run.fixes?.length ?? 0
+  const places = days.reduce((n, d) => n + d.slots.length, 0)
+  return [ago, `${days.length}일 ${places}곳`, fixes > 0 && `고칠 점 ${fixes}`].filter(Boolean).join(', ')
+}
 
 /** 코스 요청 하나 — 요청 한 줄과 「하루 걷기」에서 고른 상한(분, 안 골랐으면 null). 실패 뒤 「다시 시도」도 같은 것을 보낸다. */
 export type CourseAsk = { text: string; walkMax: number | null }

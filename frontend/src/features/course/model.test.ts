@@ -5,7 +5,7 @@ import type { Pin } from '@/features/map/model'
 
 import { kakaoTrafficUrl } from '@/features/shortlist/model'
 
-import { courseDrawings, createErrorMessage, dayLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, showHoursKnown, walkLabel, transitLink, uncheckedPlaceCount, understandBody, walkLinks } from './model'
+import { courseDrawings, createErrorMessage, dayLine, latestLine, daySummary, dayStops, dayTitle, goalState, inProgressRunId, isFinished, legLabel, pinNames, pinPoints, requestBody, showHoursKnown, walkLabel, transitLink, uncheckedPlaceCount, understandBody, walkLinks } from './model'
 
 const err = (code: string, detail?: Record<string, unknown>) => new ApiError(409, { code, message: code, detail })
 
@@ -156,5 +156,18 @@ describe('영업시간 표시(루트 검수 #1127)', () => {
   it('영업시간을 모르는 장소 수는 장소로 센다 — 같은 장소가 여러 날이어도 한 곳', () => {
     expect(uncheckedPlaceCount({ checks: [] })).toBe(0)
     expect(uncheckedPlaceCount({ checks: [{ pin_id: 'a', text: '' }, { pin_id: 'a', text: '' }, { pin_id: 'b', text: '' }] })).toBe(2)
+  })
+})
+
+describe('latestLine — 최근 코스 카드 한 줄(#1713)', () => {
+  const now = Date.parse('2026-11-10T12:00:00Z')
+  const day = (n: number) => ({ date: '2026-11-11', slots: Array.from({ length: n }, (_, i) => ({ pin_id: `p${i}`, order: i })), legs: [] })
+  it('끝난 코스는 언제, 며칠 몇 곳, 고칠 점 수', () => {
+    const run = { status: 'done', created_at: '2026-11-10T10:00:00Z', days: [day(3), day(2)], fixes: [{}, {}] } as unknown as Parameters<typeof latestLine>[0]
+    expect(latestLine(run, now)).toBe('2시간 전, 2일 5곳, 고칠 점 2')
+  })
+  it('짜는 중이면 시작한 때만', () => {
+    const run = { status: 'running', created_at: '2026-11-10T11:57:00Z', days: [], fixes: [] } as unknown as Parameters<typeof latestLine>[0]
+    expect(latestLine(run, now)).toBe('3분 전에 시작했어요')
   })
 })
