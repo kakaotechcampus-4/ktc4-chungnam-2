@@ -54,7 +54,7 @@ def test_returns_own_db_places_within_100m_closest_first(client, db_session):
     assert first["pinnable"] is True and first["category"] == "음식점" and first["address"] == "서울 성동구 성수동2가 1"
     # 자체 DB 출처 + 기록된 카카오 URL이 없어 「이름 동네」 카카오맵 검색 링크(#1486). 카카오를 부르지 않는다
     assert first["place_source"] == {"provider": "permit", "url": "https://map.kakao.com/link/search/" + quote("가까운 가게 성동구", safe="")}
-    assert set(first) <= {"place_id", "place_name", "lat", "lng", "category", "address", "place_source", "pinnable"}
+    assert set(first) <= {"place_id", "place_name", "lat", "lng", "category", "address", "place_source", "pinnable", "naver_url"}
 
 
 def test_nothing_nearby_is_an_empty_array(client, db_session):

@@ -4947,6 +4947,8 @@ export interface components {
             category?: components["schemas"]["Category"];
             address?: string;
             place_source?: components["schemas"]["PlaceSource"];
+            /** @description 「네이버 지도에서 보기」 링크 — 핀을 찍기 전 검색 결과 상세에서 연다(PM 점검 #1554). `Pin.naver_url`과 같은 `{장소 이름} {동네}` 네이버 지도 검색 링크이고 저장하지 않는다. 이름이 없으면 필드가 없다. 외부 브라우저로 연다 */
+            naver_url?: string;
             /** @description 자체 DB에 짝이 있어 `source: search`로 핀을 만들 수 있는가(서버가 자체 DB를 읽기만 해서 계산, 카카오 ID를 기록하지 않는다). false여도 `source: live`(#382)로 「그래도 핀 남기기」를 열 수 있다 — FE는 이 결과에 "장소 정보가 없는 핀이에요"를 안내한다. 없으면 true로 본다(자체 DB 연결 전) */
             pinnable?: boolean;
         };
