@@ -421,7 +421,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
       )}
       {waiting.length > 0 && (
         // 의견을 기다리는 사람은 눈에 띄게 둔다 — 여럿이면 「○○님 외 N명」으로 줄인다(#1576).
-        <p className="flex items-center gap-1.5 rounded-xl bg-brand-50 px-3 py-2.5 text-body font-semibold text-ink-900">
+        <p className="flex items-center gap-1.5 rounded-xl border border-brand-200 bg-brand-100 px-3 py-2.5 text-body font-semibold text-[var(--selected-text)]">
           <Mark kind="unknown" /> {waiting.length > 1 ? `${waiting[0].name}님 외 ${waiting.length - 1}명이` : `${waiting[0].name}님이`} 아직 의견을
           남기지 않았어요
         </p>
