@@ -77,13 +77,14 @@ function TaskRow({ item }: { item: TaskItem }) {
     <span className="size-[18px] shrink-0 rounded-full border-[1.5px] border-ink-300 bg-white" aria-hidden="true" />
   )
   const text = <span className={`min-w-0 flex-1 truncate ${item.done ? 'text-ink-500' : 'font-semibold text-ink-900'}`}>{item.label}</span>
-  const state = <span className="sr-only">{item.done ? ' 끝남' : ' 남음'}</span>
+  // 상태를 앞에 둔다 — 「성수 매운집 …」으로 시작하면 아래 핀 카드와 이름이 겹친다(화면 읽기·e2e).
+  const state = <span className="sr-only">{item.done ? '끝난 일: ' : '남은 일: '}</span>
   if (!item.onClick) {
     return (
       <span className="flex min-h-8 items-center gap-2 text-body">
         {mark}
-        {text}
         {state}
+        {text}
       </span>
     )
   }
@@ -91,12 +92,11 @@ function TaskRow({ item }: { item: TaskItem }) {
     <button
       type="button"
       onClick={item.onClick}
-      aria-label={`${item.label} ${item.done ? '끝남' : '남음'}`}
+      aria-label={`${item.done ? '끝난 일' : '남은 일'}: ${item.label}`}
       className="press hit-y-44 flex min-h-8 w-full items-center gap-2 rounded-md text-left text-body"
     >
       {mark}
       {text}
-      {state}
     </button>
   )
 }

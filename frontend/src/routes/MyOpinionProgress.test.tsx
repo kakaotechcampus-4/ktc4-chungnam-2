@@ -22,9 +22,9 @@ describe('내 의견 카드(#1547)', () => {
     )
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuetext', '3곳 중 1곳')
     expect(screen.getByText('33%')).toBeInTheDocument()
-    expect(screen.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['장소a 끝남', '장소b 남음', '장소c 남음'])
+    expect(screen.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['끝난 일: 장소a', '장소b', '장소c'])
     expect(screen.getByText(wholeText('남은 2곳에 의견을 남기면 AI 추천이 더 정확해져요'))).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '장소b 남음' }))
+    await userEvent.click(screen.getByRole('button', { name: '남은 일: 장소b' }))
     expect(onOpen).toHaveBeenCalledWith('b')
     // 줄에 다 보이면 「모두 보기」는 없다.
     expect(screen.queryByRole('button', { name: /모두 보기/ })).not.toBeInTheDocument()

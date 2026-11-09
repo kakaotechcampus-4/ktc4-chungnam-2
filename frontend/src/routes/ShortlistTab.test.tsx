@@ -97,14 +97,14 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     const bar = await screen.findByRole('progressbar', { name: /^일정/ })
     expect(bar).toHaveAttribute('aria-valuenow', '0')
     expect(bar).toHaveAttribute('aria-valuemax', '3')
-    expect(screen.getByRole('button', { name: '첫째 날 · 비어 있어요 남음' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '남은 일: 첫째 날 · 비어 있어요' })).toBeInTheDocument()
 
     await putTwoOnSecondDay()
     await waitFor(() => expect(screen.getByRole('progressbar', { name: /^일정/ })).toHaveAttribute('aria-valuenow', '1'))
     expect(screen.getByText('둘째 날 · 2곳')).toBeInTheDocument()
 
     // 빈 날을 누르면 그날이 넣을 날짜로 골라진다.
-    await userEvent.click(screen.getByRole('button', { name: '셋째 날 · 비어 있어요 남음' }))
+    await userEvent.click(screen.getByRole('button', { name: '남은 일: 셋째 날 · 비어 있어요' }))
     expect(within(screen.getByRole('group', { name: /^넣을 날짜/ })).getByRole('button', { name: /셋째 날$/ })).toHaveAttribute('aria-pressed', 'true')
   })
 
