@@ -44,9 +44,9 @@ def test_never_seen_map_has_null_since_and_empty_lists(app_client, db_session):
     map_id = _create_map(app_client)
     _join(app_client, map_id, "user_2")
     _pin(db_session, map_id, created_by="user_2")
-    assert _news(app_client, map_id).json() == {
-        "since": None, "new_pin_ids": [], "new_reactions": [], "truncated": False,
-    }
+    body = _news(app_client, map_id).json()
+    assert body.pop("as_of")   # 이 응답을 만든 DB 시각(#1672)
+    assert body == {"since": None, "new_pin_ids": [], "new_reactions": [], "truncated": False}
 
 
 def test_news_has_others_new_pins_and_reactions_only(app_client, db_session):

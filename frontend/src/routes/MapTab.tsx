@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
 import { useMeQuery } from '@/features/auth/queries'
 import CardSkeleton from '@/ui/CardSkeleton'
 import ProgressBar from '@/ui/ProgressBar'
+import DoneCard from '@/ui/DoneCard'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
 import TaskProgress from '@/ui/TaskProgress'
@@ -34,7 +35,7 @@ import TabSheet from '@/features/shell/TabSheet'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 
 /**
- * 마킹된 장소 탭은 조립만 한다. 실제 내용은 전부 `features/map/` 안에 있다.
+ * 핀 찍기 탭은 조립만 한다. 실제 내용은 전부 `features/map/` 안에 있다.
  * 새 기능은 이 파일을 키우지 말고 `features/map/` 에 파일을 더해서 여기서 끼운다.
  */
 export default function MapTab() {
@@ -138,7 +139,7 @@ export default function MapTab() {
         tab="map"
         header={
           <>
-            <PanelBackLink label="마킹된 장소" onBack={() => showGroup(null)} />
+            <PanelBackLink label="핀 찍기" onBack={() => showGroup(null)} />
             <SheetTitle>이 자리의 핀 {groupPins.length}곳</SheetTitle>
           </>
         }
@@ -154,7 +155,7 @@ export default function MapTab() {
       header={
         <>
           <div className="flex items-center justify-between gap-2">
-            <SheetTitle>마킹된 장소</SheetTitle>
+            <SheetTitle>핀 찍기</SheetTitle>
             <ImportButton mapId={mapId} />
           </div>
           {/* 넓은 화면은 단계가 없고 칩이 지도 영역 왼쪽 위에 있다(#338). */}
@@ -202,7 +203,9 @@ export default function MapTab() {
       )}
       {/* 핀은 있는데 구성원이 나 하나면 초대를 권한다(기획안 6절, #1560). */}
       {pins && pins.length > 0 && memberCount === 1 && <AloneInvite mapId={mapId} />}
-      {pins && filters.opinion !== 'none' && <MyOpinionProgress pins={pins} onOpen={selectPin} onShowLeft={() => setFilter('opinion', 'none')} />}
+      {pins && filters.opinion !== 'none' && (
+        <MyOpinionProgress pins={pins} onOpen={selectPin} onShowLeft={() => setFilter('opinion', 'none')} recommendHref={`/maps/${mapId}/recommend`} />
+      )}
       {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} />}
     </TabSheet>
   )
@@ -229,15 +232,43 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
 const TASK_ROWS = 3
 
 /**
- * 「내가 남긴 의견 2/3곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547). 남은 곳이 있을 때만 그린다.
+ * 「내가 남긴 의견 2/3곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547).
+ * 다 남기면 완료 카드 「모든 핀에 의견을 남겼어요」 + AI 추천으로 가는 버튼이다(#1659, 빈 화면 「모두 완료」). 확정되지 않은 핀이 없으면 그리지 않는다.
  * 확정된 핀은 의견을 안 남겨도 할 일로 보지 않는다(목록 카드의 「의견 남기기」와 같은 기준).
  * 줄은 끝낸 곳 하나(있으면)와 남은 곳 — 남은 곳을 누르면 그 핀이 열린다.
  */
-export function MyOpinionProgress({ pins, onOpen, onShowLeft }: { pins: Pin[]; onOpen: (pinId: string) => void; onShowLeft: () => void }) {
+export function MyOpinionProgress({
+  pins,
+  onOpen,
+  onShowLeft,
+  recommendHref,
+}: {
+  pins: Pin[]
+  onOpen: (pinId: string) => void
+  onShowLeft: () => void
+  /** 다 남겼을 때 다음 할 일(AI 추천) 주소. 없으면 다 남겼을 때 그리지 않는다. */
+  recommendHref?: string
+}) {
   const open = pins.filter((p) => p.kind !== '확정')
   const doneList = open.filter((p) => p.my_reaction)
   const leftList = open.filter((p) => !p.my_reaction)
-  if (leftList.length === 0) return null
+  if (open.length === 0 || (leftList.length === 0 && !recommendHref)) return null
+  if (leftList.length === 0) {
+    return (
+      <div className="mb-3">
+        <DoneCard
+          title="모든 핀에 의견을 남겼어요"
+          action={
+            <Link to={recommendHref!} className="btn-outline btn-sm">
+              AI 추천 받기
+            </Link>
+          }
+        >
+          모인 의견으로 AI가 대안을 찾아요
+        </DoneCard>
+      </div>
+    )
+  }
   const name = (p: Pin) => p.place_name ?? '이름 없는 장소'
   const shownDone = doneList.slice(0, 1).map((p) => ({ key: p.id, label: name(p), done: true }))
   const shownLeft = leftList.slice(0, TASK_ROWS - shownDone.length).map((p) => ({ key: p.id, label: name(p), done: false, onClick: () => onOpen(p.id) }))

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
@@ -16,6 +16,7 @@ import ThemeControl from '@/features/shell/ThemeControl'
 import { showToast } from '@/features/shell/toast'
 import Avatar from '@/ui/Avatar'
 import Sentences from '@/ui/Sentences'
+import SheetTitle from '@/ui/SheetTitle'
 
 import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
@@ -31,6 +32,7 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
   return (
     <ModalSheet label="계정" onClose={onClose} overlay={<AccountConfirm which={confirm} onCancel={() => setConfirm(null)} />}>
       <AccountBody maps={maps} onConfirm={setConfirm} />
+      <AccountSettings onConfirm={setConfirm} />
     </ModalSheet>
   )
 }
@@ -54,22 +56,58 @@ export function AccountMenu({ maps, name }: { maps: MapView[]; name?: string }) 
       }
     >
       <AccountBody maps={maps} onConfirm={setConfirm} />
+      <AccountSettings onConfirm={setConfirm} />
     </MenuPopover>
   )
 }
 
-function AccountConfirm({ which, onCancel }: { which: Confirm; onCancel: () => void }) {
+/**
+ * 지도 화면 프로필 탭(휴대폰)의 계정 칸. 시트, 메뉴 없이 탭 시트 안에 그대로 놓는다.
+ * `links`는 이름 줄 바로 아래 바로 가기 자리, `mapId`는 의견 보내기에 지금 지도를 붙인다.
+ * 화면 모드, 도움 줄, 로그아웃, 회원 탈퇴는 탭 머리의 톱니 버튼이 여는 설정 시트(`settingsOpen`)에 있다.
+ */
+export function AccountSection({
+  maps,
+  mapId,
+  links,
+  settingsOpen,
+  onSettingsClose,
+}: {
+  maps: MapView[]
+  mapId?: string
+  links?: ReactNode
+  settingsOpen: boolean
+  onSettingsClose: () => void
+}) {
+  const [confirm, setConfirm] = useState<Confirm>(null)
+  const overlay = <AccountConfirm which={confirm} mapId={mapId} onCancel={() => setConfirm(null)} />
+  return (
+    <>
+      <AccountBody maps={maps} onConfirm={setConfirm} links={links} />
+      {settingsOpen ? (
+        <ModalSheet label="설정" onClose={onSettingsClose} overlay={overlay}>
+          <SheetTitle>설정</SheetTitle>
+          <AccountSettings onConfirm={setConfirm} />
+        </ModalSheet>
+      ) : (
+        overlay
+      )}
+    </>
+  )
+}
+
+function AccountConfirm({ which, mapId, onCancel }: { which: Confirm; mapId?: string; onCancel: () => void }) {
   if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'withdraw') return <WithdrawConfirm onCancel={onCancel} />
   if (which === 'name') return <EditNameDialog onCancel={onCancel} />
-  if (which === 'feedback') return <FeedbackSheet onClose={onCancel} />
-  if (which === 'bug') return <FeedbackSheet initialCategory="bug" onClose={onCancel} />
+  if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
+  if (which === 'bug') return <FeedbackSheet mapId={mapId} initialCategory="bug" onClose={onCancel} />
   if (which === 'faq') return <FaqSheet onClose={onCancel} />
   return null
 }
 
 /** 계정 시트·메뉴 공통 내용. 지도마다 초대 링크가 따로라 줄마다 복사 버튼을 둔다. */
-function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: Confirm) => void }) {
+function AccountBody({ maps, onConfirm, links }: { maps: MapView[]; onConfirm: (which: Confirm) => void; links?: ReactNode }) {
   const me = useMeQuery().data
   const invite = useCreateInviteMutation()
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -121,6 +159,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
           이름 바꾸기
         </button>
       </div>
+      {links}
       {me?.is_guest && <div className="mb-5 mt-1"><GuestAccountNotice /></div>}
 
       {maps.length > 0 && (
@@ -149,6 +188,14 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
         </>
       )}
 
+    </>
+  )
+}
+
+/** 계정 시트, 메뉴의 아래쪽(화면 모드, 도움 줄, 로그아웃, 회원 탈퇴). 프로필 탭에서는 설정 시트로 따로 연다. */
+function AccountSettings({ onConfirm }: { onConfirm: (which: Confirm) => void }) {
+  return (
+    <>
       {/* 내 지도 목록에는 ☰ 메뉴가 없어서 화면 모드를 계정에 둔다(#1412). */}
       <ThemeControl className="mt-5" />
       <div className="mt-2">

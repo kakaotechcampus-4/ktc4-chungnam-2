@@ -409,6 +409,7 @@ export const pinsHandlers = [
       type: body.type,
       reason_text: body.reason_text ?? "",
       reason_chip_ids: body.reason_chip_ids ?? [],
+      updated_at: new Date().toISOString(),   // 새 소식(#1556)이 이 시각으로 견준다
     };
     if (idx >= 0) list[idx] = reaction;
     else list.push(reaction);

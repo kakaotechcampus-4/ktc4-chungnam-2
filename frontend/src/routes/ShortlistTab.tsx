@@ -33,7 +33,7 @@ import Sentences from '@/ui/Sentences'
 import TaskProgress from '@/ui/TaskProgress'
 
 /**
- * 확정된 장소 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 위에서 날을 고른 뒤 줄의 「넣기」로 그날에 넣는다.
+ * 장소 확정 탭(Figma 7절, 2026-11-03 일정으로 바뀜). 리스트는 아직 일정에 넣지 않은 확정 장소이고, 위에서 날을 고른 뒤 줄의 「넣기」로 그날에 넣는다.
  * 순서와 동선은 일정이 정한다 — 「동선 보기」를 켜면 본문이 그날 일정(`DayRoute`)이 되고 지도에 그날 순서대로 선이 그어진다.
  * 넓은 화면은 「일정 짜기」 패널(`SchedulePanelHost`)을 옆에 열어 끌어 넣는다. 몇 시에 어디는 정하지 않는다(범위 밖).
  * 일정은 서버에 있어 구성원이 함께 본다(#1172).
@@ -95,7 +95,7 @@ export default function ShortlistTab() {
       <TabSheet
         tab="shortlist"
         expandOnScroll
-        header={<PinDetailHeader pin={openPin} mapId={mapId} backLabel="확정된 장소" onBack={() => setOpenPin(null)} />}
+        header={<PinDetailHeader pin={openPin} mapId={mapId} backLabel="장소 확정" onBack={() => setOpenPin(null)} />}
       >
         <PinDetailBody pin={openPin} mapId={mapId} members={members} onDone={() => setOpenPin(null)} />
       </TabSheet>
@@ -116,7 +116,7 @@ export default function ShortlistTab() {
       header={
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <SheetTitle>확정된 장소 모아보기</SheetTitle>
+            <SheetTitle>장소 확정</SheetTitle>
             <div className="mt-0.5 flex items-center gap-1">
               <p className="text-xs text-ink-500">{subtitle}</p>
               {/* 확정 리스트·일정·동선 보기가 무엇인지(멘토 리뷰 #1401, #1484). */}
@@ -148,11 +148,11 @@ export default function ShortlistTab() {
           title="아직 확정된 장소가 없어요"
           action={
             <Link to={`/maps/${mapId}`} className="btn-outline btn-md">
-              마킹된 장소 보러 가기
+              핀 찍기 탭으로 가기
             </Link>
           }
         >
-          가기로 결정한 장소들이 이곳에 모여요. 마킹된 장소에서 확정 리스트에 넣어 보세요.
+          가기로 결정한 장소들이 이곳에 모여요. 핀 찍기 탭에서 확정 리스트에 넣어 보세요.
         </EmptyState>
       )}
       {all.length > 0 && routeOn && <DayRoute mapId={mapId} onOpen={setOpenPin} />}
@@ -213,7 +213,17 @@ export default function ShortlistTab() {
                 </CoachMark>
               )}
               <CategoryChips value={category} onChange={(c) => setCategory(c as PinFilters['category'])} className="-mx-1 px-1" />
-              {shown.length === 0 && <p className="text-sm text-ink-500">이 분류에는 확정된 곳이 없어요</p>}
+              {/* 필터 결과 없음 — 회색 글 한 줄은 눈에 안 띄고 푸는 길이 없었다(#1659). 마킹 탭 필터 0곳과 같은 모양. */}
+              {shown.length === 0 && (
+                <EmptyState
+                  title="이 분류에는 확정된 곳이 없어요"
+                  action={
+                    <button type="button" onClick={() => setCategory(null)} className="btn-outline btn-md">
+                      전체 보기
+                    </button>
+                  }
+                />
+              )}
               <ShortlistList
                 items={shown}
                 dayLabel={day ? dayOrdinal(edit.dates.indexOf(day)) : ''}

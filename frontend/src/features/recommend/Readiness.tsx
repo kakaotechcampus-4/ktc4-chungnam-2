@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router'
+import { Check } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
@@ -21,7 +22,6 @@ import CreditGate from '@/features/credits/CreditGate'
 import { creditBlock } from '@/features/credits/model'
 import { useCreditsQuery } from '@/features/credits/queries'
 import FieldError from '@/ui/FieldError'
-import Mark from '@/ui/Mark'
 import RangeSlider from '@/ui/RangeSlider'
 import Sentences from '@/ui/Sentences'
 import Skeleton, { Bone } from '@/ui/Skeleton'
@@ -86,6 +86,8 @@ const STEP_MS = 3000
  * 진행 중(Figma '진행 중'). v1 서버는 단계 이벤트(run.progress)를 보내지 않는다 — 실행이 요청 안에서 끝난다
  * (docs/events.md「v1에서 발행하지 않는 이벤트」). 그래서 요청이 돌아올 때까지 정해진 단계를 시간으로 넘긴다.
  * 마지막 단계에서는 멈춰 있는다. 실제 진행과 맞지 않을 수 있어 단계에 숫자·퍼센트는 붙이지 않는다.
+ * 세 단계를 처음부터 모두 보이는 스텝 표시다(#1659) — 끝난 단계는 채운 체크 원, 지금 단계는 파랑 테두리 원 + 굵은 글자,
+ * 남은 단계는 번호 원 + 회색 글자. 원 사이는 세로 선으로 잇고, 끝난 구간은 파랑이다.
  */
 export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
   const [at, setAt] = useState(0)
@@ -95,16 +97,32 @@ export function ProgressBody({ steps = RUN_STEPS }: { steps?: string[] }) {
     return () => clearTimeout(t)
   }, [at, steps.length])
   return (
-    <ol aria-live="polite" className="space-y-2 rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-3 text-sm">
-      {steps.slice(0, at + 1).map((label, i) => {
-        const current = i === at
+    <ol aria-live="polite" className="rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-3 text-sm">
+      {steps.map((label, i) => {
+        const state = i < at ? 'done' : i === at ? 'now' : 'next'
         return (
-          <li key={label} className={`flex items-center gap-2 ${current ? 'font-bold text-ink-900' : 'text-ink-700'}`}>
-            <span aria-hidden="true" className={`flex w-3.5 justify-center ${current ? 'animate-pulse' : ''}`}>
-              {current ? <span className="size-2 rounded-full bg-current" /> : <Mark kind="check" size={14} />}
+          <li key={label} className="relative flex gap-2.5 pb-3 last:pb-0">
+            {/* 다음 원까지 잇는 선 — 끝난 구간만 파랑. */}
+            {i < steps.length - 1 && (
+              <span aria-hidden="true" className={`absolute left-[11px] top-6 bottom-0 w-0.5 ${i < at ? 'bg-[var(--action-fill)]' : 'bg-ink-200'}`} />
+            )}
+            <span
+              aria-hidden="true"
+              className={`relative flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                state === 'done'
+                  ? 'done-check bg-[var(--action-fill)] text-white'
+                  : state === 'now'
+                    ? 'border-2 border-[var(--action-fill)] bg-surface text-link'
+                    : 'border border-ink-300 bg-surface text-ink-500'
+              }`}
+            >
+              {state === 'done' ? <Check size={14} strokeWidth={3} /> : state === 'now' ? <span className="size-2 animate-pulse rounded-full bg-current motion-reduce:animate-none" /> : i + 1}
             </span>
-            {label}
-            {current && <span className="ml-auto text-xs text-link">진행 중</span>}
+            <span className={`flex min-h-6 flex-1 items-center ${state === 'now' ? 'font-bold text-ink-900' : state === 'done' ? 'text-ink-700' : 'text-ink-500'}`}>
+              <span className="sr-only">{state === 'done' ? '끝난 단계: ' : state === 'now' ? '지금 단계: ' : '남은 단계: '}</span>
+              {label}
+            </span>
+            {state === 'now' && <span className="flex min-h-6 items-center text-xs text-link">진행 중</span>}
           </li>
         )
       })}
