@@ -812,7 +812,7 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     assert a.post(f"/agent/suggestions/{first}/accept", json={"action_index": 9}).status_code == 422
     accepted = a.post(f"/agent/suggestions/{first}/accept", json={"action_index": 0})
     assert accepted.status_code == 200
-    assert accepted.json()["action"] == {"index": 0, "type": "open_recommend", "label": "카페 추천 받기",
+    assert accepted.json()["action"] == {"index": 0, "type": "search_place", "label": "카페 검색",   # 카페 핀이 없어 추천 준비 전(#1583)
                                          "params": {"category": "카페"}}
     assert b.post(f"/agent/suggestions/{first}/accept", json={"action_index": 0}).status_code == 409
     assert b.post(f"/agent/suggestions/{first}/dismiss").status_code == 409
