@@ -120,14 +120,21 @@ function PinCard({
   const label = [`${card.name} ${card.meta}`, card.confirmed && '확정됨', news?.newPin && '새 핀', summaryLabel(card)].filter(Boolean).join(', ')
   return (
     // 카테고리는 왼쪽 아이콘 칸으로 글자를 읽지 않고도 가른다(#1454). 지도 핀 모양은 그대로 둔다.
-    <article ref={ref} className={`press relative flex w-full gap-3 rounded-xl p-3.5 text-left ${face}`}>
+    // 클릭은 카드에서 받는다(#1724). 끌어서 버리기가 누르는 순간 포인터를 카드로 붙잡아서, 내가 찍은 핀은 클릭이 안쪽 이름 버튼에 가지 않는다.
+    // 이름 버튼의 클릭(키보드 포함)도 여기로 올라온다. 바로 반응 버튼 안의 누름만 뺀다.
+    <article
+      ref={ref}
+      onClick={(e) => {
+        if (!(e.target as Element).closest('[data-no-drag]')) onSelect()
+      }}
+      className={`press relative flex w-full cursor-pointer gap-3 rounded-xl p-3.5 text-left ${face}`}
+    >
       <CategoryIcon category={card.category} />
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
           <p className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
-              onClick={() => onSelect()}
               aria-label={label}
               className="truncate text-left font-bold text-ink-900 outline-none before:absolute before:inset-0 before:rounded-xl focus-visible:before:outline-2 focus-visible:before:outline-offset-2 focus-visible:before:outline-[var(--line-focus)]"
             >
