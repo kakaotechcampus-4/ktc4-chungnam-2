@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import type { ReactNode } from 'react'
@@ -65,6 +65,30 @@ describe('핀 찍기 목록의 할 일 묶음과 바로 반응(#1696)', () => {
     const name = todo[0].place_name!
     await userEvent.click(screen.getByRole('button', { name: `${name} 좋음` }))
     await vi.waitFor(() => expect(client.getQueryData<Pin[]>(pinKeys.list(MAP))!.find((p) => p.id === todo[0].id)!.my_reaction?.type).toBe('like'))
+  })
+})
+
+describe('핀 카드를 누르면 상세가 열린다(#1724)', () => {
+  it('포인터를 붙잡아 클릭이 카드로 와도 열리고, 이름 버튼은 한 번만, 바로 반응 버튼은 열지 않는다', async () => {
+    const pins = await fetchPins(MAP)
+    const todo = pins.filter(isTodo)
+    const done = pins.filter((p) => !isTodo(p))
+    const onSelect = vi.fn()
+    setup(<PinList mapId={MAP} pins={pins} memberCount={4} onSelect={onSelect} todoIds={new Set(todo.map((p) => p.id))} />, pins)
+
+    const name = done[0].place_name!
+    const nameButton = screen.getByRole('button', { name: new RegExp(`^${name} `) })
+    // 끌어서 버리기가 포인터를 붙잡으면 클릭의 대상은 이름 버튼이 아니라 카드다.
+    fireEvent.click(nameButton.closest('article')!)
+    expect(onSelect).toHaveBeenLastCalledWith(done[0].id, undefined)
+    expect(onSelect).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(nameButton)
+    expect(onSelect).toHaveBeenCalledTimes(2)
+
+    onSelect.mockClear()
+    await userEvent.click(screen.getByRole('button', { name: `${todo[0].place_name} 좋음` }))
+    expect(onSelect).not.toHaveBeenCalled()
   })
 })
 
