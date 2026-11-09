@@ -36,7 +36,7 @@
 | `map.deleted` | `{ map_id }` | 방장이 지도를 삭제함(#369). 삭제와 같은 트랜잭션에 기록된다. realtime은 이미 연결된 구독자에게 이 이벤트를 보낸 뒤 연결을 닫는다(삭제된 지도는 새 구독이 404라 이 순서가 아니면 마지막 이벤트가 전달되지 않는다). 받은 FE는 내 지도 목록으로 돌아간다 |
 | `map.updated` | `{ map_id, title, start_date, end_date, region? }` | 방장이 지도 제목·날짜·지역을 고침(#465). 수정과 같은 트랜잭션에 기록된다. 요청자 기준 값(`permissions` 등)은 싣지 않는다. 받은 FE는 지도 상세 캐시를 갱신한다 |
 | `owner.changed` | `{ map_id, from_user_id, to_user_id }` | 방장이 직접 방장을 넘김(#468). 두 사람 모두 지도에 남는다 — **`member.left`를 재사용하지 않는다**(나간 것으로 오해해 SSE를 닫는다). 받은 FE는 지도 상세·구성원 목록(`role`)을 다시 불러온다 |
-| `member.presence` | `{ user_id, online }` | 접속 상태 변화 — **v1 서버는 발행하지 않는다**(아래 「v1에서 발행하지 않는 이벤트」) |
+| `member.presence` | `{ user_id, online }` | 접속 상태 변화(#1551). 「접속 중」은 그 지도의 전체 채널 SSE(`GET /maps/{mapId}/events`)에 연결이 하나라도 열려 있는 구성원이다(#1551). 같은 사람이 탭·기기를 여러 개 열어도 한 명이다. 마지막 연결이 끊기고 30초 안에 다시 붙지 않으면 접속 아님이다(새로고침·짧은 끊김에 깜빡이지 않게). 위치가 아니라 「지도를 열어 두었는가」만 본다 — 실시간 위치 공유(범위 밖)가 아니다. **바뀔 때만** 보낸다 — 첫 연결은 `online: true`, 30초 유예가 지나면 `online: false`. 지도를 처음 열 때의 값은 `GET /maps/{mapId}/members`의 `Member.online`으로 받는다. 자기 자신의 이벤트도 온다(화면이 거른다). 아래 「접속 상태의 한계」 |
 | `agent.suggested` | `AgentSuggestion` (api-spec.yaml) | v2 계획 보조 에이전트가 지도 제안을 저장함(docs/agent-v2.md 15절). 지도당 동시에 하나. 코드 유형(반응 공백, 카테고리 공백)은 #531, 모델 유형(정체, 갈림)은 #582부터 발행한다. 작업 기록 `steps`(#1297)도 GET과 같은 렌더로 실린다 |
 | `agent.resolved` | `{ suggestion_id, status, resolved_action_type }` | 제안이 끝남: 수락(accepted), 닫기(dismissed), 만료(expired), 무효화(superseded). 누가 처리했는지는 싣지 않는다 |
 | `agent.summary_updated` | `AgentSummary` | 우리 조건 요약 갱신. 점이나 알림을 켜지 않는다 |
@@ -50,13 +50,18 @@
 | `run.candidates_ready` | `{ run_id, candidates: Candidate[] }` | ④ 반영 — 점선 핀이 본인에게만 뜨는 시점 |
 | `run.failed` | `{ run_id, error: Error }` | 추천 실패 (6절 "추천 실패" 화면) — **v1 서버는 발행하지 않는다** |
 
+### 접속 상태의 한계 (#1551, 2026-11-09)
+
+- **API 프로세스 하나 기준이다.** 접속 상태는 realtime이 그 프로세스 메모리에 든 SSE 연결로 센다. 지금 배포는 환경마다 API 컨테이너 하나, `uvicorn --workers 1`이라 맞다. API를 여러 프로세스·여러 대로 늘리면 연결이 나뉘어 틀린다 — 그때 공유 저장소(DB 표나 Redis)로 옮긴다. 늘리기 전에 이 절을 고친다.
+- **배포·재시작 때 잠깐 모두 접속 아님이 된다.** SSE가 다시 붙으면 돌아온다. 그래서 재시작 직후의 `online: false`는 보내지 않아도 된다(연결이 없으니 받을 사람도 없다).
+- 저장하지 않는다. 접속 기록(언제 들어왔는지)은 남기지 않는다.
+
 ### v1에서 발행하지 않는 이벤트 (2026-10-04)
 
 - **`run.progress`·`run.failed`**: 추천 실행(`POST /runs/{id}/execute`·`/widen`·`/retry`)이 요청 안에서 동기로 끝나고, 이벤트는 요청 하나가 커밋될 때 한꺼번에 나간다 — 단계마다 보내도 끝에 한 번에 도착해 진행 표시가 되지 않고, 실패하면 트랜잭션이 롤백돼 `run.failed`도 저장되지 않는다. 그래서 v1에서는 보내지 않는다.
   - **진행 표시**는 프론트가 실행 요청이 돌아올 때까지(또는 결과 조회가 `done`이 될 때까지) 자체 애니메이션으로 보여 준다.
   - **실패**는 실행 요청의 HTTP 응답(500 `RECOMMEND_FAILED`, 크레딧이 모자라면 402 `CREDIT_INSUFFICIENT` 등)으로 받는다. 이벤트를 기다리지 않는다.
   - 단계별 진행을 실시간으로 보여 주려면 실행을 백그라운드로 옮겨야 한다(v2 검토).
-- **`member.presence`**: 접속 상태 추적이 없다. `Member.online`은 비어 온다 — 접속 점은 그리지 않는다.
 - **`agent.*`**: v2 계획 보조 에이전트(docs/agent-v2.md)의 이벤트다. #531부터 코드 유형 제안(반응 공백, 카테고리 공백)의 `agent.suggested`, `agent.resolved`, `agent.settings_changed`가 발행된다. 모델 유형(정체, 갈림)은 #582부터 발행되고, `agent.summary_updated`는 #586부터 발행된다.
 - **FE는 이 이벤트들을 받아도 되지만 의존하지 않는다.** 결과는 항상 `GET /runs/{id}/result`가 정본이다(`done`이 될 때까지 2초 간격 조회).
 
