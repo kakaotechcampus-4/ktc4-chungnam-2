@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router'
 import { agentEventHandlers, agentKeys } from '@/features/agent/queries'
 import { useMeQuery } from '@/features/auth/queries'
 import { courseKeys } from '@/features/course/queries'
+import type { MemberDto } from '@/features/maps/model'
 import { mapKeys } from '@/features/maps/queries'
 import { recommendKeys } from '@/features/recommend/queries'
 import { showToast } from '@/features/shell/toast'
@@ -81,7 +82,8 @@ function refetchTable(mapId: string): Record<string, InvalidateQueryFilters[]> {
  * 열려 있는 AI 코스 결과도 다시 받는다 — 그동안 일정이 바뀌었으면 stale 로 「일정이 바뀌었어요」를 보여야 해서다(#1322).
  */
 function refreshMap(queryClient: QueryClient, mapId: string) {
-  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId), courseKeys.latest(mapId), courseKeys.runs]) {
+  // 끊긴 동안의 접속 변화(member.presence)는 다시 오지 않는다 — 구성원 목록의 online 도 새로 받는다(#1551).
+  for (const queryKey of [pinKeys.list(mapId), pinKeys.counts(mapId), shortlistKeys.list(mapId), courseKeys.latest(mapId), courseKeys.runs, mapKeys.members(mapId)]) {
     void queryClient.invalidateQueries({ queryKey })
   }
 }
@@ -171,6 +173,11 @@ export function useMapEvents(mapId: string): { state: ConnectionState; reconnect
       'pin.deleted': remove,
       'reaction.changed': reaction,
       'map.deleted': mapDeleted,
+      // 접속 상태는 바뀔 때만 온다(#1551). 구성원 목록 캐시의 그 사람 online 만 고친다 — 목록이 없으면 처음 열 때 받는다.
+      'member.presence': (e) => {
+        const { user_id, online } = parse<{ user_id: string; online: boolean }>(e)
+        queryClient.setQueryData<MemberDto[]>(mapKeys.members(mapId), (list) => list?.map((m) => (m.user_id === user_id ? { ...m, online } : m)))
+      },
       // 내가 나갔다(다른 기기에서 나가기 등) — 그 지도의 핑고 AI 조언 상태를 버린다(agent-v2 16.4). 남이 나간 건 표대로 다시 받는다.
       'member.left': (e) => {
         if (parse<{ user_id: string }>(e).user_id === myUserId) queryClient.removeQueries({ queryKey: agentKeys.state(mapId) })

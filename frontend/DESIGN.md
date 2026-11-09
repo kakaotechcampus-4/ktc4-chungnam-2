@@ -394,6 +394,7 @@ components:
 | 장소 검색 최근 검색어 | `RecentSearches` (검색창이 비어 있고 포커스가 있을 때 검색창 바로 밑에 붙는 흰 카드 — 열리면 검색창은 아래 모서리를 펴고, 둘이 한 덩어리로 brand-600 1px 둘레 + 이음매 ink-100 선이다. 브라우저 입력 기록은 `autoComplete="off"`로 끈다: 「최근 검색」 12/600 ink-500 + 「전체 삭제」 `btn-text`, 줄마다 시계 아이콘·검색어·✕. 이 브라우저에 계정마다 8개, 검색어만 남기고 지도 링크·결과는 남기지 않는다) | `features/search/RecentSearches` |
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
+| 지금 지도를 열어 둔 사람 | `OnlineDot` (초록 `--good-line` 점 10px, 카드 면 테두리 2px). 아바타 오른쪽 아래(`Avatar online`)와 구성원 버튼의 인원 수 옆에 둔다. 점은 보이기만 하고 뜻은 버튼 이름이나 '지금 N명이 같이 보고 있어요' 글이 전한다(#1551) | `ui/OnlineDot` |
 | 별점(보기·고르기, #953) | `StarRating` (`onChange` 없으면 보기 — 평균은 가까운 별 수로 칠하고 숫자는 옆 글자로. 있으면 별 하나가 라디오, 누르는 곳 44px. 켜짐 `--action-fill` · 꺼짐 `--line-control`, 골드는 확정 전용이라 쓰지 않는다) | `ui/StarRating` |
 | 핀 상세 장소 후기(자체 DB 핀만, #953) | `PlaceReviews` (「장소 후기」 + 평균·개수 + 「후기 쓰기」 `btn-outline btn-sm` · 목록 ink-50 면 줄마다 「나」/「핑고 사용자」·별·시각·「삭제」/「신고」 `btn-text` · 「더 보기」 `btn-link`), 작성은 `ReviewSheet`(사전 고지 + `StarRating` + 여러 줄 입력 + 글자 수). 댓글·좋아요·프로필은 없다(SNS 아님) | `features/reviews` |
 | 서비스 피드백(#10) | `FeedbackSheet` (분류 칩 + 여러 줄 입력 + 「보내기」, 계정 시트·지도 정보의 글자 버튼에서 연다) | `features/feedback/FeedbackSheet` |

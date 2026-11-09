@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { courseKeys } from '@/features/course/queries'
+import { mapKeys } from '@/features/maps/queries'
 import { shortlistKeys } from '@/features/shortlist/queries'
 
 import { pinKeys } from './queries'
@@ -163,5 +164,17 @@ describe('shortlist.changed 뒤 AI 코스 재조회(#1322)', () => {
     expect(fetched).toEqual({ latest: 2, run: 2 })
     expect(invalidated()).toContain(JSON.stringify(courseKeys.latest(MAP)))
     stops.forEach((stop) => stop())
+  })
+})
+
+describe('접속 상태(#1551)', () => {
+  it('member.presence 를 받으면 구성원 목록 캐시의 그 사람 online 만 고친다', () => {
+    const { client } = setup()
+    client.setQueryData(mapKeys.members(MAP), [
+      { user_id: 'u_me', role: 'owner', is_guest: false, online: true },
+      { user_id: 'u_2', role: 'member', is_guest: false, online: false },
+    ])
+    act(() => latest().emit('member.presence', { user_id: 'u_2', online: true }))
+    expect(client.getQueryData<{ user_id: string; online: boolean }[]>(mapKeys.members(MAP))?.map((m) => m.online)).toEqual([true, true])
   })
 })

@@ -9,6 +9,7 @@ import { useMeQuery } from '@/features/auth/queries'
 import FeedbackSheet from '@/features/feedback/FeedbackSheet'
 import FaqSheet from '@/features/help/FaqSheet'
 import PinTrashSheet from '@/features/map/PinTrashSheet'
+import { othersOnline } from '@/features/maps/model'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import InviteLinks from '@/features/maps/InviteLinks'
 import { DeleteMapConfirm, EditMapDialog, LeaveMapConfirm, TransferOwnerConfirm } from '@/features/maps/MapLifecycle'
@@ -140,11 +141,13 @@ function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onCo
         )}
       </div>
       {members.error && <ErrorText message="구성원을 불러오지 못했어요" error={members.error} />}
+      {/* 나 말고 지금 지도를 열어 둔 사람(#1551). 서버가 접속 상태를 주지 않으면 0이라 줄이 없다. */}
+      {othersOnline(members.data) > 0 && <p className="mb-2 text-sm text-[var(--good-text)]">지금 {othersOnline(members.data)}명이 같이 보고 있어요</p>}
       <ul className="space-y-3">
         {members.data?.map((m) => (
           <li key={m.userId} className="flex items-center gap-3">
             {/* 구성원별 색 구분은 없다(#26) — 아바타는 회색 면 하나로 통일. */}
-            <Avatar name={m.initial} />
+            <Avatar name={m.initial} online={m.online} />
             <span className="text-ink-900">
               {m.name}
               {m.isMe && <span className="ml-1 text-ink-500">(나)</span>}
