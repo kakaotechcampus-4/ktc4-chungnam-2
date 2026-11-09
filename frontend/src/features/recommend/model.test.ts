@@ -13,6 +13,7 @@ import {
   noResultsExternalSearch,
   notEnforcedNote,
   radiusOptions,
+  tagAuthor,
   readinessRadiusM,
   recommendAreaNote,
   rerunErrorMessage,
@@ -255,5 +256,20 @@ describe('「찾는 범위」 km 칸(#1416)', () => {
     expect(kmInputToM('5.1', 2000, 5000, 100)).toBeNull()
     expect(kmInputToM('', 2000, 5000, 100)).toBeNull()
     expect(kmInputToM('삼', 2000, 5000, 100)).toBeNull()
+  })
+})
+
+describe('합친 태그 칩의 쓴 사람 — 첫 줄 이름만 쓰면 남의 이름 옆에 내 × 가 붙는다', () => {
+  const by = (name: string, mine = false) =>
+    line(name, 'preferred', { author_display_name: name, author_id: mine ? 'me' : name, permissions: { can_disable: mine } as EvidenceLineDto['permissions'] })
+  it('내 줄만이면 내 이름과 id(「(나)」가 붙는다)', () => {
+    expect(tagAuthor([by('준영', true)])).toEqual({ author_display_name: '준영', author_id: 'me' })
+  })
+  it('남 한 사람이면 그 이름, (나) 없음', () => {
+    expect(tagAuthor([by('민재')])).toEqual({ author_display_name: '민재', author_id: '' })
+  })
+  it('여럿이면 나를 앞에 두고 나머지는 수로', () => {
+    expect(tagAuthor([by('민재'), by('준영', true), by('강준')]).author_display_name).toBe('나 외 2명')
+    expect(tagAuthor([by('민재'), by('강준'), by('민재')]).author_display_name).toBe('민재 외 1명')
   })
 })
