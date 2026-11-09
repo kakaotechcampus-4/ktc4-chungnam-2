@@ -346,7 +346,7 @@ components:
 | 필터 드롭다운 | `FilterSelect` (「라벨 값 ▾」, 칸 전체가 select · 폭은 가장 긴 선택지, 줄 폭을 넘으면 값을 「…」로 줄인다) | `features/map/PinFilterControls` |
 | 짧은 표시 | `tag` + `tag-{neutral·ai·good·warn·bad}` | `index.css` |
 | 입력칸 | 한 줄 `TextField` · 여러 줄 `TextArea`(둘 다 ✕·글자 수 포함) · `ClearButton` | `ui/TextField` · `ui/TextArea` · `index.css` |
-| 날짜 입력·달력 | `DatePicker` (`field` 틀에 「2026.11.20 (금)」, 누르면 아래에 달력) · 화면에 바로 까는 달력 `Calendar`(확정 탭 「넣을 날짜」). 고른 날 brand-600 채운 원 · 오늘 brand 테두리 한 줄 · 일요일 `--day-sun-*`(연한 빨강 면 + 빨강 글자) · 토요일 `--day-sat-*`(연한 파랑 면 + 파랑 글자) · 범위 밖은 면 없이 ink-300 흐린 숫자만(누를 수 없음, 회색 원은 고를 수 있는 날보다 눈에 띄어서 뺐다, #1554). `rangeWeeks`면 `min`~`max`가 든 주만 그리고 달 넘기기가 없다(달이 바뀌는 1일은 「11.1」). 비워도 되는 칸만 ✕. 브라우저 날짜 칸은 달력 색을 못 바꿔서 쓰지 않는다 | `ui/DatePicker` |
+| 날짜 입력·달력 | `DatePicker` (`field` 틀에 「2026.11.20 (금)」, 누르면 아래에 달력) · 화면에 바로 까는 달력 `Calendar`(확정 탭 「넣을 날짜」). 고른 날 brand-600 채운 원 · 오늘 brand 테두리 한 줄 · 일요일 `--day-sun-text`(빨강 글자) · 토요일 `--day-sat-text`(파랑 글자), 주말 면은 없다 · 범위 밖은 면 없이 ink-300 흐린 숫자만(누를 수 없음, 회색 원은 고를 수 있는 날보다 눈에 띄어서 뺐다, #1554). `rangeWeeks`면 `min`~`max`가 든 주만 그리고 달 넘기기가 없다(달이 바뀌는 1일은 「11.1」). 비워도 되는 칸만 ✕. 브라우저 날짜 칸은 달력 색을 못 바꿔서 쓰지 않는다 | `ui/DatePicker` |
 | 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |
 | 누군지 모르는 사람(탈퇴한 작성자) | `UnknownName` (글 안의 「(알 수 없음)」만 ink-400) | `ui/UnknownName` |
 | 시트 안 이전 화면 | `BackButton` 「‹ 마킹된 장소」 | `ui/BackButton` |
