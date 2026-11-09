@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import { AlertDialog } from 'radix-ui'
 import Sentences from './Sentences'
+import BusyLabel from './BusyLabel'
 
 /**
  * 확인 창(Figma 근거 확인 계열·로그아웃). 포커스 가두기·Esc 닫기는 Radix AlertDialog 가 맡는다(#299·#359).
@@ -76,9 +77,12 @@ export default function ConfirmDialog({
               <button
                 type="submit"
                 disabled={pending}
+                aria-busy={pending}
                 className={`${danger ? 'btn-danger' : 'btn-primary'} btn-md`}
               >
-                {ok}
+                <BusyLabel busy={pending} busyText={ok}>
+                  {ok}
+                </BusyLabel>
               </button>
             </div>
           </form>

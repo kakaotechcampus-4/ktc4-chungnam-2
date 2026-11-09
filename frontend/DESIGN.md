@@ -339,6 +339,7 @@ components:
 | 필요한 것 | 쓰는 부품 | 위치 |
 |---|---|---|
 | 버튼 | `btn-{primary·outline·neutral·confirm·danger·danger-outline}` + `btn-{lg·md·sm}` | `index.css` |
+| 버튼 안 기다림(#1668) | `BusyLabel` (도는 아이콘 16 + 「…하는 중…」, 동작 줄이기면 멈춤) | `ui/BusyLabel` |
 | 글자 버튼·링크 | `btn-text` · `btn-link` | `index.css` |
 | 버튼인 카드·줄·지도 위 원 버튼의 올림·눌림 | `press` (바탕 위에 잉크 4%·8%를 덮는다) | `index.css` |
 | 누르는 알약(필터·선택) | `chip` (+ `chip-against`), 카테고리 줄은 `CategoryChips` | `index.css` · `features/map/PinFilterControls` |
@@ -468,6 +469,7 @@ components:
   - 글자 버튼은 글자색이 진해지고, `btn-link`는 올리면 밑줄이 생긴다.
   - 버튼(`btn-lg·md·sm`)은 누르는 동안 98%로 살짝 눌린다. 동작 줄이기면 색만 바뀐다.
   - 버튼인 카드·줄(핀 카드, 지도 카드, 검색 결과 이름, AI 후보 카드, 확정 리스트 이름, 알림 줄, 의견 고르기)과 지도 위 원 버튼·하단 탭은 `press`를 붙인다. 바탕색 위에 잉크를 얇게 덮어서 흰 카드·파란 후보 카드 어디서든 같은 정도로 보인다. 누름 반응은 바로 보여야 해서 전환 시간을 두지 않는다.
+  - **기다림(#1668):** 서버를 기다리는 버튼은 `BusyLabel`로 도는 아이콘 16 + 「저장하는 중…」을 보이고 `disabled` + `aria-busy`다. 글자만 바꾸지 않는다(눌렸는지 한눈에 알기 어려웠다). 확인 창 마지막 버튼은 `pending`이면 같은 모양이다. 버튼 상태의 기준은 버튼 상태 9가지 모음(기본, 호버, 눌림, 포커스, 비활성, 로딩, 성공, 오류, 선택됨)이다.
   - `press`는 `background-image`로 덮는다. 그 요소에 인라인 `background` 단축 속성을 쓰면 지워지니 `backgroundColor`를 쓴다.
 - **글자 버튼:** `btn-text`(조용한 회색 500 — 「닫기」·「핀 삭제」·「확정 해제」·「나중에 할게요」)와 `btn-link`(brand-600 700 — 「카카오맵에서 보기」·「복사」·「직접 찍기」). 둘 다 누르는 곳 44px이 들어 있다. 크기는 놓인 줄의 글자 크기를 따른다.
 - **Kakao:** 카카오 노랑 + 검정 글자, `btn-lg`. 「카카오로 시작하기」 한 곳뿐이다.
