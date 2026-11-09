@@ -13,6 +13,17 @@
 			lb_try_interval 500ms
 		}
 	}
+	# 초대 링크 미리보기(#1625). 메신저 미리보기 봇은 스크립트를 실행하지 않아 화면(index.html)의 고정 og 태그만 읽는다.
+	# 봇이 여는 /invites/{token}만 API의 미리보기 문서로 보낸다. 사람(카톡 안 브라우저 포함)은 아래 화면으로 간다.
+	# 카톡 봇은 kakaotalk-scrap, 카톡 안 브라우저는 KAKAOTALK이라 겹치지 않는다.
+	@invite_preview {
+		path_regexp invite ^/invites/([^/]+)/?$
+		header_regexp bot User-Agent (?i)(kakaotalk-scrap|facebookexternalhit|twitterbot|slackbot|discordbot|telegrambot)
+	}
+	handle @invite_preview {
+		rewrite * /invites/{re.invite.1}/preview
+		reverse_proxy {args[0]}:8000
+	}
 	handle {
 		reverse_proxy {args[1]}:80 {
 			# 화면 컨테이너가 다시 뜨는 동안도 같다

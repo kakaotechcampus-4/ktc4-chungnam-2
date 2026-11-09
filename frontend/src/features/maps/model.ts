@@ -261,8 +261,18 @@ export function inviteErrorMessage(err: unknown): string {
   return INVITE_ERROR_MESSAGES[err.code] ?? '참여하지 못했어요'
 }
 
-/** alreadyMemberMapId: 연 사람이 이미 그 지도 구성원이면 지도 id(#1563). 서버가 그때만 준다. */
-export type InviteView = { title: string; dates: string; memberCount: number; pinCount: number; inviter: string; alreadyMemberMapId?: string }
+export type InviteView = {
+  title: string
+  dates: string
+  memberCount: number
+  pinCount: number
+  inviter: string
+  /** 카드 그림(#1625) — 대표 이미지가 없으면 지역 그림이다. MapCover 가 그린다. */
+  region?: string
+  coverUrl?: string
+  /** 연 사람이 이미 그 지도 구성원이면 지도 id(#1563). 서버가 그때만 준다. */
+  alreadyMemberMapId?: string
+}
 
 export function toInviteView(invite: InviteSummaryDto): InviteView {
   return {
@@ -271,6 +281,8 @@ export function toInviteView(invite: InviteSummaryDto): InviteView {
     memberCount: invite.member_count,
     pinCount: invite.pin_count,
     inviter: invite.inviter_display_name,
+    region: invite.region?.label,
+    coverUrl: invite.cover_url ?? undefined,
     alreadyMemberMapId: invite.already_member_map_id,
   }
 }
