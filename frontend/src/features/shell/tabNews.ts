@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
-/** 새 소식을 다는 탭. 지금은 AI 추천뿐이다 — AI 코스는 다른 탭에 있으면 진행 조회가 멈춰서 끝난 줄을 모른다(#1704). */
-export type NewsTab = 'recommend'
+/** 새 소식을 다는 탭 — AI 추천(#1704), AI 코스(#1719, 진행 조회는 `CourseRunWatcher`가 탭 밖에서도 잇는다). */
+export type NewsTab = 'recommend' | 'course'
 
 /** `지도id:탭` → 말풍선 글. 화면 상태라 저장하지 않는다(새로고침하면 사라진다). */
 const useTabNewsStore = create<{ news: Record<string, string> }>(() => ({ news: {} }))
