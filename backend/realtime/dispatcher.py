@@ -31,6 +31,18 @@ CLOSED = object()
 
 
 @dataclass(frozen=True)
+class PresenceEvent:
+    """member.presence — event_log 행처럼 보이지만 저장하지 않는 메모리 이벤트다(seq 없음)."""
+
+    map_id: str
+    payload: dict
+    seq: None = None
+    channel: str = "public"
+    type: str = "member.presence"
+    recipient_user_id: None = None
+
+
+@dataclass(frozen=True)
 class Subscription:
     """구독 하나가 무엇을 받을 자격이 있는지 — 이 조건을 큐에 넣는 시점에 검사한다.
     channel="private"이면 user_id와 행의 recipient_user_id가 일치할 때만 받는다. user_id는 전체
@@ -75,11 +87,25 @@ class Dispatcher:
     def subscribe(self, map_id: str, *, channel: str, user_id: str) -> Subscription:
         sub = Subscription(channel=channel, user_id=user_id)
         self._subscribers.setdefault(map_id, []).append(sub)
-        if channel == "public":
-            self.presence.connect(map_id, user_id)
+        became_online = channel == "public" and self.presence.connect(map_id, user_id)
         if self._closing:
-            self._close(sub)
+            self._close(sub)   # 종료 중 — 알리지 않는다(unsubscribe가 짝을 맞춘다)
+        elif became_online:
+            self._announce(map_id, user_id, online=True)   # 첫 연결 — 자기 자신도 받는다(docs/events.md, 화면이 거른다)
         return sub
+
+    def _announce(self, map_id: str, user_id: str, *, online: bool) -> None:
+        """member.presence를 그 지도의 전체 채널 구독자에게 메모리에서 바로 보낸다 — event_log에 쓰지 않는다
+        (접속 기록을 남기지 않고, 커밋 전 트랜잭션과 섞일 일도 없다). seq가 없어 SSE id 줄이 없고 재전송되지 않는다."""
+        row = PresenceEvent(map_id=map_id, payload={"user_id": user_id, "online": online})
+        for sub in list(self._subscribers.get(map_id, [])):
+            if sub.wants(row):
+                self._put(map_id, sub, row)
+
+    def expire_presence(self) -> None:
+        """유예(presence.GRACE)가 끝난 구성원의 `online=false`를 보낸다. 폴링 루프가 매 번 부른다."""
+        for map_id, user_id in self.presence.expire():
+            self._announce(map_id, user_id, online=False)
 
     def request_stop(self) -> None:
         """폴링 루프에 정지를 요청한다. 진행 중인 _tick은 끊지 않고 끝까지 돈 뒤 루프가 빠져나온다
@@ -160,7 +186,7 @@ class Dispatcher:
                     break
                 except asyncio.TimeoutError:
                     pass
-                self.presence.expire()   # 끊긴 지 GRACE가 지난 접속 기록을 치운다(이벤트로 알리는 일은 다음 PR)
+                self.expire_presence()   # 접속 유예가 끝난 구성원을 알린다(메모리만, 틱 성공과 무관)
                 # 동기 DB 쿼리를 async 루프 안에서 그대로 부르면 그 500ms 폴링 텀마다 이벤트 루프
                 # 전체(다른 SSE 연결 포함)가 DB 왕복 시간만큼 멈춘다. 조회만 스레드로 넘기고, 구독 큐와
                 # 구독 목록은 이벤트 루프(여기)에서만 만진다 — asyncio 객체는 스레드에서 만지지 않는다.
@@ -203,6 +229,13 @@ class Dispatcher:
         self._deliver(emit)
         return len(rows) >= TICK_ROW_LIMIT and self._last_seen > before
 
+    def _put(self, map_id: str, sub: Subscription, row) -> None:
+        """구독 큐에 행 하나를 넣는다. 큐가 넘치면 그 구독을 끊는다."""
+        try:
+            sub.queue.put_nowait(row)
+        except asyncio.QueueFull:
+            self._evict(map_id, sub)
+
     def _deliver(self, rows) -> None:
         """행마다 받을 구독에 넣고, 그 행이 구독을 끊는 행이면 해당 구독에 CLOSED를 넣는다.
         이벤트가 CLOSED보다 먼저 큐에 들어가야 받은 쪽이 왜 끊겼는지 안다(docs/events.md)."""
@@ -210,10 +243,7 @@ class Dispatcher:
             subs = list(self._subscribers.get(row.map_id, []))
             for sub in subs:
                 if sub.wants(row):
-                    try:
-                        sub.queue.put_nowait(row)
-                    except asyncio.QueueFull:
-                        self._evict(row.map_id, sub)
+                    self._put(row.map_id, sub, row)
             scope = close_after(row)
             if scope is None:
                 continue

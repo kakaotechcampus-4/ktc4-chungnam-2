@@ -16,7 +16,7 @@ from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.deps import get_membership_gateway
 from authz.testing import FakeMembership
-from realtime.dispatcher import dispatcher
+from realtime.dispatcher import dispatcher, Dispatcher
 from realtime.router import private_events, public_events
 
 MAP = "close-map"
@@ -31,6 +31,12 @@ class Row:
     type: str
     payload: dict = field(default_factory=dict)
     recipient_user_id: str | None = None
+
+
+@pytest.fixture(autouse=True)
+def _quiet_presence(monkeypatch):
+    """이 파일은 구독 종료·ping·재전송을 본다 — member.presence 알림(test_presence.py가 본다)이 첫 청크를 가로채지 않게 한다."""
+    monkeypatch.setattr(Dispatcher, "_announce", lambda *a, **k: None)
 
 
 class _AliveRequest:
