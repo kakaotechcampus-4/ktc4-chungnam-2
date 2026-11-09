@@ -99,6 +99,8 @@ describe('AI 코스 — 모드별 결과(#1322)', () => {
     expect(cards[0]).toHaveTextContent('도보 90분은 그대로예요')
     expect(within(cards[1]).queryByRole('button')).not.toBeInTheDocument()
     expect(cards[1]).toHaveTextContent('그대로 둬요')
+    // 괜찮아요는 한 줄로 접혀 있고 눌러서 펼친다(#1714).
+    await user.click(screen.getByRole('button', { name: /괜찮아요 1가지/ }))
     expect(screen.getByText(/하루 이동 시간은 모두 괜찮아요/)).toBeInTheDocument()
     expect(screen.queryByText('날짜별 순서')).not.toBeInTheDocument()
   })
