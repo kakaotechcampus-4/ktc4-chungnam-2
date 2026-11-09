@@ -24,7 +24,7 @@ from authz.core import Principal
 from authz.guard import require_map_member, require_on_map
 from common.settings import settings
 from maps import core, flows, service
-from maps.deps import DbSession
+from maps.deps import DbSession, get_optional_user
 from maps.schemas import (
     Invite, InviteSummary, Map, MapCreateRequest, MapList, MapUpdateRequest, Member, OwnerTransferRequest,
     TrashedMapList,
@@ -254,9 +254,12 @@ def delete_invite(
     service.revoke_invite(db, token=token, user_id=user.user_id)
 
 
-@public_router.get("/invites/{token}", response_model=InviteSummary)
-def get_invite_summary(token: str = Path(...), db=DbSession):
-    return service.get_invite_summary(db, token=token)
+@public_router.get("/invites/{token}", response_model=InviteSummary, response_model_exclude_none=True)
+def get_invite_summary(
+    token: str = Path(...), user: CurrentUser | None = Depends(get_optional_user), db=DbSession
+):
+    # 로그인 없이도 열린다. 세션이 있고 이미 구성원이면 already_member_map_id를 싣는다(#1563).
+    return service.get_invite_summary(db, token=token, viewer_id=user.user_id if user else None)
 
 
 @router.post("/invites/{token}/accept", response_model=Map, response_model_exclude_none=True)
