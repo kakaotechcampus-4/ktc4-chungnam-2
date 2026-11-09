@@ -25,6 +25,17 @@ const TRANSIT_OVERHEAD_MIN = 10;
 const DAY_MS = 86_400_000;
 
 /** 구간 방식과 분 — 서버와 같은 규칙(직선거리 기준 거친 추정). */
+/** 점검해 봤더니 괜찮았던 것의 문장 — 서버 `agent/course/cards.py` CHECKED_TEXT 와 같은 글자(목이 「문제 없어요」만 일곱 줄 보여 주던 것을 고쳤다). */
+const CHECKED_TEXT: Record<string, string> = {
+  closed: "쉬는 날에 넣은 곳은 없어요",
+  travel: "도보 구간과 하루 이동이 상한 안이에요",
+  member: "구성원이 고른 도보 상한을 지켜요",
+  condition: "우리 조건과 어긋난 곳은 없어요",
+  goal: "요청한 목표를 모두 지켜요",
+  cluster: "같은 동네가 여러 날로 갈린 곳은 없어요",
+  meal: "식당이 없거나 너무 많은 날은 없어요",
+};
+
 function leg(a: { lat: number; lng: number }, b: { lat: number; lng: number }): { mode: "walk" | "transit"; approx_minutes: number } {
   const dLat = (a.lat - b.lat) * 111_000;
   const dLng = (a.lng - b.lng) * 88_000;
@@ -98,11 +109,11 @@ function exampleFixes(mode: CourseRunMock["mode"], dates: string[], routable: Ro
         resolved_text: `${label(i)}에 넣으면 그날 이동이 가장 짧아요`, remaining_text: null, not_fixed_reason: null,
       }];
     });
-    return { fixes, checked: [{ kind: "closed", text: "쉬는 날에 넣은 곳은 없어요" }, { kind: "travel", text: "도보·이동 상한을 넘는 날은 없어요" }] };
+    return { fixes, checked: [{ kind: "closed", text: CHECKED_TEXT.closed }, { kind: "travel", text: CHECKED_TEXT.travel }] };
   }
   const full = byDate.map((pins, i) => ({ pins, i })).filter((d) => d.pins.length > 0);
   if (full.length < 2) {
-    return { fixes: [], checked: ["closed", "travel", "member", "condition", "goal", "cluster", "meal"].map((kind) => ({ kind: kind as CourseRunMock["checked"][number]["kind"], text: "문제 없어요" })) };
+    return { fixes: [], checked: ["closed", "travel", "member", "condition", "goal", "cluster", "meal"].map((kind) => ({ kind: kind as CourseRunMock["checked"][number]["kind"], text: CHECKED_TEXT[kind] })) };
   }
   const [a, b] = full; // 날 맞바꾸기: 앞의 두 날을 통째로
   const swap = [...a.pins.map((p) => ({ pin_id: p.id, from_date: dates[a.i], to_date: dates[b.i] })), ...b.pins.map((p) => ({ pin_id: p.id, from_date: dates[b.i], to_date: dates[a.i] }))];
@@ -134,7 +145,7 @@ function exampleFixes(mode: CourseRunMock["mode"], dates: string[], routable: Ro
     });
   }
   const open = routable.length >= 3 ? ["member", "condition", "goal", "cluster"] : ["member", "condition", "goal", "cluster", "meal"];
-  return { fixes, checked: open.map((kind) => ({ kind: kind as CourseRunMock["checked"][number]["kind"], text: "문제 없어요" })) };
+  return { fixes, checked: open.map((kind) => ({ kind: kind as CourseRunMock["checked"][number]["kind"], text: CHECKED_TEXT[kind] })) };
 }
 
 const HEADLINE: Record<CourseRunMock["mode"], (n: number) => string> = {
