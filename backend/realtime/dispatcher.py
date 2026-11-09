@@ -160,6 +160,7 @@ class Dispatcher:
                     break
                 except asyncio.TimeoutError:
                     pass
+                self.presence.expire()   # 끊긴 지 GRACE가 지난 접속 기록을 치운다(이벤트로 알리는 일은 다음 PR)
                 # 동기 DB 쿼리를 async 루프 안에서 그대로 부르면 그 500ms 폴링 텀마다 이벤트 루프
                 # 전체(다른 SSE 연결 포함)가 DB 왕복 시간만큼 멈춘다. 조회만 스레드로 넘기고, 구독 큐와
                 # 구독 목록은 이벤트 루프(여기)에서만 만진다 — asyncio 객체는 스레드에서 만지지 않는다.

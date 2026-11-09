@@ -91,3 +91,61 @@ def test_api_online_user_ids_reads_the_dispatcher(monkeypatch, d):
     d.subscribe("m1", channel="public", user_id="u1")
     assert api.online_user_ids("m1") == {"u1"}
     assert api.online_user_ids("other") == set()
+
+
+def test_connect_after_grace_ended_but_before_expire_is_a_new_online(clock):
+    p = Presence(clock)
+    p.connect("m1", "u1")
+    p.disconnect("m1", "u1")
+    clock.now += GRACE + 1   # expire가 아직 안 돌았다
+    assert p.connect("m1", "u1") is True
+
+
+def test_loop_expires_presence_each_cycle(monkeypatch):
+    import asyncio
+
+    import realtime.dispatcher as module
+
+    monkeypatch.setattr(module, "POLL_INTERVAL", 0.001)
+    d = Dispatcher()
+    calls = []
+    monkeypatch.setattr(d.presence, "expire", lambda: calls.append(1) or [])
+
+    def tick():
+        d.request_stop()
+        return []
+
+    monkeypatch.setattr(d, "_tick", tick)
+    asyncio.run(asyncio.wait_for(d.run_forever(), 1))
+    assert calls   # 운영 루프가 expire를 부른다
+
+
+def test_readers_in_other_threads_never_see_dict_changed_during_iteration():
+    import threading
+
+    p = Presence()
+    stop = threading.Event()
+    errors = []
+
+    def reader():
+        try:
+            while not stop.is_set():
+                p.online_user_ids("m1")
+        except Exception as exc:   # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=reader) for _ in range(2)]
+    for t in threads:
+        t.start()
+    try:
+        for i in range(20000):   # 이벤트 루프 쪽 쓰기를 흉내 낸다
+            user = f"u{i % 50}"
+            p.connect("m1", user)
+            p.disconnect("m1", user)
+            if i % 100 == 0:
+                p.expire()
+    finally:
+        stop.set()
+        for t in threads:
+            t.join()
+    assert errors == []
