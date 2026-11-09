@@ -25,7 +25,8 @@ afterAll(() => {
 
 const members = [{ userId: 'u_me', name: '나', initial: '나', isMe: true, isOwner: true, isGuest: false }]
 
-it('의견 등록이 끝나면 버튼이 잠깐 "등록했어요"가 된 뒤 목록으로 돌아간다(#1712)', async () => {
+// 처음 남기는 좋음은 바로 등록돼 누를 버튼이 없다(#1696). 버튼으로 남기는 반대로 본다.
+it('의견을 남기면 버튼이 잠깐 "남겼어요"가 된 뒤 목록으로 돌아간다(#1712)', async () => {
   const pin = (await fetchPins(MAP)).find((p) => p.kind !== '확정' && !p.my_reaction)!
   const onDone = vi.fn()
   render(
@@ -35,10 +36,11 @@ it('의견 등록이 끝나면 버튼이 잠깐 "등록했어요"가 된 뒤 목
       </MemoryRouter>
     </QueryClientProvider>,
   )
-  await userEvent.click(await screen.findByRole('radio', { name: '좋음' }))
-  await userEvent.click(screen.getByRole('button', { name: '의견 등록' }))
+  await userEvent.click(await screen.findByRole('radio', { name: '반대' }))
+  await userEvent.type(screen.getByRole('textbox'), '너무 멀어요')
+  await userEvent.click(screen.getByRole('button', { name: '반대 남기기' }))
 
-  expect(await screen.findByRole('button', { name: '등록했어요' })).toHaveClass('btn-done')
+  expect(await screen.findByRole('button', { name: '남겼어요' })).toHaveClass('btn-done')
   expect(onDone).not.toHaveBeenCalled()
   await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1), { timeout: 2000 })
 })

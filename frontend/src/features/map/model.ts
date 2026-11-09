@@ -134,6 +134,9 @@ export function timeAgo(iso: string, now = Date.now()): string {
   return `${Math.floor(min / (60 * 24))}일 전`
 }
 
+/** 할 일 핀 — 확정되지 않았고 내 의견이 없다. 확정 핀은 의견을 안 남겨도 할 일로 보지 않는다(#859). 목록 묶음과 "내가 남긴 의견" 카드가 같이 쓴다(#1696). */
+export const isTodo = (pin: Pin) => pin.kind !== '확정' && !pin.my_reaction
+
 export type PinCardView = {
   id: string
   name: string
