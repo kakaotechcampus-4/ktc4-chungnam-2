@@ -64,7 +64,7 @@ export default function BottomSheet({
 
   function onPointerDown(e: React.PointerEvent) {
     // 제목 줄 안의 버튼·드롭다운은 끌기가 아니라 그 버튼 동작이다.
-    if ((e.target as HTMLElement).closest('button, a, input, select')) return
+    if (!own(e) || (e.target as HTMLElement).closest('button, a, input, select')) return
     startY.current = e.clientY
     setDragY(0)
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -95,14 +95,14 @@ export default function BottomSheet({
   const autoExpand = expandOnScroll && stage === 2
   const expandHandlers = autoExpand
     ? {
-        onWheel: (e: React.WheelEvent) => e.deltaY > 0 && onStageChange(3),
+        onWheel: (e: React.WheelEvent) => own(e) && e.deltaY > 0 && onStageChange(3),
         // 키보드로 안쪽에 들어가거나 입력칸을 누르면 스크롤할 수 있게 3단계로 올린다. 손가락·마우스로 버튼을 누를 때는 올리지 않는다 —
         // 누르는 순간(포커스) 시트가 움직여 손을 뗄 때 다른 자리에 떨어지면 그 누름이 버튼에 가지 않았다(e2e 「반대」, #1675).
         // 그 구분이 :focus-visible 이다(입력칸은 눌러도 참, 버튼은 키보드일 때만 참).
-        onFocusCapture: (e: React.FocusEvent) => focusVisible(e.target) && onStageChange(3),
-        onTouchStart: (e: React.TouchEvent) => (touchY.current = e.touches[0].clientY),
+        onFocusCapture: (e: React.FocusEvent) => own(e) && focusVisible(e.target) && onStageChange(3),
+        onTouchStart: (e: React.TouchEvent) => (touchY.current = own(e) ? e.touches[0].clientY : null),
         onTouchMove: (e: React.TouchEvent) => {
-          if (touchY.current !== null && touchY.current - e.touches[0].clientY > TAP_SLOP) {
+          if (own(e) && touchY.current !== null && touchY.current - e.touches[0].clientY > TAP_SLOP) {
             touchY.current = null
             onStageChange(3)
           }
@@ -163,6 +163,14 @@ export default function BottomSheet({
       </div>
     </main>
   )
+}
+
+/**
+ * 이 시트의 DOM 안에서 난 이벤트인지. 포털로 띄운 모달 시트(알림함, 확인 창)의 이벤트도 React 트리를 따라 여기까지 올라온다.
+ * 거르지 않으면 모달을 누를 때 뒤 시트가 접히고 펼쳐지며, 포인터 캡처를 뺏긴 모달은 닫힘 효과가 끝나지 않아 투명한 채로 화면을 막았다.
+ */
+function own(e: React.SyntheticEvent): boolean {
+  return e.currentTarget.contains(e.target as Node)
 }
 
 /** 키보드 포커스나 입력칸 포커스인지. :focus-visible 을 모르는 환경(테스트의 jsdom 일부)에서는 예전처럼 참으로 본다. */
