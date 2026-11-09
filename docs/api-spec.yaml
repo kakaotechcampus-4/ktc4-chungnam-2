@@ -3256,7 +3256,7 @@ components:
       required: [status, notice, statements, checked_at]
       description: |
         웹 확인 결과(#1152 ④, docs/agent-v2.md 6.8). 모델이 웹을 읽고 옮긴 문장이다. 서버는 출처가 그 호출의 검색 결과에 있는지와 금지 표현만 본다 — 문장 내용은 확인하지 못한다.
-        found: FE는 「AI 웹 요약 · 확인되지 않음」 표시를 붙이고 문장과 출처 링크를 보인다. not_found·paused: statements는 비어 있고 notice 글을 그대로 보인다.
+        found: FE는 「AI 웹 요약 (확인 안 됨)」 표시를 붙이고 문장과 출처 링크를 보인다. not_found·paused: statements는 비어 있고 notice 글을 그대로 보인다.
         예(found): {status: found, notice: null, statements: [{text: "가게 앞에 차 두세 대를 댈 수 있다고 적혀 있어요", source_url: "https://blog.example.com/123", source_name: "blog.example.com"}], checked_at: "2026-11-03T12:00:00+09:00"}
         예(paused): {status: paused, notice: "오늘은 웹 확인을 쉬고 있어요. 내일 다시 찾아볼게요", statements: [], checked_at: …}
       properties:
