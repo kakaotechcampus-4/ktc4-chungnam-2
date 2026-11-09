@@ -560,9 +560,12 @@ def list_members(db: Session, *, map_id: str) -> list[Member]:
     # 배치 조회 — N명에 N번 쿼리하지 않는다(auth.api.display_names 자체가 배치용으로 설계됨).
     names = auth_api.display_names(db, [m.user_id for m in entries])
     guests = guest_ids_of(db, entries)
+    # 집계는 한 번(구성원 수만큼 묻지 않는다). 반응이 없는 사람은 키가 없어 0으로 읽는다(#1562).
+    opinions = pins_api.count_reactions_by_user(db, map_id=map_id)
     return [
         core.to_member_response(
-            m.user_id, role=m.role, display_name=names.get(m.user_id), online=None, is_guest=m.user_id in guests
+            m.user_id, role=m.role, display_name=names.get(m.user_id), online=None, is_guest=m.user_id in guests,
+            opinion_count=opinions.get(m.user_id, 0),
         )
         for m in entries
     ]
