@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { ApiError } from '@/api'
 
-import { externalSearch, nearestPlaces, parseLink, searchPlaces } from './api'
+import { externalSearch, fetchPlacePhotos, nearestPlaces, parseLink, searchPlaces } from './api'
 import { nearbyKakaoPlaces } from './kakaoNearby'
 import type { LatLng, SourcePlaces } from './model'
 import type { SearchSource } from './searchStore'
@@ -49,6 +49,11 @@ export function useSourcePlacesQuery(source: SearchSource | null, near: LatLng |
  * 결과 없음 화면의 카카오맵 링크(#905). 이름 검색이 0곳일 때만 부른다. 실패하면 링크만 숨긴다 — 결과 없음 화면은 그대로다.
  * 링크는 검색어로만 정해져서 같은 검색어는 다시 부르지 않는다.
  */
+/** 검색 결과 상세의 블로그 사진(#1681). 핀 사진(`usePinPhotosQuery`)처럼 열 때마다 새로 받는다(저장 금지, #53). */
+export function usePlacePhotosQuery(placeId: string) {
+  return useQuery({ queryKey: ['places', placeId, 'photos'], queryFn: () => fetchPlacePhotos(placeId), gcTime: 0, retry: false })
+}
+
 export function useExternalSearchQuery(query: string) {
   return useQuery({ queryKey: ['places', 'external-search', query], queryFn: () => externalSearch(query), staleTime: Infinity, retry: false })
 }

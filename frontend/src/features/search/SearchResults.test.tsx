@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
@@ -105,6 +106,28 @@ describe('장소 검색 결과 없음의 카카오맵 링크(#905)', () => {
     renderSearch('곱창')
     expect(await screen.findByText(/곱창/, { selector: 'p, span, button' })).toBeInTheDocument()
     expect(screen.queryByText('찾는 장소가 없어요')).not.toBeInTheDocument()
+    expect(asked).toEqual([])
+    server.events.removeAllListeners()
+  })
+})
+
+describe('검색 결과 상세의 블로그 사진(#1681)', () => {
+  it('자체 DB에 짝이 있는 결과는 핀을 찍기 전에도 블로그 사진 줄을 보인다', async () => {
+    renderSearch('해운대 밀면')
+    await userEvent.click(await screen.findByText('해운대 밀면'))
+    const row = await screen.findByRole('region', { name: '블로그 사진' })
+    expect(row.querySelectorAll('a')).toHaveLength(3)
+  })
+
+  it('자체 DB에 없는 결과는 사진을 부르지 않고 줄도 그리지 않는다', async () => {
+    const asked: string[] = []
+    server.events.on('request:start', ({ request }) => {
+      if (new URL(request.url).pathname.endsWith('/photos')) asked.push(request.url)
+    })
+    renderSearch('곱창')
+    await userEvent.click(await screen.findByText('성수 노포 곱창'))
+    expect(await screen.findByText('성수 노포 곱창', { selector: 'h3' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '블로그 사진' })).not.toBeInTheDocument()
     expect(asked).toEqual([])
     server.events.removeAllListeners()
   })

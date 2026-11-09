@@ -10,6 +10,7 @@ import { useSheetStore } from '@/features/shell/sheetStore'
 import { showToast } from '@/features/shell/toast'
 import Checkbox from '@/ui/Checkbox'
 import DatePicker from '@/ui/DatePicker'
+import { ProgressTrack } from '@/ui/ProgressBar'
 import Radio from '@/ui/Radio'
 import SheetTitle from '@/ui/SheetTitle'
 import Sentences from '@/ui/Sentences'
@@ -176,6 +177,7 @@ function LinkRef({ url }: { url: string }) {
 }
 
 function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (url: string) => void; onSearchName: (name: string) => void }) {
+  const countId = useId()
   const all = imp.rows.map((row, i) => ({ row, i, state: rowState(row) }))
   // 찍은 줄은 「찍음」으로 따로 접어 둔다 — 상태별 묶음에는 아직 찍지 않은 줄만.
   const doneRows = all.filter((e) => e.row.outcome)
@@ -206,7 +208,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
     <div className="mt-1 space-y-5">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
-          <p className="min-w-0 flex-1 text-sm text-ink-500">
+          <p id={countId} className="min-w-0 flex-1 text-sm text-ink-500">
             {checking > 0 && imp.phase === 'checking'
               ? `지도 링크 ${imp.rows.length}개 중 ${imp.rows.length - checking}개 확인했어요`
               : `지도 링크 ${imp.rows.length}개`}
@@ -220,6 +222,10 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
             모두 비우기
           </button>
         </div>
+        {/* 링크가 많으면 확인이 몇 초 걸린다 — 글 아래 진행 막대로 얼마나 남았는지 보인다(#1675, 로딩 패턴 「진행 바」). */}
+        {checking > 0 && imp.phase === 'checking' && (
+          <ProgressTrack value={imp.rows.length - checking} max={imp.rows.length} labelledBy={countId} />
+        )}
         {imp.truncated && <p className="text-xs text-warn-text">
           <Sentences text="목록이 가득 차서 일부 링크가 빠졌어요. 찍고 완료된 것을 지운 뒤 나머지 기간을 다시 넣어 주세요" />
         </p>}

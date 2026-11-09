@@ -1,4 +1,4 @@
-"""docs/api-spec.yaml의 places 태그 — GET /places/search (#180), POST /places/from-link (#474).
+"""docs/api-spec.yaml의 places 태그 — GET /places/search (#180), POST /places/from-link (#474), GET /places/{placeId}/photos (#1681).
 
 로그인만 필요하고 지도 구성원 여부는 보지 않는다. 검증(422) → 호출 상한(429) → 검색(503) 순서다.
 """
@@ -90,6 +90,20 @@ def nearest_places(
     except SQLAlchemyError as exc:
         logger.warning("nearest 조회 실패(%s)", type(exc).__name__)   # 타입만 — SQL 파라미터에 좌표가 실린다
         raise AppError("PLACES_UNAVAILABLE") from None
+
+
+@router.get("/places/{placeId}/photos", response_model=list[api.PlacePhoto])
+def place_photos(placeId: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db_session)):
+    """핀을 찍기 전 검색 결과 상세의 블로그 사진(#1681). placeId는 검색 결과의 place_id 그대로다.
+    자체 DB 결과(`own:<id>`)만 찾고, 카카오 결과는 상한을 세지 않고 빈 배열이다(짝을 찾으려면 이름·좌표가 필요하다).
+    핀 사진(GET /pins/{pinId}/photos)과 같은 places.api.place_photos와 사용자당 상한을 쓴다. 응답은 저장하지 않는다(#53)."""
+    if not placeId.startswith("own:"):
+        return []   # ponytail: 카카오 결과에 자체 DB 짝이 있어도 사진은 없다. 필요하면 match_place로 짝을 찾는다
+    own_id = placeId.removeprefix("own:")
+    if not api.get_places([own_id], db=db):
+        raise AppError("NOT_FOUND")
+    api.check_photo_rate(user.user_id)
+    return api.place_photos(own_id, db=db)
 
 
 @router.post("/places/from-link", response_model=LinkParseResult, response_model_exclude_none=True)

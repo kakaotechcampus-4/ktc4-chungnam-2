@@ -1773,6 +1773,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/places/{placeId}/photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 핀을 찍기 전 검색 결과 상세의 블로그 사진(#1681) — 자체 DB 장소를 다룬 블로그 사진의 미리보기 최대 3장.
+         *     고르는 규칙과 부르는 곳은 핀 사진(`GET /pins/{pinId}/photos`)과 같은 `places.api.place_photos` 한 곳이다(규칙은 `places/photos.py`).
+         *     **응답은 저장하거나 캐시하지 않고 넘기기만 한다**(#53과 같은 규칙) — 열 때마다 새로 부른다.
+         *     `placeId`는 검색 결과의 `place_id` 그대로다. 자체 DB 결과(`own:<id>`)만 사진을 찾고, 그 밖의 결과(카카오)는 상한을 세지 않고 빈 배열이다 — 화면은 값을 해석하지 않고 그대로 부른다.
+         *     로그인만 필요하다(장소 검색과 같다). 사용자당 상한은 핀 사진과 같은 몫을 함께 센다(초과 시 429).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    placeId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK. 없으면 빈 배열 — 지어내지 않는다(주소가 없는 장소, 개발 모드 PLACES_MODE=dev) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PinPhoto"][];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["PlacesUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/places/from-link": {
         parameters: {
             query?: never;

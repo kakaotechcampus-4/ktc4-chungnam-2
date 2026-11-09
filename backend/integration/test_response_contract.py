@@ -743,6 +743,20 @@ def test_pin_photos_match_the_openapi_spec(clients, pin_body, monkeypatch):
     assert b.get(f"/pins/{pin_id}/photos").status_code == 404
 
 
+def test_place_photos_match_the_openapi_spec(clients, fake_places, monkeypatch):
+    """검색 결과 블로그 사진(#1681, 스펙 PinPhoto). 자체 DB 결과는 사진, 카카오 결과는 빈 배열, 모르는 자체 DB 번호는 404."""
+    from places import api as places_api
+
+    photo = places_api.PlacePhoto(thumbnail_url="https://search1.kakaocdn.net/thumb/1", link_url="https://blog.naver.com/a/1", site_name="네이버블로그")
+    monkeypatch.setattr(places_api, "place_photos", lambda place_id, db=None: [photo])
+    monkeypatch.setattr(places_api, "check_photo_rate", lambda user_id: None)
+    a, _, problems = clients
+    resp = a.get(f"/places/own:{fake_places.place_id('seongsu-kalguksu')}/photos")
+    assert resp.status_code == 200 and resp.json()[0]["site_name"] == "네이버블로그"
+    assert a.get("/places/kakao:seongsu-kalguksu/photos").json() == []
+    assert a.get("/places/own:no_such_place/photos").status_code == 404
+
+
 def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
     """실시간 핀(#386, 스펙 PinCreateLive) — 응답에 좌표·이름이 없어도 Pin 스키마에 맞고, 목록·확정 항목·동선까지 같다."""
     a, b, problems = clients
