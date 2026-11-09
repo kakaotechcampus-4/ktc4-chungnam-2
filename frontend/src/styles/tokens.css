@@ -23,8 +23,8 @@
   --warn-bg: #FBF0DC;  --warn-line: #C77700;  --warn-text: #9C5A00;
   --bad-bg:  #FBEAEA;  --bad-line:  #D02A2A;  --bad-text:  #A32020;
   /* 달력 주말(DatePicker). 일요일 빨강·토요일 파랑은 달력 관습이라 빨강 규칙의 예외다(colors.md 6절) */
-  --day-sun-bg: var(--bad-bg);    --day-sun-text: var(--bad-text);
-  --day-sat-bg: var(--brand-100); --day-sat-text: var(--brand-700);
+  --day-sun-text: var(--bad-text);
+  --day-sat-text: var(--brand-700);
 
   /* ── 면 ──────────────────────────────── */
   --surface-page:    var(--ink-50);

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, Outlet, useSearchParams } from 'react-router'
+import { Link, Navigate, Outlet, useLocation, useSearchParams } from 'react-router'
 
 import { ChevronRight, CircleCheck, UserRound } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { FEATURES } from '@/features/onboarding/features'
+import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
 import MapIllustration from '@/ui/MapIllustration'
@@ -49,6 +50,7 @@ export default function RequireLogin() {
 
 function SessionGate() {
   const { isPending, error, data: me } = useMeQuery()
+  const { pathname } = useLocation()
   // 실패 안내는 여기서 읽는다. 게스트가 카카오 전환에 실패하면 게스트 세션은 그대로라 로그인 화면이 뜨지 않는다 —
   // 그때는 토스트로 알린다(LoginScreen 만 읽던 때는 아무 말 없이 목록으로 돌아왔다).
   const loginError = useLoginError()
@@ -58,6 +60,9 @@ function SessionGate() {
   }, [loggedIn, loginError])
 
   if (isPending) return <PingoLoading label="로그인 상태를 확인하는 중…" mood="space" className="min-h-dvh justify-center" />
+  // 이 기기에서 처음 온 사람은 로그인 화면보다 서비스 안내를 먼저 본다(#1576). 「시작하기」·「건너뛰기」로 여기 돌아온다.
+  // 첫 화면(/)으로 왔을 때만이다 — 받은 지도 주소로 바로 온 사람은 가려던 곳을 잃지 않게 로그인부터 한다.
+  if (isUnauthorized(error) && pathname === '/' && !loginError && !hasSeenWelcome()) return <Navigate to="/welcome" replace />
   if (isUnauthorized(error)) return <LoginScreen notice={loginError ?? undefined} />
   if (error) {
     return (

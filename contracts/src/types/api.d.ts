@@ -1279,6 +1279,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 이 지도를 지금 본 것으로 적는다(#1556) — 요청한 사람의 「마지막으로 본 때」(`memberships.last_seen_at`)를 서버 시각으로 바꾼다.
+         *     화면은 「확인」을 누를 때와 지도를 떠날 때(탭을 내릴 때 포함) 부른다. 구성원이면 누구나(게스트 포함). 이벤트를 보내지 않는다.
+         *     기기와 상관없이 한 사람에 하나다 — PC에서 확인하면 휴대폰의 「새 소식」도 사라진다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 적었다 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/news": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 마지막으로 본 뒤 새로 생긴 핀·의견(#1556, #1454) — 「무엇이 새것인가」를 서버 한 곳에서 정한다. 화면은 받은 대로 그린다.
+         *     - 기준 시각 `since`는 요청한 사람의 `memberships.last_seen_at`이다. 한 번도 `POST /maps/{mapId}/seen`을 부르지 않았으면 null이고 두 목록은 비어 있다(처음 연 지도).
+         *     - **새 핀**: 지금 지도에 있는 핀 중 `created_at`이 `since` 뒤이고 **내가 찍지 않은** 핀. AI 추천 핀은 「지도에 올리기」 시각이 `created_at`이다. 휴지통에서 되살린 핀은 `created_at`이 옛 시각이라 들어가지 않는다.
+         *     - **새 의견**: 지금 지도에 있는 핀에 달린 반응 중 `since` 뒤에 남기거나 바꾼 것(`updated_at` 기준)이고 **내 것이 아닌** 것. 그 뒤에 지운 반응은 없다(지금 남아 있는 반응만).
+         *     - 이 조회는 `last_seen_at`을 바꾸지 않는다. 각 목록은 최근 것부터 최대 100개, 넘으면 `truncated=true`.
+         *     - 사유 글은 문장에 섞지 않고 칸(`reason_text`, `reason_chip_ids`)으로 준다(#717). 구성원이 `GET /pins/{pinId}/reactions`로 이미 볼 수 있는 값이다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MapNews"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/members": {
         parameters: {
             query?: never;
@@ -4512,7 +4599,7 @@ export interface components {
             user_id: string;
             display_name: string;
         };
-        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다 */
+        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다. 예외는 `already_member_map_id` 하나다 — 요청한 사람이 이미 그 지도의 구성원일 때만 준다(#1563) */
         InviteSummary: {
             title: string;
             /** Format: date */
@@ -4526,6 +4613,8 @@ export interface components {
             inviter_display_name: string;
             /** Format: date-time */
             expires_at: string;
+            /** @description 요청에 로그인 세션(게스트 포함)이 있고 그 사람이 **이미 이 지도의 구성원이면** 그 지도의 id(#1563). 화면은 수락 카드를 건너뛰고 바로 그 지도로 간다(기획안 6절 「구성원 흐름」). 세션이 없거나, 구성원이 아니거나, 이미 나간 사람에게는 **필드를 주지 않는다** — 링크만 가진 사람이 지도 id를 알아내지 못하게 하려는 원래 규칙 그대로다. 토큰이 만료(410)·없음(404)이면 지금처럼 오류다. 이 조회는 구성원 여부만 보고 아무것도 바꾸지 않는다(수락은 여전히 `POST /invites/{token}/accept`) */
+            already_member_map_id?: string;
         };
         Invite: {
             token: string;
@@ -4554,6 +4643,8 @@ export interface components {
             display_name?: string;
             /** @description 「접속 중」은 그 지도의 전체 채널 SSE(`GET /maps/{mapId}/events`)에 연결이 하나라도 열려 있는 구성원이다(#1551). 같은 사람이 탭·기기를 여러 개 열어도 한 명이다. 마지막 연결이 끊기고 30초 안에 다시 붙지 않으면 접속 아님이다(새로고침·짧은 끊김에 깜빡이지 않게). 위치가 아니라 「지도를 열어 두었는가」만 본다 — 실시간 위치 공유(범위 밖)가 아니다. 지도를 처음 열 때 이 값으로 그리고, 그 뒤 변화는 `member.presence` 이벤트로 받는다. 서버가 채우기 전에는 없다 — 없으면 접속 점을 그리지 않는다(지어낸 값을 쓰지 않는다) */
             online?: boolean;
+            /** @description 이 구성원이 이 지도의 핀에 남긴 의견 수(#1562). 구성원 줄 「의견 N개」·0이면 「아직 없음」. 지금 남아 있는 ♥(like)·🚫(against) 반응을 센다 — 반응은 핀 하나에 한 사람당 하나라 「의견을 남긴 핀 수」와 같다. 지운 핀(휴지통)에 남긴 반응은 세지 않는다. 「?」(미확인)는 반응이 아니라 세지 않는다. `FilterCounts.members_with_opinion`과 같은 기준이다(이 값이 1 이상인 구성원 수 = members_with_opinion). 선택 필드 — 서버가 채우기 전에는 없다(없으면 화면은 줄을 그리지 않는다) */
+            opinion_count?: number;
         };
         /** @description 내 지도 목록과 상한(#623). 2026-10-19 전에는 Map 배열이었다 */
         MapList: {
@@ -4995,6 +5086,8 @@ export interface components {
             place_url?: string;
             /** @description 「네이버 지도에서 보기」 링크(#1513). `{장소 이름} {동네}` 네이버 지도 검색 링크(https://map.naver.com/p/search/ + 검색어). 자체 DB 핀에만 있고 이름이 없는 실시간 핀(source=live)에는 없다. 없으면 링크를 숨긴다. 외부 브라우저로 연다 */
             naver_url?: string;
+            /** @description 장소의 동네(#1564). 핀 상세 맨 위 「이름 · 동네 · 카테고리」의 동네. 자체 DB 장소 주소에서 서버가 뽑은 `{시·군·구} {동}`이다(예: 「성동구 성수동2가」, 「해운대구 우동」) — 카카오맵·네이버 지도 검색 링크의 동네와 같은 규칙(`places.core.neighborhood`)이다. 동을 못 찾으면 시·군·구까지만. **실시간 핀(source=live)과 주소가 없는 장소에는 없다**(필드 생략) — 서버가 카카오 주소를 저장하지 않는다(#53, #382). 없으면 화면은 동네 자리를 비운다 */
+            neighborhood?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
             /**
@@ -5027,6 +5120,35 @@ export interface components {
             reason_text?: string;
             /** @description GET /categories/{category}/reason-chips가 준 칩의 id. 그 핀의 카테고리 목록에 없는 id는 422 VALIDATION_ERROR (2026-10-04, #60). 반대(against)에서만 보낸다 */
             reason_chip_ids?: string[];
+        };
+        /** @description 마지막으로 본 뒤 새로 생긴 핀·의견(#1556). 규칙은 GET /maps/{mapId}/news 설명 */
+        MapNews: {
+            /** @description 요청한 사람의 마지막으로 본 때(memberships.last_seen_at). 처음 연 지도면 null이고 두 목록은 비어 있다 */
+            since: null | string;
+            /** @description since 뒤에 지도에 올라온, 내가 찍지 않은 핀의 id. 최근 것부터 */
+            new_pin_ids: string[];
+            /** @description since 뒤에 남기거나 바꾼, 내 것이 아닌 반응. 최근 것부터 */
+            new_reactions: components["schemas"]["NewReaction"][];
+            /** @description 어느 한 목록이라도 100개를 넘어 잘렸으면 true. 화면은 「새 소식이 더 있어요」를 띄우고 지도를 다시 보게 한다 */
+            truncated: boolean;
+        };
+        /** @description 새 의견 하나(#1556). Reaction에 이름과 시각을 더한 모양이다 */
+        NewReaction: {
+            pin_id: string;
+            user_id: string;
+            /** @description 남긴 사람 이름. 구성원 목록의 이름과 같다 */
+            display_name: string;
+            /** @enum {string} */
+            type: "like" | "against";
+            /** @description 사람이 쓴 사유. 없으면 필드를 생략한다 */
+            reason_text?: string;
+            /** @description 반대 사유 칩 id(ReasonChip.id). 없으면 빈 배열 */
+            reason_chip_ids: string[];
+            /**
+             * Format: date-time
+             * @description 그 반응을 남기거나 마지막으로 바꾼 시각
+             */
+            updated_at: string;
         };
         Reaction: {
             pin_id: string;

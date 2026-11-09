@@ -12,6 +12,29 @@
 - **한계**: API 프로세스 하나 기준이다(지금 배포는 환경마다 `--workers 1`). 늘릴 때 공유 저장소로 옮긴다. 배포·재시작 때 잠깐 모두 접속 아님이 된다. 접속 기록은 저장하지 않는다(`docs/events.md` 「접속 상태의 한계」).
 - 위치가 아니라 「지도를 열어 두었는가」만 본다 — 실시간 위치 공유(범위 밖)와 다르다.
 - 서버 구현: `backend/realtime`(연결 수·유예·이벤트), `backend/maps`(구성원 목록의 `online`은 `realtime.api`로 묻는다). 타입은 설명만 바뀐다(`npm run gen:types`).
+## 2026-11-09, 마지막으로 본 뒤 새로 생긴 핀·의견 — `POST /maps/{mapId}/seen`, `GET /maps/{mapId}/news` (#1556)
+
+「마지막으로 본 때」를 서버가 사람마다 하나 갖는다(#1454 후속). 지금 화면은 브라우저에 의견 수를 적어 두고 짐작해서 기기마다 다르고 놓치는 의견이 있었다. **새 엔드포인트 둘, 기존 응답은 그대로다.**
+
+- **`POST /maps/{mapId}/seen`** → 204. 요청한 사람의 `memberships.last_seen_at`을 서버 시각으로 적는다. 화면은 「확인」을 누를 때와 지도를 떠날 때 부른다. 이벤트는 없다.
+- **`GET /maps/{mapId}/news`** → `MapNews { since, new_pin_ids, new_reactions, truncated }`.
+  - `since`가 null(한 번도 본 적 없음)이면 두 목록은 비어 있다.
+  - 새 핀: `created_at`이 `since` 뒤이고 내가 찍지 않은, 지금 지도에 있는 핀. 휴지통에서 되살린 핀은 빠진다(`created_at`이 옛 시각).
+  - 새 의견: `since` 뒤에 남기거나 바꾼(`updated_at`), 내 것이 아닌, 지금 남아 있는 반응. `NewReaction`은 `Reaction`에 `display_name`·`updated_at`을 더한 모양이고 사유는 칸으로 준다(#717).
+  - 각 목록은 최근 것부터 최대 100개, 넘으면 `truncated=true`. 이 조회는 `last_seen_at`을 바꾸지 않는다.
+- 둘 다 구성원만(게스트 포함), 아니면 404.
+- DB: `memberships.last_seen_at`(timestamptz, null 허용) — 서버 PR의 마이그레이션. 화면 후속: `features/map/newSince`의 수 비교와 브라우저 저장을 지우고 두 API를 쓴다.
+- 서버 구현 전까지 `integration/test_spec_route_coverage.py`의 `KNOWN_MISSING`과 `integration/test_response_contract.py`의 `KNOWN_UNCOVERED`에 두 경로를 둔다(서버 PR이 지운다).
+- 목 서버: 두 경로를 흉내 낸다(본 때는 메모리에만). 타입 재생성 필요(`npm run gen:types`).
+## 2026-11-09, 핀의 동네·구성원별 의견 수·이미 구성원인 초대 — `Pin.neighborhood`, `Member.opinion_count`, `InviteSummary.already_member_map_id` (#1564, #1562, #1563)
+
+**늘리기만 한다** — 세 필드 모두 선택이고 서버가 채우기 전에는 없다. 기존 화면은 그대로 돈다.
+
+- **`Pin.neighborhood`**(#1564): 핀 상세 맨 위 「이름 · 동네 · 카테고리」의 동네. 자체 DB 장소 주소에서 뽑은 `{시·군·구} {동}`(예: 「성동구 성수동2가」)이고, 카카오맵·네이버 지도 검색 링크의 동네와 같은 규칙(`places.core.neighborhood`)이다. **실시간 핀과 주소가 없는 장소에는 없다**(카카오 주소를 저장하지 않는다, #53·#382).
+- **`Member.opinion_count`**(#1562): 그 구성원이 이 지도에 남긴 ♥·🚫 반응 수(지운 핀 제외, 「?」 미확인은 세지 않는다). 구성원 줄 「의견 N개」, 0이면 「아직 없음」. `FilterCounts.members_with_opinion`과 같은 기준이다.
+- **`InviteSummary.already_member_map_id`**(#1563): 로그인 세션(게스트 포함)이 있고 **이미 그 지도 구성원일 때만** 지도 id를 준다. 화면은 수락 카드를 건너뛰고 지도로 간다. 세션이 없거나 구성원이 아니면 필드가 없다 — 링크만 가진 사람에게 지도 id를 주지 않는 원래 규칙은 그대로다. `GET /invites/{token}`은 여전히 로그인 없이 부를 수 있다.
+- 서버 구현: `backend/pins`(동네, `places.api`로 묶어 읽어 핀 수만큼 쿼리가 늘지 않게), `backend/maps`(구성원 의견 수는 `pins.api` 집계 한 번, 초대 요약의 구성원 확인).
+- 목 서버: 핀에 동네(목은 주소 앞 시·도만 뗀다), 구성원 목록에 의견 수, 내가 구성원인 지도의 초대 요약에 `already_member_map_id`. 타입 재생성 필요(`npm run gen:types`).
 
 ## 2026-11-09, 검색 결과의 네이버 지도 링크 — `PlaceSearchResult.naver_url` (#1554)
 

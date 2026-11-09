@@ -41,14 +41,14 @@ export function useRemoveFromShortlistMutation(mapId: string) {
 
 /**
  * 확정 해제. 확정 탭의 「빼기」와 핀 상세의 「✓ 확정됨」이 같이 쓴다.
- * 확정 탭은 줄이 사라져서 「되돌리기」 토스트를 띄우고, 핀 상세는 버튼이 그대로 남아 다시 누르면 되므로 띄우지 않는다(undo: false).
+ * 둘 다 「되돌리기」 토스트를 띄운다 — 넣을 때 토스트로 알리니 뺄 때도 같은 자리에서 알린다(#1576).
  * 핀만 알면 되도록 확정 리스트에서 그 핀의 항목 id를 찾는다.
  */
 export function useUnconfirm(mapId: string) {
   const remove = useRemoveFromShortlistMutation(mapId)
   const add = useAddToShortlistMutation(mapId)
   const items = useShortlistQuery(mapId).data
-  const unconfirm = (pin: { id: string; place_name?: string | null }, { undo = true } = {}) => {
+  const unconfirm = (pin: { id: string; place_name?: string | null }) => {
     // 줄은 다시 받을 때까지 남아 있어 두 번 누를 수 있다. 두 번째가 404로 실패 토스트를 띄우고 첫 번째의 「되돌리기」를 지웠다.
     const item = items?.find((i) => i.pin.id === pin.id)
     if (!item) return showToast('확정 리스트를 불러오는 중이에요. 잠시 뒤에 다시 눌러 주세요')
@@ -56,7 +56,6 @@ export function useUnconfirm(mapId: string) {
     const name = pin.place_name ?? '이 장소'
     remove.mutate(item.id, {
       onSuccess: () =>
-        undo &&
         showToast(`${name}${josa(name, '을', '를')} 확정 리스트에서 뺐어요`, {
           label: '되돌리기',
           onClick: () => add.mutate(pin.id, { onError: () => showToast('되돌리지 못했어요') }),

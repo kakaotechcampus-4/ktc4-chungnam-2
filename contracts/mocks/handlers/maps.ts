@@ -11,6 +11,7 @@ export const MAP_LIMIT = 20;
 export const TRIP_MAX_DAYS = 90; // #1371: 시작일·종료일 포함
 const tripDays = (start: string, end: string) => Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1;
 const tripTooLong = () => apiError(422, "TRIP_TOO_LONG", `여행 기간은 최대 ${TRIP_MAX_DAYS}일까지 정할 수 있어요`, { limit: TRIP_MAX_DAYS });
+const lastSeen: Record<string, string> = {};   // #1556 mapId -> 마지막으로 본 때(나)
 const myMapCount = () => Object.keys(store.maps).filter((id) => (store.members[id] ?? []).some((m) => m.user_id === ME_USER_ID)).length;
 const mapLimitError = () =>
   apiError(409, "MAP_LIMIT", `지도는 ${MAP_LIMIT}개까지 만들거나 참여할 수 있어요. 지도를 나가거나 삭제한 뒤 다시 시도해 주세요`, { limit: MAP_LIMIT, count: myMapCount() });
@@ -363,6 +364,8 @@ export const mapsHandlers = [
       pin_count: pinCount(map.id), // 핀의 이름·위치는 주지 않고 개수만
       inviter_display_name: store.members[map.id]?.[0]?.display_name,
       expires_at: invite.expires_at,
+      // #1563 내가 이미 구성원이면 지도 id를 준다(아니면 필드 없음)
+      ...((store.members[map.id] ?? []).some((m) => m.user_id === ME_USER_ID) ? { already_member_map_id: map.id } : {}),
     });
   }),
 
@@ -383,9 +386,38 @@ export const mapsHandlers = [
     return HttpResponse.json(toMapResponse(map));
   }),
 
+  // #1556 마지막으로 본 때 — 목 서버는 메모리에만 둔다(나 한 사람)
+  http.post("*/maps/:mapId/seen", ({ params }) => {
+    const mapId = params.mapId as string;
+    if (!getMapOr404(mapId) || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    lastSeen[mapId] = new Date().toISOString();
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.get("*/maps/:mapId/news", ({ params }) => {
+    const mapId = params.mapId as string;
+    if (!getMapOr404(mapId) || !(store.members[mapId] ?? []).some((m) => m.user_id === ME_USER_ID)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
+    const since = lastSeen[mapId] ?? null;
+    if (since === null) return HttpResponse.json({ since: null, new_pin_ids: [], new_reactions: [], truncated: false });
+    const pins = Object.values(store.pins).filter((p) => p.map_id === mapId);
+    const newPins = pins.filter((p) => p.created_by !== ME_USER_ID && p.created_at > since)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at)).map((p) => p.id);
+    const nameOf = (userId: string) => (store.members[mapId] ?? []).find((m) => m.user_id === userId)?.display_name ?? "구성원";
+    const newReactions = pins.flatMap((p) => (store.reactions[p.id] ?? [])
+      .filter((r) => r.user_id !== ME_USER_ID && ((r as any).updated_at ?? "") > since)
+      .map((r) => ({ pin_id: p.id, user_id: r.user_id, display_name: nameOf(r.user_id), type: r.type, ...(r.reason_text ? { reason_text: r.reason_text } : {}),
+        reason_chip_ids: r.reason_chip_ids ?? [], updated_at: (r as any).updated_at as string })))
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    return HttpResponse.json({ since, new_pin_ids: newPins.slice(0, 100), new_reactions: newReactions.slice(0, 100),
+      truncated: newPins.length > 100 || newReactions.length > 100 });
+  }),
+
   http.get("*/maps/:mapId/members", ({ params }) => {
     const mapId = params.mapId as string;
     if (!getMapOr404(mapId)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
-    return HttpResponse.json(store.members[mapId] ?? []);
+    // #1562 구성원마다 이 지도의 핀에 남긴 ♥·🚫 수(지운 핀은 store.pins에 없다)
+    const pinIds = Object.values(store.pins).filter((p) => p.map_id === mapId).map((p) => p.id);
+    const opinions = (userId: string) => pinIds.filter((id) => (store.reactions[id] ?? []).some((r) => r.user_id === userId)).length;
+    return HttpResponse.json((store.members[mapId] ?? []).map((m) => ({ ...m, opinion_count: opinions(m.user_id) })));
   }),
 ];

@@ -93,10 +93,10 @@ export default function DatePicker({
   )
 }
 
-/** 요일별 글자·면 — 일요일 빨강, 토요일 파랑(colors.md 6절의 달력 예외). */
-const DAY_TONE: Record<number, { head: string; day: string }> = {
-  0: { head: 'text-[var(--day-sun-text)]', day: 'bg-[var(--day-sun-bg)] text-[var(--day-sun-text)]' },
-  6: { head: 'text-[var(--day-sat-text)]', day: 'bg-[var(--day-sat-bg)] text-[var(--day-sat-text)]' },
+/** 요일별 글자색 — 일요일 빨강, 토요일 파랑, 면은 없다(colors.md 6절의 달력 예외). */
+const DAY_TONE: Record<number, string> = {
+  0: 'text-[var(--day-sun-text)]',
+  6: 'text-[var(--day-sat-text)]',
 }
 
 /**
@@ -189,7 +189,7 @@ export function Calendar({
       )}
       <div className="grid grid-cols-7 text-center text-xs font-semibold text-ink-500" aria-hidden="true">
         {WEEK.map((w, i) => (
-          <span key={w} className={`py-1.5 ${DAY_TONE[i]?.head ?? ''}`}>{w}</span>
+          <span key={w} className={`py-1.5 ${DAY_TONE[i] ?? ''}`}>{w}</span>
         ))}
       </div>
       <div ref={grid} onKeyDown={onKey} className="grid grid-cols-7 gap-y-1">
@@ -199,7 +199,7 @@ export function Calendar({
           const picked = day === value
           const off = out(day)
           const [dy, dm, d] = parts(day)
-          const tone = DAY_TONE[weekday(day)]?.day
+          const tone = DAY_TONE[weekday(day)]
           return (
             <button
               key={day}
@@ -214,7 +214,7 @@ export function Calendar({
               className={[
                 'relative mx-auto flex size-11 items-center justify-center rounded-full text-base transition-colors',
                 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--line-focus)]',
-                // 오늘은 테두리 한 줄 — 주말 면·고른 날 채움 어디에 와도 보인다.
+                // 오늘은 테두리 한 줄 — 고른 날 채움 위에 와도 보인다.
                 day === now ? 'font-bold ring-1 ring-inset ring-[var(--action-fill)]' : '',
                 // 고를 수 없는 날은 면 없이 흐린 숫자만 — 고를 수 있는 날이 먼저 보인다.
                 off

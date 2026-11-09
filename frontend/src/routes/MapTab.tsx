@@ -21,7 +21,7 @@ import { usePinFilters } from '@/features/map/usePinFilters'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import PinUnavailable from '@/features/map/PinUnavailable'
 import { ImportButton } from '@/features/kakaoImport/ImportSheet'
-import { usePinSelection } from '@/features/map/usePinSelection'
+import { usePinGroup, usePinSelection } from '@/features/map/usePinSelection'
 import { useCountsQuery, usePinsQuery } from '@/features/map/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import { useSourcePlacesQuery } from '@/features/search/queries'
@@ -29,6 +29,7 @@ import { SearchResultsBody, SearchResultsHeader } from '@/features/search/Search
 import { useSearchStore } from '@/features/search/searchStore'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { useShell } from '@/features/shell/shellContext'
+import PanelBackLink from '@/features/shell/PanelBackLink'
 import TabSheet from '@/features/shell/TabSheet'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 
@@ -39,6 +40,7 @@ import { useIsDesktop } from '@/features/shell/useIsDesktop'
 export default function MapTab() {
   const { mapId } = useShell()
   const { selectedPinId, selectPin } = usePinSelection()
+  const { groupIds, showGroup } = usePinGroup()
   const { data: pins, isPending, error, refetch } = usePinsQuery(mapId)
   const counts = useCountsQuery(mapId).data
   const setStage = useSheetStore((s) => s.setStage)
@@ -65,7 +67,9 @@ export default function MapTab() {
   if (sorted && order?.key !== orderKey) setOrder({ key: orderKey, ids: sorted.map((p) => p.id) })
   const shown = sorted && order?.key === orderKey ? order.ids.map((id) => sorted.find((p) => p.id === id)).filter((p) => p !== undefined) : sorted
   const search = useSearchStore()
-  const found = useSourcePlacesQuery(search.source, search.near).data?.places
+  const sourced = useSourcePlacesQuery(search.source, search.near).data
+  // 지도 자리 메뉴는 카카오 근처 가게(#1549)까지 센다.
+  const found = sourced && [...sourced.places, ...(sourced.nearby ?? [])]
   const filtered = Boolean(filters.category || filters.createdBy || filters.kind || filters.opinion)
   const [params, setParams] = useSearchParams()
   const onboarding = params.get('onboarding') as OnboardingKind | null
@@ -87,10 +91,11 @@ export default function MapTab() {
     prevStage.current = stage
   }, [onboarding, stage, closeOnboarding])
 
-  // 핀을 고르면 상세가 2단계로 올라온다(최종기획안 4절 "핀 상세").
+  // 핀을 고르면 상세가 2단계로 올라온다(최종기획안 4절 "핀 상세"). 겹친 핀 목록도 같다(#1576).
+  const groupKey = groupIds?.join(',')
   useEffect(() => {
-    if (selectedPinId) setStage('map', 2)
-  }, [selectedPinId, setStage])
+    if (selectedPinId || groupKey) setStage('map', 2)
+  }, [selectedPinId, groupKey, setStage])
 
   const selectedPin = pins?.find((pin) => pin.id === selectedPinId)
   // 목록을 다 받은 뒤에도 없으면 볼 수 없는 핀이다. 로딩 중이나 실패 중에는 판단하지 않는다.
@@ -121,6 +126,24 @@ export default function MapTab() {
         header={<PinDetailHeader pin={selectedPin} mapId={mapId} onBack={() => selectPin(null)} />}
       >
         <PinDetailBody pin={selectedPin} mapId={mapId} members={members} onDone={() => selectPin(null)} />
+      </TabSheet>
+    )
+  }
+
+  // 겹친 핀 묶음(#1576) — 지도에서 가장 가까이 확대해도 겹친 핀들만 보인다. 여기서 연 핀을 닫으면 이 목록으로 돌아온다.
+  const groupPins = groupIds && pins ? groupIds.map((id) => pins.find((p) => p.id === id)).filter((p) => p !== undefined) : []
+  if (groupPins.length > 0) {
+    return (
+      <TabSheet
+        tab="map"
+        header={
+          <>
+            <PanelBackLink label="마킹된 장소" onBack={() => showGroup(null)} />
+            <SheetTitle>이 자리의 핀 {groupPins.length}곳</SheetTitle>
+          </>
+        }
+      >
+        <PinList pins={groupPins} memberCount={memberCount} onSelect={selectPin} news={cardNews} />
       </TabSheet>
     )
   }
