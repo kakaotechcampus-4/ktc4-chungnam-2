@@ -12,6 +12,7 @@ import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
 import { mapTapAction, showMapMenuHintOnce } from '@/features/map/mapTap'
 import { PIN_GROUP_PARAM, usePinGroup, usePinSelection } from '@/features/map/usePinSelection'
 import { authorName, byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
+import MapGestureHelp from '@/features/map/MapGestureHelp'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
@@ -621,13 +622,19 @@ export default function MapLayout() {
               />
             )}
           </div>
+          {/* 칩 줄 끝 「?」는 지도 쓰는 법(#1613). 칩은 옆으로 밀고 「?」는 오른쪽에 남는다. */}
           {!desktop && chipsShown && (
-            <CategoryChips
-              value={filters.category}
-              onChange={(c) => setFilter('category', c)}
-              floating
-              className={`pointer-events-auto -mx-4 px-4 pb-1 transition-opacity ${fade}`}
-            />
+            <div className={`-ml-4 flex items-center gap-2 transition-opacity ${fade}`}>
+              <CategoryChips
+                value={filters.category}
+                onChange={(c) => setFilter('category', c)}
+                floating
+                className="pointer-events-auto min-w-0 flex-1 pb-1 pl-4"
+              />
+              <span className="-mt-1 shrink-0">
+                <MapGestureHelp />
+              </span>
+            </div>
           )}
         </header>
 
@@ -666,14 +673,20 @@ export default function MapLayout() {
           </div>
           <div className="absolute left-4 right-20 top-3 flex flex-col items-start gap-2">
             {chipsShown && (
-              <CategoryChips
-                value={filters.category}
-                onChange={(c) => setFilter('category', c)}
-                floating
-                // 마우스로는 옆으로 밀기 어렵고 가로 스크롤바가 지도를 가려서, 좁으면 줄을 바꾼다.
-                // 터치(태블릿)는 모바일처럼 옆으로 민다 — 좁은 지도 위에서 칩이 두세 줄로 쌓이지 않게(#603).
-                className={`pointer-events-auto max-w-full pointer-fine:flex-wrap transition-opacity ${fade}`}
-              />
+              <div className={`flex max-w-full items-start gap-2 transition-opacity ${fade}`}>
+                <CategoryChips
+                  value={filters.category}
+                  onChange={(c) => setFilter('category', c)}
+                  floating
+                  // 마우스로는 옆으로 밀기 어렵고 가로 스크롤바가 지도를 가려서, 좁으면 줄을 바꾼다.
+                  // 터치(태블릿)는 모바일처럼 옆으로 민다 — 좁은 지도 위에서 칩이 두세 줄로 쌓이지 않게(#603).
+                  className="pointer-events-auto min-w-0 pointer-fine:flex-wrap"
+                />
+                {/* 지도 쓰는 법(#1613) — 칩 줄 끝. */}
+                <span className="shrink-0 py-1.5">
+                  <MapGestureHelp />
+                </span>
+              </div>
             )}
           </div>
           {/* 연결 끊김은 지도 위쪽 가운데, 칩 줄 아래(#1575) — 왼쪽 위에 두면 칩과 섞여 안 보였다. 좁은 화면에서도 칩과 겹치지 않게 칩 줄 아래다. */}

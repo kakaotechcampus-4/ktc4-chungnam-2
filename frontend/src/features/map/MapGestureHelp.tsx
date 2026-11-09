@@ -3,7 +3,6 @@ import { CircleHelp } from 'lucide-react'
 
 import WelcomeScene from '@/features/onboarding/WelcomeScene'
 import MenuPopover from '@/features/shell/MenuPopover'
-import { CONTROLS } from '@/features/shell/layout'
 
 /** 손이 하는 일 → 지도가 하는 일. 판단은 `mapTap`·지도 자리 메뉴(#1549, #1613)이고 여기는 그 뜻만 적는다. */
 const ROWS = {
@@ -18,11 +17,11 @@ const ROWS = {
 }
 
 /**
- * 지도 버튼 묶음 맨 위 「?」(#1613). 빈 지도 누르기와 핀 찍는 법을 움직이는 장면으로 보인다.
+ * 지도 위 카테고리 칩 줄 끝 「?」(#1613). 지도 버튼 묶음에 두면 묶음이 높아져 작은 휴대폰에서 묶음과 핑고 AI 조언이 숨어서 칩 줄로 옮겼다. 빈 지도 누르기와 핀 찍는 법을 움직이는 장면으로 보인다.
  * 처음 한 번 뜨는 토스트를 놓친 사람도 언제든 찾게 한다. 마우스면 클릭·우클릭, 터치면 짧게·길게 누르기다 —
  * 첫 안내 토스트(`showMapMenuHintOnce`)와 같은 기준(`pointer: fine`)이라 마우스를 단 태블릿은 마우스 쪽을 본다.
  */
-export default function MapGestureHelp({ tabIndex }: { tabIndex: number }) {
+export default function MapGestureHelp() {
   const [touch] = useState(() => !window.matchMedia?.('(pointer: fine)').matches)
   const rows = ROWS[touch ? 'touch' : 'mouse']
   return (
@@ -33,11 +32,9 @@ export default function MapGestureHelp({ tabIndex }: { tabIndex: number }) {
           type="button"
           aria-label="지도 쓰는 법 보기"
           title="지도 쓰는 법"
-          tabIndex={tabIndex}
-          style={{ width: CONTROLS.size, height: CONTROLS.size }}
-          className="press flex items-center justify-center rounded-t-xl text-link"
+          className="chip hit-44 pointer-events-auto px-2 text-link shadow-float"
         >
-          <CircleHelp size={20} aria-hidden="true" />
+          <CircleHelp size={16} aria-hidden="true" />
         </button>
       }
     >
