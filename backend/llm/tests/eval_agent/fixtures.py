@@ -152,6 +152,14 @@ class World:
         return FixtureTools(self, allowed, preview=self.preview(key), followup_check=self.followup_check(key))
 
 
+def _ready_categories(pins, reactions) -> frozenset[str]:
+    """추천 준비(⓪)를 통과한 카테고리 — 의견 핀이 1곳 이상이다. 운영은 recommend.api.get_readiness가 정하고(snapshot.build),
+    이 픽스처의 get_readiness 도구(_get_readiness)와 같은 기준이다(#1583)."""
+    category_of = {p.pin_id: p.category for p in pins}
+    return frozenset(c for c in categories.recommendable()
+                     if any(category_of.get(r.pin_id) == c for r in reactions))
+
+
 def build(case: Mapping[str, Any]) -> World:
     n = case.get("members", 3)
     members = tuple(Member(user_id=f"u{i}", alias=f"m{i}", joined_at=JOINED) for i in range(1, n + 1))
@@ -186,6 +194,7 @@ def build(case: Mapping[str, Any]) -> World:
         map=MapInfo(map_id="map_eval", start_date=start, end_date=start + timedelta(days=2), deleted=False),
         today=TODAY, members=members, pins=tuple(pins), reactions=tuple(reactions), reasons=tuple(reasons),
         shortlist=shortlist, last_run_at={}, actions=derive_actions(tuple(pins), tuple(reactions), shortlist),
+        ready_categories=_ready_categories(pins, reactions),
     )
     past = [
         core.PastSuggestion(id=f"old{i}", diagnosis=d["diagnosis"], category=d.get("category"), fingerprint=f"fp-old-{i}",

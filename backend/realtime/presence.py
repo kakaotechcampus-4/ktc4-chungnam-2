@@ -48,6 +48,22 @@ class Presence:
                 del self._connections[map_id]
             self._grace_until.setdefault(map_id, {})[user_id] = self._clock() + GRACE
 
+    def forget(self, map_id: str, user_id: str | None = None) -> None:
+        """구성원이 아니게 되어(나가기·탈퇴) 또는 지도가 사라져 연결이 닫힌 사람을 유예 없이 집계에서 뺀다.
+        user_id가 None이면 그 지도 전체. 이벤트는 만들지 않는다 — 나간 사람의 `online:false`를 알릴 이유가 없다
+        (member.left가 이미 갔다). 이 뒤에 닫히는 연결의 disconnect는 아무것도 하지 않는다."""
+        with self._lock:
+            for table in (self._connections, self._grace_until):
+                users = table.get(map_id)
+                if users is None:
+                    continue
+                if user_id is None:
+                    del table[map_id]
+                    continue
+                users.pop(user_id, None)
+                if not users:
+                    del table[map_id]
+
     def expire(self) -> list[tuple[str, str]]:
         """유예가 끝난 (map_id, user_id)를 치우고 돌려준다 — 부르는 쪽이 `online=false`를 알린다.
         폴링 루프가 주기적으로 부른다(안 부르면 끊긴 사람이 유예 표에 쌓인다)."""

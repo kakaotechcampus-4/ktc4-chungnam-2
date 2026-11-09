@@ -15,7 +15,9 @@ from authz.policy import Role
 from authz.schemas import Permissions
 from common.errors import AppError
 from common.events import Event
-from maps.schemas import TITLE_MAX_LENGTH, Invite, InviteSummary, Map, MapRegion, Member, NextOwner, TrashedMap
+from maps.schemas import (
+    TITLE_MAX_LENGTH, Invite, InviteSummary, Map, MapNews, MapRegion, Member, NewReaction, NextOwner, TrashedMap,
+)
 
 # 내 지도 상한(#369 15번) — 만들거나 참여한 지도 합산, 삭제된 지도와 나간 지도는 세지 않는다.
 MAP_LIMIT = 20
@@ -405,14 +407,20 @@ def to_map_response(
 
 
 def to_member_response(
-    user_id: str, *, role: Role, display_name: str | None, online: bool | None, is_guest: bool
+    user_id: str, *, role: Role, display_name: str | None, online: bool | None, is_guest: bool,
+    opinion_count: int | None = None,
 ) -> Member:
     """role은 memberships.role 그대로다(#369 11번 — maps.created_by로 판정하지 않는다).
     display_name은 auth.api.display_names로 채운다(탈퇴자는 '탈퇴한 구성원', #155).
-    online은 여전히 채울 데이터 출처가 없다(realtime에 presence 없음, #32 별건) — user_id로
-    대체하거나 False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다).
-    is_guest는 호출부가 auth.api.guest_user_ids로 구한 값을 넘긴다(#955) — 방장 넘기기 검사(check_owner_target)와 같은 판정이다."""
-    return Member(user_id=user_id, role=role, display_name=display_name, online=online, is_guest=is_guest)
+    online은 구성원 목록(list_members)이 realtime.api.online_user_ids로 채운다(#1551). 서버가 모르는 자리(이벤트 페이로드 등)는
+    None으로 둔다 — False로 채우지 않는다(그럴싸해 보이는 거짓 fallback이다).
+    is_guest는 호출부가 auth.api.guest_user_ids로 구한 값을 넘긴다(#955) — 방장 넘기기 검사(check_owner_target)와 같은 판정이다.
+    opinion_count는 list_members가 pins.api.count_reactions_by_user로 채운다(#1562) — 모르는 자리는 None(0으로 지어내지 않는다).
+    """
+    return Member(
+        user_id=user_id, role=role, display_name=display_name, online=online, is_guest=is_guest,
+        opinion_count=opinion_count,
+    )
 
 
 def member_joined_event(map_id: str, member: Member) -> Event:
@@ -429,6 +437,26 @@ def purge_cutoff(now: datetime) -> datetime:
     """이 시각 이전(같은 시각 포함)에 삭제된 지도는 기간이 찼다 — 정리 대상이고 복구할 수 없다(#464, #1474).
     정리(maps.purge), 복구 판정(is_purge_due), 휴지통 목록이 모두 이 경계를 쓴다."""
     return now - TRASH_RETENTION
+
+
+def to_map_news(
+    since: datetime, new_pin_ids: list[str], reactions: list[dict], names: dict[str, str | None], *, truncated: bool
+) -> MapNews:
+    """pins.api.list_new_since의 결과를 응답으로 옮긴다(#1556). 사유 글은 문장에 섞지 않고 칸으로 둔다(#717).
+    이름을 못 구하면(users 행이 없음) 탈퇴한 구성원으로 표시한다 — 지어낸 이름을 쓰지 않는다."""
+    return MapNews(
+        since=since,
+        new_pin_ids=new_pin_ids,
+        new_reactions=[
+            NewReaction(
+                pin_id=r["pin_id"], user_id=r["user_id"], display_name=names.get(r["user_id"]) or WITHDRAWN_DISPLAY_NAME,
+                type=r["type"], reason_text=r.get("reason_text"), reason_chip_ids=list(r.get("reason_chip_ids") or []),
+                updated_at=r["updated_at"],
+            )
+            for r in reactions
+        ],
+        truncated=truncated,
+    )
 
 
 def is_purge_due(deleted_at: datetime, now: datetime) -> bool:
