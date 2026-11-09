@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
+import { http, HttpResponse } from 'msw'
 import { MemoryRouter } from 'react-router'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 
@@ -46,8 +47,9 @@ it('확정 버튼은 켜고 끄는 버튼 하나다 — 넣으면 「확정 리�
   await userEvent.click(await screen.findByRole('button', { name: '확정 리스트에 넣기', pressed: false }))
   const on = await screen.findByRole('button', { name: '확정됨', pressed: true })
   expect(on).toHaveFocus()
+  // 버튼은 응답 전에 바뀐다(#1676) — 넣기가 끝날 때(토스트)까지 다시 누르면 무시하니, 끝난 뒤에 뺀다.
+  await waitFor(() => expect(useToastStore.getState().toast?.action?.label).toBe('확정 리스트 보기'))
   expect(await fetchShortlist(MAP)).toHaveLength(1)
-  expect(useToastStore.getState().toast?.action?.label).toBe('확정 리스트 보기')
 
   useToastStore.setState({ toast: null })
   await userEvent.click(on)
@@ -57,3 +59,27 @@ it('확정 버튼은 켜고 끄는 버튼 하나다 — 넣으면 「확정 리�
   expect(useToastStore.getState().toast?.action?.label).toBe('되돌리기')
   // 넣고 빼며 핀·확정 리스트를 두 번씩 다시 받는다 — 부하가 높으면 기본 5초를 넘는다.
 }, 15_000)
+
+function renderHeader() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <Header />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+it('넣기는 응답 전에 확정됨으로 바뀐다(낙관적, #1676)', async () => {
+  let answer: () => void = () => {}
+  server.use(http.post('*/maps/:mapId/shortlist', () => new Promise<Response>((done) => (answer = () => done(HttpResponse.json({}, { status: 500 }))))))
+  renderHeader()
+  await userEvent.click(await screen.findByRole('button', { name: '확정 리스트에 넣기', pressed: false }))
+  // 서버는 아직 답하지 않았다.
+  expect(await screen.findByRole('button', { name: '확정됨', pressed: true })).toBeInTheDocument()
+  // 실패하면 그 핀만 되돌리고 알린다.
+  answer()
+  expect(await screen.findByRole('button', { name: '확정 리스트에 넣기', pressed: false })).toBeInTheDocument()
+  expect(useToastStore.getState().toast?.message).toBe('확정 리스트에 넣지 못했어요')
+})
