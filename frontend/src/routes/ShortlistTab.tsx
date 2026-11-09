@@ -65,6 +65,7 @@ export default function ShortlistTab() {
   const items = all.filter((i) => !inSchedule.has(i.pin.id))
   const shown = category ? items.filter((i) => i.pin.category === category) : items
   const scheduled = all.length - items.length
+  const allPlaced = edit.ready && !edit.error && all.length > 0 && items.length === 0
   const day = putDay && edit.dates.includes(putDay) ? putDay : edit.dates[0]
   const openPin = pins.find((p) => p.id === params.get('pin'))
 
@@ -126,9 +127,12 @@ export default function ShortlistTab() {
           {all.length > 0 && (
             <div className="flex shrink-0 gap-2">
               {/* AI 코스 짜기는 따로 탭이다(「AI 코스」). 「일정 짜기」 패널은 넓은 화면에만 있다 — 휴대폰은 줄의 「넣기」로 넣고 동선 보기로 고친다. */}
-              <button type="button" aria-pressed={routeOn} aria-disabled={!routeOn && scheduled === 0} onClick={toggleRoute} className="chip">
-                동선 보기{routeOn && <Mark kind="check" size={14} />}
-              </button>
+              {/* 다 넣었으면 완료 카드에 같은 버튼이 있어 여기서는 뺀다(#1680). 켜져 있을 때는 끄는 자리라 남긴다. */}
+              {(routeOn || !allPlaced) && (
+                <button type="button" aria-pressed={routeOn} aria-disabled={!routeOn && scheduled === 0} onClick={toggleRoute} className="chip">
+                  동선 보기{routeOn && <Mark kind="check" size={14} />}
+                </button>
+              )}
               {desktop && (
                 // 다시 누르면 닫힌다(패널의 ✕·Esc와 같다).
                 <button type="button" aria-pressed={scheduleOpen} onClick={() => (scheduleOpen ? closeSchedule() : openSchedule(mapId))} className="chip">

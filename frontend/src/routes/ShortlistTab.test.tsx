@@ -92,6 +92,15 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1']))
   })
 
+  it('다 넣으면 완료 카드의 「동선 보기」 하나만 남는다(#1680)', async () => {
+    renderTab()
+    await putTwoOnSecondDay()
+    const last = await screen.findByRole('button', { name: /둘째 날에 넣기$/ })
+    await userEvent.click(last)
+    expect(await screen.findByText('모든 장소를 일정에 넣었어요')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /^동선 보기/ })).toHaveLength(1)
+  })
+
   it('카테고리 칩으로 리스트를 걸러 보고, 남은 곳이 없으면 알린다(#1559)', async () => {
     renderTab()
     await screen.findByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })

@@ -493,12 +493,13 @@ export default function MapLayout() {
         style={desktop ? { left: panelOpen ? PANEL_GAP : -panelW, width: panelW } : undefined}
         className={
           desktop
-            ? `fixed inset-y-3 z-30 flex flex-col overflow-hidden rounded-2xl bg-surface shadow-float transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
+            ? `fixed inset-y-3 z-30 flex flex-col overflow-hidden rounded-2xl bg-[var(--surface-sheet)] shadow-float transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
                 panelOpen ? 'visible' : 'invisible'
               }`
             : 'contents'
         }
       >
+        {/* 패널 바탕은 탭 내용과 같은 시트 면이다 — 머리 아래만 흰 띠면 따로 붙인 판처럼 보였다(#1680). 검색창은 흰 칸이라 필터 칸처럼 떠 보인다. */}
         {/* 넓은 화면 pb-1: 검색창 포커스 테두리(바깥 4px)가 바로 아래 탭 내용(흰 바탕)에 덮이지 않게 자리를 둔다. */}
         <header
           data-map-header
