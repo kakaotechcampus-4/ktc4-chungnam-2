@@ -24,6 +24,7 @@ import { useCreditsQuery } from '@/features/credits/queries'
 import FieldError from '@/ui/FieldError'
 import RangeSlider from '@/ui/RangeSlider'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
 import Skeleton, { Bone } from '@/ui/Skeleton'
 
 import { useAiStore } from './aiStore'
@@ -214,13 +215,14 @@ export function ReadinessBody({ mapId }: { mapId: string }) {
       )}
       <CreditGate feature="recommend_run" mapId={mapId} error={create.error} onCharged={create.reset}>
         <button
+          aria-busy={create.isPending}
           type="button"
           disabled={!chosen || create.isPending}
           onClick={() => chosen && ask(chosen, false)}
           data-coach="recommend-run"
           className="btn-primary btn-lg w-full"
         >
-          {create.isPending ? '추천을 찾는 중…' : chosen ? `${chosen} 추천받기` : '의견이 모이면 추천받을 수 있어요'}
+          <BusyLabel busy={create.isPending} busyText="추천을 찾는 중…">{chosen ? `${chosen} 추천받기` : '의견이 모이면 추천받을 수 있어요'}</BusyLabel>
         </button>
       </CreditGate>
       <CoachMark id="recommend-run" target="recommend-run" title="모두의 의견으로 AI가 후보를 찾아요">

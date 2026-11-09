@@ -8,6 +8,7 @@ import { showToast } from '@/features/shell/toast'
 import RegionCover from '@/ui/RegionCover'
 import SheetTitle from '@/ui/SheetTitle'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
 
 import { cardTint, MAP_COLORS, shrinkImage } from './look'
 import type { MapView } from './model'
@@ -123,8 +124,8 @@ export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void
           <button type="button" onClick={onClose} className="btn-neutral btn-lg">
             닫기
           </button>
-          <button type="button" disabled={draft === undefined || cover.isPending} onClick={save} className="btn-primary btn-lg">
-            {cover.isPending ? '저장하는 중…' : '저장'}
+          <button type="button" disabled={draft === undefined || cover.isPending} onClick={save} aria-busy={cover.isPending} className="btn-primary btn-lg">
+            <BusyLabel busy={cover.isPending} busyText="저장하는 중…">저장</BusyLabel>
           </button>
         </div>
       </div>
@@ -216,8 +217,8 @@ export function ColorSheet({ map, onClose }: { map: MapView; onClose: () => void
           <button type="button" onClick={onClose} className="btn-neutral btn-lg">
             닫기
           </button>
-          <button type="button" disabled={!changed || update.isPending} onClick={save} className="btn-primary btn-lg">
-            {update.isPending ? '저장하는 중…' : '저장'}
+          <button type="button" disabled={!changed || update.isPending} onClick={save} aria-busy={update.isPending} className="btn-primary btn-lg">
+            <BusyLabel busy={update.isPending} busyText="저장하는 중…">저장</BusyLabel>
           </button>
         </div>
       </div>

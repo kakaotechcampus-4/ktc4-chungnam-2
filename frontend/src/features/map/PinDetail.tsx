@@ -23,6 +23,7 @@ import TextField from '@/ui/TextField'
 import Sentences from '@/ui/Sentences'
 import UnknownName from '@/ui/UnknownName'
 import PeopleProof from '@/ui/PeopleProof'
+import BusyLabel from '@/ui/BusyLabel'
 
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
@@ -596,12 +597,13 @@ function MyOpinion({
       )}
 
       <button
+        aria-busy={react.isPending}
         type="button"
         onClick={submit}
         disabled={!type || react.isPending}
         className="btn-primary btn-md w-full"
       >
-        {react.isPending ? '등록하는 중…' : '의견 등록'}
+        <BusyLabel busy={react.isPending} busyText="등록하는 중…">의견 등록</BusyLabel>
       </button>
     </section>
   )

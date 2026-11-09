@@ -9,6 +9,7 @@ import { showToast } from '@/features/shell/toast'
 import SheetTitle from '@/ui/SheetTitle'
 import StarRating from '@/ui/StarRating'
 import TextArea from '@/ui/TextArea'
+import BusyLabel from '@/ui/BusyLabel'
 
 import { canSave, RATING_WORDS, saveErrorMessage, type MyReviewDto } from './model'
 import { useSaveReviewMutation } from './queries'
@@ -84,8 +85,8 @@ export default function ReviewSheet({
         save.error && <ErrorText message={saveErrorMessage(save.error)} error={save.error} />
       )}
 
-      <button type="button" onClick={submit} disabled={!canSave(rating, body) || save.isPending} className="btn-primary btn-lg mt-3 w-full">
-        {save.isPending ? '저장하는 중…' : '저장'}
+      <button aria-busy={save.isPending} type="button" onClick={submit} disabled={!canSave(rating, body) || save.isPending} className="btn-primary btn-lg mt-3 w-full">
+        <BusyLabel busy={save.isPending} busyText="저장하는 중…">저장</BusyLabel>
       </button>
     </ModalSheet>
   )
