@@ -21,7 +21,7 @@ type Confirm = 'leave' | 'delete' | 'edit' | 'owner' | 'trash' | null
  * 프로필 모달(Figma 8절, 모바일). 탭 시트가 아니라 모달이다 — 탭 시트 자리에 띄우면 켜진 탭과 내용이 어긋난다.
  * 검정 32% 딤이 지도·상단 버튼·하단 바까지 덮고, 시트는 화면 바닥에 붙는다.
  * 넓은 화면은 같은 내용을 패널 헤더 구성원 버튼 아래 메뉴로 연다(ProfileMenu). 강퇴는 v2라 버튼이 없다.
- * 계정(이름, 로그아웃, 화면 모드, 도움 줄)은 휴대폰은 「내 프로필」 탭, 넓은 화면은 오른쪽 위 계정 원에 있다.
+ * 계정(이름, 로그아웃, 화면 모드, 도움 줄)은 휴대폰은 프로필 탭, 넓은 화면은 오른쪽 위 계정 원에 있다.
  */
 export default function ProfileModal({ mapId, onClose }: { mapId: string; onClose: () => void }) {
   const [confirm, setConfirm] = useState<Confirm>(null)
@@ -180,7 +180,7 @@ function ProfileBody({ mapId, onConfirm }: { mapId: string; onConfirm: (which: C
   )
 }
 
-/** 계정 칸 아래 도움 줄(휴대폰 「내 프로필」 탭, 내 지도 목록 계정 시트): 자주 묻는 질문, 버그 신고하기, 의견 보내기. 넓은 화면은 ☰ 메뉴에 있다(#1538). */
+/** 계정 칸 아래 도움 줄(휴대폰 프로필 탭, 내 지도 목록 계정 시트): 자주 묻는 질문, 버그 신고하기, 의견 보내기. 넓은 화면은 ☰ 메뉴에 있다(#1538). */
 export function HelpLinks({ onPick }: { onPick: (which: 'faq' | 'bug' | 'feedback') => void }) {
   return (
     <div className="mt-3 flex justify-center gap-4">

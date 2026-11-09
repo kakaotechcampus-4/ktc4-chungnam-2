@@ -559,7 +559,7 @@ export default function MapLayout() {
                 }
               />
             ) : (
-              // 알림은 휴대폰에서 「내 프로필」 탭으로 옮겼다 — 오른쪽 위는 손이 닿기 어렵다(#1660). 안 읽은 점은 탭 아이콘에 붙는다.
+              // 알림은 휴대폰에서 프로필 탭으로 옮겼다 — 오른쪽 위는 손이 닿기 어렵다(#1660). 안 읽은 점은 탭 아이콘에 붙는다.
               <div className="flex items-center gap-3">
                 <button
                   type="button"
@@ -730,10 +730,10 @@ const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | nul
   { path: '/shortlist', label: '장소 확정', Icon: FileText },
   { path: '/course', label: 'AI 코스', Icon: Route },
   // 휴대폰만(#1660). 넓은 화면은 오른쪽 위 계정 원이 같은 일을 한다. 아이콘은 내 이니셜 원이다.
-  { path: '/me', label: '내 프로필', Icon: null, mobileOnly: true },
+  { path: '/me', label: '프로필', Icon: null, mobileOnly: true },
 ]
 
-/** 「내 프로필」 탭 아이콘 — 내 이니셜 원, 안 읽은 알림이 있으면 오른쪽 위 빨간 점(종과 같은 점). */
+/** 프로필 탭 아이콘 — 내 이니셜 원, 안 읽은 알림이 있으면 오른쪽 위 빨간 점(종과 같은 점). */
 function MeIcon({ name, unread }: { name?: string; unread: boolean }) {
   return (
     // 지금 탭의 회색 알약 위에서도 원이 보이게 테두리를 두른다.

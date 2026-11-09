@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, Navigate } from 'react-router'
-import { List, Users } from 'lucide-react'
+import { List, Settings, Users } from 'lucide-react'
 
 import { AccountSection } from '@/features/maps/AccountSheet'
 import { useMapsQuery } from '@/features/maps/queries'
@@ -12,7 +12,8 @@ import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import SheetTitle from '@/ui/SheetTitle'
 
 /**
- * 「내 프로필」 탭(휴대폰만, 네이버 지도 MY 시안). 오른쪽 위까지 손이 닿지 않아도 알림, 내 지도 목록, 지도 정보, 계정을 아래에서 연다.
+ * 프로필 탭(휴대폰만, 네이버 지도 MY 시안). 오른쪽 위까지 손이 닿지 않아도 알림, 내 지도 목록, 지도 정보, 계정을 아래에서 연다.
+ * 시트 머리 오른쪽에 알림 종과 설정 톱니를 둔다(시안과 같은 자리).
  * 넓은 화면은 오른쪽 위 계정 원과 패널 머리에 같은 것이 있어 이 탭이 없다 — 주소로 들어오면 핀 찍기 탭으로 보낸다.
  */
 export default function MeTab() {
@@ -20,6 +21,7 @@ export default function MeTab() {
   const desktop = useIsDesktop()
   const maps = useMapsQuery().data?.items ?? []
   const [mapInfo, setMapInfo] = useState(false)
+  const [settings, setSettings] = useState(false)
 
   if (desktop) return <Navigate to={`/maps/${mapId}`} replace />
 
@@ -28,14 +30,26 @@ export default function MeTab() {
       tab="me"
       header={
         <div className="flex items-center justify-between gap-2">
-          <SheetTitle>내 프로필</SheetTitle>
-          <NotificationBell currentMapId={mapId} />
+          <SheetTitle>프로필</SheetTitle>
+          <div className="flex items-center gap-3">
+            <NotificationBell currentMapId={mapId} />
+            <button
+              type="button"
+              aria-label="설정"
+              onClick={() => setSettings(true)}
+              className="hit-44 press flex size-8 shrink-0 items-center justify-center rounded-full border border-ink-200 bg-surface text-ink-900"
+            >
+              <Settings size={18} aria-hidden="true" />
+            </button>
+          </div>
         </div>
       }
     >
       <AccountSection
         maps={maps}
         mapId={mapId}
+        settingsOpen={settings}
+        onSettingsClose={() => setSettings(false)}
         links={
           <div className="mb-5 flex gap-2">
             <Link to="/" className="btn-neutral btn-md flex-1">
