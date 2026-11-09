@@ -108,6 +108,19 @@ export default function MapLayout() {
   const me = useMeQuery().data
   const myId = me?.id
   const myMaps = useMapsQuery().data?.items ?? []
+  const searchBox = useRef<HTMLDivElement>(null)
+  // 최근 검색 목록은 검색창·목록 밖을 누르면 닫는다. 지도는 눌러도 검색창 포커스를 빼앗지 않아(카카오맵이 터치를 먹는다)
+  // blur 만으로는 휴대폰에서 목록이 계속 떠 있었다(PM 점검 #1554).
+  useEffect(() => {
+    if (!searchFocused) return
+    const onDown = (e: PointerEvent) => {
+      if (searchBox.current?.contains(e.target as Node)) return
+      setSearchFocused(false)
+      document.getElementById('place-search')?.blur()
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [searchFocused])
   const recent = useRecentSearches(myId)
   const recentOpen = searchFocused && !searchText && recent.list.length > 0
   // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
@@ -189,6 +202,9 @@ export default function MapLayout() {
 
   function runSearch(q: string) {
     if (!q) return
+    // 찾기 시작하면 최근 검색 목록을 닫고 키보드를 내린다 — 결과 시트가 보이게.
+    setSearchFocused(false)
+    document.getElementById('place-search')?.blur()
     // 검색은 마킹 탭의 일이다. 다른 탭에서 검색해도 마킹 탭으로 가서 결과를 보여준다.
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
     const center = controller.current?.getCenter() ?? null
@@ -527,6 +543,7 @@ export default function MapLayout() {
           {/* 넓은 화면은 패널 안이라 그림자·흐림이 없다(그림자는 지도 위에 떠 있는 것에만). */}
           {/* 포커스가 검색창이나 최근 검색 목록 안에 있는 동안만 목록을 연다. Esc는 닫는다. */}
           <div
+            ref={searchBox}
             className="relative"
             onFocus={() => setSearchFocused(true)}
             onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setSearchFocused(false)}
@@ -633,8 +650,13 @@ export default function MapLayout() {
                 className={`pointer-events-auto max-w-full pointer-fine:flex-wrap transition-opacity ${fade}`}
               />
             )}
-            {connection.state !== 'open' && <ConnectionBanner floating state={connection.state} onReconnect={connection.reconnect} />}
           </div>
+          {/* 연결 끊김은 지도 위쪽 가운데, 칩 줄 아래(#1575) — 왼쪽 위에 두면 칩과 섞여 안 보였다. 좁은 화면에서도 칩과 겹치지 않게 칩 줄 아래다. */}
+          {connection.state !== 'open' && (
+            <div className="absolute inset-x-4 top-16 flex justify-center">
+              <ConnectionBanner floating state={connection.state} onReconnect={connection.reconnect} />
+            </div>
+          )}
           <PanelToggle open={panelOpen} onToggle={() => setPanelOpen(!panelOpen)} />
           <MapControls docked hidden={modalOpen} fading={mapMoving} active={activeControl} onPress={onControl} />
           {/* 조언은 지도 단위라 네 탭 모두(#1162). */}

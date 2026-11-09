@@ -171,8 +171,10 @@ function NewMapLink({ className, blockedBy }: { className: string; blockedBy?: s
 }
 
 function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; empty?: string }) {
-  const [open, setOpen] = useState<{ kind: CardAction; map: MapView } | null>(null)
+  const [opened, setOpen] = useState<{ kind: CardAction; map: MapView } | null>(null)
   const close = () => setOpen(null)
+  // 창에는 연 순간의 지도가 아니라 목록의 최신 값을 준다 — 대표 이미지를 바꾼 뒤에도 창이 옛 그림을 보이지 않게(PM 점검 #1554).
+  const open = opened && { ...opened, map: maps.find((m) => m.id === opened.map.id) ?? opened.map }
   return (
     <section className="space-y-3">
       {title && (

@@ -116,6 +116,11 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     expect(toggle).toHaveTextContent(/조건 \d+개/)
     await userEvent.click(toggle)
 
+    // 칩마다 쓴 사람 이름이 글자로 보이고, 내 줄은 「(나)」다(#1561 — 툴팁은 휴대폰에서 안 보인다).
+    const mine = (await screen.findByRole('button', { name: '매운맛 전문 빼기' })).closest('li')!
+    expect(mine).toHaveTextContent('황경(나)매운맛 전문')
+    expect(mine).not.toHaveAttribute('title')
+
     // 목 서버의 내 줄은 「매운맛 전문」(꼭 지켜야 하는 조건) — 빼기 전에 한 번 묻는다.
     await userEvent.click(await screen.findByRole('button', { name: '매운맛 전문 빼기' }))
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: '빼기' }))
