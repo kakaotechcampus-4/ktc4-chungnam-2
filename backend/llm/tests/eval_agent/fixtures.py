@@ -6,7 +6,8 @@
 - 도구는 agent/tools.py와 같은 모양의 결과를 픽스처에서 만든다(FixtureTools). structure_reasons는 ②를 부르지 않고 픽스처의
   lines(②가 냈을 키와 방향)와 칩 표를 쓴다 — 평가 대상이 ②가 아니라서다.
 - 미리 돌려 보기(6.7, #1180)는 recommend를 부르지 않고 케이스의 preview(정해 둔 수)를 쓴다. 무엇을 돌릴지(stall 전부, split은
-  비교가 있으면 전부, 절충 키는 different_axes만 — #1317)와 절충 키, 진단 입력 칸은 운영과 같은 core.preview_target, compromise_keys, diagnosis_input이다. 결과는 도구
+  비교가 있으면 전부, 두 의견의 조건은 different_axes만 — #1317, #1600)와 조건, 표시 이름, 진단 입력 칸은 운영과 같은
+  core.preview_target, compromise_conditions, condition_labels, diagnosis_input이다. 결과는 도구
   기록 p1에 넣는다(운영의 tools.preview와 같은 모양). 케이스에 preview가 없으면 ② 실패처럼 null이다.
 - 후속 케이스(6.9, #1347)는 case.followup {h, action, label}에 target 신호의 첫 제안을 h시간 전에 그 버튼으로 수락했다고 적는다.
   이력에 그 제안(followup.status=watching, fingerprint는 target 신호 그대로)을 넣고, 후속 신호는 운영과 같은 core.detect_followups가
@@ -123,18 +124,19 @@ class World:
         return core.compare_reasons(self.structured([r.reaction_id for r in self.snap.reasons if r.pin_id == pin_id]))
 
     def preview(self, key: str) -> dict[str, Any] | None:
-        """미리 돌려 본 결과(agent/tools.preview와 같은 모양). 케이스의 preview 수에 절충 키의 표시 이름을 붙인다."""
+        """미리 돌려 본 결과(agent/tools.preview와 같은 모양). 케이스의 preview 수에 두 의견 조건의 표시 이름을 붙인다."""
         top = self.find(key)
         comparison = self.comparison(top.pin_id) if top.diagnosis == "split" else None
         target = core.preview_target(top, comparison)
         given = self.case.get("preview")
         if target is None or given is None:
             return None
-        _category, keys = target
+        _category, conditions = target
         result: dict[str, Any] = {"passed_count": given["passed_count"]}
-        if keys:
-            labels = recommend_api.fact_labels()
-            result |= {"with_keys_count": given["with_keys_count"], "with_labels": [labels[k] for k in keys if k in labels]}
+        if conditions:
+            result |= {"both_sides_count": given["both_sides_count"],
+                       "both_sides_confirmed_count": given["both_sides_confirmed_count"],
+                       **core.condition_labels(conditions, recommend_api.fact_labels())}
         return result | {"funnel": []}
 
     def diagnosis_input(self, key: str) -> dict[str, Any]:
