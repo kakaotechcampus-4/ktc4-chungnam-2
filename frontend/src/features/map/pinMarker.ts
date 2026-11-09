@@ -5,6 +5,10 @@ import { pinGlyph } from '@/ui/pinGlyph'
 import { kindLabel, type Pin } from './model'
 
 
+/** 새 소식 점 — 핀 머리 오른쪽 위(#1454). */
+const FRESH_DOT =
+  '<span data-new-dot aria-hidden="true" style="position:absolute;left:28px;top:3px;width:10px;height:10px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff"></span>'
+
 /**
  * 지도 위 핀 — 일반(올린 AI 추천 포함)·확정. 핀 그림은 `ui/pinGlyph` 한 곳에서 만든다(색의 진하기는 참여율, 구성원별 색 구분은 없다 #26).
  * fresh: 마지막으로 본 뒤 새로 생긴 핀·의견이 있는 핀(#1454) — 머리 오른쪽 위에 파란 점을 단다(목록 「새 핀」 태그와 같은 브랜드 파랑).
@@ -22,9 +26,33 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
       ${pinGlyph(pin.kind === '확정' ? { kind: 'confirmed' } : { kind: 'normal', ratio })}
     </svg>${
       fresh
-        ? '<span data-new-dot aria-hidden="true" style="position:absolute;left:28px;top:3px;width:10px;height:10px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff"></span>'
+        ? FRESH_DOT
         : ''
     }`
+  el.addEventListener('click', onClick)
+  return el
+}
+
+/**
+ * 화면에서 겹친 지도 핀 여러 곳(#1576). 핀 모양 그대로 머리에 곳 수를 적는다(`pinGlyph` count).
+ * 모두 확정이면 확정 핀 색, 하나라도 아니면 일반 핀 색이고 진하기는 묶음 안에서 가장 높은 참여율이다.
+ * 새 소식이 있는 핀이 하나라도 있으면 파란 점을 단다. 누르면 확대해 풀거나, 더 확대해도 겹치면 그 핀들 목록을 연다(MapCanvas).
+ * 이름은 setAttribute 로만 넣는다(마크업으로 해석되지 않게).
+ */
+export function createPinGroupMarkerElement(
+  g: { names: string[]; confirmed: boolean; ratio: number; fresh: boolean },
+  onClick: () => void,
+): HTMLElement {
+  const el = document.createElement('button')
+  el.type = 'button'
+  el.setAttribute('aria-label', `핀 ${g.names.length}곳이 겹쳐 있어요 · ${g.names.join(', ')}${g.fresh ? ', 새 소식 있음' : ''}`)
+  el.style.cssText =
+    'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
+  const count = g.names.length
+  el.innerHTML = `
+    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
+      ${pinGlyph(g.confirmed ? { kind: 'confirmed', count } : { kind: 'normal', ratio: g.ratio, count })}
+    </svg>${g.fresh ? FRESH_DOT : ''}`
   el.addEventListener('click', onClick)
   return el
 }
@@ -62,8 +90,8 @@ export function createSearchMarkerElement(
 }
 
 /**
- * 화면에서 겹친 검색 결과 여러 곳(#1174). 검색 핀과 같은 빨간 원에 아이콘 대신 곳 수(숫자만, 두 자리까지 원 안에 든다)를 적고,
- * 뒤에 원 하나를 비껴 깔아 여러 곳이 포개진 것으로 읽힌다. 누르면 시트에 그곳들만 보인다.
+ * 화면에서 겹친 검색 결과 여러 곳(#1174). 검색 핀과 같은 빨간 원에 아이콘 대신 곳 수(숫자만, 두 자리까지 원 안에 든다)를 적는다.
+ * 뒤에 원을 비껴 깔던 겹침 표시는 뺐다 — 숫자가 이미 여러 곳이라고 말해서 군더더기였다(#1576). 누르면 시트에 그곳들만 보인다.
  * 카카오맵은 20m 축척보다 더 확대하지 못해서, 같은 건물 가게들은 확대로 떼어 낼 수 없다.
  * 이름은 setAttribute 로만 넣는다(마크업으로 해석되지 않게).
  */
@@ -74,9 +102,8 @@ export function createSearchGroupMarkerElement(names: string[], onClick: () => v
   el.style.cssText =
     'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `
-    <svg viewBox="0 0 32 38" width="32" height="38" aria-hidden="true" overflow="visible"
+    <svg viewBox="0 0 32 38" width="32" height="38" aria-hidden="true"
          style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))">
-      <circle cx="20" cy="12" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <path d="M11 26L16 36.5L21 26Z" stroke-linejoin="round" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <circle cx="16" cy="16" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <text x="16" y="16" text-anchor="middle" dominant-baseline="central"
@@ -119,18 +146,28 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
 }
 
 /**
- * 지도 빈 곳을 누른 자리의 「이 근처 장소 찾기」 말풍선(#1028). 누르자마자 검색하지 않고 한 번 더 묻는다 — 어느 탭이든 같다.
- * 아래 작은 점이 누른 자리다(오버레이 yAnchor 1 → 점 가운데가 좌표). 버튼은 btn-outline btn-sm 부품이다.
+ * 지도 자리 메뉴(#1549) — 항목은 「신규 핀 찍기」 하나다. 부르는 법만 넷이다(왼쪽 클릭·짧게 누르기·길게 누르기는 말풍선, PC 우클릭은 메뉴).
+ * - `bubble`: 누른 자리 위 말풍선(#1028). 아래 작은 점이 누른 자리다(오버레이 yAnchor 1 → 점 가운데가 좌표).
+ * - `menu`: 커서 자리의 작은 메뉴(오버레이 xAnchor·yAnchor 0 → 왼쪽 위가 좌표). 키보드로 고를 수 있게 열리면 항목에 포커스를 둔다.
+ * 버튼은 btn-outline btn-sm 부품이다.
  */
-export function createTapBubbleElement(onPress: () => void): HTMLElement {
-  const box = document.createElement('div')
-  box.className = 'enter-pop'
-  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
+export function createTapBubbleElement(onPress: () => void, style: 'bubble' | 'menu' = 'bubble'): HTMLElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'btn-outline btn-sm shadow-float'
-  button.textContent = '이 근처 장소 찾기'
+  button.textContent = '신규 핀 찍기'
   button.addEventListener('click', onPress)
+  const box = document.createElement('div')
+  box.className = 'enter-pop'
+  if (style === 'menu') {
+    box.setAttribute('role', 'menu')
+    box.setAttribute('aria-label', '지도 메뉴')
+    box.style.cssText = 'transform-origin:0 0;margin:4px 0 0 4px'
+    button.setAttribute('role', 'menuitem')
+    box.append(button)
+    return box
+  }
+  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
   const dot = document.createElement('span')
   dot.setAttribute('aria-hidden', 'true')
   dot.style.cssText =

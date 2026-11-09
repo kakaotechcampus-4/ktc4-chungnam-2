@@ -98,6 +98,7 @@ function createPin(mapId: string, body: CreatePinBody): Response {
       place_name: own.place_name,
       ...(own.place_source?.url ? { place_url: own.place_source.url } : {}),
       naver_url: `https://map.naver.com/p/search/${encodeURIComponent(own.place_name)}`,   // #1513 이름 검색 링크
+      ...(own.address ? { neighborhood: own.address.split(" ").slice(1).join(" ") } : {}),   // #1564 목은 주소 앞 시·도만 뗀다(서버는 places.core.neighborhood)
       created_by: ME_USER_ID,
       created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
       created_at: new Date().toISOString(),

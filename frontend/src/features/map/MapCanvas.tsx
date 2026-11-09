@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { allInside, dragHeading, fitCenter, fitLevel, fitPadding, groupNear, view, zoomSteps } from './camera'
-import { createMarkerLayer, mapFade, type MarkerLayer } from './markerLayer'
+import { attachLongPress } from './longPress'
+import { createMarkerLayer, mapFade, PIN_GROUP_PX, type MarkerLayer } from './markerLayer'
 import { usePinDragStore } from './pinDrag'
 import {
   createCandidateMarkerElement,
@@ -120,9 +121,11 @@ export default function MapCanvas({
   route = [],
   onSelect,
   onResultGroup,
+  onPinGroup,
   onReady,
   onMovingChange,
   onMapClick,
+  onMapMenu,
   tapBubble = null,
   leftCover = 0,
   startCenter,
@@ -144,14 +147,18 @@ export default function MapCanvas({
   onSelect: (pinId: string) => void
   /** 화면에서 겹쳐 하나로 묶인 검색 결과 핀을 눌렀다(#1174). 시트에 그곳들만 보인다. */
   onResultGroup: (ids: string[]) => void
+  /** 화면에서 겹친 핀 묶음을 눌렀는데 가장 가까이 확대해도 겹친다(#1576). 그 핀들만 목록으로 보인다. */
+  onPinGroup: (pinIds: string[]) => void
   onReady: (controller: MapController) => void
   /** 사용자가 지도를 끌기 시작하면 true, 멈추면 false. */
   onMovingChange: (moving: boolean) => void
   /** 지도 빈 곳을 눌렀다(핀·후보·검색 결과를 누르거나 끌고 놓은 건 아니다). 고른 것을 푸는 자리다. */
   /** 지도 빈 곳을 누름. 누른 자리는 화면 메모리에서만 쓴다(#486, 저장하지 않는다). */
   onMapClick: (at: { lat: number; lng: number } | null) => void
-  /** 지도 빈 곳을 누른 자리에 띄우는 「이 근처 장소 찾기」 말풍선(#1028). 떠 있지 않으면 null. */
-  tapBubble?: { lat: number; lng: number; onPress: () => void } | null
+  /** 지도 자리 메뉴를 부름(#1549) — PC 우클릭(`rightclick`) 또는 빈 지도 길게 누르기(`longpress`). */
+  onMapMenu: (at: { lat: number; lng: number }, how: 'rightclick' | 'longpress') => void
+  /** 지도 자리 메뉴 「신규 핀 찍기」(#1028, #1549) — 누른 자리 위 말풍선(`bubble`) 또는 커서 자리 메뉴(`menu`). 떠 있지 않으면 null. */
+  tapBubble?: { lat: number; lng: number; style?: 'bubble' | 'menu'; onPress: () => void } | null
   /** 지도 왼쪽을 가리는 패널 카드 폭(px). 넓은 화면에서 패널이 열려 있을 때만 0이 아니다. */
   leftCover?: number
   /** 핀이 없을 때 첫 화면 가운데 — 지도 만들 때 고른 지역(시청·도청). 없으면 서울이다. 핀이 있으면 핀들에 맞춘다. */
@@ -162,9 +169,9 @@ export default function MapCanvas({
   const containerRef = useRef<HTMLDivElement>(null)
   const layerRef = useRef<MarkerLayer | null>(null)
   // 콜백이 바뀔 때마다 지도를 다시 만들면 깜빡인다. 최신 참조만 갈아끼운다.
-  const callbacks = useRef({ onSelect, onResultGroup, onReady, onMovingChange, onMapClick })
+  const callbacks = useRef({ onSelect, onResultGroup, onPinGroup, onReady, onMovingChange, onMapClick, onMapMenu })
   useLayoutEffect(() => {
-    callbacks.current = { onSelect, onResultGroup, onReady, onMovingChange, onMapClick }
+    callbacks.current = { onSelect, onResultGroup, onPinGroup, onReady, onMovingChange, onMapClick, onMapMenu }
   })
   const fittedRef = useRef(false)
   // 첫 화면을 지역 가운데로 옮겼거나(started) 사용자가 지도를 움직였으면(moved) 지역으로 다시 옮기지 않는다 — 시야를 뺏지 않는다.
@@ -197,7 +204,20 @@ export default function MapCanvas({
           center: new maps.LatLng(start.lat, start.lng),
           level: 5,
         })
-        const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId))
+        // 겹친 핀 묶음(#1576): 확대해서 풀리면 풀릴 만큼만 확대하고, 가장 가까이(레벨 1)서도 겹치면 목록을 연다.
+        // 한 레벨 들어갈 때마다 화면 거리가 두 배라, 지금 가장 먼 두 핀 사이가 묶는 거리의 두 배가 되는 레벨까지 간다.
+        // 끝까지(레벨 1) 들어가면 골목 하나가 화면을 채워 주변을 잃는다.
+        let controller: MapController | null = null
+        const openGroup = (ids: string[], points: { lat: number; lng: number }[]) => {
+          const proj = map.getProjection()
+          const px = points.map((p) => proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)))
+          const spread = Math.max(...px.flatMap((a) => px.map((b) => Math.hypot(a.x - b.x, a.y - b.y))))
+          const level = map.getLevel()
+          if (!controller || level <= 1 || spread * 2 ** (level - 1) < PIN_GROUP_PX) return callbacks.current.onPinGroup(ids)
+          const to = Math.min(level - 1, Math.max(1, Math.floor(level - Math.log2((2 * PIN_GROUP_PX) / Math.max(spread, 1)))))
+          controller.fitPins(points, { force: true, closest: to })
+        }
+        const layer = createMarkerLayer(maps, map, (pinId) => callbacks.current.onSelect(pinId), openGroup)
         // 가까이 볼수록 바탕 지도를 옅게 한다(index.css .map-base). 멀리 볼 땐 바탕 그대로다.
         const container = containerRef.current
         const fade = () => container.style.setProperty('--map-fade', String(mapFade(map.getLevel())))
@@ -264,8 +284,19 @@ export default function MapCanvas({
         const onIdle = () => callbacks.current.onMovingChange(false)
         // 도형 위를 누르면 카카오가 지도 click 대신(또는 함께) 도형 click 을 준다 — 어느 쪽이 와도 한 번만 알린다.
         let clickQueued = false
+        // 지도 자리 메뉴(#1549): PC 우클릭은 커서 자리 메뉴, 모바일은 빈 지도 길게 누르기. 브라우저 기본 메뉴는 지도 위에서만 막는다.
+        const onRightClick = (e?: kakao.maps.event.MouseEvent) =>
+          e && callbacks.current.onMapMenu({ lat: e.latLng.getLat(), lng: e.latLng.getLng() }, 'rightclick')
+        const blockMenu = (e: Event) => e.preventDefault()
+        container.addEventListener('contextmenu', blockMenu)
+        const press = attachLongPress(container, (x, y) => {
+          const at = map.getProjection().coordsFromContainerPoint(new maps.Point(x, y))
+          navigator.vibrate?.(20)
+          callbacks.current.onMapMenu({ lat: at.getLat(), lng: at.getLng() }, 'longpress')
+        })
         const onClick = (e?: kakao.maps.event.MouseEvent) => {
-          if (clickQueued) return
+          // 길게 누르고 뗀 뒤 오는 click 은 막 연 메뉴를 닫지 않게 버린다.
+          if (clickQueued || press.justFired()) return
           clickQueued = true
           const at = e ? { lat: e.latLng.getLat(), lng: e.latLng.getLng() } : null
           window.setTimeout(() => {
@@ -278,6 +309,8 @@ export default function MapCanvas({
         maps.event.addListener(map, 'drag', onDrag)
         maps.event.addListener(map, 'idle', onIdle)
         maps.event.addListener(map, 'click', onClick)
+        maps.event.addListener(map, 'rightclick', onRightClick)
+        maps.event.addListener(map, 'dragstart', press.cancel)
         maps.event.addListener(map, 'zoom_changed', fade)
         detach = () => {
           stopMoves()
@@ -285,6 +318,10 @@ export default function MapCanvas({
           maps.event.removeListener(map, 'drag', onDrag)
           maps.event.removeListener(map, 'idle', onIdle)
           maps.event.removeListener(map, 'click', onClick)
+          maps.event.removeListener(map, 'rightclick', onRightClick)
+          maps.event.removeListener(map, 'dragstart', press.cancel)
+          container.removeEventListener('contextmenu', blockMenu)
+          press.detach()
           maps.event.removeListener(map, 'zoom_changed', fade)
         }
 
@@ -295,7 +332,7 @@ export default function MapCanvas({
           const p = proj.containerPointFromCoords(to)
           return proj.coordsFromContainerPoint(new maps.Point(p.x - coverShift(), p.y + sheetLift()))
         }
-        callbacks.current.onReady({
+        controller = {
           // 축척은 그대로 두고 부드럽게 옮긴다(화면보다 먼 곳은 카카오가 바로 옮긴다).
           panTo: (lat, lng) => {
             movedRef.current = true
@@ -349,7 +386,8 @@ export default function MapCanvas({
             }
             runMoves(to < level ? [panMove(center), ...zoomMoves(to, center)] : [...zoomMoves(to), panMove(center)])
           },
-        })
+        }
+        callbacks.current.onReady(controller)
         setReady(true)
       })
       .catch((err: unknown) => {
@@ -478,26 +516,32 @@ export default function MapCanvas({
     }
   }, [results, ready])
 
-  // 「이 근처 장소 찾기」 말풍선(#1028). 누르는 일은 최신 것을 부르게 ref 로 둔다 — 자리가 그대로면 다시 그리지 않는다.
+  // 지도 자리 메뉴 「신규 핀 찍기」(#1028, #1549). 누르는 일은 최신 것을 부르게 ref 로 둔다 — 자리·모양이 그대로면 다시 그리지 않는다.
   const tapPress = useRef<() => void>(() => {})
   useLayoutEffect(() => {
     if (tapBubble) tapPress.current = tapBubble.onPress
   })
   const tapLat = tapBubble?.lat
   const tapLng = tapBubble?.lng
+  const tapStyle = tapBubble?.style ?? 'bubble'
   useEffect(() => {
     const m = mapRef.current
     if (!ready || !m || tapLat == null || tapLng == null) return
+    const content = createTapBubbleElement(() => tapPress.current(), tapStyle)
+    const menu = tapStyle === 'menu'
     const overlay = new m.maps.CustomOverlay({
       position: new m.maps.LatLng(tapLat, tapLng),
-      content: createTapBubbleElement(() => tapPress.current()),
-      yAnchor: 1,
+      content,
+      xAnchor: menu ? 0 : 0.5,
+      yAnchor: menu ? 0 : 1,
       clickable: true,
       zIndex: 20,
     })
     overlay.setMap(m.map)
+    // 우클릭 메뉴는 키보드로 바로 고를 수 있게 항목에 포커스를 둔다.
+    if (menu) content.querySelector('button')?.focus({ preventScroll: true })
     return () => overlay.setMap(null)
-  }, [tapLat, tapLng, ready])
+  }, [tapLat, tapLng, tapStyle, ready])
 
   // 고른 AI 후보 핀을 핑고가 위에서 끌어안는다 — 핑고는 AI에만 나온다(PRODUCT.md). 몸은 핀 뒤(zIndex 11 < 핀 12)에 두고,
   // 머리를 감싼 손은 핀이 앞에 그린다. 머리 뒤에서 올라오고, 다른 후보를 고르거나 풀면 머리 뒤로 내려간다 —

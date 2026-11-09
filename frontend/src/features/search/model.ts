@@ -14,7 +14,11 @@ export type ExternalSearchDto = components['schemas']['ExternalSearch']
 export const isLinkInput = (text: string) => /^https?:\/\/\S+$/i.test(text)
 
 /** 출처마다 받은 장소. 링크면 링크에서 읽은 단서(`link`)도 같이 둔다. */
-export type SourcePlaces = { places: PlaceSearchResultDto[]; link?: LinkParseResultDto }
+/**
+ * 결과 시트의 장소. `nearby`는 지도 자리 메뉴(누른 곳)에서만 온다 — 자체 DB에 없는 근처 가게를
+ * 브라우저의 카카오 SDK로 찾은 것이다(#1549, 실시간 핀 후보).
+ */
+export type SourcePlaces = { places: PlaceSearchResultDto[]; link?: LinkParseResultDto; nearby?: PlaceSearchResultDto[] }
 export type LatLng = { lat: number; lng: number }
 
 /** 두 좌표 사이 직선거리(m). 하버사인 — 검색 결과의 "350m" 표시용이라 이 정도면 충분하다. */

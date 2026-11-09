@@ -4599,7 +4599,7 @@ export interface components {
             user_id: string;
             display_name: string;
         };
-        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다 */
+        /** @description 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다. 예외는 `already_member_map_id` 하나다 — 요청한 사람이 이미 그 지도의 구성원일 때만 준다(#1563) */
         InviteSummary: {
             title: string;
             /** Format: date */
@@ -4613,6 +4613,8 @@ export interface components {
             inviter_display_name: string;
             /** Format: date-time */
             expires_at: string;
+            /** @description 요청에 로그인 세션(게스트 포함)이 있고 그 사람이 **이미 이 지도의 구성원이면** 그 지도의 id(#1563). 화면은 수락 카드를 건너뛰고 바로 그 지도로 간다(기획안 6절 「구성원 흐름」). 세션이 없거나, 구성원이 아니거나, 이미 나간 사람에게는 **필드를 주지 않는다** — 링크만 가진 사람이 지도 id를 알아내지 못하게 하려는 원래 규칙 그대로다. 토큰이 만료(410)·없음(404)이면 지금처럼 오류다. 이 조회는 구성원 여부만 보고 아무것도 바꾸지 않는다(수락은 여전히 `POST /invites/{token}/accept`) */
+            already_member_map_id?: string;
         };
         Invite: {
             token: string;
@@ -4640,6 +4642,8 @@ export interface components {
             role: "owner" | "member";
             display_name?: string;
             online?: boolean;
+            /** @description 이 구성원이 이 지도의 핀에 남긴 의견 수(#1562). 구성원 줄 「의견 N개」·0이면 「아직 없음」. 지금 남아 있는 ♥(like)·🚫(against) 반응을 센다 — 반응은 핀 하나에 한 사람당 하나라 「의견을 남긴 핀 수」와 같다. 지운 핀(휴지통)에 남긴 반응은 세지 않는다. 「?」(미확인)는 반응이 아니라 세지 않는다. `FilterCounts.members_with_opinion`과 같은 기준이다(이 값이 1 이상인 구성원 수 = members_with_opinion). 선택 필드 — 서버가 채우기 전에는 없다(없으면 화면은 줄을 그리지 않는다) */
+            opinion_count?: number;
         };
         /** @description 내 지도 목록과 상한(#623). 2026-10-19 전에는 Map 배열이었다 */
         MapList: {
@@ -5081,6 +5085,8 @@ export interface components {
             place_url?: string;
             /** @description 「네이버 지도에서 보기」 링크(#1513). `{장소 이름} {동네}` 네이버 지도 검색 링크(https://map.naver.com/p/search/ + 검색어). 자체 DB 핀에만 있고 이름이 없는 실시간 핀(source=live)에는 없다. 없으면 링크를 숨긴다. 외부 브라우저로 연다 */
             naver_url?: string;
+            /** @description 장소의 동네(#1564). 핀 상세 맨 위 「이름 · 동네 · 카테고리」의 동네. 자체 DB 장소 주소에서 서버가 뽑은 `{시·군·구} {동}`이다(예: 「성동구 성수동2가」, 「해운대구 우동」) — 카카오맵·네이버 지도 검색 링크의 동네와 같은 규칙(`places.core.neighborhood`)이다. 동을 못 찾으면 시·군·구까지만. **실시간 핀(source=live)과 주소가 없는 장소에는 없다**(필드 생략) — 서버가 카카오 주소를 저장하지 않는다(#53, #382). 없으면 화면은 동네 자리를 비운다 */
+            neighborhood?: string;
             /** @description 핀을 찍은 구성원의 user_id (#26) */
             created_by: string;
             /**
