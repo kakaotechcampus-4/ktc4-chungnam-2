@@ -26,7 +26,7 @@ from common.settings import settings
 from maps import core, flows, service
 from maps.deps import DbSession, get_optional_user
 from maps.schemas import (
-    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapUpdateRequest, Member, OwnerTransferRequest,
+    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapNews, MapUpdateRequest, Member, OwnerTransferRequest,
     TrashedMapList,
 )
 
@@ -200,8 +200,18 @@ def post_seen(
     principal: Principal = MapForRead,
     db=DbSession,
 ):
-    # 이벤트를 보내지 않는다. 시각은 서버가 정한다(요청에 값을 받지 않는다).
-    service.mark_seen(db, map_id=mapId, user_id=principal.user_id, now=datetime.now(timezone.utc))
+    # 이벤트를 보내지 않는다. 시각은 서버(DB)가 정한다(요청에 값을 받지 않는다).
+    service.mark_seen(db, map_id=mapId, user_id=principal.user_id)
+
+
+@router.get("/maps/{mapId}/news", response_model=MapNews)
+def get_news(
+    mapId: str = Path(...),
+    principal: Principal = MapForRead,
+    db=DbSession,
+):
+    # last_seen_at을 바꾸지 않는다 — 읽기만. since가 null인 응답도 칸이 있어야 해서 exclude_none을 쓰지 않는다.
+    return service.get_news(db, map_id=mapId, user_id=principal.user_id)
 
 
 @router.delete("/maps/{mapId}/members/me", status_code=204)

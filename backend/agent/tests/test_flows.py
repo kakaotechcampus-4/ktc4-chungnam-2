@@ -89,8 +89,8 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
     assert type_ == "agent.suggested"
     assert AgentSuggestionSchema.model_validate(payload).id == str(sug.id)
     assert payload["advice"] == [{"segments": [{"kind": "text", "text": "확정 2곳 중 카페 0곳"}], "is_guess": False}]
-    assert payload["actions"] == [
-        {"index": 0, "type": "open_recommend", "label": "카페 추천 받기", "params": {"category": "카페"}},
+    assert payload["actions"] == [   # 카페 핀이 없어 추천 준비가 안 됐다 — 검색으로 잇는다(#1583)
+        {"index": 0, "type": "search_place", "label": "카페 검색", "params": {"category": "카페"}},
     ]
     assert not {"claims", "fingerprint", "evidence_hash", "resolved_by", "shadow"} & set(payload)   # 서버 내부 값
     cur = _cursor(world, map_id)
@@ -140,6 +140,7 @@ def test_no_reaction_suggestion_renders_pin_names(world, monkeypatch):
     [action] = payload["actions"]
     assert (action["type"], action["label"]) == ("show_pins", "미확인 핀 보기")
     assert db_pin in action["params"]["pin_ids"] and live_pin in action["params"]["pin_ids"]
+    assert action["params"]["unseen_only"] is True   # 화면이 쓰는 필터(#1583)
 
 
 def test_expired_and_superseded_announce_agent_resolved(world):

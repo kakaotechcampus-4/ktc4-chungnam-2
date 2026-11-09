@@ -130,6 +130,7 @@ class Snapshot:
     latest_seq: int | None = None          # 이 지도의 가장 큰 event_log seq(12.5)
     latest_event_at: datetime | None = None   # 그 이벤트의 created_at
     schedule: Schedule | None = None       # 확정 일정(#1356). 날짜에 넣은 장소가 코스 최소 수보다 적으면 None
+    ready_categories: frozenset[str] = frozenset()   # 추천 준비(⓪)를 통과한 카테고리(#1583) — 판정은 recommend.api.get_readiness
 
     def __post_init__(self):
         object.__setattr__(self, "_pins_by_id", {p.pin_id: p for p in self.pins})
@@ -222,6 +223,10 @@ def build(db: Session, map_id: str, now: datetime) -> Snapshot | None:
         shortlist=shortlist, last_run_at=recommend_api.last_run_at_by_category(db, map_id=map_id),
         actions=derive_actions(pins, reactions, shortlist), latest_seq=latest_seq, latest_event_at=latest_event_at,
         schedule=read_schedule(db, map_id),
+        ready_categories=frozenset(
+            c for c in categories.pinnable() if c in categories.recommendable()
+            and recommend_api.get_readiness(db, map_id=map_id, category=c)["ready"]
+        ),
     )
 
 
