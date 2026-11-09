@@ -77,7 +77,7 @@
   --pingo-alert: #DC6A6A;          /* 핑고 ALERT 모자·핀(시안 Alert Pink). 핑고 그림 전용 */
   --pingo-blush: #F2A9B9;          /* 핑고 설렘의 볼·하트(캐릭터 가이드 v2). 핑고 그림 전용 */
 
-  /* ── 크레딧 동전(ui/Coin) ─────
+  /* ── 크레딧 동전(ui/Coin, 핑고 coin) ─────
      크레딧을 쓰는 자리를 눈에 띄게 하는 동전 그림 전용. 확정 골드(#F5B301)보다 주황 쪽으로 진하게 갈라 놓았다.
      면·버튼 바탕에는 쓰지 않는다. 글자는 coin-text(흰 바탕 6.6:1) */
   --coin-face:  #FFC633;
@@ -101,6 +101,11 @@
   --map-tile-contrast:   0.92;
   --confirmed-bg:         #FFF6DB;   /* 「★ 확정 리스트에 넣기」 바탕 */
   --confirmed-text:       var(--pin-confirmed-mark); /* 그 바탕 위 글자. 핀 윤곽선과 나눠서 다크에서 밝힌다 */
+  /* 핀 이름표(누르지 않은 때)의 글자와 테두리. 밝은 화면은 핀 윤곽선 색 그대로, 다크는 카드 면 위 4.5:1 이 되게 밝힌다(#1412) */
+  --pin-label-normal:    var(--pin-outline);
+  --pin-label-confirmed: var(--pin-confirmed-mark);
+  --pin-label-candidate: var(--brand-700);
+  --pin-label-search:    var(--pin-stroke);
   --map-card-tint:        100%;      /* 지도 색을 카드 면에 섞는 양(look.ts cardTint). 다크는 조금만 */
   --map-dim:              #1A1C26;   /* AI 추천 탭 여행 지역 밖을 덮는 색(12%) */
   --map-tile-night:       invert(0); /* 다크에서만 카카오 지도 그림을 뒤집는 필터(.map-base img). 밝을 땐 그대로 */
@@ -159,6 +164,10 @@
   --pin-fill-empty: #E0E2EC;   /* 의견 없는 핀 속은 밝은 회색 그대로 — 어두운 지도에서 핀이 묻히지 않게 */
   --confirmed-bg:   #2E2710;
   --confirmed-text: #F5C84A;
+  --pin-label-normal:    #FF9393;
+  --pin-label-confirmed: #F5C84A;
+  --pin-label-candidate: #B4C2F8;
+  --pin-label-search:    #FF9393;
   --map-card-tint:  24%;
 
   /* 카카오 지도 그림은 다크 지도가 없어 뒤집어 어둡게 한다(#1412, 카카오 확인 FE 리드 2026-11-09). 바다 파랑·공원 초록은 hue-rotate 로 돌려 남긴다 */

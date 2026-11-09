@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { ChevronLeft } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { isUnauthorized } from '@/features/auth/api'
@@ -12,6 +11,7 @@ import { randomGuestName } from '@/features/auth/guestName'
 import { useGuestJoinMutation, useMeQuery } from '@/features/auth/queries'
 import { inviteErrorMessage, inviteProblem, type InviteProblem, type InviteView } from '@/features/maps/model'
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
+import BackButton from '@/ui/BackButton'
 import EntryFrame from '@/ui/EntryFrame'
 import EmptyState from '@/ui/EmptyState'
 import { josaRo } from '@/ui/josa'
@@ -68,13 +68,8 @@ export default function InvitePage() {
   return (
     // 넓은 화면은 입구 카드다(#1269).
     <EntryFrame as="div" className="bg-ink-50 px-4 pb-6 pt-4">
-      <div className="h-8">
-        {loggedIn && (
-          <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-surface shadow-float">
-            <ChevronLeft size={20} />
-          </Link>
-        )}
-      </div>
+      {/* 카톡에서 들어온 사람에게 ‹ 만 두면 카톡으로 돌아가는 버튼처럼 읽혀서 갈 곳을 적는다(#1623). */}
+      <div className="h-8">{loggedIn && <BackButton label="내 지도 목록" onClick={() => navigate('/')} />}</div>
 
       <div className="flex flex-1 flex-col justify-center">
         {summary.data ? (
