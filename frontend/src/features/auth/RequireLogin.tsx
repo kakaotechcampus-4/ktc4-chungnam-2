@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, Navigate, Outlet, useLocation, useSearchParams } from 'react-router'
+import { Link, Navigate, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router'
 
 import { ChevronRight, CircleCheck, UserRound } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import FieldError from '@/ui/FieldError'
+import { ClearButton } from '@/ui/TextField'
 import { FEATURES } from '@/features/onboarding/features'
 import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
 import ModalSheet from '@/features/shell/ModalSheet'
@@ -19,7 +21,7 @@ import Sentences from '@/ui/Sentences'
 import { isUnauthorized } from './api'
 import GoogleButton from './GoogleButton'
 import KakaoButton from './KakaoButton'
-import { guestMergedMessage } from './model'
+import { guestMergedMessage, inviteToken } from './model'
 import PendingAccountScreen from './PendingAccountScreen'
 import { readPendingInvite } from './pendingInvite'
 import { useMeQuery } from './queries'
@@ -223,8 +225,9 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
         <SheetTitle>게스트로 시작하기</SheetTitle>
       </div>
       <p className="mt-3 break-keep text-sm text-ink-700">
-        <Sentences text="친구에게 받은 초대 링크를 열고 이름만 입력하면 바로 그 지도에 참여해요." />
+        <Sentences text="친구에게 받은 초대 링크를 붙여 넣으면 이름만 입력하고 바로 그 지도에 참여해요." />
       </p>
+      {invite ? null : <InviteLinkForm />}
       <ul className="mt-4 space-y-2 rounded-xl bg-ink-50 p-4 text-sm text-ink-700">
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-link" aria-hidden="true" />핀 찍기와 의견 남기기는 똑같이 쓸 수 있어요</li>
         <li className="flex gap-2"><CircleCheck size={16} className="mt-0.5 shrink-0 text-link" aria-hidden="true" />새 지도 만들기, AI 추천, AI 코스는 카카오나 구글로 로그인해야 쓸 수 있어요</li>
@@ -239,6 +242,55 @@ function GuestSheet({ onClose }: { onClose: () => void }) {
         닫기
       </button>
     </ModalSheet>
+  )
+}
+
+/** 받은 초대 링크를 붙여 넣어 초대 화면으로 간다(#1631). 이름 입력과 로그인 고르기는 초대 화면이 맡는다. */
+function InviteLinkForm() {
+  const navigate = useNavigate()
+  const [text, setText] = useState('')
+  const [wrong, setWrong] = useState(false)
+  const go = (value: string) => {
+    const token = inviteToken(value)
+    if (token) navigate(`/invites/${encodeURIComponent(token)}`)
+    else setWrong(true)
+  }
+  return (
+    <form
+      className="mt-4"
+      onSubmit={(e) => {
+        e.preventDefault()
+        go(text)
+      }}
+    >
+      <label htmlFor="invite-link" className="mb-1.5 block text-sm font-bold text-ink-900">받은 초대 링크</label>
+      <div className="field">
+        <input
+          id="invite-link"
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value)
+            setWrong(false)
+          }}
+          // 초대 링크를 붙여 넣으면 입장하기를 누르지 않아도 바로 간다. 아니면 칸에 남겨 고치게 한다(#1631).
+          onPaste={(e) => {
+            const token = inviteToken(e.clipboardData.getData('text'))
+            if (!token) return
+            e.preventDefault()
+            navigate(`/invites/${encodeURIComponent(token)}`)
+          }}
+          placeholder="여기에 붙여 넣기"
+          autoComplete="off"
+          inputMode="url"
+          aria-invalid={wrong || undefined}
+          aria-describedby={wrong ? 'invite-link-error' : undefined}
+          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-ink-500"
+        />
+        {text && <ClearButton label="초대 링크 지우기" onClick={() => setText('')} />}
+      </div>
+      {wrong && <FieldError id="invite-link-error" className="mt-1.5">초대 링크가 아니에요. 받은 링크를 통째로 붙여 넣어 주세요</FieldError>}
+      <button type="submit" disabled={!text.trim()} className="btn-primary btn-lg mt-3 w-full">입장하기</button>
+    </form>
   )
 }
 
