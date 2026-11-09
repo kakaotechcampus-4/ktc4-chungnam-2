@@ -16,9 +16,24 @@ export default function ProgressBar({ label, value, max, className = '' }: { lab
         <span id={id} className="text-ink-600">{label}</span>
         <span aria-hidden="true" className="shrink-0 text-brand-600">{pct}%</span>
       </div>
-      <div role="progressbar" aria-labelledby={id} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value} className="h-1.5 overflow-hidden rounded-full bg-ink-100">
-        <div className="h-full rounded-full bg-[var(--action-fill)] transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${pct}%` }} />
-      </div>
+      <ProgressTrack value={value} max={max} labelledBy={id} />
+    </div>
+  )
+}
+
+/** 막대만 — 진행 막대 모양은 여기 한 곳이다. 할 일 카드(`TaskProgress`)도 이것을 쓴다. */
+export function ProgressTrack({ value, max, labelledBy, valueText }: { value: number; max: number; labelledBy: string; valueText?: string }) {
+  return (
+    <div
+      role="progressbar"
+      aria-labelledby={labelledBy}
+      aria-valuemin={0}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      aria-valuetext={valueText}
+      className="h-1.5 overflow-hidden rounded-full bg-ink-100"
+    >
+      <div className="h-full rounded-full bg-[var(--action-fill)] transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${percent(value, max)}%` }} />
     </div>
   )
 }
