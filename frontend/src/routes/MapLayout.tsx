@@ -17,6 +17,7 @@ import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
 import { useNewSince, useSaveSeenOnLeave } from '@/features/map/newSince'
 import { useMapEvents } from '@/features/map/realtime'
+import PinMoveHost from '@/features/map/PinMoveHost'
 import TrashDropZone from '@/features/map/TrashDropZone'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import { boundaryCorners, useRegionBoundary } from '@/features/map/regionGeo'
@@ -692,6 +693,8 @@ export default function MapLayout() {
       {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
       {/* 카톡 가져오기 시트는 탭 화면 밖 한 자리에서 그린다 — 목록 머리가 바뀌어도 함께 사라지지 않게(#1045). */}
       <ImportSheetHost mapId={mapId} />
+      {/* 핀을 지도 위에 끌어다 놓아 옮기기(#1549). 화면 크기와 상관없이 하나만 둔다. */}
+      <PinMoveHost mapId={mapId} />
       {/* 확정 탭 「일정 짜기」 패널(넓은 화면만) — 탭을 떠나면 닫힌다. */}
       {onShortlistTab && desktop && <SchedulePanelHost mapId={mapId} />}
     </>
