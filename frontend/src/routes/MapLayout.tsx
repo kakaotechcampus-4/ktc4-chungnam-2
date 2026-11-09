@@ -128,7 +128,7 @@ export default function MapLayout() {
   // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
   // 받기 전(loadedPins 없음)에 떠나면 적지 않는다 — 빈 모습을 적으면 다음에 모든 핀이 새 핀으로 보인다.
   const { news } = useNewSince(mapId, loadedPins, myId)
-  useSaveSeenOnLeave(mapId, loadedPins, myId)
+  useSaveSeenOnLeave(mapId, myId)
   const freshKey = [...news.keys()].sort().join(',')
   const freshPinIds = useMemo(() => new Set(freshKey ? freshKey.split(',') : []), [freshKey])
   // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
