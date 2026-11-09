@@ -31,9 +31,38 @@
     <!-- 홈 화면에 추가하면 주소창 없이 앱처럼 연다(#1493). 아이콘은 파랑 바탕 흰 핑고, 오프라인 캐시는 두지 않는다. -->
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- 검색과 AI 답변 엔진이 읽는 서비스 요약(#1614). 크레딧은 판매 상품이 아니라 무료다(기획안 16-4절). -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "핑고핑고",
+        "url": "https://ktc-pingopingo.duckdns.org/",
+        "description": "친구들과 한 지도에 가고 싶은 곳을 찍고, 의견을 모아 여행 장소를 정해요",
+        "applicationCategory": "TravelApplication",
+        "operatingSystem": "Web",
+        "inLanguage": "ko",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "KRW" }
+      }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- JS를 돌리지 않는 크롤러(네이버, AI 크롤러)가 읽는 소개다(#1614). React가 뜨면 이 자리를 덮어쓴다.
+           기능 줄은 src/features/onboarding/features.ts 의 text 와 같아야 한다(features.test.ts 가 대조한다). -->
+      <main class="mx-auto max-w-[400px] px-5 pt-14">
+        <h1 class="text-2xl font-bold text-ink-900">핑고핑고</h1>
+        <p class="mt-1 font-semibold text-ink-900">같이 갈 곳을 한 지도에 모아요</p>
+        <p class="mt-4 break-keep text-sm text-ink-700">친구들과 한 지도에 가고 싶은 곳을 찍고, 의견을 모아 여행 장소를 정해요</p>
+        <h2 class="mt-8 text-sm font-bold text-ink-900">핑고핑고로 이런 걸 할 수 있어요</h2>
+        <ul class="mt-4 space-y-3 break-keep text-sm text-ink-700">
+          <li>가고 싶은 곳을 핀으로 남겨요</li>
+          <li>좋음과 반대로 솔직한 의견을 나눠요</li>
+          <li>모두의 취향을 모아 AI가 대안을 찾아줘요</li>
+          <li>마음에 드는 장소는 확정 리스트에 담아요</li>
+        </ul>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
