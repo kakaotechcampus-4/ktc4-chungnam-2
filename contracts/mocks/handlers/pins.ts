@@ -160,6 +160,14 @@ export const pinsHandlers = [
     return HttpResponse.json(MOCK_PHOTOS.map((p) => ({ ...p, link_url: `${p.link_url}?pin=${pin.id}` })));
   }),
 
+  // #1681 핀 찍기 전 검색 결과의 블로그 사진. 실서버는 자체 DB 결과(`own:<id>`)만 찾는다. 목의 장소는 모두 `kakao:mock-N`이라
+  // 자체 DB에 짝이 있는 곳(isPinnable)을 자체 DB 결과로 보고 사진을 준다. 없는 장소는 실서버처럼 빈 배열이다.
+  http.get("*/places/:placeId/photos", ({ params }) => {
+    const place = SEED_PLACES.find((p) => p.place_id === params.placeId);
+    if (!place || !isPinnable(place)) return HttpResponse.json([]);
+    return HttpResponse.json(MOCK_PHOTOS.map((p) => ({ ...p, link_url: `${p.link_url}?place=${place.place_id}` })));
+  }),
+
   http.post("*/maps/:mapId/pins", async ({ params, request }) => createPin(params.mapId as string, (await request.json()) as CreatePinBody)),
 
   http.get("*/maps/:mapId/counts", ({ params }) => {
