@@ -36,6 +36,7 @@
 | 마이그레이션 | alembic | 1.13.3 | `backend/alembic/versions/`(현재 head `0070_course_run_pin_ids_drop`, 0026·0027은 번호 없음) |
 | DB 드라이버 | psycopg2-binary | 2.9.9 | DB URL `postgresql://` |
 | 공간 | geoalchemy2 / pyproj | 0.15.2 / 3.6.1 | 좌표·거리, 공공데이터 좌표 변환(`places/ingest.py`) |
+| 이미지 | pillow | 12.3.0 | 초대 링크 미리보기 그림(대표 사진 자르기 + 워드마크, `maps/preview.py`, #1625) |
 | HTTP 클라이언트 | httpx | 0.27.2 | 카카오 OAuth, 장소 소스, 링크 해석 |
 | LLM SDK | openai | 3.22.1(파일 표기) | `llm/client.py` — 실제 설치 버전은 확인 못 함 |
 | 설정 | python-dotenv, pyyaml | 1.2.2, 6.0.2 | `common/settings.py`, `agent/core.py` |

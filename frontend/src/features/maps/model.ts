@@ -146,13 +146,16 @@ export function mapChanges(
   return Object.keys(body).length ? body : null
 }
 
-/** isGuest: 그 브라우저에서만 이어지는 게스트(#955). 방장이 될 수 없어 넘기기 목록에서 빠진다. */
-/** online: 지금 이 지도를 열어 둔 사람(#1551). 서버가 채우기 전이면 없다. 없으면 접속 점을 그리지 않는다. */
-export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean; isGuest: boolean; online?: boolean }
+/**
+ * isGuest: 그 브라우저에서만 이어지는 게스트(#955). 방장이 될 수 없어 넘기기 목록에서 빠진다.
+ * opinionCount: 이 지도에 남긴 의견 수(#1562). online: 지금 이 지도를 열어 둔 사람(#1551).
+ * 둘 다 서버가 채우기 전이면 없다. 없으면 화면은 그리지 않는다.
+ */
+export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean; isGuest: boolean; opinionCount?: number; online?: boolean }
 
 export function toMemberView(member: MemberDto, myUserId: string | undefined): MemberView {
   const name = member.display_name ?? '이름 없음'
-  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner', isGuest: member.is_guest === true, online: member.online }
+  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner', isGuest: member.is_guest === true, opinionCount: member.opinion_count, online: member.online }
 }
 
 export function toMapView(map: MapDto): MapView {
@@ -261,7 +264,18 @@ export function inviteErrorMessage(err: unknown): string {
   return INVITE_ERROR_MESSAGES[err.code] ?? '참여하지 못했어요'
 }
 
-export type InviteView = { title: string; dates: string; memberCount: number; pinCount: number; inviter: string }
+export type InviteView = {
+  title: string
+  dates: string
+  memberCount: number
+  pinCount: number
+  inviter: string
+  /** 카드 그림(#1625) — 대표 이미지가 없으면 지역 그림이다. MapCover 가 그린다. */
+  region?: string
+  coverUrl?: string
+  /** 연 사람이 이미 그 지도 구성원이면 지도 id(#1563). 서버가 그때만 준다. */
+  alreadyMemberMapId?: string
+}
 
 export function toInviteView(invite: InviteSummaryDto): InviteView {
   return {
@@ -270,6 +284,9 @@ export function toInviteView(invite: InviteSummaryDto): InviteView {
     memberCount: invite.member_count,
     pinCount: invite.pin_count,
     inviter: invite.inviter_display_name,
+    region: invite.region?.label,
+    coverUrl: invite.cover_url ?? undefined,
+    alreadyMemberMapId: invite.already_member_map_id,
   }
 }
 

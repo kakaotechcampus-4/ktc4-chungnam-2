@@ -56,7 +56,7 @@ export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void
   return (
     <ModalSheet label="대표 이미지 편집" onClose={onClose}>
       <SheetTitle>대표 이미지 편집</SheetTitle>
-      <p className="mt-1 text-sm text-ink-600"><Sentences text="구성원 모두에게 같은 이미지가 보여요" /></p>
+      <p className="mt-1 text-sm text-ink-600"><Sentences text="구성원과 초대 링크를 받은 사람에게 보여요. 카톡 미리보기에도 나와요" /></p>
       <div className="mt-4 overflow-hidden rounded-xl border border-ink-200">
         <MapCover map={map} className="block aspect-[16/7] w-full" />
       </div>

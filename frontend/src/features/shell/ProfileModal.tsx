@@ -154,6 +154,9 @@ function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onCo
             </span>
             {m.isOwner && <span className="tag tag-neutral">방장</span>}
             {m.isGuest && <span className="tag tag-neutral">게스트</span>}
+            {m.opinionCount !== undefined && (
+              <span className="ml-auto shrink-0 text-sm text-ink-500">{m.opinionCount > 0 ? `의견 ${m.opinionCount}개` : '아직 없음'}</span>
+            )}
           </li>
         ))}
       </ul>
