@@ -357,13 +357,18 @@ def check_photo_rate(user_id: str) -> None:
 
 
 @lru_cache(maxsize=1)
+def _face_detector() -> photos.FaceDetector:
+    return photos.FaceDetector()
+
+
+@lru_cache(maxsize=1)
 def _image_search() -> photos.KakaoImageSearch:
     client = httpx.Client(timeout=settings.places_http_timeout_s)
     return photos.KakaoImageSearch(SourceHttp(client, _STATS, retries=settings.places_http_retries), settings.kakao_rest_api_key)
 
 
 def place_photos(place_id: str, *, db: Session | None = None) -> list[PlacePhoto]:
-    """자체 DB 장소 하나의 블로그 사진(최대 photos.PHOTO_LIMIT장). 검색어는 그 장소의 상호명과 구, 도로명 주소다.
+    """자체 DB 장소 하나의 블로그 사진(최대 photos.PHOTO_LIMIT장, 사람 얼굴이 보이는 사진은 뺀다). 검색어는 그 장소의 상호명과 구, 도로명 주소다.
     장소나 주소가 없으면 빈 목록 — 상호명만으로는 다른 지점 사진이 섞인다. 개발 모드는 카카오를 부르지 않고 빈 목록이다.
     카카오 호출이 실패하거나 키가 없으면 PLACES_UNAVAILABLE(503)."""
     if _is_dev():
@@ -376,10 +381,13 @@ def place_photos(place_id: str, *, db: Session | None = None) -> list[PlacePhoto
     if not search.is_configured():
         raise AppError("PLACES_UNAVAILABLE")
     try:
-        return photos.pick(search.search(query))
+        candidates = photos.pick(search.search(query), limit=photos.FETCH_SIZE)
     except SourceError as exc:
         log.warning("places.photos 실패: %s", exc)
         raise AppError("PLACES_UNAVAILABLE") from exc
+    # 얼굴이 보이는 사진(셀카, 일행 사진)은 뺀다 — 미리보기를 받아 메모리에서 검사하고 버린다.
+    return photos.without_faces(candidates, search.fetch_thumbnail, _face_detector().has_face)
+
 
 # ---- 지도 링크 해석 (POST /places/from-link, #474) ----
 # parse-only: 아무것도 저장하지 않는다. 링크의 좌표·이름은 자체 DB를 찾는 데만 쓰고 응답·로그에 싣지 않는다.
