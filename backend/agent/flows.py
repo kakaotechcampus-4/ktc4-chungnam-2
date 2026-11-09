@@ -634,8 +634,8 @@ def _preview(ctx: tools.ToolContext, top: core.Signal, comparison: dict[str, Any
     target = core.preview_target(top, comparison)
     if target is None:
         return None
-    category, with_keys = target
-    return tools.preview(ctx, category=category, with_keys=with_keys)
+    category, conditions = target
+    return tools.preview(ctx, category=category, with_conditions=conditions)
 
 
 def _planned_outcome(

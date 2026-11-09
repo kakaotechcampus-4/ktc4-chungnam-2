@@ -1222,14 +1222,19 @@ def _planned_group(reaction: dict, text_lines: Mapping[str, Sequence[Mapping[str
     ]
 
 
-def _all_labels_true(labels: Sequence, fact_keys: Sequence[str]) -> bool:
-    """라벨이 확실하고(known) 참인 키만 센다(절충안, #1180). 모르는 키가 하나라도 있으면 세지 않는다 — 약속하지 않는 쪽으로."""
-    return all(known and bool(value) for known, value in (core.resolve_label(labels, key) for key in fact_keys))
+def _both_sides(labels: Sequence, conditions: Sequence[tuple[str, bool]]) -> tuple[bool, bool]:
+    """두 의견의 조건(fact_key, 원하는 방향)에 대한 장소 하나의 (어긋나지 않음, 모두 확인됨)(절충안, #1600). 라벨이 known이고 값이
+    방향과 다르면 어긋난다. 모름은 어긋나지 않는다 — soft 키의 unknown_policy(pass)와 같다. 모두 확인됨은 조건 전부가 known이고
+    방향과 같은 것이다."""
+    resolved = [(core.resolve_label(labels, key), wants) for key, wants in conditions]
+    clear = all(not known or bool(value) == wants for (known, value), wants in resolved)
+    confirmed = all(known and bool(value) == wants for (known, value), wants in resolved)
+    return clear, confirmed
 
 
 def preview_filter(
     db: Session, *, map_id: str, category: str, text_lines: Mapping[str, Sequence[Mapping[str, Any]]],
-    with_keys: Sequence[str] = (), place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+    with_conditions: Sequence[Mapping[str, Any]] = (), place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
     center: tuple[float, float] | None = None,
 ) -> dict:
     """미리 돌려 보기(docs/agent-v2.md 6.7, #1180) — 지금 「추천 받기」를 누르면 실격 조건까지 남는 곳의 수. run을 만들 때와
@@ -1243,8 +1248,13 @@ def preview_filter(
     **읽기 전용이다.** run, 후보, 근거 줄, 지역, 제외 목록을 만들지도 읽지도 않는다 — 제외 목록은 사람마다 따로라 비공개다
     (agent-v2 2절 2번). 그래서 실제 추천은 이 수보다 적을 수 있다. 돌려주는 것은 수뿐이다 — 장소 이름과 id는 없다(크레딧 없이
     추천을 받는 길을 막는다, #432):
-    `{passed_count, with_keys_count, funnel[{key, removed_count}]}`. funnel은 pool·radius·closed·disqualify 네 단계(run의 깔때기와
-    같은 값, pool은 run처럼 0). with_keys_count는 통과한 곳 중 with_keys의 라벨이 모두 참(known)인 곳의 수, with_keys가 없으면 None."""
+    `{passed_count, both_sides_count, both_sides_confirmed_count, funnel[{key, removed_count}]}`. funnel은
+    pool·radius·closed·disqualify 네 단계(run의 깔때기와 같은 값, pool은 run처럼 0).
+
+    with_conditions(`[{fact_key, wants}]`, 두 의견의 조건 — 어떤 조건을 셀지는 agent가 정한다)가 있으면 통과한 곳을 두 번 더 센다
+    (#1600, 세는 법은 `_both_sides` 한 곳). both_sides_count는 어느 조건에도 어긋나지 않는 곳(라벨이 known이고 값이 방향과 다르면
+    뺀다, 모름은 센다), both_sides_confirmed_count는 그중 조건이 모두 known이고 방향과 같은 곳. 조건이 없으면 둘 다 None. 거르기는
+    그대로다 — 실격 규칙을 여기서 다시 정하지 않고 passed_count도 조건과 상관없다."""
     if category not in categories.recommendable():
         raise ValueError(f"추천 대상이 아닌 카테고리: {category}")
     readiness = readiness_for_category(db, map_id=map_id, category=category)
@@ -1275,12 +1285,12 @@ def preview_filter(
         db, map_id=map_id, category=category, regions=regions, active_lines=lines,
         place_search=place_search, place_facts=place_facts, off_season=_out_of_season_keys(db, map_id),
     )
-    keys = list(dict.fromkeys(with_keys))
+    conditions = list(dict.fromkeys((c["fact_key"], bool(c["wants"])) for c in with_conditions))
+    both = [_both_sides(filtered.labels_by_place[p.place_id], conditions) for p in filtered.passed] if conditions else None
     return {
         "passed_count": len(filtered.passed),
-        "with_keys_count": sum(
-            _all_labels_true(filtered.labels_by_place[p.place_id], keys) for p in filtered.passed
-        ) if keys else None,
+        "both_sides_count": sum(clear for clear, _ in both) if both is not None else None,
+        "both_sides_confirmed_count": sum(confirmed for _, confirmed in both) if both is not None else None,
         "funnel": [
             {"key": key, "removed_count": filtered.removed[key]} for key, _label in core.FUNNEL_STAGES if key in filtered.removed
         ],
