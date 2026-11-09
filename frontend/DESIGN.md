@@ -349,7 +349,7 @@ components:
 | 날짜 입력·달력 | `DatePicker` (`field` 틀에 「2026.11.20 (금)」, 누르면 아래에 달력) · 화면에 바로 까는 달력 `Calendar`(확정 탭 「넣을 날짜」). 고른 날 brand-600 채운 원 · 오늘 brand 테두리 한 줄 · 일요일 `--day-sun-text`(빨강 글자) · 토요일 `--day-sat-text`(파랑 글자), 주말 면은 없다 · 범위 밖은 면 없이 ink-300 흐린 숫자만(누를 수 없음, 회색 원은 고를 수 있는 날보다 눈에 띄어서 뺐다, #1554). `rangeWeeks`면 `min`~`max`가 든 주만 그리고 달 넘기기가 없다(달이 바뀌는 1일은 「11.1」). 비워도 되는 칸만 ✕. 브라우저 날짜 칸은 달력 색을 못 바꿔서 쓰지 않는다 | `ui/DatePicker` |
 | 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |
 | 누군지 모르는 사람(탈퇴한 작성자) | `UnknownName` (글 안의 「(알 수 없음)」만 ink-400) | `ui/UnknownName` |
-| 시트 안 이전 화면 | `BackButton` 「‹ 마킹된 장소」 | `ui/BackButton` |
+| 시트 안 이전 화면, 지도 밖 화면의 내 지도 목록 가기 | `BackButton` 「‹ 마킹된 장소」, 초대 화면 「‹ 내 지도 목록」(#1623) | `ui/BackButton` |
 | 비어 있을 때 | `EmptyState` (핑고 + 제목 + 설명 + 다음 행동, 찾던 게 없으면 `mood="sad"`) | `ui/EmptyState` |
 | 이유를 알리는 안내(결과 위) | `Notice` (ink-100 면 + warn-line 아이콘 + ink-700 글자 + 다음 행동 버튼) | `ui/Notice` |
 | 불러오는 중(모양을 아는 목록) | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리 — 핀·지도·알림 목록, 일정, 확정 리스트, 검색 결과. 옆에 글이 없으면 `label`로 화면 읽기에만 알린다) | `ui/CardSkeleton` |
