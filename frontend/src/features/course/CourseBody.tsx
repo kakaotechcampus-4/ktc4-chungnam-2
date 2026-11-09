@@ -20,6 +20,8 @@ import CardSkeleton from '@/ui/CardSkeleton'
 import Notice from '@/ui/Notice'
 import EmptyState from '@/ui/EmptyState'
 import TextField from '@/ui/TextField'
+import BusyLabel from '@/ui/BusyLabel'
+import CoachMark from '@/ui/CoachMark'
 
 import { useCourseViewStore } from './courseMapStore'
 import CourseRun from './CourseRun'
@@ -173,10 +175,13 @@ function Entry({
       <div className="space-y-1">
         {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭으로 간다). 확정 장소가 모자라면 막는다. */}
         <CreditGate feature="course" mapId={mapId} error={error} onCharged={() => clearFail(mapId)}>
-          <button type="submit" disabled={create.isPending || routable < 2} className="btn-primary btn-lg w-full">
-            {create.isPending ? '요청하는 중…' : '코스 짜기'}
+          <button type="submit" disabled={create.isPending || routable < 2} data-coach="course-run" aria-busy={create.isPending} className="btn-primary btn-lg w-full">
+            <BusyLabel busy={create.isPending} busyText="요청하는 중…">코스 짜기</BusyLabel>
           </button>
         </CreditGate>
+        <CoachMark id="course-run" target="course-run" title="확정한 장소로 날짜별 동선을 짜요">
+          요청을 한 줄 적으면 반영해요. 결과는 나에게만 보이고, 일정에 넣을지는 직접 정해요
+        </CoachMark>
         {/* 최근 코스가 있어 입력 화면이 보이지만 장소가 모자라면, 회색 버튼 아래에 이유를 적는다(#1127 리뷰). */}
         {routable < 2 && <p className="text-center text-xs text-ink-500">{NOT_ENOUGH}</p>}
         {latest && (
