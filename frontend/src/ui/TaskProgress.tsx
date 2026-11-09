@@ -36,7 +36,7 @@ export default function TaskProgress({
       <div className="flex items-baseline justify-between gap-2">
         <p id={id} className="text-sm font-bold text-ink-900">
           {title}
-          <span className="ml-1.5 text-xs font-semibold text-ink-500">
+          <span className="ml-1.5 text-base font-bold text-[var(--action-quiet-text)]">
             {done}/{total}
             {unit}
           </span>

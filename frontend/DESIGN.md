@@ -343,7 +343,7 @@ components:
 | 버튼인 카드·줄·지도 위 원 버튼의 올림·눌림 | `press` (바탕 위에 잉크 4%·8%를 덮는다) | `index.css` |
 | 누르는 알약(필터·선택) | `chip` (+ `chip-against`), 카테고리 줄은 `CategoryChips` | `index.css` · `features/map/PinFilterControls` |
 | 늘 하나가 골라진 2~5개 중 하나(의견 분류, 우리 조건 요약 카테고리) | `SegmentedControl` (ink-100 홈 안에서 고른 칸만 흰 면 + brand-600 굵은 글자 + `shadow-float`, 칸 높이 44, 14/600. 속은 라디오라 화살표로 옮긴다. 안 골랐을 수 있거나 칸 글이 길면(「1시간 30분까지」) `chip`) | `ui/SegmentedControl` |
-| 비율(참여율) | `ProgressBar` (막대는 `ProgressTrack` 한 곳 — 할 일 카드도 같은 막대를 쓴다. 위 줄 12/700 ink-600 뜻 글 + 오른쪽 brand-600 %, 아래 6px 막대 brand-600 / ink-100. 숫자는 글에 꼭 남긴다, 막대는 progressbar 로 읽힌다) | `ui/ProgressBar` |
+| 비율(참여율) | `ProgressBar` (막대는 `ProgressTrack` 한 곳 — 할 일 카드도 같은 막대를 쓴다. 위 줄 13/700 ink-600 뜻 글 + 오른쪽 ink-500 %, 아래 6px 막대 ink-500 / ink-100. 참여 현황은 할 일이 아니라 정보라 회색이다 — 같은 파랑이 둘이면 할 일 카드가 묻혔다(#1636). ink-400은 ink-100 바탕에서 3:1이 안 돼 쓰지 않는다. 숫자는 글에 꼭 남긴다, 막대는 progressbar 로 읽힌다) | `ui/ProgressBar` |
 | 값 하나를 끌어 고르기(범위) | `RangeSlider` (막대 높이 44 · 손잡이 24 원(누르는 곳 44) · 채운 쪽 brand-600, 남은 쪽 ink-200 · 아래 눈금 글자 12 ink-500. 끌면 눈금 근처에서 붙고 기기가 짧게 떤다, 키보드는 붙지 않는다) | `ui/RangeSlider` |
 | 필터 드롭다운 | `FilterSelect` (「라벨 값 ▾」, 칸 전체가 select · 폭은 가장 긴 선택지, 줄 폭을 넘으면 값을 「…」로 줄인다) | `features/map/PinFilterControls` |
 | 짧은 표시 | `tag` + `tag-{neutral·ai·good·warn·bad}` | `index.css` |
@@ -356,7 +356,7 @@ components:
 | 이유를 알리는 안내(결과 위) | `Notice` (ink-100 면 + warn-line 아이콘 + ink-700 글자 + 다음 행동 버튼) | `ui/Notice` |
 | 불러오는 중(모양을 아는 목록) | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리 — 핀·지도·알림 목록, 일정, 확정 리스트, 검색 결과. 옆에 글이 없으면 `label`로 화면 읽기에만 알린다) | `ui/CardSkeleton` |
 | 응답 기다림(무엇이 나올지 모름) | `PingoLoading` (1초 뒤 걷는 핑고 + 한 줄, 로그인 상태 확인만 `mood="space"` 우주복 핑고) | `ui/PingoLoading` |
-| 끝나지 않은 일(#1547, 자이가르닉 효과) | `TaskProgress` 카드 (흰 면 + ink-200 `ring-1` + 반경 12. 머리 「제목 n/m단위」 14/700 + 오른쪽 action 파랑 % · `ProgressTrack` 막대 · 할 일 줄(끝난 일 = 채운 action 원 + 흰 체크 + ink-500 글자, 남은 일 = ink-300 빈 원 + 굵은 글자, 누르면 그 일로 간다, 누르는 자리 44px) · 안내 한 줄 13 ink-500 + 「모두 보기」 `btn-link`). 다 끝나면 그리지 않는다. 마킹된 장소 「내 의견」(끝낸 곳 하나 + 남은 곳, 누르면 핀이 열림), 확정 탭 「일정」(날마다 한 줄, 빈 날을 누르면 넣을 날짜로) | `ui/TaskProgress` |
+| 끝나지 않은 일(#1547, 자이가르닉 효과) | `TaskProgress` 카드 (흰 면 + ink-200 `ring-1` + 반경 12. 머리 「제목」 14/700 + 「n/m단위」 16/700 action 파랑 + 오른쪽 action 파랑 % · `ProgressTrack` 막대(8px action 파랑, 화면에서 파랑 막대는 이것뿐이다, #1636) · 할 일 줄(끝난 일 = 채운 action 원 + 흰 체크 + ink-500 글자, 남은 일 = ink-300 빈 원 + 굵은 글자, 누르면 그 일로 간다, 누르는 자리 44px) · 안내 한 줄 13 ink-500 + 「모두 보기」 `btn-link`). 다 끝나면 그리지 않는다. 마킹된 장소 「내 의견」(끝낸 곳 하나 + 남은 곳, 누르면 핀이 열림), 확정 탭 「일정」(날마다 한 줄, 빈 날을 누르면 넣을 날짜로) | `ui/TaskProgress` |
 | 누가 했는지(#1547, 사회적 증거) | `PeopleProof` (이름 첫 글자 원 24px, selected-bg + selected-text, 흰 2px 테두리로 겹침, 넷 넘으면 「+N」 + 「4명 중 **2명**이 …」 12 ink-600, 숫자는 action 파랑 굵게). 같은 지도 구성원이 실제로 한 일만 — 지어낸 숫자·지도 밖 사람 수는 쓰지 않는다. 핀 상세 「의견을 남긴 사람」(의견 목록을 받기 전에는 `ProgressBar`) | `ui/PeopleProof` |
 | 두 문장 이상 안내 글 | `Sentences` (문장마다 줄, 한 문장이면 그대로) | `ui/Sentences` |
 | 핑고 | `Pingo` (표정 `mood` · 고개 내밀기 `peek`) · 작은 아이콘 자리는 `PingoMark` | `ui/Pingo` |
