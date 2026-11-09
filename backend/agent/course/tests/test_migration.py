@@ -22,7 +22,8 @@ MODEL_INDEXES = {i.name for i in AgentCourseRun.__table__.indexes}
 MODE_REVISION, MODE_PREVIOUS = "0062_course_run_modes", "0061_recommend_run_origin"
 MODE_COLUMNS = {"mode", "headline", "fixes", "checked", "snapshot_version"}    # 0062가 더한 칸
 KEEP_REVISION = "0067_course_run_pin_ids_keep"   # snapshot_pin_ids를 줄이기(#1465) 전까지 남긴다(#1464)
-KEPT_COLUMN = "snapshot_pin_ids"   # 모델에서는 뺐고 DB에 남는다(deploy_rules.md 「지울 칸」)
+KEPT_COLUMN = "snapshot_pin_ids"   # 모델에서는 뺐고 0067~0068 사이 DB에 남는다. 0069에서 지운다
+DROP_PIN_IDS_REVISION = "0069_course_run_pin_ids_drop"   # #1465
 MIG_DB = f"{TEST_DB_NAME}_course_mig"[:63]
 
 
@@ -160,5 +161,32 @@ def test_0067_restores_pin_ids_on_db_that_ran_old_0062_and_both_codes_insert(mig
             rows = conn.execute(sa.text(
                 "SELECT map_id, snapshot_version, snapshot_pin_ids FROM agent_course_runs WHERE map_id IN ('m1', 'm2') ORDER BY map_id")).all()
         assert [tuple(r) for r in rows] == [("m1", "legacy", ["a"]), ("m2", "v1", [])]
+    finally:
+        engine.dispose()
+
+
+def test_0069_drops_pin_ids_and_snapshot_version_default_and_downgrades(mig_url):
+    """줄이기(#1465): 칸이 모델과 같아지고, 새 코드의 INSERT는 그대로 되며, version 없는 INSERT는 이제 거부된다. downgrade는 0067 모양이다."""
+    cfg = _config()
+    command.upgrade(cfg, KEEP_REVISION)
+    engine = sa.create_engine(mig_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text(
+                "INSERT INTO agent_course_runs (id, map_id, requested_by, status, input, snapshot_at, snapshot_version)"
+                " VALUES (gen_random_uuid(), 'm1', 'u1', 'done', '{}', now(), 'v1')"))
+        command.upgrade(cfg, DROP_PIN_IDS_REVISION)
+        assert {c["name"] for c in sa.inspect(engine).get_columns("agent_course_runs")} == set(AgentCourseRun.__table__.columns.keys())
+        with engine.begin() as conn:
+            assert conn.execute(sa.text("SELECT snapshot_version FROM agent_course_runs WHERE map_id = 'm1'")).scalar_one() == "v1"
+        with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:   # 기본값이 없으니 version을 모르는 INSERT는 거부된다
+            conn.execute(sa.text(
+                "INSERT INTO agent_course_runs (id, map_id, requested_by, status, input, snapshot_at)"
+                " VALUES (gen_random_uuid(), 'm2', 'u1', 'done', '{}', now())"))
+        command.downgrade(cfg, KEEP_REVISION)
+        with engine.begin() as conn:
+            row = conn.execute(sa.text("SELECT snapshot_version, snapshot_pin_ids FROM agent_course_runs WHERE map_id = 'm1'")).one()
+        assert tuple(row) == ("v1", [])   # 칸은 돌아오지만 지운 값은 없다
+        command.upgrade(cfg, DROP_PIN_IDS_REVISION)
     finally:
         engine.dispose()

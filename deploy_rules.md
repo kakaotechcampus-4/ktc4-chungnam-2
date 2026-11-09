@@ -139,7 +139,8 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 | 테이블.칸 | 남긴 이유 | 줄이기 |
 |---|---|---|
-| `agent_course_runs.snapshot_pin_ids` | 일정 version(`snapshot_version`)이 대신한다(#1321). 이전 릴리스가 읽고 쓴다. 새 코드는 쓰지 않아 기본값 `'[]'`가 들어간다 | #1465 — 칸 삭제와 `snapshot_version` 기본값(`'legacy'`) 제거. 운영에 #1321 코드가 올라간 다음 릴리스. `v0.1.0`(2026-11-08, #1528)에 #1321이 들어가 이제 진행할 수 있다 |
+
+지금 남은 칸은 없다(`agent_course_runs.snapshot_pin_ids`는 0069에서 지웠다, #1465).
 
 ## 데이터가 바뀔 때
 
