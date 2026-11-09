@@ -6,6 +6,7 @@ import RunAdvice from '@/features/agent/RunAdvice'
 import type { MemberView } from '@/features/maps/model'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
+import { goToPlaceSearch } from '@/features/search/goToPlaceSearch'
 import { balanceText } from '@/features/credits/model'
 import { useCreditsQuery } from '@/features/credits/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
@@ -344,7 +345,7 @@ export function NoResults({
           </div>
         )}
       </div>
-      <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-link text-sm">
+      <button type="button" onClick={goToPlaceSearch} className="btn-link text-sm">
         검색해서 직접 찍기
       </button>
     </div>

@@ -5,15 +5,15 @@ import { CATEGORY_RULES } from "../categories";
 
 type PlaceSearchResult = components["schemas"]["PlaceSearchResult"];
 
-/** 목 서버용 고정 장소 목록 — 실제 카카오 응답이 아니다. 이름 부분 일치로만 거른다. */
-export const SEED_PLACES: PlaceSearchResult[] = [
+/** 목 서버용 고정 장소 목록 — 실제 카카오 응답이 아니다. 이름 부분 일치로만 거른다. 네이버 링크(#1554)는 핀과 같은 이름 검색 링크다. */
+export const SEED_PLACES: PlaceSearchResult[] = ([
   { place_id: "kakao:mock-1", place_name: "해운대 밀면", lat: 35.1631, lng: 129.1639, category: "음식점", address: "부산 해운대구 우동", place_source: { provider: "kakao", url: "https://place.map.kakao.com/mock-1" } },
   { place_id: "kakao:mock-2", place_name: "해운대 바다 카페", lat: 35.1587, lng: 129.1604, category: "카페", address: "부산 해운대구 중동", place_source: { provider: "kakao", url: "https://place.map.kakao.com/mock-2" } },
   { place_id: "kakao:mock-3", place_name: "광안리 해변", lat: 35.1532, lng: 129.1186, category: "관광지", address: "부산 수영구 광안동", place_source: { provider: "kakao" } },
   { place_id: "kakao:mock-4", place_name: "광안리 게스트하우스", lat: 35.1547, lng: 129.1191, category: "숙소", address: "부산 수영구 광안동", place_source: { provider: "kakao" } },
   { place_id: "kakao:mock-5", place_name: "제주 흑돼지 거리", lat: 33.5131, lng: 126.5296, category: "음식점", address: "제주 제주시 일도이동", place_source: { provider: "kakao" } },
   { place_id: "kakao:mock-6", place_name: "성수 노포 곱창", lat: 37.5445, lng: 127.0557, category: "음식점", address: "서울 성동구 성수동2가", place_source: { provider: "kakao", url: "https://place.map.kakao.com/mock-6" } },
-];
+] as PlaceSearchResult[]).map((p) => ({ ...p, naver_url: `https://map.naver.com/p/search/${encodeURIComponent(p.place_name)}` }));
 
 /**
  * 카카오에는 있지만 자체 장소 DB에는 없는 장소(#382). 검색 결과는 pinnable:false 이고, `source: search` 로는 핀이 안 된다
