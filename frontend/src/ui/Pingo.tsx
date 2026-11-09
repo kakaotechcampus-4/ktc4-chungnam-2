@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from 'react'
 
+import { CoinShape } from './Coin'
 import { PINGO_MARK } from './pingoMark'
 
 /**
@@ -14,6 +15,7 @@ import { PINGO_MARK } from './pingoMark'
  * - walk 응답을 기다리는 로딩(WALK CYCLE, PingoLoading)
  * - fly 로그인 화면의 첫인상 — 망토를 두르고 지도 위를 날아간다(시안에 없는 자세라 기본형을 기울여 만들었다)
  * - space 우주복을 입고 둥둥 떠다닌다 — 로그인 상태를 확인하는 동안(배포 중이면 30초까지 걸린다). 머리를 감싼 유리 헬멧 + 목 링 + 가슴 조작판, 주변에 별
+ * - coin 크레딧 동전을 두 손으로 들고 있다 — 크레딧을 쓰는 AI 실행 버튼 아래(CreditGate)
  * - hug 고른 AI 후보 핀을 위에서 끌어안는다(지도, 시안에 없는 자세). 팔은 그리지 않는다 — 원을 감싼 손은 핀이 앞에서 그린다(pinMarker)
  */
 export type PingoMood =
@@ -32,6 +34,7 @@ export type PingoMood =
   | 'fly'
   | 'hug'
   | 'space'
+  | 'coin'
 
 const BODY = 'M32 16C43 16 49 23.5 49.5 33C50 38 51.5 42 51 46C50 53 42 57 32 57C22 57 14 53 13 46C12.5 42 14 38 14.5 33C15 23.5 21 16 32 16Z'
 const LINE = { stroke: 'var(--pingo-outline)', strokeWidth: 1.3 }
@@ -202,6 +205,20 @@ const POSES: Record<PingoMood, Pose> = {
       </>
     ),
     extra: () => line('M55 26Q64 28 58 32', 1.3, 'var(--brand-200)'),
+  },
+  // 동전은 얼굴 다음에 그려 두 손(front)이 양옆 테두리를 감싼다. 반짝임은 동전 위.
+  coin: {
+    back: [],
+    front: [[21.5, 47, 3.2, 5, -30], [42.5, 47, 3.2, 5, 30]],
+    face: (
+      <>
+        {line('M24 35Q27 31 30 35M34 35Q37 31 40 35', 1.8)}
+        <ellipse cx="21" cy="39" rx="2.6" ry="1.2" fill="var(--pingo-blush)" />
+        <ellipse cx="43" cy="39" rx="2.6" ry="1.2" fill="var(--pingo-blush)" />
+        <CoinShape cx={32} cy={46.5} r={9.5} />
+      </>
+    ),
+    extra: () => at(55, 40, 0.65, SPARK, 'var(--coin-face)', 'var(--coin-rim)'),
   },
   walk: { back: [[13.5, 42, 3.6, 7.5, 30], [50.5, 42, 3.6, 7.5, -30]], face: DOT_EYES },
   // 앞팔은 주먹을 앞으로 뻗고(슈퍼맨), 뒷팔은 몸에 붙여 뒤로 넘긴다.

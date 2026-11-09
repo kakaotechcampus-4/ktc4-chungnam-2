@@ -2,7 +2,9 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 
 import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
+import Coin from '@/ui/Coin'
 import Notice from '@/ui/Notice'
+import Pingo from '@/ui/Pingo'
 import Sentences from '@/ui/Sentences'
 
 import { adButtonText, adOfferText, balanceText, creditBlock, guestCreditText, insufficientText, type CreditFeature } from './model'
@@ -14,7 +16,7 @@ import { useAdCharge } from './useAdCharge'
  * - 게스트: 버튼 대신 처음부터 카카오 전환 안내. 게스트임은 GET /credits/me 의 403 으로 안다(숫자도 그 detail 에서).
  * - 잔액 부족(실행이 402): 안내 + 「후기 쓰러 가기」(확정 탭). 버튼은 둔다 — 후기를 쓰고 오면 다시 누를 수 있다.
  *   ad.available 이고 광고가 준비됐으면 고지 한 줄 + 「광고 보고 N 크레딧 받기」(#1039, 3.7). 받으면 onCharged.
- * - 그 밖: 버튼 아래 「N 크레딧 사용 · 남은 크레딧 M/30」(상한은 응답의 max_balance).
+ * - 그 밖: 버튼 아래 동전을 든 핑고 + 「N 크레딧 사용」(동전 색) / 「남은 크레딧 M/30」(상한은 응답의 max_balance).
  * 잔액이 가격보다 적은지는 화면이 미리 판단하지 않는다 — 판정은 서버(402) 한 곳이다.
  * `error` 는 그 실행 요청의 오류다. 크레딧과 무관한 오류는 부르는 쪽이 보인다(creditBlock 이 null).
  */
@@ -73,13 +75,21 @@ export default function CreditGate({
       )}
       {children}
       {/* 잔액을 못 받아도 버튼은 막지 않는다 — 최종 판정은 서버다. 숫자는 응답에서만 읽는다(#733). */}
-      <p className="text-center text-label text-ink-500">
-        {credits.data
-          ? `${credits.data.prices[feature]} 크레딧 사용 · ${balanceText(credits.data)}`
-          : credits.error
-            ? '남은 크레딧을 불러오지 못했어요'
-            : ' '}
-      </p>
+      {/* 크레딧을 쓴다는 걸 놓치지 않게 동전을 든 핑고 + 동전 색 글자로 버튼 바로 아래에 둔다. */}
+      {credits.data ? (
+        <div className="flex items-center justify-center gap-2.5 pt-1">
+          <Pingo mood="coin" size={48} />
+          <div>
+            <p className="flex items-center gap-1 text-sm font-bold text-coin-text">
+              <Coin size={16} />
+              {credits.data.prices[feature]} 크레딧 사용
+            </p>
+            <p className="text-xs text-ink-600">{balanceText(credits.data)}</p>
+          </div>
+        </div>
+      ) : (
+        <p className="text-center text-xs text-ink-500">{credits.error ? '남은 크레딧을 불러오지 못했어요' : ' '}</p>
+      )}
     </div>
   )
 }

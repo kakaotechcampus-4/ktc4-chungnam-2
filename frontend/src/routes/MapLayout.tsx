@@ -109,6 +109,7 @@ export default function MapLayout() {
   const myId = me?.id
   const myMaps = useMapsQuery().data?.items ?? []
   const recent = useRecentSearches(myId)
+  const recentOpen = searchFocused && !searchText && recent.list.length > 0
   // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
   // 받기 전(loadedPins 없음)에 떠나면 적지 않는다 — 빈 모습을 적으면 다음에 모든 핀이 새 핀으로 보인다.
   const { news } = useNewSince(mapId, loadedPins, myId)
@@ -535,14 +536,21 @@ export default function MapLayout() {
               role="search"
               inert={!desktop && mapMoving}
               onSubmit={submitSearch}
-              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
-                search.source ? 'border-brand-600' : 'border-ink-200'
+              // 최근 검색이 열리면 목록과 한 덩어리로 붙인다 — 아래 모서리를 펴고, 둘레는 brand-600(포커스 표시), 이음매는 옅은 선.
+              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}${
+                recentOpen
+                  ? 'rounded-t-xl border-brand-600 border-b-ink-100'
+                  : `rounded-xl has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
+                      search.source ? 'border-brand-600' : 'border-ink-200'
+                    }`
               }${desktop ? '' : ` ${fade}`}`}
             >
               <input
                 id="place-search"
                 type="search"
                 enterKeyHint="search"
+                // 브라우저(크롬·안드로이드 크롬) 입력 기록 목록이 「최근 검색」과 겹쳐 뜨지 않게 끈다.
+                autoComplete="off"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
                 maxLength={2000}
@@ -555,7 +563,7 @@ export default function MapLayout() {
                 <Search size={20} />
               </button>
             </form>
-            {searchFocused && !searchText && recent.list.length > 0 && (
+            {recentOpen && (
               <RecentSearches
                 list={recent.list}
                 floating={!desktop}

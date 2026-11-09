@@ -129,13 +129,15 @@ describe('결과 먼저 — 「추천받기」 한 번에 결과까지(#849)', (
     const credits = () => fetch(`http://localhost/credits/me`).then((r) => r.json())
     const before = await credits()
     renderWithClient(<ReadinessBody mapId={MAP} />)
-    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
+    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용`)).toBeInTheDocument()
+    expect(screen.getByText(`남은 크레딧 ${before.balance}/${before.max_balance}`)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '음식점 추천받기' }))
 
     await confirmCredit()
     const left = before.balance - before.prices.recommend_run
-    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용 · 남은 크레딧 ${left}/${before.max_balance}`)).toBeInTheDocument()
+    expect(await screen.findByText(`${before.prices.recommend_run} 크레딧 사용`)).toBeInTheDocument()
+    expect(screen.getByText(`남은 크레딧 ${left}/${before.max_balance}`)).toBeInTheDocument()
   })
 
   it('402 는 크레딧 부족 안내와 「후기 쓰러 가기」(확정 탭) — run 은 생기지 않는다', async () => {

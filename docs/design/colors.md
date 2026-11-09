@@ -299,6 +299,12 @@ AI 머리글에는 이미 「AI」 배지가 붙어 있어서 구분은 그대�
   --notify-dot: #C2410C;           /* 새 소식 점 — 알림 안 읽음, 새 조언(#1036, #1223) */
   --pingo-alert: #DC6A6A;          /* 핑고 ALERT 모자·핀. 핑고 그림 전용 */
 
+  /* ── 크레딧 동전(ui/Coin) — 동전 그림 전용, 글자는 coin-text ── */
+  --coin-face:  #FFC633;
+  --coin-rim:   #C77A00;
+  --coin-shine: #FFF0B3;
+  --coin-text:  #8A4F00;
+
   /* ── 핀 · 지도 위 전용 ───────────────── */
   --pin-stroke:     #D02A2A;   /* 검색 결과 빨간 원 */
   --pin-outline:    var(--pin-dot);   /* 일반 핀 윤곽선 — 머리 점과 같은 #8F1D1D */
