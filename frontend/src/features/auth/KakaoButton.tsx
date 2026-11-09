@@ -10,7 +10,7 @@ export default function KakaoButton({ retry = false, label }: { retry?: boolean;
   return (
     <a
       href={kakaoLoginUrl()}
-      className="btn-lg w-full rounded-xl bg-[#FEE500] font-semibold text-black/85"
+      className="btn-lg w-full rounded-xl bg-[var(--kakao-yellow)] font-semibold text-black/85"
     >
       <MessageCircle size={20} fill="currentColor" aria-hidden="true" /> {label ?? (retry ? '카카오로 다시 시도하기' : '카카오로 시작하기')}
     </a>

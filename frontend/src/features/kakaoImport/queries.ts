@@ -37,7 +37,7 @@ export type AddResult = 'added' | 'noNew' | 'noLinks' | 'noDates' | 'full'
 type Outcome = NonNullable<BulkPinItemResultDto['status']>
 
 /**
- * 카톡 대화에서 가져오기(#578, #1046, #1045)의 진행. 지도별로 sessionStorage 에 이어 두어 새로고침해도 남는다(storage.ts).
+ * 카톡 대화로 핀 찍기(#578, #1046, #1045)의 진행. 지도별로 sessionStorage 에 이어 두어 새로고침해도 남는다(storage.ts).
  * 담는 것은 링크와 공유 글에서 읽은 이름·주소, 서버 응답뿐이고, 대화 원문은 담지 않는다.
  * 시트가 열려 있는지(`openFor`)도 여기 둔다 — 버튼이 있는 목록 머리가 검색·핀 상세로 바뀌어도 시트와 「모달 열림」이 따라 사라지지 않게(#1045).
  */

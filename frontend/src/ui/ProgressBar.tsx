@@ -1,5 +1,8 @@
 import { useId, type ReactNode } from 'react'
 
+/** 다 찼는지 — 막대와 % 글자가 초록이 된다. */
+export const isFull = (value: number, max: number) => max > 0 && value >= max
+
 /** 0~100 정수. 분모가 0이면 0이다. */
 export const percent = (value: number, max: number) => (max > 0 ? Math.min(100, Math.max(0, Math.round((value / max) * 100))) : 0)
 
@@ -14,7 +17,7 @@ export default function ProgressBar({ label, value, max, className = '' }: { lab
     <div className={className}>
       <div className="mb-1 flex items-baseline justify-between gap-2 text-xs font-bold">
         <span id={id} className="text-ink-600">{label}</span>
-        <span aria-hidden="true" className="shrink-0 text-link">{pct}%</span>
+        <span aria-hidden="true" className={`shrink-0 ${isFull(value, max) ? 'text-[var(--good-text)]' : 'text-link'}`}>{pct}%</span>
       </div>
       <ProgressTrack value={value} max={max} labelledBy={id} />
     </div>
@@ -33,7 +36,11 @@ export function ProgressTrack({ value, max, labelledBy, valueText }: { value: nu
       aria-valuetext={valueText}
       className="h-1.5 overflow-hidden rounded-full bg-ink-100"
     >
-      <div className="h-full rounded-full bg-[var(--action-fill)] transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${percent(value, max)}%` }} />
+      {/* 채우는 동안은 할 일 파랑, 다 차면 좋음 초록(완료). 빨강·주황은 쓰지 않는다 — 진행이 적은 건 오류가 아니다(영역 분리 규칙). */}
+      <div
+        className={`h-full rounded-full transition-[width,background-color] duration-300 motion-reduce:transition-none ${isFull(value, max) ? 'bg-[var(--good-line)]' : 'bg-[var(--action-fill)]'}`}
+        style={{ width: `${percent(value, max)}%` }}
+      />
     </div>
   )
 }

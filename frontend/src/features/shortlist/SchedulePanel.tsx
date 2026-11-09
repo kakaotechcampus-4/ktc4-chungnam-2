@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 
 import ErrorText from '@/ErrorText'
-import { dayTitle } from '@/features/course/model'
+import { dayLine, dayTitle } from '@/features/course/model'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import SidePanel from '@/features/shell/SidePanel'
 import CardSkeleton from '@/ui/CardSkeleton'
@@ -67,9 +67,10 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
       {edit.dates.map((d, i) => {
         const ids = edit.schedule.days[d] ?? []
         return (
-          <ScheduleDayBox key={d} day={d} title={dayTitle(d, i)} count={ids.length}>
+          <ScheduleDayBox key={d} day={d} title={dayTitle(d, i)} count={ids.length} color={dayLine(i).color}>
             <ScheduleDayList
               day={d}
+              color={dayLine(i).color}
               ids={ids}
               nameOf={name}
               onTakeOut={(id) => edit.takeOut(id, name(id))}

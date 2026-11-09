@@ -12,12 +12,14 @@ type State = {
   openFor: string | null
   /** 끄는 줄을 지금 놓으면 들어갈 자리. 칸 테두리와 끼울 자리 선을 그린다. 끄는 곳(패널·동선 보기·리스트)이 다 여기에 적는다. */
   hover: DropHover | null
+  /** 방금 넣은 핀 — 그 일정 줄을 잠깐 강조한다(`flash-ring`). */
+  flash: string | null
 }
 
 /** 끄는 핀과, 지금 놓으면 들어갈 자리. */
 export type DropHover = DropSpot & { pinId: string }
 
-const useScheduleStore = create<State>(() => ({ openFor: null, hover: null }))
+const useScheduleStore = create<State>(() => ({ openFor: null, hover: null, flash: null }))
 
 /** 일정이 서버로 옮겨 가기 전(2026-11-03)에 이 기기에 저장하던 키. 서버 일정으로 덮어쓰지 않고, 남은 것은 지울 때만 쓴다. */
 const LEGACY_PREFIX = 'pingo.schedule.v1.'
@@ -45,3 +47,14 @@ export const leaveScheduleTab = () => useScheduleStore.setState({ openFor: null,
 export const setDropHover = (hover: DropHover | null) => useScheduleStore.setState({ hover })
 export const useDropHover = () => useScheduleStore((s) => s.hover)
 export const useScheduleOpen = (mapId: string) => useScheduleStore((s) => s.openFor === mapId)
+
+/** 강조가 끝나는 시간(index.css `flash-ring`과 같다). */
+const FLASH_MS = 1600
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+/** 방금 넣은 핀의 일정 줄을 잠깐 강조한다. 줄은 보이게 스크롤한다(`useFlash`). */
+export function flashPin(pinId: string) {
+  clearTimeout(flashTimer)
+  useScheduleStore.setState({ flash: pinId })
+  flashTimer = setTimeout(() => useScheduleStore.setState({ flash: null }), FLASH_MS)
+}
+export const useFlash = (pinId: string) => useScheduleStore((s) => s.flash === pinId)
