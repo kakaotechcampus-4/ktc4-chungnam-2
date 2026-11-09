@@ -4,7 +4,7 @@ import Sentences from './Sentences'
 
 /**
  * 확인 창(Figma 근거 확인 계열·로그아웃). 포커스 가두기·Esc 닫기는 Radix AlertDialog 가 맡는다(#299·#359).
- * 고르게 하는 창이라 딤을 눌러도 닫히지 않는다. 빨강(danger)은 파괴적 동작(빼기)에만 쓴다.
+ * 고르게 하는 창이라 딤을 눌러도 닫히지 않는다. 빨강(danger)은 되돌릴 수 없는 동작에만 쓴다 — 어디에 쓰는지는 DESIGN.md 버튼 표.
  */
 export default function ConfirmDialog({
   title,

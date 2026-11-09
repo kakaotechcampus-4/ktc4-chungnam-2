@@ -1,6 +1,6 @@
 # 기술 스택
 
-작성 기준: `develop`(2026-11-03). 이 문서는 **지도**다 — 버전과 동작의 정본은 각 절의 근거 파일이고, 어긋나면 파일이 맞다. 숫자(경로 수, 버전)는 이 시점에 읽은 값이라 시간이 지나면 달라질 수 있다. 확인하지 못한 것은 「확인 못 함」으로 적는다. 제품 스펙은 `최종기획안.md`, 기술 계약은 `docs/`가 정본이다(루트 `CLAUDE.md`의 문서 지도).
+작성 기준: `develop`(2026-11-03, 숫자와 상태는 2026-11-10에 다시 맞춤). 이 문서는 **지도**다 — 버전과 동작의 정본은 각 절의 근거 파일이고, 어긋나면 파일이 맞다. 숫자(경로 수, 버전)는 이 시점에 읽은 값이라 시간이 지나면 달라질 수 있다. 확인하지 못한 것은 「확인 못 함」으로 적는다. 제품 스펙은 `최종기획안.md`, 기술 계약은 `docs/`가 정본이다(루트 `CLAUDE.md`의 문서 지도).
 
 ## 1. 한눈에 보기
 
@@ -33,16 +33,15 @@
 | 서버 | uvicorn[standard] | 0.30.6 | Dockerfile CMD |
 | 검증 | pydantic | 2.9.2 | 모듈별 `schemas.py`, LLM 구조화 출력 |
 | ORM | sqlalchemy | 2.0.35 | `common/database.py` |
-| 마이그레이션 | alembic | 1.13.3 | `backend/alembic/versions/`(현재 head `0059_shortlist_scheduled_date`, 0026·0027은 번호 없음) |
+| 마이그레이션 | alembic | 1.13.3 | `backend/alembic/versions/`(현재 head `0070_course_run_pin_ids_drop`, 0026·0027은 번호 없음) |
 | DB 드라이버 | psycopg2-binary | 2.9.9 | DB URL `postgresql://` |
 | 공간 | geoalchemy2 / pyproj | 0.15.2 / 3.6.1 | 좌표·거리, 공공데이터 좌표 변환(`places/ingest.py`) |
 | 이미지 | pillow | 12.3.0 | 초대 링크 미리보기 그림(대표 사진 자르기 + 워드마크, `maps/preview.py`, #1625) |
 | HTTP 클라이언트 | httpx | 0.27.2 | 카카오 OAuth, 장소 소스, 링크 해석 |
 | LLM SDK | openai | 3.22.1(파일 표기) | `llm/client.py` — 실제 설치 버전은 확인 못 함 |
-| 설정 | python-dotenv, pyyaml | 1.0.1, 6.0.2 | `common/settings.py`, `agent/core.py` |
+| 설정 | python-dotenv, pyyaml | 1.2.2, 6.0.2 | `common/settings.py`, `agent/core.py` |
 | 테스트 | pytest, pytest-asyncio, jsonschema | 9.0.3, 1.3.0, 4.23.0 | 아래 10절 |
 | 구조 검사 | import-linter | 2.15 | `backend/pyproject.toml`의 계약, CI `lint-imports` |
-| (사용 안 함) | redis | 5.0.8 | **코드에서 import하는 곳이 없다**(12절) |
 
 린터·포매터(ruff, black, mypy) 설정은 없다.
 
@@ -56,7 +55,7 @@
 ### 설정과 보안
 - **환경**: `PINGO_ENV`는 dev·test·staging·prod, 값이 없으면 prod. **모드 스위치** `PLACES_MODE`·`LLM_MODE`(dev 스텁 / real, staging·prod 기본 real), `PLACES_SOURCES`, `AGENT_LOOP_IN_PROCESS`, `CREDIT_AD_PROVIDER`, `COOKIE_SECURE`.
 - **기동 가드**(`common/settings.py` `__post_init__`): staging·prod에서 스텁 모드, `CORS=*`, 빈 CORS, 기본 `SESSION_SECRET`, 빈 `FRONTEND_BASE_URL`, real 모드인데 외부 키가 비어 있는 경우, prod의 `QA_LOGIN_SECRET`·fake 광고를 막는다. 추가 가드는 #1210.
-- **세션**: 무상태 HMAC-SHA256 서명 토큰, TTL 30일, 로그아웃·탈퇴는 `users.sessions_valid_after`로 이전 토큰을 무효화한다. 쿠키는 `session`, `kakao_oauth_state`, `pending_account` 셋이고 모두 httpOnly·`SameSite=lax`(`auth/router.py`).
+- **세션**: 무상태 HMAC-SHA256 서명 토큰, TTL 30일, 로그아웃·탈퇴는 `users.sessions_valid_after`로 이전 토큰을 무효화한다. 쿠키는 `session`, `kakao_oauth_state`, `google_oauth_state`(#1514), `pending_account` 넷이고 모두 httpOnly·`SameSite=lax`(`auth/router.py`).
 - **로그 보호**: `common/logguard.py`가 접근 로그의 쿼리 문자열과 초대 토큰 경로를 가리고 SQL 매개변수가 든 예외 출력을 걸러낸다(#1201). httpx·httpcore 로그는 WARNING부터.
 
 ## 3. 데이터
@@ -77,7 +76,7 @@
 - **기록**: 모든 상태 변경이 `common.events.record_event`로 **같은 트랜잭션**에 `event_log`를 남긴다.
 - **전달**: realtime dispatcher가 **0.5초마다 폴링**해 구독자에게 SSE로 보낸다. at-least-once, seq에 구멍이 생기면 최대 2초 기다린다. 채널은 지도 공개 이벤트(`/maps/{mapId}/events`)와 개인 이벤트(`/maps/{mapId}/events/me`) 두 개. ping은 20초마다, 재전송 보존 창은 24시간.
 - **프록시**: Caddy가 `flush_interval -1`로 SSE를 바로 흘려보낸다(`deploy/Caddyfile`).
-- **화면**: `EventSource`는 `realtime.ts` 한 곳. 이벤트는 TanStack Query 캐시에 반영하거나 해당 쿼리를 무효화한다. **60초 무수신 재연결**(#832)은 PR #1135가 병합 대기 중이다(2026-11-03 기준). 개인 채널은 스펙과 목에는 있지만 FE가 구독하는 곳은 확인하지 못했다.
+- **화면**: `EventSource`는 `realtime.ts` 한 곳. 이벤트는 TanStack Query 캐시에 반영하거나 해당 쿼리를 무효화한다. **60초 무수신 재연결**(#832)이 들어갔다(`realtime.ts`의 `STALE_MS`). 개인 채널은 스펙과 목에는 있지만 FE가 구독하는 곳은 확인하지 못했다.
 - **한계**: 폴러가 프로세스 안 백그라운드 태스크라 API 컨테이너 1개를 전제한다. 구독 큐 상한·스레드 경계는 #1211.
 
 ## 5. 프론트엔드
@@ -108,9 +107,9 @@
 
 근거: `docs/api-spec.yaml`, `docs/openapi-workflow.md`, `contracts/`.
 
-- **OpenAPI 3.1**, 경로 72개·오퍼레이션 88개·스키마 139개·태그 14개(auth, maps, pins, places, recommend, shortlist, realtime, notifications, feedback, ads, course, credits, reviews, agent). 전역 보안은 쿠키 `session`.
+- **OpenAPI 3.1**, 경로 78개·오퍼레이션 96개·스키마 148개·태그 14개(auth, maps, pins, places, recommend, shortlist, realtime, notifications, feedback, ads, course, credits, reviews, agent). 전역 보안은 쿠키 `session`.
 - **타입 생성**: `contracts`의 `npm run gen:types`(openapi-typescript 7.13)가 `contracts/src/types/api.d.ts`를 만들고 **커밋한다**. CI가 `gen:types` 뒤 `git diff --exit-code`로 어긋남을 잡는다.
-- **목 서버**: `contracts/mocks/`의 msw 핸들러가 상태를 가진 인메모리 스토어로 응답한다. 시나리오 8개(`empty`, `happy-path`, `no-results`, `region-conflict`, `guest`, `withdrawn-relogin`, `credits-empty`, `credits-full`). SSE도 흉내 낸다.
+- **목 서버**: `contracts/mocks/`의 msw 핸들러가 상태를 가진 인메모리 스토어로 응답한다. 시나리오 11개(`empty`, `happy-path`, `no-results`, `region-conflict`, `guest`, `withdrawn-relogin`, `credits-empty`, `credits-full`, `agent-declared`, `agent-linked`, `agent-schedule`). SSE도 흉내 낸다.
 - **lint**: `@redocly/cli`(`npm run lint:spec`). **CI에서는 돌지 않는다.**
 - **변경 절차**: `docs/api-spec.yaml` → `docs/CHANGELOG-api.md` → errors/events/permissions 문서 → `contracts`(타입·목·smoke 테스트) → 구현. 구현 PR이 CI 가드(`KNOWN_MISSING`, `KNOWN_UNCOVERED`, `KNOWN_DRIFT`)의 항목을 지운다.
 
@@ -118,7 +117,7 @@
 
 | 서비스 | 용도 | 비고 |
 |---|---|---|
-| 카카오 OAuth | 로그인 | FE는 인가 URL을 만들지 않고 `/auth/kakao/login`으로 이동, 서버가 state 쿠키를 심고 카카오로 보낸다(`auth/core.py`, `auth/service.py`) |
+| 카카오·구글 OAuth | 로그인(구글은 #1514, 같은 방식) | FE는 인가 URL을 만들지 않고 `/auth/kakao/login`으로 이동, 서버가 state 쿠키를 심고 카카오로 보낸다(`auth/core.py`, `auth/service.py`) |
 | 카카오 로컬 검색 | 장소 검색 | 서버가 `dapi.kakao.com`을 부른다. **응답 저장·캐시·LLM 전송 금지**, 장소 ID와 `place_url`만 저장 가능(`docs/architecture.md` 2절, #53). `integration/test_kakao_no_store_e2e.py`, `test_places_no_kakao_leak.py`가 검사 |
 | 카카오맵 SDK | 지도 표시, 실시간 핀 위치 재조회 | FE가 직접. 결과는 메모리에만 둔다 |
 | 네이버 | 장소 소스 코드는 있으나 기본 꺼짐(`PLACES_SOURCES=kakao`) | `naver.me` 단축 링크의 **리다이렉트 한 번**만 따라간다(#1048) |
@@ -129,7 +128,7 @@
 ### LLM
 - **제공자**: OpenAI를 직접 호출한다(2026-11-02, #1120). 모델 `gpt-6-luna`(`LLM_MODEL`로 바꿀 수 있다). **환경변수 이름은 엘리스 시절 그대로** `ELICE_ML_API_BASE_URL`·`ELICE_ML_API_KEY`다. 코드의 기본 주소는 빈 문자열이고(비면 호출이 실패), `https://api.openai.com/v1`은 `deploy/env/*.env.example`에 들어 있다. **운영 서버가 실제로 전환됐는지는 서버 env를 확인해야 한다**(`deploy_rules.md`는 운영이 아직 옛 설정이라고 적는다).
 - **호출 방식**: `chat.completions.parse` + Pydantic 구조화 출력, 타임아웃 15초, 재시도 0. 단가·일일 예산(3,000원)은 `common/settings.py`. 호출 1건마다 `llm_calls`에 한 행(종류와 결과 `ok`·`refusal`·`empty`·`timeout`·`invalid_schema`·`call_failed`, #870)을 남긴다.
-- **호출 지점(정확히)**: **요청 중 호출은 v1에서 ② 사유 구조화(`plan_evidence`) 하나**다. ③-a-1 장소 라벨링(`label_place`)은 **v1 스텁이라 모델을 부르지 않는다**(원자료에 값이 있을 때만 known). 호출 종류는 `llm/models.py`의 `CALLS` 6개 — `plan_evidence`, `agent_diagnose`, `agent_status`, `course_goals`, `course_direct`, `course_turn`(뒤의 다섯은 v2 에이전트·AI 코스).
+- **호출 지점(정확히)**: **요청 중 호출은 v1에서 ② 사유 구조화(`plan_evidence`) 하나**다. ③-a-1 장소 라벨링(`label_place`)은 **v1 스텁이라 모델을 부르지 않는다**(원자료에 값이 있을 때만 known). 호출 종류는 `llm/models.py`의 `CALLS` 7개 — `plan_evidence`, `agent_diagnose`, `agent_status`, `agent_web_check`, `course_goals`, `course_direct`, `course_turn`(뒤의 여섯은 v2 에이전트·AI 코스, `course_turn`은 평가·시연 전용).
 - **모델이 하지 않는 일**: 실격 필터, 선호 순위(점수), 반경·동선 계산, 카카오 대화 해석은 전부 코드가 한다(`CLAUDE.md`의 「모델 호출」 절).
 
 ## 8. 배포·인프라
@@ -167,7 +166,7 @@
 
 ## 10. 테스트·QA
 
-- **백엔드**: pytest, **실제 PostgreSQL**(모킹하지 않는다). 동시에 여러 터미널에서 돌릴 때는 `PINGO_TEST_DB`로 DB를 분리한다. `live` 마커(실제 외부 API)는 기본 실행에서 뺀다(`pytest.ini`). 통합·계약 테스트는 `backend/integration/`에 37개 파일.
+- **백엔드**: pytest, **실제 PostgreSQL**(모킹하지 않는다). 동시에 여러 터미널에서 돌릴 때는 `PINGO_TEST_DB`로 DB를 분리한다. `live` 마커(실제 외부 API)는 기본 실행에서 뺀다(`pytest.ini`). 통합·계약 테스트는 `backend/integration/`에 41개 파일.
 - **프론트**: vitest + testing-library + msw(목 서버 시나리오 재사용). 접근성은 자동 검사 도구(axe 등)가 아니라 testing-library로 포커스·알림 영역을 직접 검증한다(`src/a11y.test.tsx`).
 - **E2E**(`e2e/`, #1281): Playwright로 지도 만들기 → 구성원 참여 → 핀 → 🚫 사유 → 추천 받기 → 「지도에 올리기」를 돈다. 구성원 화면은 새로고침하지 않아 실시간(SSE)까지 본다. 로그인은 카카오 대신 `auth.testing.session_cookie`, 모델은 스텁, 장소는 `e2e/seed.py`가 넣은 정예, 카카오 지도 키 없이 목록과 시트로 돈다. 실행법은 `qa/README.md`.
 - **QA 하네스**(`qa/`): 케이스 대장 `qa/cases.yaml`, 실행기는 `qa/harness/`의 `run_api_cases.py`(실제 HTTP, `--base-url`, `POST /auth/qa-login`), `run_reco.py`, `run_complex.py`, `run_llm_cost.py`. 격리 DB `pingo_eval`, 결과 기록은 `qa/results/`. 스테이징에서 매일 자동 점검(`staging-check`).
@@ -182,10 +181,8 @@
 
 | 항목 | 상태 | 추적 |
 |---|---|---|
-| `redis` 패키지와 로컬 compose의 redis | 코드에서 쓰지 않는다(정리 대기) | #1229 |
-| FE 60초 무수신 재연결 | PR #1135 병합 대기 | #832 |
 | 개인 SSE 채널 | 스펙·목에는 있고 FE 구독 확인 못 함 | #13 |
-| 운영 LLM 제공자 전환 | 서버 env 확인 필요(확인 못 함) | #1203 |
+| 운영 LLM 제공자 전환 | v0.1.0 배포 때 OpenAI 직접 호출로 맞춤(`deploy_rules.md` 「배포 전에 정할 것」) | #1203 |
 | RDS `max_connections`, 운영 마이그레이션 실제 리비전 | 확인 못 함 | #1203, #1204 |
 | 백업 복원 검증 | 아직 없음 | #1204 |
 | 폴러 큐 상한·스레드 경계 | 상한 없음 | #1211 |

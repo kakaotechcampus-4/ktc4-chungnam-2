@@ -3,10 +3,12 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { resetScenario, server } from '@pingo/contracts/mocks/node'
 import { http, HttpResponse } from 'msw'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { wholeText } from '@/test/text'
+
+import { markWelcomeSeen } from '@/features/onboarding/welcomeSeen'
 
 import RequireLogin from './RequireLogin'
 
@@ -21,6 +23,10 @@ function Search() {
   return <span data-testid="search">{useLocation().search}</span>
 }
 
+function Invite() {
+  return <p>초대 화면 {useParams().token}</p>
+}
+
 function show(entry = '/?login_pending=withdrawn_account') {
   const client = new QueryClient()
   return render(
@@ -29,6 +35,7 @@ function show(entry = '/?login_pending=withdrawn_account') {
         <Search />
         <Routes>
           <Route path="/welcome" element={<p>서비스 안내</p>} />
+          <Route path="/invites/:token" element={<Invite />} />
           <Route element={<RequireLogin />}>
             <Route path="/" element={<p>내 지도 목록</p>} />
           </Route>
@@ -165,5 +172,33 @@ describe('처음 온 사람(#1576)', () => {
     signedOut()
     show('/?login_error=google_unavailable')
     expect(await screen.findByRole('alert')).toBeInTheDocument()
+  })
+})
+
+describe('게스트 시트의 초대 링크 칸(#1631)', () => {
+  const TOKEN = 'Qm3xV8kR2pLw9TnYc4HdJs7EaUf1BgZo5Ni6Xy0WtKe'
+  async function openGuestSheet() {
+    server.use(http.get('*/auth/me', () => HttpResponse.json({ code: 'UNAUTHORIZED', message: '로그인이 필요합니다' }, { status: 401 })))
+    markWelcomeSeen()
+    show('/')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /게스트로 시작하기/ }))
+    return { user, field: await screen.findByLabelText('받은 초대 링크') }
+  }
+
+  it('초대 링크를 붙여 넣으면 버튼을 누르지 않아도 그 초대 화면으로 간다', async () => {
+    const { user, field } = await openGuestSheet()
+    await user.click(field)
+    await user.paste(`https://pingopingo.app/invites/${TOKEN}`)
+    expect(await screen.findByText(`초대 화면 ${TOKEN}`)).toBeInTheDocument()
+  })
+
+  it('초대 링크가 아니면 칸에 남기고 오류를 보인다', async () => {
+    const { user, field } = await openGuestSheet()
+    await user.type(field, 'https://naver.me/abc')
+    await user.click(screen.getByRole('button', { name: '입장하기' }))
+    expect(screen.getByText(/초대 링크가 아니에요/)).toBeInTheDocument()
+    expect(field).toHaveValue('https://naver.me/abc')
+    expect(screen.queryByText(/초대 화면/)).not.toBeInTheDocument()
   })
 })

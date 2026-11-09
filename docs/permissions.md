@@ -29,7 +29,7 @@ member:                      # 지도에 참여한 모든 구성원 — 기본 �
     - route.recalculate        # 동선 재계산(5-10) — "구성원 누구나" (#103 결정)
     - agent.toggle             # 계획 보조 에이전트 모드 켜고 끄기(v2, docs/agent-v2.md). 구성원 누구나
     - agent.suggestion.resolve # 지도 제안 수락·닫기(v2). 구성원 누구나, 지도 단위로 모두에게서 닫힌다
-    - course.request           # AI 코스 짜기 요청(#334, #580 결정 전 브랜치 초안). 구성원 누구나. 하루 상한(5회)은 서비스가 센다
+    - course.request           # AI 코스 짜기 요청(#334). 구성원 누구나(게스트 제외). 횟수 상한은 없고 1번에 크레딧 1(docs/credits-reviews.md 3.2, #432)
 
 author:                       # evidence_line·candidate·run을 만든 당사자에게 얹히는 추가 범위
   scope:
@@ -68,7 +68,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 
 ## 게스트 (v2, #472)
 
-게스트(로그인 수단이 없는 사용자, `CurrentUser.is_guest`, #694)는 **새 롤이 아니다.** 초대로 들어간 지도에서는 일반 `member`와 똑같이 움직이고(핀·반응·추천·확정 리스트·초대 수락, 같은 상한) 아래 두 가지만 막는다. 롤이 아니라 계정 속성이라 `authz/policy.py`·`Permissions`는 바뀌지 않는다.
+게스트(로그인 수단이 없는 사용자, `CurrentUser.is_guest`, #694)는 **새 롤이 아니다.** 초대로 들어간 지도에서 핀·반응·확정 리스트·초대 수락은 일반 `member`와 같고(같은 상한), 크레딧을 쓰는 기능과 후기는 막는다. 지도 만들기와 복사, AI 추천, AI 코스, 크레딧 조회, 장소 후기 쓰기와 신고는 403 `GUEST_NOT_ALLOWED`이고 목록의 정본은 `docs/errors.md`다. 권한 표로 보면 아래 두 가지가 다르다. 롤이 아니라 계정 속성이라 `authz/policy.py`·`Permissions`는 바뀌지 않는다.
 
 - **지도 만들기 불가** — `POST /maps` → 403 `GUEST_NOT_ALLOWED`(maps 라우터가 `CurrentUser.is_guest`로 판정).
 - **방장이 될 수 없다** — `pick_successor`(나가기·탈퇴 위임)가 게스트를 후보에서 뺀다. 직접 넘기기 대상이 게스트면 422 `OWNER_TARGET_INVALID`. 방장이 혼자이고 남은 사람이 게스트뿐이면 나가기는 409 `OWNER_CANNOT_LEAVE`(탈퇴는 지도 삭제).
@@ -120,7 +120,7 @@ owner:                        # 방장. 처음엔 지도 생성자, 위임되면
 | 지도 제안 수락·닫기 — 구성원 누구나 (v2, #510) | `member.actions: [agent.suggestion.resolve]`. 열람 기록과 상태 조회는 구성원이면 되고 별도 액션이 없다 |
 | 추천 막힘 조언 조회 — 요청한 본인만 (v2, #510) | 기존 `author.actions: [recommend.manage]`를 쓴다(run 결과 조회와 같은 범위) |
 | 추천 탭 광고 조회, 광고 클릭 기록 — 구성원 누구나 (#642, docs/ads.md) | 새 액션 없음. 조회 전용 GET과 같이 지도 구성원 확인(`require_map_member`)만 한다. 클릭 기록은 집계 증가뿐이라 도메인 액션으로 보지 않는다 |
-| AI 코스 짜기 요청 — 구성원 누구나 (#334, #580 결정 전 초안) | `member.actions: [course.request]`. 하루 상한은 권한이 아니라 서비스 상태라 여기 넣지 않고 429 `COURSE_LIMIT`로 판정한다 |
+| AI 코스 짜기 요청 — 구성원 누구나 (#334) | `member.actions: [course.request]`. 횟수 상한은 없고 1번에 크레딧 1이다(#432). 잔액 부족은 권한이 아니라 서비스 상태라 402 `CREDIT_INSUFFICIENT`, 게스트는 403 `GUEST_NOT_ALLOWED` |
 | AI 코스 run 조회 — 요청한 본인만 (#334) | `author.scope.run: own`, `author.actions: [course.view]`. 「내 마지막 코스」(`GET /maps/{mapId}/courses/latest`)는 구성원이면 되고(자기 run만 돌려준다) 별도 액션이 없다 |
 | AI 추천 run 근거 조회·토글·추가 — 구성원 누구나 (#108, #32, 최종기획안 5-5) | `member.actions: [recommend.evidence]` (개별 줄 비활성화만 `author.actions: [evidence.disable]`) |
 | AI 추천 run 실행계(지역확인·실행·결과조회·반경넓히기·재시도) — 요청한 본인만 (#108, 가드레일1) | `author.scope.run: own`, `author.actions: [recommend.manage]` |
@@ -154,8 +154,7 @@ def require_map_member() -> Depends:
 
 인증(쿠키/세션 파싱)은 `backend/auth/deps.py::get_current_user`가 라우터의
 `APIRouter(dependencies=[...])`로 걸린다 — 각 라우터 파일이 각자 기억해서 부르는 게 아니라
-라우터 선언 자체에 박혀 있다. 상세 근거는 `backend/authz/mentor-review-plan.md`,
-`backend/auth/mentor-review-plan.md` 참고.
+라우터 선언 자체에 박혀 있다. 권한 표와 코드가 같은지는 `integration/test_permission_matrix_http.py`가 실제 HTTP로 확인한다.
 
 **비구성원 vs 권한 없음의 응답 차이(계약 변경, `docs/CHANGELOG-api.md` 참고):**
 - 그 지도의 구성원이 아님 → **404** (존재 자체를 흘리지 않는다)

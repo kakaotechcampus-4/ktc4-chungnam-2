@@ -99,7 +99,9 @@ export function createMarkerLayer(
       .map((g) => g.map((i) => ids[i]))
     grouped.clear()
     for (const id of sets.flat()) grouped.add(id)
-    for (const [id, el] of elements) el.style.display = grouped.has(id) ? 'none' : ''
+    // hidden 으로 숨긴다(preflight 가 [hidden] 을 display:none !important 로 둔다). style.display 를 비우면
+    // 핀 버튼의 display:flex(가운데 정렬)까지 지워져 핀 그림만 왼쪽 위로 붙고 이름표 꼬리가 핀 끝에서 어긋났다.
+    for (const [id, el] of elements) el.hidden = grouped.has(id)
     const key = sets.map((g) => g.map((id) => `${id}:${signatures.get(id)}`).join(',')).join('|')
     if (key === groupKey) return
     groupKey = key
