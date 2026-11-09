@@ -1279,6 +1279,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/maps/{mapId}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 이 지도를 지금 본 것으로 적는다(#1556) — 요청한 사람의 「마지막으로 본 때」(`memberships.last_seen_at`)를 서버 시각으로 바꾼다.
+         *     화면은 「확인」을 누를 때와 지도를 떠날 때(탭을 내릴 때 포함) 부른다. 구성원이면 누구나(게스트 포함). 이벤트를 보내지 않는다.
+         *     기기와 상관없이 한 사람에 하나다 — PC에서 확인하면 휴대폰의 「새 소식」도 사라진다.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 적었다 */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/maps/{mapId}/news": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 마지막으로 본 뒤 새로 생긴 핀·의견(#1556, #1454) — 「무엇이 새것인가」를 서버 한 곳에서 정한다. 화면은 받은 대로 그린다.
+         *     - 기준 시각 `since`는 요청한 사람의 `memberships.last_seen_at`이다. 한 번도 `POST /maps/{mapId}/seen`을 부르지 않았으면 null이고 두 목록은 비어 있다(처음 연 지도).
+         *     - **새 핀**: 지금 지도에 있는 핀 중 `created_at`이 `since` 뒤이고 **내가 찍지 않은** 핀. AI 추천 핀은 「지도에 올리기」 시각이 `created_at`이다. 휴지통에서 되살린 핀은 `created_at`이 옛 시각이라 들어가지 않는다.
+         *     - **새 의견**: 지금 지도에 있는 핀에 달린 반응 중 `since` 뒤에 남기거나 바꾼 것(`updated_at` 기준)이고 **내 것이 아닌** 것. 그 뒤에 지운 반응은 없다(지금 남아 있는 반응만).
+         *     - 이 조회는 `last_seen_at`을 바꾸지 않는다. 각 목록은 최근 것부터 최대 100개, 넘으면 `truncated=true`.
+         *     - 사유 글은 문장에 섞지 않고 칸(`reason_text`, `reason_chip_ids`)으로 준다(#717). 구성원이 `GET /pins/{pinId}/reactions`로 이미 볼 수 있는 값이다.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    mapId: components["parameters"]["MapId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MapNews"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/maps/{mapId}/members": {
         parameters: {
             query?: never;
@@ -4554,6 +4641,7 @@ export interface components {
              */
             role: "owner" | "member";
             display_name?: string;
+            /** @description 「접속 중」은 그 지도의 전체 채널 SSE(`GET /maps/{mapId}/events`)에 연결이 하나라도 열려 있는 구성원이다(#1551). 같은 사람이 탭·기기를 여러 개 열어도 한 명이다. 마지막 연결이 끊기고 30초 안에 다시 붙지 않으면 접속 아님이다(새로고침·짧은 끊김에 깜빡이지 않게). 위치가 아니라 「지도를 열어 두었는가」만 본다 — 실시간 위치 공유(범위 밖)가 아니다. 지도를 처음 열 때 이 값으로 그리고, 그 뒤 변화는 `member.presence` 이벤트로 받는다. 서버가 채우기 전에는 없다 — 없으면 접속 점을 그리지 않는다(지어낸 값을 쓰지 않는다) */
             online?: boolean;
             /** @description 이 구성원이 이 지도의 핀에 남긴 의견 수(#1562). 구성원 줄 「의견 N개」·0이면 「아직 없음」. 지금 남아 있는 ♥(like)·🚫(against) 반응을 센다 — 반응은 핀 하나에 한 사람당 하나라 「의견을 남긴 핀 수」와 같다. 지운 핀(휴지통)에 남긴 반응은 세지 않는다. 「?」(미확인)는 반응이 아니라 세지 않는다. `FilterCounts.members_with_opinion`과 같은 기준이다(이 값이 1 이상인 구성원 수 = members_with_opinion). 선택 필드 — 서버가 채우기 전에는 없다(없으면 화면은 줄을 그리지 않는다) */
             opinion_count?: number;
@@ -5032,6 +5120,35 @@ export interface components {
             reason_text?: string;
             /** @description GET /categories/{category}/reason-chips가 준 칩의 id. 그 핀의 카테고리 목록에 없는 id는 422 VALIDATION_ERROR (2026-10-04, #60). 반대(against)에서만 보낸다 */
             reason_chip_ids?: string[];
+        };
+        /** @description 마지막으로 본 뒤 새로 생긴 핀·의견(#1556). 규칙은 GET /maps/{mapId}/news 설명 */
+        MapNews: {
+            /** @description 요청한 사람의 마지막으로 본 때(memberships.last_seen_at). 처음 연 지도면 null이고 두 목록은 비어 있다 */
+            since: null | string;
+            /** @description since 뒤에 지도에 올라온, 내가 찍지 않은 핀의 id. 최근 것부터 */
+            new_pin_ids: string[];
+            /** @description since 뒤에 남기거나 바꾼, 내 것이 아닌 반응. 최근 것부터 */
+            new_reactions: components["schemas"]["NewReaction"][];
+            /** @description 어느 한 목록이라도 100개를 넘어 잘렸으면 true. 화면은 「새 소식이 더 있어요」를 띄우고 지도를 다시 보게 한다 */
+            truncated: boolean;
+        };
+        /** @description 새 의견 하나(#1556). Reaction에 이름과 시각을 더한 모양이다 */
+        NewReaction: {
+            pin_id: string;
+            user_id: string;
+            /** @description 남긴 사람 이름. 구성원 목록의 이름과 같다 */
+            display_name: string;
+            /** @enum {string} */
+            type: "like" | "against";
+            /** @description 사람이 쓴 사유. 없으면 필드를 생략한다 */
+            reason_text?: string;
+            /** @description 반대 사유 칩 id(ReasonChip.id). 없으면 빈 배열 */
+            reason_chip_ids: string[];
+            /**
+             * Format: date-time
+             * @description 그 반응을 남기거나 마지막으로 바꾼 시각
+             */
+            updated_at: string;
         };
         Reaction: {
             pin_id: string;
@@ -5987,7 +6104,10 @@ export interface components {
             };
         };
         EvtMemberPresence: components["schemas"]["SseEnvelope"] & {
-            /** @constant */
+            /**
+             * @description 접속 상태가 바뀔 때만 보낸다(#1551). 판정 규칙은 Member.online
+             * @constant
+             */
             event: "member.presence";
             data: {
                 user_id: string;
