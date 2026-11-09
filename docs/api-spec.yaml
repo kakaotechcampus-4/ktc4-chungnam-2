@@ -2290,15 +2290,15 @@ components:
 
     Member:
       type: object
-      # display_name·online만 없을 수 있다 — auth(#4)의 users 테이블, realtime의 presence가
-      # 아직 없어 못 채운다(maps/core.py::to_member_response). user_id는 항상 채운다.
+      # display_name·online만 없을 수 있다 — display_name은 users 행이 없을 때, online은 서버가 채우기 전(#1551 구현 전)이다.
+      # user_id는 항상 채운다.
       required: [user_id, role, is_guest]
       properties:
         user_id: { type: string }
         is_guest: { type: boolean, description: "로그인 수단이 없는 게스트(그 브라우저에서만 이어지는 임시 계정)인가(#955). 서버는 게스트에게 방장을 넘기지 않는다(OWNER_TARGET_INVALID) — 화면이 방장 넘기기 목록에서 빼고 이름 옆에 「게스트」를 붙이는 데 쓴다. 계산 값이라 저장하지 않는다(CurrentUser.is_guest와 같은 판정)" }
         role: { type: string, enum: [owner, member], description: "owner = 방장, 나머지는 member. memberships.role 기준이라 방장이 나가 위임되면 바뀐다(지도를 만든 사람과 다를 수 있다, #369). 구성원 목록의 방장 표시용 (2026-10-04, FE 요청)" }
         display_name: { type: string, maxLength: 50 } # 코드에 근거 없음, 팀 확인 필요(멘토 리뷰 대응)
-        online: { type: boolean }
+        online: { type: boolean, description: "「접속 중」은 그 지도의 전체 채널 SSE(`GET /maps/{mapId}/events`)에 연결이 하나라도 열려 있는 구성원이다(#1551). 같은 사람이 탭·기기를 여러 개 열어도 한 명이다. 마지막 연결이 끊기고 30초 안에 다시 붙지 않으면 접속 아님이다(새로고침·짧은 끊김에 깜빡이지 않게). 위치가 아니라 「지도를 열어 두었는가」만 본다 — 실시간 위치 공유(범위 밖)가 아니다. 지도를 처음 열 때 이 값으로 그리고, 그 뒤 변화는 `member.presence` 이벤트로 받는다. 서버가 채우기 전에는 없다 — 없으면 접속 점을 그리지 않는다(지어낸 값을 쓰지 않는다)" }
         opinion_count: { type: integer, minimum: 0, description: "이 구성원이 이 지도의 핀에 남긴 의견 수(#1562). 구성원 줄 「의견 N개」·0이면 「아직 없음」. 지금 남아 있는 ♥(like)·🚫(against) 반응을 센다 — 반응은 핀 하나에 한 사람당 하나라 「의견을 남긴 핀 수」와 같다. 지운 핀(휴지통)에 남긴 반응은 세지 않는다. 「?」(미확인)는 반응이 아니라 세지 않는다. `FilterCounts.members_with_opinion`과 같은 기준이다(이 값이 1 이상인 구성원 수 = members_with_opinion). 선택 필드 — 서버가 채우기 전에는 없다(없으면 화면은 줄을 그리지 않는다)" }
 
     MapList:
@@ -3930,7 +3930,7 @@ components:
         - type: object
           required: [event, data]
           properties:
-            event: { const: "member.presence" }
+            event: { const: "member.presence", description: "접속 상태가 바뀔 때만 보낸다(#1551). 판정 규칙은 Member.online" }
             data:
               type: object
               required: [user_id, online]

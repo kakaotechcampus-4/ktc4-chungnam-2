@@ -4641,6 +4641,7 @@ export interface components {
              */
             role: "owner" | "member";
             display_name?: string;
+            /** @description 「접속 중」은 그 지도의 전체 채널 SSE(`GET /maps/{mapId}/events`)에 연결이 하나라도 열려 있는 구성원이다(#1551). 같은 사람이 탭·기기를 여러 개 열어도 한 명이다. 마지막 연결이 끊기고 30초 안에 다시 붙지 않으면 접속 아님이다(새로고침·짧은 끊김에 깜빡이지 않게). 위치가 아니라 「지도를 열어 두었는가」만 본다 — 실시간 위치 공유(범위 밖)가 아니다. 지도를 처음 열 때 이 값으로 그리고, 그 뒤 변화는 `member.presence` 이벤트로 받는다. 서버가 채우기 전에는 없다 — 없으면 접속 점을 그리지 않는다(지어낸 값을 쓰지 않는다) */
             online?: boolean;
             /** @description 이 구성원이 이 지도의 핀에 남긴 의견 수(#1562). 구성원 줄 「의견 N개」·0이면 「아직 없음」. 지금 남아 있는 ♥(like)·🚫(against) 반응을 센다 — 반응은 핀 하나에 한 사람당 하나라 「의견을 남긴 핀 수」와 같다. 지운 핀(휴지통)에 남긴 반응은 세지 않는다. 「?」(미확인)는 반응이 아니라 세지 않는다. `FilterCounts.members_with_opinion`과 같은 기준이다(이 값이 1 이상인 구성원 수 = members_with_opinion). 선택 필드 — 서버가 채우기 전에는 없다(없으면 화면은 줄을 그리지 않는다) */
             opinion_count?: number;
@@ -6103,7 +6104,10 @@ export interface components {
             };
         };
         EvtMemberPresence: components["schemas"]["SseEnvelope"] & {
-            /** @constant */
+            /**
+             * @description 접속 상태가 바뀔 때만 보낸다(#1551). 판정 규칙은 Member.online
+             * @constant
+             */
             event: "member.presence";
             data: {
                 user_id: string;
