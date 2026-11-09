@@ -46,13 +46,13 @@ const PROMPT: Record<ReactionType, { title: string }> = {
 }
 
 /**
- * 제목 줄(시트 끌기 영역). 「‹ 마킹된 장소」(확정 탭에선 「‹ 확정된 장소」)는 시트 안 이전 화면 — 모바일 좌상단 ‹(내 지도 목록)와 다르다.
+ * 제목 줄(시트 끌기 영역). 「‹ 핀 찍기」(확정 탭에선 「‹ 장소 확정」)는 시트 안 이전 화면 — 모바일 좌상단 ‹(내 지도 목록)와 다르다.
  * 넓은 화면은 이 ‹ 가 패널 헤더 ‹ 로 옮겨 간다(PanelBackLink).
  */
 export function PinDetailHeader({
   pin,
   mapId,
-  backLabel = '마킹된 장소',
+  backLabel = '핀 찍기',
   onBack,
 }: {
   pin: Pin
@@ -232,7 +232,7 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
   )
 }
 
-/** 핀 상세 본문(Figma 5절 '마킹된 장소 상세'). */
+/** 핀 상세 본문(Figma 5절 '마킹된 장소 상세', 지금 탭 이름은 핀 찍기). */
 export function PinDetailBody({
   pin,
   mapId,
