@@ -39,7 +39,7 @@ def item(pin_id: str, *, by: str = "u1", at: datetime = NOW - hours(50)) -> Shor
 
 def snap(
     *, members=("u1", "u2", "u3"), pins=(), reactions=(), shortlist=(), last_run_at=None, reasons=(),
-    start_date: date = FAR_START, end_date: date | None = None, today: date = TODAY,
+    start_date: date = FAR_START, end_date: date | None = None, today: date = TODAY, ready_categories=(),
 ) -> Snapshot:
     ms = tuple(
         m if isinstance(m, Member) else member(m) for m in members
@@ -51,4 +51,5 @@ def snap(
                     deleted=False),
         today=today, members=ms, pins=pins, reactions=reactions, reasons=tuple(reasons), shortlist=shortlist,
         last_run_at=dict(last_run_at or {}), actions=derive_actions(pins, reactions, shortlist),
+        ready_categories=frozenset(ready_categories),
     )

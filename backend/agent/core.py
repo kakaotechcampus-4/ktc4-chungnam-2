@@ -304,6 +304,14 @@ def detect_no_reaction(s: Snapshot, now: datetime, th: timedelta) -> list[Signal
     )]
 
 
+def gap_state(s: Snapshot, category: str) -> str:
+    """카테고리 공백의 버튼을 가르는 그 카테고리 상태(#1583). ready: 추천 준비를 통과했다(의견 핀 1곳 이상 — 판정은 recommend, 여기서
+    다시 세지 않는다), pins: 핀은 있는데 준비가 안 됐다(의견이 없다), empty: 핀이 없다. 추천 대상이 아닌 카테고리는 ready가 아니다."""
+    if category in s.ready_categories:
+        return "ready"
+    return "pins" if any(p.category == category for p in s.pins) else "empty"
+
+
 def detect_category_gap(s: Snapshot) -> list[Signal]:
     """카테고리 공백(6.5). 확정이 2곳 이상인데 관찰 대상 카테고리 중 확정이 없는 곳. 숙소와 기타는 핀을 만들 수
     없어(pinnable 아님) 보지 않는다. features.candidate_pin_ids는 그 카테고리의 미확정 핀(후보, 찍은 순, 많아야 TOOL_RESULT_MAX_ITEMS) —
@@ -322,7 +330,7 @@ def detect_category_gap(s: Snapshot) -> list[Signal]:
         out.append(make_signal(
             "category_gap", category=c, evidence=confirmed,
             features=_features(s, category=c, affected=s.member_count, elapsed_ratio=None, trigger=None)
-            | {"candidate_pin_ids": candidates},
+            | {"candidate_pin_ids": candidates, "gap_state": gap_state(s, c)},
         ))
     return out
 
@@ -844,24 +852,33 @@ def _no_reaction_draft(sig: Signal) -> Draft:
         title="아직 확인되지 않은 핀이 {c1.value}개 있어요",
         claims=[c.model_dump() for c in (count, *refs)],
         advice=[{"slot_text": f"{{{r.id}}}", "is_guess": False} for r in refs],
-        actions=_actions(("show_pins", "미확인 핀 보기", {"pin_ids": pin_ids})),
+        actions=_actions(("show_pins", "미확인 핀 보기", {"pin_ids": pin_ids, "unseen_only": True})),
     )
+
+
+def _gap_action(c: str, action_type: str) -> tuple[str, str, dict[str, Any]]:
+    """카테고리 공백의 버튼 하나 (유형, 문구, params). 문구와 params는 여기서만 정한다(처음 제안과 다음 방법이 같이 쓴다)."""
+    if action_type == "show_pins":
+        return action_type, f"{c} 핀에 의견 남기기", {"category": c, "unseen_only": True}
+    label = f"{c} 추천 받기" if action_type == "open_recommend" else f"{c} 검색"
+    return action_type, label, {"category": c}
 
 
 def _category_gap_draft(sig: Signal) -> Draft:
     """카테고리 공백(6.5). 제목 "확정 리스트에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳".
-    버튼은 하나다 — 추천 대상이면 추천 받기, 아니면 검색(숙소가 다시 핀이 될 때 쓴다). 「핀 보기」는 카테고리 필터만 걸어 누른 사람이
-    할 일이 생기지 않아 뺐다(#1317)."""
+    버튼은 하나다 — 추천 준비가 됐으면 추천 받기, 핀은 있는데 의견이 없으면 「핀에 의견 남기기」(미확인 필터), 핀이 없거나 추천 대상이
+    아니면 검색(숙소가 다시 핀이 될 때 쓴다). 준비가 안 된 카테고리에 추천 받기를 붙이지 않는다(#1583). 「핀 보기」는 카테고리 필터만
+    걸어 누른 사람이 할 일이 생기지 않아 뺐다(#1317)."""
     c = sig.category
     confirmed = CountClaim(id="c1", kind="count", subject="map", subject_id=None, metric="confirmed",
                            value=len(sig.evidence_ids))
     in_category = CountClaim(id="c2", kind="count", subject="category", subject_id=c, metric="confirmed", value=0)
-    first = ("open_recommend", f"{c} 추천 받기") if c in categories.recommendable() else ("search_place", f"{c} 검색")
+    first = _gap_action(c, base_actions("category_gap", c, gap_state=sig.features.get("gap_state"))[0])
     return Draft(
         title=f"확정 리스트에 {c}{_josa(c, '이', '가')} 아직 없어요",
         claims=[confirmed.model_dump(), in_category.model_dump()],
         advice=[{"slot_text": f"확정 {{c1.value}}곳 중 {c} {{c2.value}}곳", "is_guess": False}],
-        actions=_actions((*first, {"category": c})),
+        actions=_actions(first),
     )
 
 
@@ -1016,12 +1033,17 @@ def tried_of(chain: Sequence[PastSuggestion]) -> list[dict[str, str]]:
     ]
 
 
-def base_actions(diagnosis: str, category: str | None, *, by_model: bool = False) -> tuple[str, ...]:
+def base_actions(diagnosis: str, category: str | None, *, by_model: bool = False,
+                 gap_state: str | None = None) -> tuple[str, ...]:
     """그 유형의 허용 행동 — 모델이 진단하면 MODEL_ACTIONS(정체, 갈림, 후보 핀이 있는 카테고리 공백), 카테고리 공백의 템플릿은 고를 수
     있는 행동(추천 대상이면 추천 받기, 그다음 검색), 일정 점검은 open_course 하나(6.10). open_course는 모델 진단의 허용 행동이 아니다."""
     if diagnosis in MODEL_TYPES or (by_model and diagnosis in MODEL_ACTIONS):
         return MODEL_ACTIONS[diagnosis]
     if diagnosis == "category_gap":
+        if gap_state == "pins":   # 핀은 있는데 의견이 없다 — 추천은 시작하지 못한다(NOT_READY). 의견을 남기게 하고, 안 되면 검색(#1583)
+            return ("show_pins", "search_place")
+        if gap_state == "empty":
+            return ("search_place",)
         return ("open_recommend", "search_place") if category in categories.recommendable() else ("search_place",)
     if diagnosis == "schedule":
         return (SCHEDULE_ACTION[0],)
@@ -1029,9 +1051,10 @@ def base_actions(diagnosis: str, category: str | None, *, by_model: bool = False
 
 
 def _remaining(diagnosis: str, category: str | None, tried: Iterable[Mapping[str, Any]],
-               preview: Mapping[str, Any] | None = None, *, by_model: bool = False) -> tuple[str, ...]:
+               preview: Mapping[str, Any] | None = None, *, by_model: bool = False,
+               gap_state: str | None = None) -> tuple[str, ...]:
     done = {t.get("action_type") for t in tried}
-    out = [a for a in base_actions(diagnosis, category, by_model=by_model) if a not in done]
+    out = [a for a in base_actions(diagnosis, category, by_model=by_model, gap_state=gap_state) if a not in done]
     if preview is not None and preview.get("passed_count") == 0:
         out = [a for a in out if a != "open_recommend"]
     return tuple(out)
@@ -1040,7 +1063,8 @@ def _remaining(diagnosis: str, category: str | None, tried: Iterable[Mapping[str
 def allowed_actions(sig: Signal, preview: Mapping[str, Any] | None = None) -> tuple[str, ...]:
     """이 신호에 낼 수 있는 행동 — 허용 행동(base_actions, 모델이 진단하면 모델의 목록)에서 이미 해 본 것(features.tried)을 빼고, 미리
     돌려 본 수가 0이면 추천 받기를 뺀다(6.7). 첫 제안(attempt 0)은 tried가 비어 base_actions 그대로다."""
-    return _remaining(sig.diagnosis, sig.category, sig.features.get("tried") or (), preview, by_model=uses_model(sig))
+    return _remaining(sig.diagnosis, sig.category, sig.features.get("tried") or (), preview, by_model=uses_model(sig),
+                      gap_state=sig.features.get("gap_state"))
 
 
 def is_followup(sig: Signal) -> bool:
@@ -1057,7 +1081,9 @@ def uses_model(sig: Signal) -> bool:
     if is_declaration(sig):
         return False
     if sig.diagnosis == "category_gap":
-        return not is_followup(sig) and bool(sig.features.get("candidate_pin_ids"))
+        # 준비가 안 된 카테고리(gap_state가 pins·empty)는 의견이 없어 진단할 재료가 없다 — 템플릿으로 의견 남기기·검색을 낸다(#1583)
+        return (not is_followup(sig) and bool(sig.features.get("candidate_pin_ids"))
+                and sig.features.get("gap_state") in (None, "ready"))
     return sig.diagnosis in MODEL_TYPES
 
 
@@ -1089,7 +1115,8 @@ def _followup_signal(
     다음 방법을 건너뛰고 충돌 선언(attempt 2)이다. fingerprint = hash(앞 제안 fingerprint, attempt)라 duplicate에 걸리지 않는다."""
     tried = tried_of(chain)
     attempt = target.attempt + 1
-    if attempt < MAX_ATTEMPT and not _remaining(target.diagnosis, target.category, tried):
+    state = gap_state(snap, target.category) if target.diagnosis == "category_gap" and target.category else None
+    if attempt < MAX_ATTEMPT and not _remaining(target.diagnosis, target.category, tried, gap_state=state):
         attempt = MAX_ATTEMPT
     evidence_ids, ev_hash, affected = _episode_evidence(target, snap)
     a = target.resolved_at
@@ -1098,7 +1125,7 @@ def _followup_signal(
         "attempt": attempt, "tried": tried, "followup_of": target.id, "base_fingerprint": target.fingerprint,
         "since_minutes": int((now - a).total_seconds() // 60),
         "new_pins": sum(p.category == target.category and p.created_at > a for p in snap.pins),
-    }
+    } | ({"gap_state": state} if state else {})
     return Signal(
         id="", diagnosis=target.diagnosis, category=target.category,
         pin_id=target.pin_id if target.diagnosis == "split" else None,
@@ -1182,9 +1209,8 @@ def _category_gap_followup_draft(sig: Signal) -> Draft:
     c = sig.category
     remaining = allowed_actions(sig)
     base = _category_gap_draft(sig)
-    label = {"open_recommend": f"{c} 추천 받기", "search_place": f"{c} 검색"}[remaining[0]]
     tried = [_tried_line(t["label"]) for t in sig.features.get("tried") or () if t.get("label")]
-    return replace(base, advice=_clean(tried + base.advice), actions=_actions((remaining[0], label, {"category": c})))
+    return replace(base, advice=_clean(tried + base.advice), actions=_actions(_gap_action(c, remaining[0])))
 
 
 def render_followup_template(sig: Signal, preview: Mapping[str, Any] | None = None) -> Draft:
