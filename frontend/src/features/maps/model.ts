@@ -146,13 +146,16 @@ export function mapChanges(
   return Object.keys(body).length ? body : null
 }
 
-/** isGuest: 그 브라우저에서만 이어지는 게스트(#955). 방장이 될 수 없어 넘기기 목록에서 빠진다. */
-/** opinionCount: 이 지도에 남긴 의견 수(#1562). 서버가 채우기 전이면 없다. 없으면 화면은 그리지 않는다. */
-export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean; isGuest: boolean; opinionCount?: number }
+/**
+ * isGuest: 그 브라우저에서만 이어지는 게스트(#955). 방장이 될 수 없어 넘기기 목록에서 빠진다.
+ * opinionCount: 이 지도에 남긴 의견 수(#1562). online: 지금 이 지도를 열어 둔 사람(#1551).
+ * 둘 다 서버가 채우기 전이면 없다. 없으면 화면은 그리지 않는다.
+ */
+export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean; isGuest: boolean; opinionCount?: number; online?: boolean }
 
 export function toMemberView(member: MemberDto, myUserId: string | undefined): MemberView {
   const name = member.display_name ?? '이름 없음'
-  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner', isGuest: member.is_guest === true, opinionCount: member.opinion_count }
+  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner', isGuest: member.is_guest === true, opinionCount: member.opinion_count, online: member.online }
 }
 
 export function toMapView(map: MapDto): MapView {
@@ -299,4 +302,9 @@ export function inviteProblem(err: unknown): InviteProblem | null {
   if (err.code === 'INVITE_REVOKED') return 'revoked'
   if (err.code === 'INVITE_NOT_FOUND') return 'invalid'
   return null
+}
+
+/** 나 말고 지금 이 지도를 열어 둔 구성원 수(#1551). 구성원 버튼과 지도 정보의 '지금 N명이 같이 보고 있어요'가 같이 쓴다. */
+export function othersOnline(members: MemberView[] | undefined): number {
+  return members?.filter((m) => m.online && !m.isMe).length ?? 0
 }
