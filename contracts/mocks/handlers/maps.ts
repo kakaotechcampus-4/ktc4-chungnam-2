@@ -363,6 +363,8 @@ export const mapsHandlers = [
       pin_count: pinCount(map.id), // 핀의 이름·위치는 주지 않고 개수만
       inviter_display_name: store.members[map.id]?.[0]?.display_name,
       expires_at: invite.expires_at,
+      // #1563 내가 이미 구성원이면 지도 id를 준다(아니면 필드 없음)
+      ...((store.members[map.id] ?? []).some((m) => m.user_id === ME_USER_ID) ? { already_member_map_id: map.id } : {}),
     });
   }),
 
@@ -386,6 +388,9 @@ export const mapsHandlers = [
   http.get("*/maps/:mapId/members", ({ params }) => {
     const mapId = params.mapId as string;
     if (!getMapOr404(mapId)) return apiError(404, "NOT_FOUND", "지도를 찾을 수 없습니다");
-    return HttpResponse.json(store.members[mapId] ?? []);
+    // #1562 구성원마다 이 지도의 핀에 남긴 ♥·🚫 수(지운 핀은 store.pins에 없다)
+    const pinIds = Object.values(store.pins).filter((p) => p.map_id === mapId).map((p) => p.id);
+    const opinions = (userId: string) => pinIds.filter((id) => (store.reactions[id] ?? []).some((r) => r.user_id === userId)).length;
+    return HttpResponse.json((store.members[mapId] ?? []).map((m) => ({ ...m, opinion_count: opinions(m.user_id) })));
   }),
 ];
