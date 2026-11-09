@@ -354,7 +354,7 @@ components:
 | 누군지 모르는 사람(탈퇴한 작성자) | `UnknownName` (글 안의 「(알 수 없음)」만 ink-400) | `ui/UnknownName` |
 | 시트 안 이전 화면, 지도 밖 화면의 내 지도 목록 가기 | `BackButton` 「‹ 핀 찍기」, 초대 화면과 지도 만들기 「‹ 내 지도 목록」(#1623, #1655) | `ui/BackButton` |
 | 할 일을 다 끝냈을 때(2026-11-10) | `DoneCard` (good-bg 면 + 반경 12 · 완료 체크 `DoneCheck` 32(초록 원이 커지며 흰 체크가 그려진다, `done-check`) · 제목 14/700 · 다음 할 일 12 ink-600 · 다음 행동 버튼 하나. `role="status"`) | `ui/DoneCard` |
-| 처음 쓰는 사람에게 버튼 자리 짚기(#1658) | `CoachMark` (짚을 자리 `data-coach`만 밝게 두고 나머지 `--scrim` + 흰 2px 테두리 · 옆 흰 말풍선(꼬리, 핑고 40 · 제목 14/700 · 한 줄 13 ink-700 · `btn-outline btn-sm` 「알겠어요」, 폭 최대 320, 아래 자리가 모자라면 위). 이 기기에서 한 번만(`coach.{id}`), 한 번에 하나, 아무 곳이나 누르거나 Esc로 닫히고 누름은 막지 않는다. 모달이 열려 있거나 자동화 브라우저면 띄우지 않는다. 지금 자리: 확정 탭 넣을 날짜, AI 추천 추천받기, AI 코스 코스 짜기 — 지도 탭은 시트 첫 방문 안내가 있어 두지 않는다) | `ui/CoachMark` |
+| 처음 쓰는 사람에게 버튼 자리 짚기(#1658) | `CoachMark` (짚을 자리 `data-coach`만 밝게 두고 나머지 `--scrim` + 흰 2px 테두리 · 옆 흰 말풍선(꼬리, 핑고 40 · 제목 14/700 · 한 줄 13 ink-700 · `btn-outline btn-sm` 「알겠어요」, 폭 최대 320, 아래 자리가 모자라면 위). 이 기기에서 한 번만(`coach.{id}`), 한 번에 하나, 아무 곳이나 누르거나 Esc로 닫히고 누름은 막지 않는다. 모달이 열려 있거나 자동화 브라우저면 띄우지 않는다. 지금 자리: 확정 탭 넣을 날짜, AI 추천 추천받기, AI 코스 코스 짜기, 지도 위 지도 쓰는 법 버튼(#1684). 지도 탭 시트에는 두지 않는다(첫 방문 안내가 있다). 지도 쓰는 법 버튼도 첫 방문 안내(`?onboarding=`)가 떠 있는 동안은 짚지 않고, 닫은 뒤 짚는다) | `ui/CoachMark` |
 | 비어 있을 때 | `EmptyState` (핑고 + 제목 + 설명 + 다음 행동, 찾던 게 없으면 `mood="sad"`. 위에 설명이 이미 있는 자리(휴지통, 삭제한 핀 시트)는 제목만. 필터 결과 없음은 `btn-outline btn-md` 「필터 해제」·「전체 보기」로 푸는 길을 같이 둔다, #1659) | `ui/EmptyState` |
 | 이유를 알리는 안내(결과 위) | `Notice` (ink-100 면 + warn-line 아이콘 + ink-700 글자 + 다음 행동 버튼) | `ui/Notice` |
 | 불러오는 중(모양을 아는 목록) | `CardSkeleton` (글자 「불러오는 중…」 대신 카드 자리 — 핀·지도·알림 목록, 일정, 확정 리스트, 검색 결과. 옆에 글이 없으면 `label`로 화면 읽기에만 알린다) | `ui/CardSkeleton` |
@@ -366,7 +366,7 @@ components:
 | 핑고 | `Pingo` (표정 `mood` · 고개 내밀기 `peek`) · 작은 아이콘 자리는 `PingoMark` | `ui/Pingo` |
 | 지도 위 핑고(3D, 끈 방향 8방향으로 걷기·오르내리기, 쉬면 졸기·잠들기, 새 조언 「!」) | `MapPingo` (`heading` · `wave` · `alert` · `idle`, 크기는 className). 쉬는 시간은 `features/agent/useIdleStage` | `ui/MapPingo` |
 | 온보딩 장면(핑고가 기능을 쓰는 모습, 4:3 지도 판) | `WelcomeScene` (`kind` = pin·reaction·ai·shortlist, 자주 묻는 질문 장면, 지도 쓰는 법 `mapMouse`·`mapTouch`) | `features/onboarding/WelcomeScene` |
-| 지도 쓰는 법(지도 위 카테고리 칩 줄 끝 「?」, 모양은 `chip` + `shadow-float` + 아이콘 16, 누르는 곳 44) | `MapGestureHelp` (`MenuPopover` 안에 제목 · 장면 · 「손이 하는 일 — 지도가 하는 일」 세 줄(가운데로 옮기기, 핀 찍기, 핀 끌어 지우기 #1012). 마우스(`pointer: fine`)면 클릭·우클릭·눌러서 끌기, 아니면 짧게·길게 누르기·길게 눌러 끌기 — 첫 안내 토스트와 같은 기준) | `features/map/MapGestureHelp` |
+| 지도 쓰는 법(지도 위 카테고리 칩 줄 끝 「?」, 모양은 `chip` + `shadow-float` + 아이콘 16, 누르는 곳 44) | `MapGestureHelp` (`MenuPopover` 안에 제목 · 장면 · 「손이 하는 일 — 지도가 하는 일」 세 줄(가운데로 옮기기, 핀 찍기, 핀 끌어 지우기 #1012). 마우스(`pointer: fine`)면 클릭·우클릭·눌러서 끌기, 아니면 짧게·길게 누르기·길게 눌러 끌기 — 첫 안내 토스트와 같은 기준. 흰 칩에 아이콘만 있어 필터 칩처럼 보여서, 처음 한 번 `CoachMark`로 자리를 짚는다(#1684). 색과 자리는 바꾸지 않는다. 파랑을 주면 선택된 칩으로 읽히고, 지도 버튼 묶음에 두면 작은 휴대폰에서 묶음이 숨는다) | `features/map/MapGestureHelp` |
 | 여러 장 중 몇 번째(온보딩) | `StepDots` (지금 장 brand-600 길쭉한 점 · 나머지 ink-300, 읽는 글은 「4장 중 2장」) | `ui/StepDots` |
 | 서비스 이름(로고) | `Wordmark` 「pingopingo」 — pin ink-900 + go brand-600(12° 기울임). 높이만 정하고 글자로 다시 쓰지 않는다 | `ui/Wordmark` |
 | 그리다 죽었을 때(흰 화면 대신) | `ErrorBoundary` (`mood="sad"` 안내 + 「다시 열기」 + 「처음으로」, `resetKey`가 바뀌면 비움. 앱 전체와 지도 탭 자리에 있다) | `ui/ErrorBoundary` |
