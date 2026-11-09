@@ -625,8 +625,13 @@ export default function MapLayout() {
                 className={`pointer-events-auto max-w-full pointer-fine:flex-wrap transition-opacity ${fade}`}
               />
             )}
-            {connection.state !== 'open' && <ConnectionBanner floating state={connection.state} onReconnect={connection.reconnect} />}
           </div>
+          {/* 연결 끊김은 지도 위쪽 가운데, 칩 줄 아래(#1575) — 왼쪽 위에 두면 칩과 섞여 안 보였다. 좁은 화면에서도 칩과 겹치지 않게 칩 줄 아래다. */}
+          {connection.state !== 'open' && (
+            <div className="absolute inset-x-4 top-16 flex justify-center">
+              <ConnectionBanner floating state={connection.state} onReconnect={connection.reconnect} />
+            </div>
+          )}
           <PanelToggle open={panelOpen} onToggle={() => setPanelOpen(!panelOpen)} />
           <MapControls docked hidden={modalOpen} fading={mapMoving} active={activeControl} onPress={onControl} />
           {/* 조언은 지도 단위라 네 탭 모두(#1162). */}
