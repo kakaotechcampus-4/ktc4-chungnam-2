@@ -43,6 +43,8 @@ class Computation:
     model: Optional[str]
     prompt_version: Optional[str]
     review: Optional[review_mod.ReviewResult] = None     # 다 넣은 일정(review 모드)의 점검과 고칠 안. 응답에는 아직 내지 않는다(다음 PR)
+    course: core.Course = ()                             # 고른 코스(날짜별 별칭). 평가(eval/compare.py)가 진짜 영업시간으로 채점한다(#1615)
+    goals: tuple[goals_mod.Goal, ...] = ()               # 목표 세우기가 세운 목표(검증 뒤, 쉬는 날로 옮기기 전). 평가가 정답 목표와 견준다(#1615)
 
 
 def start_hours(trip: core.Trip, gateway: OpeningHoursGateway) -> dict[str, dict[int, core.DayStatus]]:
@@ -162,5 +164,5 @@ def run_course(
         view=build_view(trip, build.excluded, goals, unmatched, result, records, mode=mode, reviewed=reviewed, unassigned=unassigned),
         model_turns=result.model_turns,
         tokens_in=sum(t[0] for t in tokens), tokens_out=sum(t[1] for t in tokens),
-        model=model, prompt_version=prompt_version, review=reviewed,
+        model=model, prompt_version=prompt_version, review=reviewed, course=result.course, goals=goals,
     )

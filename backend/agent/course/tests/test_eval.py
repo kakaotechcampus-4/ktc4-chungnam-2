@@ -84,28 +84,27 @@ def test_비교_기본은_확인필요_모드():
 
 # ---- 요청 목표 비교(pivot 4절) ----
 
-class _FakeSetter:
-    """목표 세우기 모델 자리 대역: 정답 그대로 돌려준다."""
-    calls, failures, tokens = 1, [], (10, 2)
-
-    def __init__(self, goal_set):
-        self._goal_set = goal_set
-
-    def __call__(self, _input):
-        return self._goal_set
+def _setter(goal_set):
+    """목표 세우기 모델 자리 대역: 받은 목표를 그대로 돌려주고 부른 수를 센다."""
+    def planner(_input):
+        planner.calls += 1
+        return goal_set
+    planner.calls = 0
+    return planner
 
 
-class _FakeDecider:
-    calls, failures, tokens = 2, [], (30, 4)
+def _decider(turn_input):
+    """지휘 모델 자리 대역: 후보가 없으면 optimize, 있으면 c1로 끝낸다(지도 하나에 두 번)."""
+    from llm.schemas import CourseDirectTurn
+    tool = {"action": {"tool": "optimize", "priority": [g["id"] for g in turn_input["goals"]], "locks": []}} if not turn_input["candidates"] \
+        else {"action": {"tool": "finish", "candidate_id": "c1"}}
+    return CourseDirectTurn.model_validate({"thought": "해 볼게요", **tool})
 
-    def __init__(self):
-        self._queue = []
 
-    def __call__(self, turn_input):
-        from llm.schemas import CourseDirectTurn
-        tool = {"action": {"tool": "optimize", "priority": [g["id"] for g in turn_input["goals"]], "locks": []}} if not turn_input["candidates"] \
-            else {"action": {"tool": "finish", "candidate_id": "c1"}}
-        return CourseDirectTurn.model_validate({"thought": "해 볼게요", **tool})
+def _right_goals():
+    from llm.schemas import CourseGoalSet
+    return CourseGoalSet.model_validate({"goals": [{"kind": "night_end", "day": "d1", "places": [], "source": "request",
+                                                     "quote": "첫날 저녁엔 야경", "reaction_ids": []}], "unmatched": []})
 
 
 def _request(m, kind="night"):
@@ -123,46 +122,61 @@ def test_요청_비교는_정답_주입이_기준선보다_요청을_더_지킨�
     assert "goal_met" in compare.format_table(table, len(maps))
 
 
-def test_요청_비교의_에이전트는_목표_세우기_정확도와_모델_사용량을_잰다():
+def test_요청_비교의_모델_변형은_목표_세우기_정확도와_모델_호출을_잰다():
     from llm.schemas import CourseGoalSet
     m = build_maps.build_all(fake_records(), 1)[0]
     req = _request(m)
-    right = CourseGoalSet.model_validate({"goals": [{"kind": "night_end", "day": "d1", "places": [], "source": "request",
-                                                      "quote": "첫날 저녁엔 야경", "reaction_ids": []}], "unmatched": []})
-    out = compare.run_request_variants(compare.scenario_from_map(m), req, goal_setter=_FakeSetter(right), decider=_FakeDecider())
-    agent = out["agent"]
-    assert agent.goals_exact is True and agent.goals_trap_ok is None and agent.calls == 3
-    assert (agent.tokens_in, agent.tokens_out) == (40, 6)
+    out = compare.run_request_variants(compare.scenario_from_map(m), req, goals_planner=_setter(_right_goals()), direct_planner=_decider)
+    assert set(out) == {"draft", "strong", "strong_gold", "goals_code", "agent"}
+    agent, goals_code = out["agent"], out["goals_code"]
+    assert agent.goals_exact is True and agent.goals_trap_ok is None and agent.calls == 3     # 목표 1 + 지휘 2
+    assert goals_code.goals_exact is True and goals_code.calls == 1                         # 목표 1, 지휘 없음
     assert agent.gold_met == out["strong_gold"].gold_met
 
-    wrong = CourseGoalSet.model_validate({"goals": [], "unmatched": []})
     trap = {**req, "gold_goals": [], "gold_unmatched": [req["request_text"]]}
-    out = compare.run_request_variants(compare.scenario_from_map(m), trap, goal_setter=_FakeSetter(wrong), decider=_FakeDecider())
-    assert out["agent"].goals_exact is True and out["agent"].goals_trap_ok is True      # 함정에서 목표 0개
+    out = compare.run_request_variants(compare.scenario_from_map(m), trap,
+                                       goals_planner=_setter(CourseGoalSet.model_validate({"goals": [], "unmatched": []})), direct_planner=_decider)
+    assert out["agent"].goals_exact is True and out["agent"].goals_trap_ok is True      # 함정에서 요청 목표 0개
+
+
+def test_목표_세우기는_지도마다_한_번이고_두_변형이_같은_목표를_쓴다():
+    m = build_maps.build_all(fake_records(), 1)[0]
+    setter = _setter(_right_goals())
+    out = compare.run_request_variants(compare.scenario_from_map(m), _request(m), goals_planner=setter, direct_planner=_decider)
+    assert setter.calls == 1
+    assert out["goals_code"].goals_exact == out["agent"].goals_exact
+    goals_code_log, agent_log = "\n".join(out["goals_code"].worklog), "\n".join(out["agent"].worklog)
+    assert "지휘(코드)" in goals_code_log and "지휘(모델" not in goals_code_log      # 목표만은 지휘 자리를 코드가 맡는다
+    assert "지휘(모델" in agent_log
 
 
 def test_요청_비교는_목표_세우기_실패를_목표_없이_진행한다():
-    from agent.course.deps import ModelTurnFailed
-    from llm.api import AgentCallFailed
     m = build_maps.build_all(fake_records(), 1)[0]
 
     def failing(_input):
-        raise ModelTurnFailed(AgentCallFailed(reason="timeout", detail="x"))
-    failing.calls, failing.failures, failing.tokens = 1, [object()], (0, 0)
-    out = compare.run_request_variants(compare.scenario_from_map(m), _request(m), goal_setter=failing, decider=_FakeDecider())
-    assert out["agent"].goals_exact is False and out["agent"].failures == 1
+        raise ValueError("x")
+    out = compare.run_request_variants(compare.scenario_from_map(m), _request(m), goals_planner=failing, direct_planner=_decider)
+    assert out["agent"].goals_exact is False and out["agent"].failures == 1 and out["goals_code"].failures == 1
 
 
 def test_요청_비교는_작업_기록을_단계_모양으로_담는다():
-    from llm.schemas import CourseGoalSet
     m = build_maps.build_all(fake_records(), 1)[0]
-    req = _request(m)
-    right = CourseGoalSet.model_validate({"goals": [{"kind": "night_end", "day": "d1", "places": [], "source": "request",
-                                                      "quote": "첫날 저녁엔 야경", "reaction_ids": []}], "unmatched": []})
-    out = compare.run_request_variants(compare.scenario_from_map(m), req, goal_setter=_FakeSetter(right), decider=_FakeDecider())
+    out = compare.run_request_variants(compare.scenario_from_map(m), _request(m), goals_planner=_setter(_right_goals()), direct_planner=_decider)
     log = out["agent"].worklog
     assert log[0].startswith("[이해] 해석(모델)") and any(l.startswith("[확인] 검증(코드)") for l in log) and log[-1].startswith("[결과]")
     assert out["strong_gold"].worklog[0].startswith("[이해] 해석(정답 주입)") and out["strong"].worklog == ()
+
+
+def test_저장한_줄로_회차_평균과_범위를_낸다():
+    maps = build_maps.build_all(fake_records(), 2)
+    records = []
+    for round_no in (1, 2):
+        for m in maps:
+            res = compare.run_request_variants(compare.scenario_from_map(m), _request(m), goals_planner=_setter(_right_goals()), direct_planner=_decider)
+            records.append(json.loads(json.dumps(compare.to_record(m["id"], round_no, res))))
+    assert all("worklog" not in v for r in records for v in r["variants"].values())     # 작업 기록(장소 이름)은 저장하지 않는다
+    text = compare.summarize(records)
+    assert "1회 2개, 2회 2개" in text and "goals_code" in text and "agent" in text
 
 
 def test_시연은_요청_문장을_직접_받아_작업_기록을_찍는다(tmp_path):
