@@ -119,18 +119,28 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
 }
 
 /**
- * 지도 빈 곳을 누른 자리의 「이 근처 장소 찾기」 말풍선(#1028). 누르자마자 검색하지 않고 한 번 더 묻는다 — 어느 탭이든 같다.
- * 아래 작은 점이 누른 자리다(오버레이 yAnchor 1 → 점 가운데가 좌표). 버튼은 btn-outline btn-sm 부품이다.
+ * 지도 자리 메뉴(#1549) — 항목은 「신규 핀 찍기」 하나다. 부르는 법만 넷이다(왼쪽 클릭·짧게 누르기·길게 누르기는 말풍선, PC 우클릭은 메뉴).
+ * - `bubble`: 누른 자리 위 말풍선(#1028). 아래 작은 점이 누른 자리다(오버레이 yAnchor 1 → 점 가운데가 좌표).
+ * - `menu`: 커서 자리의 작은 메뉴(오버레이 xAnchor·yAnchor 0 → 왼쪽 위가 좌표). 키보드로 고를 수 있게 열리면 항목에 포커스를 둔다.
+ * 버튼은 btn-outline btn-sm 부품이다.
  */
-export function createTapBubbleElement(onPress: () => void): HTMLElement {
-  const box = document.createElement('div')
-  box.className = 'enter-pop'
-  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
+export function createTapBubbleElement(onPress: () => void, style: 'bubble' | 'menu' = 'bubble'): HTMLElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'btn-outline btn-sm shadow-float'
-  button.textContent = '이 근처 장소 찾기'
+  button.textContent = '신규 핀 찍기'
   button.addEventListener('click', onPress)
+  const box = document.createElement('div')
+  box.className = 'enter-pop'
+  if (style === 'menu') {
+    box.setAttribute('role', 'menu')
+    box.setAttribute('aria-label', '지도 메뉴')
+    box.style.cssText = 'transform-origin:0 0;margin:4px 0 0 4px'
+    button.setAttribute('role', 'menuitem')
+    box.append(button)
+    return box
+  }
+  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
   const dot = document.createElement('span')
   dot.setAttribute('aria-hidden', 'true')
   dot.style.cssText =

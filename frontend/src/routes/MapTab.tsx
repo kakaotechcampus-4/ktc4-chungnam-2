@@ -65,7 +65,9 @@ export default function MapTab() {
   if (sorted && order?.key !== orderKey) setOrder({ key: orderKey, ids: sorted.map((p) => p.id) })
   const shown = sorted && order?.key === orderKey ? order.ids.map((id) => sorted.find((p) => p.id === id)).filter((p) => p !== undefined) : sorted
   const search = useSearchStore()
-  const found = useSourcePlacesQuery(search.source, search.near).data?.places
+  const sourced = useSourcePlacesQuery(search.source, search.near).data
+  // 지도 자리 메뉴는 카카오 근처 가게(#1549)까지 센다.
+  const found = sourced && [...sourced.places, ...(sourced.nearby ?? [])]
   const filtered = Boolean(filters.category || filters.createdBy || filters.kind || filters.opinion)
   const [params, setParams] = useSearchParams()
   const onboarding = params.get('onboarding') as OnboardingKind | null

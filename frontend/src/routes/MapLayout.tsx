@@ -9,7 +9,7 @@ import { MIN_LEVEL } from '@/features/map/camera'
 import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
 import { useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
-import { mapTapAction } from '@/features/map/mapTap'
+import { mapTapAction, showMapMenuHintOnce } from '@/features/map/mapTap'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { authorName, byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
 import { CategoryChips } from '@/features/map/PinFilterControls'
@@ -295,8 +295,8 @@ export default function MapLayout() {
   }, [onRecommendTab, mapReady, run, result])
 
   // 지도 빈 곳 누르기는 어느 탭이든 같다(#1028, 멘토 리뷰 #816). 고른 것(핀 상세·검색 결과·AI 후보)이 있으면 풀고,
-  // 없으면 누른 자리에 「이 근처 장소 찾기」 말풍선을 띄운다 — 둘러보다 누른 것이 바로 검색이 되지 않게. 지도는 그대로 둔다.
-  const [tapAt, setTapAt] = useState<{ lat: number; lng: number } | null>(null)
+  // 없으면 누른 자리에 「신규 핀 찍기」 말풍선을 띄운다 — 둘러보다 누른 것이 바로 검색이 되지 않게. 지도는 그대로 둔다.
+  const [tapAt, setTapAt] = useState<{ lat: number; lng: number; style: 'bubble' | 'menu' } | null>(null)
   // 탭을 바꾸거나 무엇을 고르거나 검색이 열리면 말풍선은 닫는다(렌더 중에 맞춘다 — 위 lastQuery 와 같은 방식).
   const tapContext = `${pathname}|${selectedPinId}|${search.source ? 'search' : ''}|${candidateFocus?.id ?? ''}`
   const [lastTapContext, setLastTapContext] = useState(tapContext)
@@ -313,9 +313,22 @@ export default function MapLayout() {
       if (search.selectedId) search.select(null)
       if (ai.focus) ai.blurCandidate()
     }
-    setTapAt(action === 'open' ? at : null)
+    setTapAt(action === 'open' && at ? { ...at, style: 'bubble' } : null)
+    if (action === 'open') showMapMenuHintOnce()
   }
-  /** 말풍선을 누르면 마킹 탭에서 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486). */
+  /** PC 우클릭은 커서 자리 메뉴, 빈 지도 길게 누르기는 말풍선이다(#1549). 고른 것이 있어도 바로 연다 — 일부러 부른 메뉴라서. */
+  function onMapMenu(at: { lat: number; lng: number }, how: 'rightclick' | 'longpress') {
+    setTapAt({ ...at, style: how === 'rightclick' ? 'menu' : 'bubble' })
+  }
+  // 메뉴는 Esc 로도 닫는다(바깥 누르기·지도 끌기는 위 onMapClick·onMovingChange 가 닫는다).
+  const menuOpen = tapAt !== null
+  useEffect(() => {
+    if (!menuOpen) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setTapAt(null)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuOpen])
+  /** 「신규 핀 찍기」를 누르면 마킹 탭에서 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486, #1549). */
   function searchNearby(at: { lat: number; lng: number }) {
     setTapAt(null)
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
@@ -435,6 +448,7 @@ export default function MapLayout() {
         onReady={onMapReady}
         onMovingChange={onMovingChange}
         onMapClick={onMapClick}
+        onMapMenu={onMapMenu}
         tapBubble={tapAt && { ...tapAt, onPress: () => searchNearby(tapAt) }}
         leftCover={cover}
       />
