@@ -335,6 +335,11 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert a.patch("/auth/me", json={"display_name": "철수2"}).status_code == 200
     assert a.patch("/auth/me", json={"display_name": ""}).status_code == 422
 
+    assert a.post(f"/maps/{map_id}/seen").status_code == 204   # 새 소식(#1556)의 기준 시각 — 아래 반응이 이 뒤에 생긴다
+    # 시험 세션은 긴 트랜잭션이라 DB now()가 멈춰 있다 — 기준 시각을 1시간 앞으로 물러 「이 뒤에 생긴 것」이 구분되게 한다.
+    from sqlalchemy import text as _text
+    db_session.execute(_text("UPDATE memberships SET last_seen_at = last_seen_at - interval '1 hour' WHERE map_id = :m AND user_id = 'user_a'"), {"m": map_id})
+    db_session.commit()
     pins = []
     for key in ("seongsu-kalguksu", "seongsu-bunsik", "hongdae-ramen"):
         r = a.post(f"/maps/{map_id}/pins", json=pin_body(key))
@@ -367,6 +372,7 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     news = a.get(f"/maps/{map_id}/news")
     assert news.status_code == 200
     by_pin = {r["pin_id"]: r for r in news.json()["new_reactions"]}
+    assert pins[0] in by_pin, news.json()
     assert "reason_text" not in by_pin[pins[0]] and by_pin[pins[1]]["reason_text"] == "별로"
     assert b.delete(f"/pins/{pins[0]}/reaction").status_code == 204
 
