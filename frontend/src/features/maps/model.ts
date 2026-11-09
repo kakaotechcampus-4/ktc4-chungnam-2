@@ -147,11 +147,12 @@ export function mapChanges(
 }
 
 /** isGuest: 그 브라우저에서만 이어지는 게스트(#955). 방장이 될 수 없어 넘기기 목록에서 빠진다. */
-export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean; isGuest: boolean }
+/** opinionCount: 이 지도에 남긴 의견 수(#1562). 서버가 채우기 전이면 없다. 없으면 화면은 그리지 않는다. */
+export type MemberView = { userId: string; name: string; initial: string; isMe: boolean; isOwner: boolean; isGuest: boolean; opinionCount?: number }
 
 export function toMemberView(member: MemberDto, myUserId: string | undefined): MemberView {
   const name = member.display_name ?? '이름 없음'
-  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner', isGuest: member.is_guest === true }
+  return { userId: member.user_id, name, initial: name.slice(0, 1), isMe: member.user_id === myUserId, isOwner: member.role === 'owner', isGuest: member.is_guest === true, opinionCount: member.opinion_count }
 }
 
 export function toMapView(map: MapDto): MapView {
@@ -260,7 +261,8 @@ export function inviteErrorMessage(err: unknown): string {
   return INVITE_ERROR_MESSAGES[err.code] ?? '참여하지 못했어요'
 }
 
-export type InviteView = { title: string; dates: string; memberCount: number; pinCount: number; inviter: string }
+/** alreadyMemberMapId: 연 사람이 이미 그 지도 구성원이면 지도 id(#1563). 서버가 그때만 준다. */
+export type InviteView = { title: string; dates: string; memberCount: number; pinCount: number; inviter: string; alreadyMemberMapId?: string }
 
 export function toInviteView(invite: InviteSummaryDto): InviteView {
   return {
@@ -269,6 +271,7 @@ export function toInviteView(invite: InviteSummaryDto): InviteView {
     memberCount: invite.member_count,
     pinCount: invite.pin_count,
     inviter: invite.inviter_display_name,
+    alreadyMemberMapId: invite.already_member_map_id,
   }
 }
 
