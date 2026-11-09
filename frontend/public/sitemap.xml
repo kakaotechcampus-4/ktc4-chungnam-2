@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 로그인 없이 열리는 화면만 넣는다(#1614). 지도는 로그인이 필요하고 초대 주소는 개인 링크다. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://ktc-pingopingo.duckdns.org/</loc></url>
+  <url><loc>https://ktc-pingopingo.duckdns.org/welcome</loc></url>
+  <url><loc>https://ktc-pingopingo.duckdns.org/terms</loc></url>
+  <url><loc>https://ktc-pingopingo.duckdns.org/privacy</loc></url>
+  <url><loc>https://ktc-pingopingo.duckdns.org/location-terms</loc></url>
+</urlset>
