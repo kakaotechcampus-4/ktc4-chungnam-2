@@ -382,6 +382,7 @@ components:
 | 핀은 있는데 구성원이 나 하나일 때 초대 안내(마킹 탭 목록 위) | `AloneInvite` (핑고 물 면 · 핑고 40 · 「아직 나 혼자예요」 14/700 · `btn-outline btn-sm` 「친구 초대하기」, 버튼 글자는 온보딩과 같다, #1560) | `features/map/AloneInvite` |
 | 자주 묻는 질문 | `FaqSheet` (글은 `features/help/faq`, 정책 숫자는 적지 않는다. 답 위에 `WelcomeScene` 장면, 폭 최대 280) | `features/help/FaqSheet` |
 | 지도 대표 이미지(올린 사진 또는 지역 명소 그림), 이미지·색 편집 창 | `MapCover` · `CoverSheet` · `ColorSheet`. 기본 그림은 `RegionCover`(320×140, 평면 2D 명소: 서울 광화문 · 부산 광안대교 · 대구 83타워 · 광주 무등산 서석대 · 대전 한빛탑 · 춘천 소양강 스카이워크, 그 밖은 길 위 핀 둘). 핑고 캐릭터는 넣지 않는다. 지도 색 견본은 `features/maps/look`의 파스텔 8색 | `features/maps/MapLook`, `ui/RegionCover` |
+| 초대 화면 대표 이미지 위 핑고 얼굴(오른쪽 아래 흰 원 32, 얼굴 22) | `CoverPingo`. 초대 카드(2:1)에만 얹는다 — 내 지도 카드에는 얹지 않는다. 카톡 미리보기 그림은 같은 자리에 워드마크다(서버 `maps/preview.py`, #1625) | `ui/CoverPingo` |
 | 카드 구석 「⋯」 동작 메뉴(내 지도 카드) | `ActionMenu` (radix DropdownMenu, 항목 높이 44, 위험 동작은 `--action-danger` 글자로 맨 끝, 고르면 바로 닫힘) | `features/shell/ActionMenu` |
 | 지도 바꾸기(넓은 화면 패널 제목) | `MapSwitcher` | `features/maps/MapSwitcher` |
 | 삭제한 지도 휴지통(목록 끝 `btn-text` 입구 + 바닥 시트, 줄마다 「복구」 `btn-outline btn-sm`) | `TrashSheet` | `features/maps/TrashSheet` |
