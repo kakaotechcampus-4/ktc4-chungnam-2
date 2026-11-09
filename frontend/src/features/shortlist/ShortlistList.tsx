@@ -1,4 +1,6 @@
 import { GripVertical, Plus } from 'lucide-react'
+import { authorName } from '@/features/map/model'
+import UnknownName from '@/ui/UnknownName'
 
 import DragGhost from './DragGhost'
 import type { ShortlistItemDto } from './model'
@@ -64,7 +66,7 @@ function Row({
           <p className="truncate font-bold text-ink-900">{name}</p>
           <p className="truncate text-xs text-ink-500">
             {item.pin.category}
-            {item.pin.created_by_display_name && ` · ${item.pin.created_by_display_name}님이 찍은 핀`}
+            <UnknownName text={` · ${authorName(item.pin)}님이 찍은 핀`} />
           </p>
         </button>
         {onPut && (

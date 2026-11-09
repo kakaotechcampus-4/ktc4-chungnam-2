@@ -182,14 +182,22 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
           </p>}
         </div>
         {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
-        {(selected.address || selected.url) && (
+        {(selected.address || selected.url || selected.naverUrl) && (
           <div className="space-y-2 rounded-xl bg-ink-50 p-3.5 text-body">
             {selected.address && <p className="text-ink-700">{selected.address}</p>}
-            {selected.url && (
-              <a href={selected.url} target="_blank" rel="noopener noreferrer" className="btn-link">
-                카카오맵에서 자세히 보기 <ExternalLink size={14} aria-hidden="true" />
-              </a>
-            )}
+            {/* 핀 상세와 같은 두 링크 — 찍기 전에도 네이버 지도로 볼 수 있다(#1554). */}
+            <div className="flex flex-wrap gap-x-4">
+              {selected.url && (
+                <a href={selected.url} target="_blank" rel="noopener noreferrer" className="btn-link">
+                  카카오맵에서 자세히 보기 <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              )}
+              {selected.naverUrl && (
+                <a href={selected.naverUrl} target="_blank" rel="noopener noreferrer" className="btn-link">
+                  네이버 지도에서 보기 <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              )}
+            </div>
           </div>
         )}
         {selected.canLeaveLive && !selected.alreadyPinned ? (

@@ -190,7 +190,7 @@ function ProfileBody({ mapId, onConfirm, account = true }: { mapId: string; onCo
             <div>
               <p className="text-sm font-bold text-ink-900">계정</p>
               <p className="text-xs text-ink-500">
-                {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
+                {me.data?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '로그인됨 · '}
                 {me.data?.display_name}{' '}
                 <button type="button" onClick={() => onConfirm('name')} className="btn-link">
                   이름 바꾸기
