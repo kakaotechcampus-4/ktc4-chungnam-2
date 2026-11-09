@@ -160,8 +160,8 @@ function PrefsView({ onBack }: { onBack: () => void }) {
             <Switch
               checked={p.enabled}
               label={prefLabel(p.type)}
-              disabled={update.isPending}
-              onChange={(enabled) => update.mutate({ type: p.type, enabled })}
+              // 누르는 순간 움직인다(낙관적, #1676). 흐리게 막지 않고, 같은 줄을 보내는 중에 또 누르면 무시한다 — 응답 순서가 엇갈리면 값이 뒤집힌다.
+              onChange={(enabled) => !(update.isPending && update.variables?.type === p.type) && update.mutate({ type: p.type, enabled })}
             />
           </li>
         ))}

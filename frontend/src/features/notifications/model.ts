@@ -39,3 +39,20 @@ export function mapOrigin(n: Pick<NotificationDto, 'map_id'>, currentMapId: stri
   if (!currentMapId) return 'all'
   return n.map_id === currentMapId ? 'here' : 'other'
 }
+
+/**
+ * 읽음을 화면 캐시에 먼저 적는다(#1676). ids가 없으면 전부. 배지 숫자(첫 쪽 unread_count)는 새로 읽은 줄 수만큼 줄인다 —
+ * 받은 쪽 밖의 안 읽은 알림도 있어서 0으로 만들지 않는다(전부 읽음일 때만 0).
+ */
+export function markReadLocally(data: { pages: NotificationListDto[]; pageParams: unknown[] }, ids?: string[]) {
+  const hit = (n: NotificationDto) => !n.read && (!ids || ids.includes(n.id))
+  const newly = data.pages.reduce((sum, p) => sum + p.items.filter(hit).length, 0)
+  return {
+    ...data,
+    pages: data.pages.map((p, i) => ({
+      ...p,
+      items: p.items.map((n) => (hit(n) ? { ...n, read: true } : n)),
+      unread_count: i === 0 ? (ids ? Math.max(0, p.unread_count - newly) : 0) : p.unread_count,
+    })),
+  }
+}

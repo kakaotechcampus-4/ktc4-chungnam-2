@@ -64,23 +64,26 @@ export function PinDetailHeader({
 }) {
   const add = useAddToShortlistMutation(mapId)
   const remove = useUnconfirm(mapId)
-  const confirmed = pin.kind === '확정'
-  const canToggle = confirmed ? pin.permissions.can_remove_from_shortlist : pin.permissions.can_add_to_shortlist
+  // 누르는 순간 바뀐 상태로 보인다(#1676, 낙관적 UI) — 넣기는 핀 캐시가 바로 확정이 되고, 빼기는 응답 전까지 여기서 뒤집어 보인다.
+  const confirmed = pin.kind === '확정' && remove.removingPinId !== pin.id
   const busy = add.isPending || remove.isPending
+  // 권한은 서버가 지금 상태로 준 값이라, 바꾸는 중에는 반대쪽 권한이 아직 없다 — 그동안은 버튼을 그대로 둔다(포커스가 빠지지 않게).
+  const canToggle = busy || (confirmed ? pin.permissions.can_remove_from_shortlist : pin.permissions.can_add_to_shortlist)
   const navigate = useNavigate()
   const name = pin.place_name ?? '이 장소'
   // 넣으면 확정 리스트로 가는 길을(#1030), 빼면 「되돌리기」를 토스트로 준다 — 핀 모양만으로는 뺐다는 걸 놓친다(#1576).
-  const toggle = () =>
-    confirmed
-      ? remove.unconfirm(pin)
-      : add.mutate(pin.id, {
-          onSuccess: () =>
-            showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
-              label: '확정 리스트 보기',
-              onClick: () => navigate(`/maps/${mapId}/shortlist`),
-            }),
-          onError: () => showToast('확정 리스트에 넣지 못했어요'),
-        })
+  const toggle = () => {
+    if (busy) return
+    if (confirmed) return remove.unconfirm(pin)
+    add.mutate(pin.id, {
+      onSuccess: () =>
+        showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
+          label: '확정 리스트 보기',
+          onClick: () => navigate(`/maps/${mapId}/shortlist`),
+        }),
+      onError: () => showToast('확정 리스트에 넣지 못했어요'),
+    })
+  }
 
   return (
     <div>
@@ -94,7 +97,8 @@ export function PinDetailHeader({
         </span>
         {canToggle ? (
           // 켜고 끄는 버튼 하나다. 한 버튼이라 눌러도 포커스가 그대로다. 채움 버튼이 아니다 — 이 화면의 채움 버튼은 「의견 등록」 하나다.
-          <button type="button" aria-pressed={confirmed} disabled={busy} onClick={toggle} className="btn-confirm btn-sm">
+          // 바꾸는 동안 흐리게 막지 않는다 — 누른 결과가 이미 보이는 게 낙관적 UI다. 그동안 다시 누르면 무시한다(toggle).
+          <button type="button" aria-pressed={confirmed} aria-disabled={busy} onClick={toggle} className="btn-confirm btn-sm">
             {confirmed ? (
               <><Mark kind="check" size={14} /> 확정됨</>
             ) : (
