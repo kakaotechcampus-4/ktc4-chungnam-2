@@ -107,13 +107,13 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
         <ellipse cx="17.14" cy="3.87" rx="1.52" ry="2.36" transform="rotate(40 17.14 3.87)" />
       </g>`
     : ''
-  // 순위 배지는 오른쪽 위다. 고르면 핑고 손이 그 자리라 커진 머리 오른쪽 옆으로 내린다.
+  // 순위 배지는 머리 밖 오른쪽 위다 — 머리 가장자리를 덮으면 핀이 깎여 작아 보였다. 고르면 핑고 손이 그 자리라 커진 머리 오른쪽 옆으로 내린다.
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true" overflow="visible"${c.selected ? ' class="pin-bounce"' : ''}>
       ${pinGlyph({ kind: 'candidate' })}
       ${hands}
     </svg>
-    <span aria-hidden="true" style="position:absolute;left:${c.selected ? 30 : 25}px;top:${c.selected ? 12 : 0}px;min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;border-radius:8px;background:#fff;border:1.5px solid var(--brand-600);color:var(--brand-700);font:700 11px/13px var(--font-sans);text-align:center">${c.rank}</span>`
+    <span aria-hidden="true" style="position:absolute;left:${c.selected ? 30 : 29}px;top:${c.selected ? 12 : -6}px;min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;border-radius:8px;background:#fff;border:1.5px solid var(--brand-600);color:var(--brand-700);font:700 11px/13px var(--font-sans);text-align:center">${c.rank}</span>`
   el.addEventListener('click', onClick)
   return el
 }

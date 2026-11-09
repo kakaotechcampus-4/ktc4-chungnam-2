@@ -2,8 +2,11 @@ import { LIKE_PATH } from './Mark'
 import { PIN_OUTLINE, PIN_PATH } from './pinPath'
 import { PINGO_MARK } from './pingoMark'
 
-/** 핑고 얼굴(32×32 로고)을 핀 머리(가운데 12,10) 안에 넣는 변환. */
-const MARK_IN_HEAD = 'translate(5.3 3.6) scale(0.42)'
+/**
+ * 핑고 얼굴(32×32 로고)을 핀 머리(가운데 12,10) 안에 넣는 변환. 0.42배일 땐 흰 얼굴이 핀의 18%를 덮어 밝은 지도와 섞이고,
+ * 파란 테두리만 핀으로 읽혀 같은 크기의 일반·확정 핀보다 작아 보였다 — 0.34배로 줄여 머리에 파랑이 남게 한다(2026-11-10).
+ */
+const MARK_IN_HEAD = 'translate(6.56 4.83) scale(0.34)'
 
 export type PinGlyph =
   /** 일반 핀(올린 AI 추천 핀 포함). ratio 는 참여율 0~1. */
