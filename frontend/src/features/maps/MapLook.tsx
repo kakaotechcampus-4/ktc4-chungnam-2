@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { Check } from 'lucide-react'
 
 import { apiUrl, ApiError } from '@/api'
@@ -31,26 +31,38 @@ function coverErrorMessage(err: unknown): string {
 }
 
 /**
- * 대표 이미지 편집(방장만, #1445). 사진을 고르면 브라우저에서 줄여 바로 올린다. 올린 이미지가 있으면
- * 「기본 그림으로」가 지역 명소 그림으로 되돌린다.
+ * 대표 이미지 편집(방장만, #1445). 사진을 고르면 브라우저에서 줄여 미리보기에만 보이고, 「저장」을 눌러야 올린다(#1643).
+ * 「기본 그림으로」도 미리보기만 지역 명소 그림으로 바꾼다. 「닫기」는 고른 것을 버린다.
  */
 export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void }) {
   const cover = useCoverMutation(map.id)
   const [shrinkFailed, setShrinkFailed] = useState(false)
+  // undefined = 고친 것 없음, null = 기본 그림으로, Blob = 고른 사진
+  const [draft, setDraft] = useState<Blob | null | undefined>(undefined)
+  const preview = useMemo(() => (draft ? URL.createObjectURL(draft) : null), [draft])
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
   const inputId = useId()
+  const showsUpload = draft === undefined ? Boolean(map.coverUrl) : draft !== null
 
   async function pick(file: File | undefined) {
     if (!file) return
     setShrinkFailed(false)
     const limit = cover.error instanceof ApiError ? Number(cover.error.detail?.limit_bytes) || undefined : undefined
-    let image: Blob
     try {
-      image = await shrinkImage(file, limit)
+      setDraft(await shrinkImage(file, limit))
     } catch {
       setShrinkFailed(true)
-      return
     }
-    cover.mutate(image, { onSuccess: () => showToast('대표 이미지를 바꿨어요') })
+  }
+
+  function save() {
+    if (draft === undefined) return
+    cover.mutate(draft, {
+      onSuccess: () => {
+        showToast(draft ? '대표 이미지를 바꿨어요' : '기본 그림으로 바꿨어요')
+        onClose()
+      },
+    })
   }
 
   return (
@@ -58,7 +70,11 @@ export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void
       <SheetTitle>대표 이미지 편집</SheetTitle>
       <p className="mt-1 text-sm text-ink-600"><Sentences text="구성원 모두에게 같은 이미지가 보여요" /></p>
       <div className="mt-4 overflow-hidden rounded-xl border border-ink-200">
-        <MapCover map={map} className="block aspect-[16/7] w-full" />
+        {preview ? (
+          <img src={preview} alt="" className="block aspect-[16/7] w-full object-cover" />
+        ) : (
+          <MapCover map={draft === null ? { region: map.region } : map} className="block aspect-[16/7] w-full" />
+        )}
       </div>
       {shrinkFailed && <ErrorText message="이 사진은 열 수 없어요. 다른 사진을 골라 주세요" error={null} />}
       {cover.error && <ErrorText message={coverErrorMessage(cover.error)} error={cover.error} />}
@@ -75,22 +91,22 @@ export function CoverSheet({ map, onClose }: { map: MapView; onClose: () => void
             e.target.value = ''
           }}
         />
-        <label htmlFor={inputId} className={`btn-primary btn-lg w-full ${cover.isPending ? 'pointer-events-none opacity-60' : 'cursor-pointer'}`}>
-          {cover.isPending ? '올리는 중…' : '사진 고르기'}
+        <label htmlFor={inputId} className={`btn-outline btn-lg w-full ${cover.isPending ? 'pointer-events-none opacity-60' : 'cursor-pointer'}`}>
+          사진 고르기
         </label>
-        {map.coverUrl && (
-          <button
-            type="button"
-            disabled={cover.isPending}
-            onClick={() => cover.mutate(null, { onSuccess: () => showToast('기본 그림으로 바꿨어요') })}
-            className="btn-outline btn-lg w-full"
-          >
+        {showsUpload && (
+          <button type="button" disabled={cover.isPending} onClick={() => setDraft(null)} className="btn-outline btn-lg w-full">
             기본 그림으로
           </button>
         )}
-        <button type="button" onClick={onClose} className="btn-neutral btn-lg w-full">
-          닫기
-        </button>
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <button type="button" onClick={onClose} className="btn-neutral btn-lg">
+            닫기
+          </button>
+          <button type="button" disabled={draft === undefined || cover.isPending} onClick={save} className="btn-primary btn-lg">
+            {cover.isPending ? '저장하는 중…' : '저장'}
+          </button>
+        </div>
       </div>
     </ModalSheet>
   )
