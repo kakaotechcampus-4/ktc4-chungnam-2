@@ -14,6 +14,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
   el.type = 'button'
   // 장소 이름은 setAttribute 로만 넣는다 — innerHTML 로 들어가면 이름이 마크업으로 해석된다.
   el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'}, ${kindLabel(pin.kind)} 핀${fresh ? ', 새 소식 있음' : ''}`)
+  el.dataset.pinTone = pin.kind === '확정' ? 'confirmed' : 'normal'
   el.style.cssText =
     'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `
@@ -43,6 +44,7 @@ export function createSearchMarkerElement(
   const el = document.createElement('button')
   el.type = 'button'
   el.setAttribute('aria-label', [`검색 결과 ${r.n}번`, r.name, r.category].filter(Boolean).join(', '))
+  el.dataset.pinTone = 'search'
   if (r.selected) el.setAttribute('aria-current', 'true')
   el.style.cssText =
     'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
@@ -94,6 +96,7 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
   const el = document.createElement('button')
   el.type = 'button'
   el.setAttribute('aria-label', `AI 추천 ${c.rank}위, ${c.name}`)
+  el.dataset.pinTone = 'candidate'
   el.style.cssText =
     'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   // 손은 머리 원(가운데 12,10 · 반지름 8)의 양 어깨(위에서 ±40°)에 걸친다. 핑고(Pingo.tsx)의 흰 몸 + 외곽선과 같은 색이고,
@@ -147,25 +150,49 @@ export function markSelected(el: HTMLElement, name: string, on: boolean) {
   setPinLabel(el, name, on ? 'selected' : null)
 }
 
+type PinTone = 'normal' | 'confirmed' | 'candidate' | 'search'
+
+/** 이름표 색 — 핀의 윤곽선 색(line)으로 테두리·글자를, 고르면 핀의 채움 색(fill)으로 채우고 그 위 글자(on). */
+const LABEL_TONE: Record<PinTone, { line: string; fill: string; on: string }> = {
+  normal: { line: 'var(--pin-outline)', fill: 'var(--pin-outline)', on: '#fff' },
+  confirmed: { line: 'var(--pin-confirmed-mark)', fill: 'var(--pin-confirmed)', on: 'var(--pin-confirmed-mark)' },
+  candidate: { line: 'var(--brand-700)', fill: 'var(--brand-500)', on: '#fff' },
+  search: { line: 'var(--pin-stroke)', fill: 'var(--pin-stroke)', on: '#fff' },
+}
+
+/** 이름표 자리(px) — 핀 끝에서 띄우는 거리(꼬리 높이 포함)와 높이. 겹침 정리(markerLayer)도 이 값으로 잰다. */
+export const PIN_LABEL = { gap: 6, h: 21 }
+
 /**
- * 핀 아래 이름표.
- * - quiet: 지도에 찍힌 핀은 누르지 않아도 이름이 보인다. 작은 흰 알약이고 길면 말줄임한다. 겹치면 markerLayer 가 숨긴다
- * - selected: 고른 핀·후보의 말풍선(#308). 더 굵고 그림자가 진하고, 이름을 다 보인다
+ * 핀 아래 이름표 — 핀 색 말풍선(2026-11-09). 흰 바탕 + 핀 윤곽선 색 테두리·글자이고, 위로 난 꼬리가 핀 끝을 가리킨다.
+ * 회색 테두리 흰 알약일 땐 핀과도 바탕 지도와도 이어지지 않아 따로 뜬 상자로 보였다. 색은 핀 종류(`data-pin-tone`)를 따른다.
+ * - quiet: 지도에 찍힌 핀은 누르지 않아도 이름이 보인다. 길면 말줄임한다. 겹치면 markerLayer 가 숨긴다
+ * - selected: 고른 핀·후보·검색 결과(#308). 핀 색으로 채워 어느 것을 골랐는지 보이고, 이름을 다 보인다
  * - null: 떼어 낸다(검색 결과·AI 후보는 고를 때만 이름이 있다)
+ * 꼬리는 바깥 틀에, 말줄임은 안쪽 글자에 둔다 — 한 겹이면 말줄임의 overflow:hidden 이 꼬리를 잘랐다.
  * 이름은 textContent 로만 넣는다(마크업으로 해석되지 않게). 읽는 이름은 버튼 aria-label 이 이미 갖고 있어 aria-hidden 이다.
  */
 export function setPinLabel(el: HTMLElement, name: string, mode: 'quiet' | 'selected' | null) {
   el.querySelector('[data-pin-name]')?.remove()
   if (!mode || !name) return
+  const tone = LABEL_TONE[(el.dataset.pinTone as PinTone | undefined) ?? 'normal']
+  const filled = mode === 'selected'
+  const bg = filled ? tone.fill : '#fff'
   const label = document.createElement('span')
   label.dataset.pinName = mode
-  label.textContent = name
   label.setAttribute('aria-hidden', 'true')
   label.style.cssText =
-    // 그림자 대신 윤곽선 1px — 옅게 깐 바탕 지도 위에서 경계가 또렷하다. 테두리만큼 안쪽 여백을 줄여 크기는 그대로다.
-    'position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;padding:1px 7px;border-radius:8px;' +
-    'border:1px solid var(--ink-300);background:#fff;color:var(--ink-900);font-size:0.75rem;line-height:1.4;white-space:nowrap;pointer-events:none;' +
-    (mode === 'selected' ? 'font-weight:700' : 'font-weight:600;max-width:8em;overflow:hidden;text-overflow:ellipsis')
+    `position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:${PIN_LABEL.gap}px;padding:1px 7px;border-radius:6px;` +
+    `border:1px solid ${tone.line};background:${bg};color:${filled ? tone.on : tone.line};` +
+    'font-size:0.75rem;font-weight:700;line-height:1.4;white-space:nowrap;pointer-events:none;'
+  const tail = document.createElement('span')
+  tail.style.cssText =
+    `position:absolute;left:50%;top:-4px;width:7px;height:7px;transform:translateX(-50%) rotate(45deg);` +
+    `background:${bg};border-left:1px solid ${tone.line};border-top:1px solid ${tone.line}`
+  const text = document.createElement('span')
+  text.textContent = name
+  text.style.cssText = filled ? 'position:relative;display:block' : 'position:relative;display:block;max-width:8em;overflow:hidden;text-overflow:ellipsis'
+  label.append(tail, text)
   el.style.position = 'relative'
   el.appendChild(label)
 }
