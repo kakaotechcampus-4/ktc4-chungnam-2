@@ -41,7 +41,7 @@ def _call(call_id, name, result, args=None):
 # 실제 정체 진단 한 번의 기록 모양 — 미리 찾기(p1)가 먼저, 모델 도구(t1 …), 웹 확인(w1)이 뒤. 결과에는 저장된 그대로 핀 이름,
 # 별칭, 글자 수가 있다
 STALL_CALLS = [
-    _call("p1", "preview_filter", {"passed_count": 12, "funnel": {"radius": 40}}, {"category": "음식점", "with_keys": []}),
+    _call("p1", "preview_filter", {"passed_count": 12, "funnel": {"radius": 40}}, {"category": "음식점", "with_conditions": []}),
     _call("t1", "get_reasons", {"reasons": [
         {"reaction_id": "r1", "pin_id": "p1", "type": "against", "text_len": 11, "member_alias": "m2"},
         {"reaction_id": "r2", "pin_id": "p2", "type": "against", "text_len": 9, "member_alias": "m3"},
@@ -145,13 +145,16 @@ def test_tool_that_returned_an_error_says_it_stopped(error):
     assert tool_step.text == "사유를 조건으로 나누려다 멈췄어요"
 
 
-def test_compromise_preview_adds_the_count_that_meets_both_sides():
-    preview = {"passed_count": 9, "with_keys_count": 3, "with_labels": ["조용한 곳"], "funnel": {}}
-    run = _run(tool_calls=[_call("p1", "preview_filter", preview, {"category": "카페", "with_keys": ["quiet"]})])
+def test_compromise_preview_adds_the_places_against_neither_side_and_the_confirmed_ones():
+    """「다 맞춘다」고 하지 않는다 — 모름이 섞인 수(#1600)라 어긋나지 않는 곳과 둘 다 확인된 곳을 나눠 쓴다."""
+    preview = {"passed_count": 9, "both_sides_count": 3, "both_sides_confirmed_count": 1,
+               "like_labels": ["조용한 곳"], "against_labels": ["주차할 수 있음"], "funnel": {}}
+    args = {"category": "카페", "with_conditions": [{"fact_key": "quiet", "wants": True, "side": "like"}]}
+    run = _run(tool_calls=[_call("p1", "preview_filter", preview, args)])
 
     [step] = [s for s in core.render_steps(run, _sug()) if s.stage == "미리 찾기"]
 
-    assert step.text == "지금 조건으로 미리 찾아봤어요 · 9곳 남아요 · 두 의견을 다 맞추는 곳 3곳"
+    assert step.text == "지금 조건으로 미리 찾아봤어요 · 9곳 남아요 · 두 의견에 어긋나지 않는 곳 3곳(둘 다 확인 1곳)"
 
 
 @pytest.mark.parametrize("result, by, by_detail, text", [
@@ -215,7 +218,7 @@ def test_after_withdrawal_tool_and_verify_lines_are_gone():
 def test_reason_text_pin_names_aliases_and_urls_in_the_record_never_reach_the_steps():
     """기록에 사람 글, 핀 이름, 별칭, URL이 섞여 들어가 있어도(옛 기록, 리댁션 밖 칸) 작업 기록은 숫자와 고정 문구뿐이다."""
     leaky = [
-        _call("p1", "preview_filter", {"passed_count": 2, "with_labels": [REASON_TEXT], "funnel": {}}),
+        _call("p1", "preview_filter", {"passed_count": 2, "like_labels": [REASON_TEXT], "funnel": {}}),
         _call("t1", "get_reaction_matrix", {"members": ["m1", "m2"], "pins": [{"pin_id": "p1", "name": PIN_NAME}],
                                             "total": 1}, {"category": PIN_NAME}),
         _call("t2", "get_reasons", {"reasons": [{"reaction_id": "r1", "text": REASON_TEXT, "member_alias": "m1"}]},

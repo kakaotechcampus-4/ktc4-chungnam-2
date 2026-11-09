@@ -547,7 +547,7 @@ def split_brain(pin_id):
         ]
         advice = [
             AdviceLine(text="♥ {c1.value}명, 🚫 {c2.value}명으로 갈렸어요", basis=["c1", "c2"], is_guess=False),
-            AdviceLine(text="두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {c3.value}곳 있어요", basis=["c3"],
+            AdviceLine(text="두 의견을 다 맞추는 곳은 없지만, 지금 조건으로 추천에 남는 곳이 {c3.value}곳 있어요", basis=["c3"],
                        is_guess=False),
         ]
         actions = [
@@ -578,13 +578,13 @@ def test_same_axis_split_is_previewed_and_points_to_recommend_not_pins(e2e, monk
     run = e2e.runs(map_id)[-1]
     assert (run.outcome, run.used_model) == ("suggested", True)
     [preview] = [t for t in run.tool_calls if t["call_id"] == "p1"]
-    assert (preview["name"], preview["args"]) == ("preview_filter", {"category": "음식점", "with_keys": []})   # ♥ 쪽 키 없이
+    assert (preview["name"], preview["args"]) == ("preview_filter", {"category": "음식점", "with_conditions": []})   # 두 의견의 조건 없이
     passed = preview["result"]["passed_count"]
     assert run.verification["actions"]["removed"][0] == {"index": 0, "reason": "type"}   # 「핀 보기」는 허용 버튼이 아니다
 
     sug = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
     assert (sug["diagnosis"], sug["analysis"]["conflict_type"]) == ("split", "same_axis")
-    assert _text(sug["advice"][1]) == f"두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {passed}곳 있어요"
+    assert _text(sug["advice"][1]) == f"두 의견을 다 맞추는 곳은 없지만, 지금 조건으로 추천에 남는 곳이 {passed}곳 있어요"
     expected = ([("open_recommend", "음식점 추천 받기")] if passed else []) + [("search_place", "음식점 검색")]
     assert [(x["type"], x["label"]) for x in sug["actions"]] == expected
     assert [st["text"] for st in sug["steps"] if st["stage"] == "미리 찾기"] == [f"지금 조건으로 미리 찾아봤어요 · {passed}곳 남아요"]

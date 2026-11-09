@@ -1244,28 +1244,50 @@ def tracking(suggestions: Sequence[PastSuggestion], now: datetime) -> list[Agent
 
 # ---------------------------------------------------------------- 모델 진단 입력 (6.2, 6.3, 10절)
 
-def compromise_keys(comparison: Mapping[str, Any] | None) -> list[str]:
-    """절충안(6.7)의 with_keys — ♥ 쪽이 원한 키(compare_reasons의 want에 side=like가 있는 키), 키 순서. 🚫 쪽 조건은 근거 줄로
-    이미 들어가므로 여기 넣지 않는다."""
+def compromise_conditions(comparison: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """절충안(6.7)에서 셀 두 의견의 조건 `[{fact_key, wants, side}]` — compare_reasons의 keys에서 방향이 있는 줄을 양쪽 모두
+    (♥ 원함, ♥ 피함, 🚫 원함, 🚫 피함 순, 그 안은 키 순서, 같은 것은 한 번). #1253 뒤 일반 🚫 사유는 거르지 않아 🚫 쪽 조건도
+    여기서 센다(#1600). 세는 법(어긋남과 모름)은 recommend.api.preview_filter가 정한다."""
     if not comparison:
         return []
-    return [k["fact_key"] for k in comparison.get("keys", []) if any(r["side"] == "like" for r in k["want"])]
+    out: list[dict[str, Any]] = []
+    for side in ("like", "against"):
+        for bucket, wants in (("want", True), ("avoid", False)):
+            for k in comparison.get("keys", []):
+                cond = {"fact_key": k["fact_key"], "wants": wants, "side": side}
+                if any(r["side"] == side for r in k[bucket]) and cond not in out:
+                    out.append(cond)
+    return out
 
 
-def preview_target(top: Signal, comparison: Mapping[str, Any] | None) -> tuple[str, list[str]] | None:
-    """미리 돌려 보기(6.7)를 할지와 (카테고리, with_keys). stall과 split 모두 그 카테고리 근거 전부로 돌린다(split은 충돌 종류와
-    상관없이, #1317). split의 different_axes만 ♥ 쪽이 원한 키를 with_keys로 더한다 — same_axis·unclear는 두 쪽을 다 맞추는 곳이
-    정의상 없거나 알 수 없어 반대 사유를 지키는 후보 수만 센다. split의 비교가 없으면(② 실패) 돌리지 않는다. 카테고리 공백의 모델
+def condition_labels(conditions: Sequence[Mapping[str, Any]], fact_labels: Mapping[str, str]) -> dict[str, list[str]]:
+    """미리 돌려 보기 결과의 like_labels, against_labels — 그쪽 조건의 표시 이름(recommend.api.fact_labels), 조건 순서. 피함은
+    근거 줄처럼 「<이름> 제외」다. 이름을 모르는 키는 뺀다(render_analysis와 같은 규칙)."""
+    def names(side: str) -> list[str]:
+        return list(dict.fromkeys(
+            fact_labels[c["fact_key"]] + ("" if c["wants"] else " 제외")
+            for c in conditions if c["side"] == side and c["fact_key"] in fact_labels
+        ))
+
+    return {"like_labels": names("like"), "against_labels": names("against")}
+
+
+def preview_target(top: Signal, comparison: Mapping[str, Any] | None) -> tuple[str, list[dict[str, Any]]] | None:
+    """미리 돌려 보기(6.7)를 할지와 (카테고리, 두 의견의 조건). stall과 split 모두 그 카테고리 근거 전부로 돌린다(split은 충돌
+    종류와 상관없이, #1317). split의 different_axes만 양쪽 조건(compromise_conditions)을 더한다 — same_axis·unclear는 두 쪽을 다
+    맞추는 곳이 정의상 없거나 알 수 없어 추천에 남는 수만 센다. split의 비교가 없으면(② 실패) 돌리지 않는다. 카테고리 공백의 모델
     진단(6.10)은 stall처럼 그 카테고리 근거 전부로 돌린다(추천 대상이 아니면 tools.preview가 None)."""
     if top.diagnosis == "stall" or (top.diagnosis == "category_gap" and uses_model(top)):
         return top.category, []
     if top.diagnosis == "split" and comparison:
-        keys = compromise_keys(comparison) if comparison.get("conflict_type") == "different_axes" else []
-        return top.category, keys
+        conditions = compromise_conditions(comparison) if comparison.get("conflict_type") == "different_axes" else []
+        return top.category, conditions
     return None
 
 
-PREVIEW_INPUT_KEYS = ("passed_count", "with_keys_count", "with_labels")   # 진단 입력에 넣는 칸(깔때기는 기록에만)
+PREVIEW_INPUT_KEYS = (   # 진단 입력에 넣는 칸(깔때기는 기록에만)
+    "passed_count", "both_sides_count", "both_sides_confirmed_count", "like_labels", "against_labels",
+)
 
 
 def preview_input(preview: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -1283,7 +1305,8 @@ def diagnosis_input(
     stall은 카테고리와 🚫 반응 id, 🚫가 달린 핀 id. split은 핀 id, place_id(실시간 핀은 None), 반응 id, 그 핀의 ♥·🚫
     수(counts — split 필수 claim의 값), compare_reasons 결과(충돌 종류는 코드가 정한다, 6.3). 핀 id와 수, place_id를
     넣는 것은 모델이 그것을 알려고 도구를 한 번 더 부르지 않게 하려는 것이다(#534). 두 유형 모두 미리 돌려 본 결과(preview,
-    6.7 — stall {passed_count}, split의 different_axes {passed_count, with_keys_count, with_labels}, 없으면 None)를 넣는다.
+    6.7 — stall {passed_count}, split의 different_axes {passed_count, both_sides_count, both_sides_confirmed_count, like_labels,
+    against_labels}, 없으면 None)를 넣는다.
     같은 값이 도구 기록 p1에 있어 모델이 ToolClaim으로 가리킨다. 다음 방법(attempt 1, 6.9)이면 attempt, attempts(해 본 것의 행동과
     버튼 문구), allowed_actions(허용 행동에서 해 본 것과 0곳인 추천 받기를 뺀 것), followup_check(f1과 같은 값 — 수락 뒤 지난 분, 그 뒤
     그 카테고리 새 핀 수)를 더한다 — 첫 제안의 입력은 그대로다. run 결과는 없다.
@@ -2030,7 +2053,7 @@ STEP_TOOL_LISTS = {   # 모델이 받은 목록 칸(그 길이가 수다)
     TRY_IN_SCHEDULE: "pins",
 }
 STEP_PREVIEW = "지금 조건으로 미리 찾아봤어요 · {n}곳 남아요"
-STEP_PREVIEW_BOTH = " · 두 의견을 다 맞추는 곳 {n}곳"
+STEP_PREVIEW_BOTH = " · 두 의견에 어긋나지 않는 곳 {n}곳(둘 다 확인 {m}곳)"
 STEP_FACTS = "가게 정보 {n}개를 우리 데이터에서 확인했어요"
 STEP_WEB = {   # (status, 다시 씀) → (문구, by, by_detail). paused와 다시 쓴 결과는 모델을 부르지 않았다
     ("found", False): ("웹에서 찾아봤어요 · 출처 {n}개", "ai", "모델 → 코드"),
@@ -2116,9 +2139,10 @@ def _preview_step(result: Mapping[str, Any]) -> WorkStep | None:
     if passed is None:
         return None
     text = STEP_PREVIEW.format(n=passed)
-    both = _int(result.get("with_keys_count"))
-    if both is not None:
-        text += STEP_PREVIEW_BOTH.format(n=both)
+    both = _int(result.get("both_sides_count"))
+    confirmed = _int(result.get("both_sides_confirmed_count"))
+    if both is not None and confirmed is not None:
+        text += STEP_PREVIEW_BOTH.format(n=both, m=confirmed)
     return _step("미리 찾기", "계산", "code", text)
 
 

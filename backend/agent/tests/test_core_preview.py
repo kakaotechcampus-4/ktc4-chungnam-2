@@ -1,4 +1,4 @@
-"""미리 돌려 보기와 절충안(명세 6.7, #1180)의 순수 함수 — 무엇을 돌리나(preview_target, compromise_keys), 진단 입력에 넣는 칸
+"""미리 돌려 보기와 절충안(명세 6.7, #1180)의 순수 함수 — 무엇을 돌리나(preview_target, compromise_conditions), 진단 입력에 넣는 칸
 (preview_input, diagnosis_input), 검증 6단계(미리 돌려 본 수가 0이면 open_recommend를 뺀다)."""
 
 import json
@@ -13,22 +13,51 @@ DIFFERENT = {"conflict_type": "different_axes", "keys": [
     {"fact_key": "quiet", "want": [{"reaction_id": "r1", "side": "like"}], "avoid": []},
     {"fact_key": "spicy_focused", "want": [], "avoid": [{"reaction_id": "r1", "side": "like"}]},
 ]}
-PREVIEW = {"passed_count": 4, "with_keys_count": 1, "with_labels": ["조용한 곳"],
+PREVIEW = {"passed_count": 4, "both_sides_count": 3, "both_sides_confirmed_count": 1,
+           "like_labels": ["조용한 곳", "매운맛 전문 제외"], "against_labels": ["주차 가능"],
            "funnel": [{"key": "pool", "removed_count": 0}, {"key": "radius", "removed_count": 2}]}
 C_PREVIEW = {"id": "c6", "kind": "tool_result", "call_id": "p1", "path": "passed_count", "value": 4}
 
 
-def test_compromise_keys_are_the_keys_the_like_side_wanted():
-    """🚫 쪽 조건은 근거 줄로 이미 들어간다. ♥ 쪽이 피한 키(spicy_focused 피함)는 「갖춘 곳」으로 셀 수 없어 넣지 않는다."""
-    assert core.compromise_keys(DIFFERENT) == ["quiet"]
-    assert core.compromise_keys(None) == []
+LIKE_QUIET = {"fact_key": "quiet", "wants": True, "side": "like"}
+LIKE_NOT_SPICY = {"fact_key": "spicy_focused", "wants": False, "side": "like"}
+AGAINST_PARKING = {"fact_key": "parking_available", "wants": True, "side": "against"}
+
+
+def test_compromise_conditions_take_both_sides_with_their_direction():
+    """#1253 뒤 🚫 사유는 거르지 않아 🚫 쪽 조건(주차)도 센다(#1600). ♥ 쪽 피함(맵지 않음)도 방향과 함께 들어간다.
+    순서는 ♥ 원함, ♥ 피함, 🚫 원함, 🚫 피함이고 그 안은 키 순서다."""
+    assert core.compromise_conditions(DIFFERENT) == [LIKE_QUIET, LIKE_NOT_SPICY, AGAINST_PARKING]
+    assert core.compromise_conditions(None) == []
+
+
+def test_compromise_conditions_keep_one_of_each_and_skip_keys_without_a_side():
+    twice = {"conflict_type": "different_axes", "keys": [
+        {"fact_key": "quiet", "want": [{"reaction_id": "r1", "side": "like"}, {"reaction_id": "r2", "side": "like"}], "avoid": []},
+        {"fact_key": "wait_short", "want": [{"reaction_id": "r3", "side": "against"}],
+         "avoid": [{"reaction_id": "r4", "side": "against"}]},
+    ]}
+
+    assert core.compromise_conditions(twice) == [
+        LIKE_QUIET, {"fact_key": "wait_short", "wants": True, "side": "against"},
+        {"fact_key": "wait_short", "wants": False, "side": "against"},
+    ]
+
+
+def test_condition_labels_split_by_side_and_mark_avoided_ones():
+    labels = {"quiet": "조용한 곳", "spicy_focused": "매운맛 전문", "parking_available": "주차 가능"}
+
+    assert core.condition_labels([LIKE_QUIET, LIKE_NOT_SPICY, AGAINST_PARKING], labels) == {
+        "like_labels": ["조용한 곳", "매운맛 전문 제외"], "against_labels": ["주차 가능"],
+    }
+    assert core.condition_labels([LIKE_QUIET | {"fact_key": "unknown_key"}], labels) == {"like_labels": [], "against_labels": []}
 
 
 def test_preview_runs_for_a_stall_and_every_split_with_a_comparison():
-    """split은 충돌 종류와 상관없이 돌린다(#1317). ♥ 쪽 키를 더하는 것은 different_axes뿐이다 — same_axis·unclear는 두 쪽을 다
-    맞추는 곳이 없거나 알 수 없어 반대 사유를 지키는 후보 수만 센다."""
+    """split은 충돌 종류와 상관없이 돌린다(#1317). 양쪽 조건을 더하는 것은 different_axes뿐이다 — same_axis·unclear는 두 쪽을
+    다 맞추는 곳이 없거나 알 수 없어 추천에 남는 수만 센다."""
     assert core.preview_target(STALL, None) == ("음식점", [])
-    assert core.preview_target(SPLIT, DIFFERENT) == ("음식점", ["quiet"])
+    assert core.preview_target(SPLIT, DIFFERENT) == ("음식점", [LIKE_QUIET, LIKE_NOT_SPICY, AGAINST_PARKING])
     for conflict in ("same_axis", "unclear"):
         assert core.preview_target(SPLIT, {"conflict_type": conflict, "keys": DIFFERENT["keys"]}) == ("음식점", [])
     assert core.preview_target(SPLIT, None) is None   # ② 실패로 비교가 없다
@@ -39,7 +68,7 @@ def test_diagnosis_input_carries_counts_and_labels_but_not_the_funnel():
     split = core.diagnosis_input(SPLIT, SNAP, DIFFERENT, PREVIEW)
 
     assert stall["preview"] == {"passed_count": 0}
-    assert split["preview"] == {"passed_count": 4, "with_keys_count": 1, "with_labels": ["조용한 곳"]}
+    assert split["preview"] == {k: v for k, v in PREVIEW.items() if k != "funnel"}
     assert core.diagnosis_input(SPLIT, SNAP, DIFFERENT)["preview"] is None   # 돌리지 못했으면 null
     assert "funnel" not in json.dumps([stall, split])
 
@@ -120,8 +149,8 @@ def test_split_open_recommend_follows_the_same_rule():
 def test_the_preview_count_is_checked_like_any_tool_result():
     """모델은 수를 p1의 ToolClaim으로만 쓴다(11.2 3단계). 값이 다르면 claim과 그 claim에 기댄 문장이 빠진다."""
     tools = {**TOOLS, "p1": PREVIEW}
-    line = {"text": "두 의견을 다 맞추는 곳이 {c6.value}곳 있어요", "basis": ["c6"], "is_guess": False}
-    right = _out(claims=[C_LIKE, C_AGAINST, C_PREVIEW | {"path": "with_keys_count", "value": 1}], advice=[line])
+    line = {"text": "두 의견에 어긋나지 않는 곳이 {c6.value}곳 있어요", "basis": ["c6"], "is_guess": False}
+    right = _out(claims=[C_LIKE, C_AGAINST, C_PREVIEW | {"path": "both_sides_count", "value": 3}], advice=[line])
     wrong = _out(claims=[C_LIKE, C_AGAINST, C_PREVIEW | {"value": 5}], advice=[line])
 
     ok = core.verify_diagnosis(right, SPLIT, SNAP, tools, member_names=NAMES, comparison=DIFFERENT, preview=PREVIEW)

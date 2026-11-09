@@ -35,14 +35,15 @@ def world(factory, monkeypatch):
 
 @pytest.fixture()
 def previews(monkeypatch):
-    """recommend.api.preview_filter 대역. 받은 인자를 남기고 정해 둔 수를 돌려준다(passed, with_keys)."""
+    """recommend.api.preview_filter 대역. 받은 인자를 남기고 정해 둔 수를 돌려준다(passed, both, confirmed)."""
     calls: list[dict] = []
-    counts = {"passed": 4, "with_keys": 1}
+    counts = {"passed": 4, "both": 3, "confirmed": 1}
 
-    def fake(db, *, map_id, category, text_lines, with_keys=(), **_):
-        calls.append({"map_id": map_id, "category": category, "text_lines": text_lines, "with_keys": list(with_keys)})
-        return {"passed_count": counts["passed"], "with_keys_count": counts["with_keys"] if with_keys else None,
-                "funnel": FUNNEL}
+    def fake(db, *, map_id, category, text_lines, with_conditions=(), **_):
+        calls.append({"map_id": map_id, "category": category, "text_lines": text_lines,
+                      "with_conditions": list(with_conditions)})
+        return {"passed_count": counts["passed"], "both_sides_count": counts["both"] if with_conditions else None,
+                "both_sides_confirmed_count": counts["confirmed"] if with_conditions else None, "funnel": FUNNEL}
 
     monkeypatch.setattr(recommend_api, "preview_filter", fake)
     return calls, counts
@@ -77,11 +78,11 @@ def test_stall_preview_goes_into_the_input_and_the_tool_log_as_p1(world, preview
     [inp] = gateway.inputs
     assert inp["preview"] == {"passed_count": 4}   # 깔때기와 장소는 모델에 가지 않는다
     [call] = calls
-    assert (call["category"], call["with_keys"]) == ("음식점", [])
+    assert (call["category"], call["with_conditions"]) == ("음식점", [])
     assert set(call["text_lines"]) == {against}   # 그 카테고리 사유 있는 반응 전부의 ② 결과
     run = world.one(AgentRun, map_id=map_id, trigger="activity")
     preview, readiness = run.tool_calls
-    assert (preview["call_id"], preview["name"], preview["args"]) == ("p1", "preview_filter", {"category": "음식점", "with_keys": []})
+    assert (preview["call_id"], preview["name"], preview["args"]) == ("p1", "preview_filter", {"category": "음식점", "with_conditions": []})
     assert preview["result"] == {"passed_count": 4, "funnel": FUNNEL}
     assert readiness["call_id"] == "t1"   # 모델이 고른 도구 번호는 그대로 t1부터(미리 돌려 보기는 상한에 세지 않는다)
     sug = world.one(AgentSuggestion, map_id=map_id)
@@ -135,15 +136,18 @@ def split_with_compromise(inp, call_tool):
         "claims": [
             {"id": "c1", "kind": "count", "subject": "pin", "subject_id": pin, "metric": "like", "value": 2},
             {"id": "c2", "kind": "count", "subject": "pin", "subject_id": pin, "metric": "against", "value": 1},
-            {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "with_keys_count",
-             "value": inp["preview"]["with_keys_count"]},
+            {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "both_sides_count",
+             "value": inp["preview"]["both_sides_count"]},
+            {"id": "c4", "kind": "tool_result", "call_id": "p1", "path": "both_sides_confirmed_count",
+             "value": inp["preview"]["both_sides_confirmed_count"]},
         ],
-        "advice": [{"text": "두 의견을 다 맞추는 곳이 {c3.value}곳 있어요", "basis": ["c3"], "is_guess": False}],
+        "advice": [{"text": "두 의견에 어긋나지 않는 곳이 {c3.value}곳 있어요. 그중 {c4.value}곳은 둘 다 우리 데이터로 확인됐어요",
+                    "basis": ["c3", "c4"], "is_guess": False}],
         "actions": [{"type": "open_recommend", "category": "음식점", "pin_ids": None, "basis": ["c1", "c2"]}],
     })
 
 
-def test_split_on_different_axes_counts_places_that_satisfy_both_sides(world, previews):
+def test_split_on_different_axes_counts_places_against_both_sides_conditions(world, previews):
     calls, _ = previews
     map_id, pin_id, like, against = _split_map(world)
     gateway = Keyed(diagnose=split_with_compromise)
@@ -152,19 +156,25 @@ def test_split_on_different_axes_counts_places_that_satisfy_both_sides(world, pr
 
     [inp] = gateway.inputs
     assert inp["comparison"]["conflict_type"] == "different_axes"
-    label = recommend_api.fact_labels()["quiet"]
-    assert inp["preview"] == {"passed_count": 4, "with_keys_count": 1, "with_labels": [label]}
+    labels = recommend_api.fact_labels()
+    assert inp["preview"] == {"passed_count": 4, "both_sides_count": 3, "both_sides_confirmed_count": 1,
+                              "like_labels": [labels["quiet"]], "against_labels": [labels["parking_available"]]}
     [call] = calls
-    assert call["with_keys"] == ["quiet"]   # ♥ 쪽이 원한 키. 🚫 쪽 주차는 근거 줄로 이미 들어간다
+    # 🚫 쪽 주차도 센다 — #1253 뒤 일반 🚫 사유는 거르지 않는다(#1600). recommend에는 방향까지만 넘긴다
+    assert call["with_conditions"] == [{"fact_key": "quiet", "wants": True}, {"fact_key": "parking_available", "wants": True}]
     assert call["text_lines"][like] == [{"fact_key": "quiet", "wants": True, "badge": "preferred"}]
     assert call["text_lines"][against] == [{"fact_key": "parking_available", "wants": True, "badge": "required"}]
     sug = world.one(AgentSuggestion, map_id=map_id)
     assert [a["type"] for a in sug.actions] == ["open_recommend"]
-    assert {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "with_keys_count", "value": 1} in sug.claims
+    assert {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "both_sides_count", "value": 3} in sug.claims
+    assert {"id": "c4", "kind": "tool_result", "call_id": "p1", "path": "both_sides_confirmed_count", "value": 1} in sug.claims
+    preview = next(c for c in world.one(AgentRun, map_id=map_id, trigger="activity").tool_calls if c["call_id"] == "p1")
+    assert preview["args"]["with_conditions"] == [{"fact_key": "quiet", "wants": True, "side": "like"},
+                                                  {"fact_key": "parking_available", "wants": True, "side": "against"}]
 
 
 def split_with_count(inp, call_tool):
-    """반대 사유를 지키는 후보 수(p1 passed_count)를 쓰고 「추천 받기」와 「장소 검색」을 고른다(#1317)."""
+    """추천에 남는 곳의 수(p1 passed_count)를 쓰고 「추천 받기」와 「장소 검색」을 고른다(#1317)."""
     pin = inp["pin_id"]
     return DiagnosisOutput.model_validate({
         "decision": "suggest", "diagnosis": "split", "signal_id": inp["signal_id"],
@@ -174,7 +184,7 @@ def split_with_count(inp, call_tool):
             {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "passed_count",
              "value": inp["preview"]["passed_count"]},
         ],
-        "advice": [{"text": "두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {c3.value}곳 있어요", "basis": ["c3"],
+        "advice": [{"text": "두 의견을 다 맞추는 곳은 없지만, 지금 조건으로 추천에 남는 곳이 {c3.value}곳 있어요", "basis": ["c3"],
                     "is_guess": False}],
         "actions": [
             {"type": "open_recommend", "category": "음식점", "pin_ids": None, "basis": ["c1", "c2", "c3"]},
@@ -193,8 +203,8 @@ class SameAxis(FakeGateway):
 
 
 @pytest.mark.parametrize("gateway_class, conflict", [(SameAxis, "same_axis"), (FakeGateway, "unclear")])
-def test_split_without_different_axes_previews_without_keys(world, previews, gateway_class, conflict):
-    """same_axis·unclear 갈림도 그 카테고리 근거 전부로 미리 센다(#1317). ♥ 쪽 키는 더하지 않는다."""
+def test_split_without_different_axes_previews_without_conditions(world, previews, gateway_class, conflict):
+    """same_axis·unclear 갈림도 그 카테고리 근거 전부로 미리 센다(#1317). 두 의견의 조건은 더하지 않는다."""
     calls, _ = previews
     map_id, _, _, _ = _split_map(world)   # dev ②(FakeGateway)는 키를 붙이지 않아 unclear다
     gateway = gateway_class(diagnose=split_with_count)
@@ -205,7 +215,7 @@ def test_split_without_different_axes_previews_without_keys(world, previews, gat
     assert inp["comparison"]["conflict_type"] == conflict
     assert inp["preview"] == {"passed_count": 4}
     [call] = calls
-    assert (call["category"], call["with_keys"]) == ("음식점", [])
+    assert (call["category"], call["with_conditions"]) == ("음식점", [])
     sug = world.one(AgentSuggestion, map_id=map_id)
     assert [(a["type"], a["label"]) for a in sug.actions] == [("open_recommend", "음식점 추천 받기"), ("search_place", "음식점 검색")]
     assert {"id": "c3", "kind": "tool_result", "call_id": "p1", "path": "passed_count", "value": 4} in sug.claims

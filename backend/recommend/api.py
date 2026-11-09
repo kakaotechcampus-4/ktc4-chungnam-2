@@ -174,7 +174,7 @@ def reason_text_inputs(reactions: Sequence[Mapping[str, Any]]) -> list[dict]:
 
 def preview_filter(
     db: Session, *, map_id: str, category: str, text_lines: Mapping[str, Sequence[Mapping[str, Any]]],
-    with_keys: Sequence[str] = (), place_search: PlaceSearchGateway | None = None,
+    with_conditions: Sequence[Mapping[str, Any]] = (), place_search: PlaceSearchGateway | None = None,
     place_facts: PlaceFactsGateway | None = None, center: tuple[float, float] | None = None,
 ) -> dict:
     """agent의 미리 돌려 보기(docs/agent-v2.md 6.7, #1180)가 진단 전에 부른다 — 지금 「추천 받기」를 누르면 실격 조건까지 남는
@@ -182,9 +182,11 @@ def preview_filter(
     구현하지 않는다). 반응은 이 함수가 run과 같이 읽고, 글의 ② 결과만 `text_lines`(reaction_id → [{fact_key, wants, badge}],
     agent의 structure_reasons 결과)로 받는다. 이 함수는 모델을 부르지 않는다.
 
-    `{passed_count, with_keys_count, funnel[{key, removed_count}]}` — **수만 돌려준다.** 장소 이름과 id는 없다(크레딧 없이 추천을
-    받는 길이 되지 않게, #432). funnel은 pool·radius·closed·disqualify. with_keys_count는 통과한 곳 중 with_keys의 라벨이 모두
-    참(known)인 곳(절충안), with_keys가 없으면 None. run, 후보, 근거 줄, 제외 목록을 만들지도 읽지도 않는다 — 제외 목록은 사람마다
+    `{passed_count, both_sides_count, both_sides_confirmed_count, funnel[{key, removed_count}]}` — **수만 돌려준다.** 장소 이름과
+    id는 없다(크레딧 없이 추천을 받는 길이 되지 않게, #432). funnel은 pool·radius·closed·disqualify. `with_conditions`
+    (`[{fact_key, wants}]`, 두 의견의 조건, #1600)가 있으면 통과한 곳 중 어느 조건에도 어긋난다고 확인되지 않은 곳(모름 포함)이
+    both_sides_count, 그중 조건이 모두 우리 데이터로 확인된 곳이 both_sides_confirmed_count다(절충안). 조건이 없으면 둘 다 None.
+    run, 후보, 근거 줄, 제외 목록을 만들지도 읽지도 않는다 — 제외 목록은 사람마다
     따로라(비공개) 실제 추천은 이 수보다 적을 수 있다. 추천 대상이 아닌 카테고리나 ② 결과가 빠진 글 반응은 ValueError, 추천 준비가
     안 됐으면 AppError NOT_READY. Gateway를 생략하면 실행(라우터)과 같은 것을 고른다. 권한 판정 없음. 읽기 전용, 커밋하지 않는다.
 
@@ -192,7 +194,7 @@ def preview_filter(
 
     `simulate_filter`(run이 있어야 하는 추천 막힘 조언 전용)와 다르다 — 그쪽은 그 run의 저장된 줄과 제외 목록을 쓴다."""
     return flows.preview_filter(
-        db, map_id=map_id, category=category, text_lines=text_lines, with_keys=with_keys, center=center,
+        db, map_id=map_id, category=category, text_lines=text_lines, with_conditions=with_conditions, center=center,
         place_search=place_search or deps.get_place_search_gateway(),
         place_facts=place_facts or deps.get_place_facts_gateway(),
     )
