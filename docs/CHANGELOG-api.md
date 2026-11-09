@@ -2,6 +2,13 @@
 
 `docs/api-spec.yaml`이 바뀔 때마다 여기 기록한다. 프론트 담당자는 이 파일을 구독해서 변경을 즉시 확인한다.
 
+## 2026-11-09, 검색 결과의 네이버 지도 링크 — `PlaceSearchResult.naver_url` (#1554)
+
+- 핀을 찍기 전 검색 결과 상세에도 「네이버 지도에서 보기」를 둔다(PM 점검). **늘리기만 한다** — 선택 필드 하나를 더했다(상위 호환).
+- 값은 `Pin.naver_url`과 같은 `{장소 이름} {동네}` 네이버 지도 검색 링크이고, 만드는 곳은 `places/core.py`의 `naver_place_link` 한 곳이다. 응답에만 싣고 저장하지 않는다(#53).
+- `GET /places/search`, `GET /places/nearest`, `POST /places/from-link`의 `matches`가 모두 같은 스키마라 함께 바뀐다.
+- 목 서버: 고정 장소 목록에 `naver_url`을 싣는다. 타입 재생성 필요(`npm run gen:types`).
+
 ## 2026-11-08, 구글 로그인 — `GET /auth/google/login`, `GET /auth/google/callback` (#1514)
 
 - **새 엔드포인트 둘**: 카카오 로그인과 같은 흐름(state 쿠키, 항상 302, 게스트 전환 합치기, 탈퇴 계정 선택)이다. state 쿠키는 `google_oauth_state`(경로 `/auth/google`).

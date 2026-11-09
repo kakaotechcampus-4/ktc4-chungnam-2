@@ -337,7 +337,8 @@ def test_route_returns_the_spec_shape(client, own):
         "provider": "google", "name_hint": "성수 칼국수", "needs_search_query": False,
         "matches": [{"place_id": "own:p1", "place_name": "성수 칼국수", "lat": 37.5445, "lng": 127.0561,
                      "category": "음식점", "address": "서울 성동구 성수동 1", "pinnable": True,
-                     "place_source": {"provider": "permit", "url": "https://map.kakao.com/link/search/" + quote("성수 칼국수 성동구", safe="")}}],
+                     "place_source": {"provider": "permit", "url": "https://map.kakao.com/link/search/" + quote("성수 칼국수 성동구", safe="")},
+                     "naver_url": "https://map.naver.com/p/search/" + quote("성수 칼국수 성동구", safe="")}],
     }
     assert "37.5440" not in r.text   # 링크 안의 좌표를 싣지 않는다(자체 DB 장소의 좌표뿐)
 
