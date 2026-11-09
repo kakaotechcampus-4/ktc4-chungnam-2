@@ -84,7 +84,8 @@ export async function opposeWithChip(page: Page, chip: string) {
 
 /** 「핀 찍기」 목록의 핀 줄. 접근성 이름이 「장소 이름 …」으로 시작한다. */
 export function pinRow(page: Page, name: string) {
-  return page.getByRole('main', { name: '바텀시트' }).getByRole('button', { name: new RegExp(`^${name} `) })
+  // 반응 안 한 핀 줄 옆의 바로 반응 버튼(「○○ 좋음」, 「○○ 반대, 이유 쓰기」, #1696)도 이름이 같은 말로 시작해서 뺀다.
+  return page.getByRole('main', { name: '바텀시트' }).getByRole('button', { name: new RegExp(`^${name} (?!좋음$|반대, 이유 쓰기$)`) })
 }
 
 /** 열린 핀 상세에서 「확정 리스트에 넣기」를 누른다. */
