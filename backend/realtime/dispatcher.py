@@ -50,6 +50,7 @@ class Subscription:
 
     channel: str            # "public" | "private"
     user_id: str            # 구독한 사람(두 채널 모두)
+    counted: bool = False   # 접속 집계(presence)에 넣은 연결인가 — 종료 중 구독은 넣지 않아 unsubscribe가 짝을 맞춘다
     queue: "asyncio.Queue" = field(default_factory=lambda: asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX))
 
     def wants(self, row: EventLog) -> bool:
@@ -85,13 +86,16 @@ class Dispatcher:
             self._last_seen = db.execute(select(func.coalesce(func.max(EventLog.seq), 0))).scalar_one()
 
     def subscribe(self, map_id: str, *, channel: str, user_id: str) -> Subscription:
-        sub = Subscription(channel=channel, user_id=user_id)
+        counted = channel == "public" and not self._closing   # 종료 중 구독은 접속으로 세지 않는다
+        sub = Subscription(channel=channel, user_id=user_id, counted=counted)
         self._subscribers.setdefault(map_id, []).append(sub)
-        became_online = channel == "public" and self.presence.connect(map_id, user_id)
         if self._closing:
-            self._close(sub)   # 종료 중 — 알리지 않는다(unsubscribe가 짝을 맞춘다)
-        elif became_online:
-            self._announce(map_id, user_id, online=True)   # 첫 연결 — 자기 자신도 받는다(docs/events.md, 화면이 거른다)
+            self._close(sub)
+        elif counted:
+            # 유예가 끝난 사람이 expire 전에 다시 붙으면 `false`가 먼저 나가고 `true`가 뒤따르게 한다(순서).
+            self.expire_presence()
+            if self.presence.connect(map_id, user_id):
+                self._announce(map_id, user_id, online=True)   # 자기 자신도 받는다(docs/events.md, 화면이 거른다)
         return sub
 
     def _announce(self, map_id: str, user_id: str, *, online: bool) -> None:
@@ -151,7 +155,7 @@ class Dispatcher:
             subs.remove(sub)
         except ValueError:
             return   # 이미 뺀 구독 — 접속 수를 두 번 줄이지 않는다
-        if sub.channel == "public":
+        if sub.counted:
             self.presence.disconnect(map_id, sub.user_id)
         if not subs:
             self._subscribers.pop(map_id, None)   # 빈 리스트를 계속 안 들고 있는다
@@ -250,6 +254,11 @@ class Dispatcher:
             for sub in subs:
                 if scope.covers(sub.user_id):
                     self._close(sub)
+                    # 이 연결은 집계에서 이미 뺀다 — 같은 사람이 곧바로 다시 붙었을 때, 늦게 끝나는 옛 연결의
+                    # unsubscribe가 새 연결의 수를 줄이지 않게 한다.
+                    object.__setattr__(sub, "counted", False)
+            # 나가기·탈퇴·지도 삭제로 닫힌 연결은 유예 없이 집계에서 뺀다 — 30초 뒤 offline이 남은 사람에게 가지 않는다
+            self.presence.forget(scope.map_id, scope.user_id)
 
 
 dispatcher = Dispatcher()
