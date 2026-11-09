@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import update
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     PLACES, _pin, plan_with, members, own_db, place_ids, real_client,
 )
 from places import repository
@@ -51,7 +52,7 @@ def safety_planner(monkeypatch):
 
 
 def _candidates(a, map_id):
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     result = a.get(f"/runs/{run_id}/result")
@@ -65,7 +66,7 @@ def test_liking_a_spicy_feature_is_not_a_disqualifier(members, place_ids, safety
                  {"spicy_focused": True, "oily_focused": False, "cuisine_korean": False})
     pin = _pin(a, map_id, "K", place_ids)
     assert b.put(f"/pins/{pin}/reaction", json={"type": "like", "reason_text": "매운 거 좋아해"}).status_code == 200
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     names = {c["place_name"] for c in a.get(f"/runs/{run_id}/result").json()["candidates"]}
@@ -80,7 +81,7 @@ def test_member_fulfillment_counts_members_who_left_disqualifying_reasons(member
     s = _pin(a, map_id, "S", place_ids)
     assert a.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "한식 말고 다른 거"}).status_code == 200
     assert b.put(f"/pins/{s}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     cands = a.get(f"/runs/{run_id}/result").json()["candidates"]
@@ -105,7 +106,7 @@ def _narrow_to_b_s_u(a, map_id, place_ids):
 
 
 def _result(a, map_id):
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     return {c["place_name"]: c for c in a.get(f"/runs/{run_id}/result").json()["candidates"]}

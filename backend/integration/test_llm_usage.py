@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     _pin, members, own_db, place_ids, plan_with, real_client,
 )
 from llm import api as llm_api
@@ -45,7 +46,7 @@ def test_recommend_run_and_evidence_add_are_recorded_per_call(members, place_ids
     pin = _pin(a, map_id, "K", place_ids)
     assert a.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": "너무 비싸요"}).status_code == 200
 
-    run = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = b.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202, run.text
     run_id = run.json()["id"]
     assert b.patch(f"/runs/{run_id}/evidence", json={"add": [{"text": "조용한 곳"}, {"text": "주차 되는 곳"}]}).status_code == 200
@@ -67,7 +68,7 @@ def test_run_without_text_reasons_calls_no_model(members, place_ids, monkeypatch
     pin = _pin(a, map_id, "K", place_ids)
     assert a.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_chip_ids": ["food_spicy"]}).status_code == 200
 
-    assert a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).status_code == 202
+    assert a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).status_code == 202
     assert llm_usage_rows == []
 
 

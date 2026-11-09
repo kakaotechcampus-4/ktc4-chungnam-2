@@ -18,6 +18,7 @@ from auth.testing import session_cookie
 from main import app
 from places import api as places_api
 from places.ratelimit import SlidingWindowLimiter
+from integration.real_places_fixtures import RUN_CENTER
 
 REGION = {"label": "서울", "lat": 37.5665, "lng": 126.9780}
 
@@ -152,7 +153,7 @@ def test_d9_chip_only_against_becomes_evidence(clients, seoul_map, pin_body):
     a, _ = clients
     pin = a.post(f"/maps/{seoul_map}/pins", json=pin_body("hongdae-ramen")).json()["id"]
     assert a.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_chip_ids": ["food_spicy"]}).status_code == 200
-    run = a.post(f"/maps/{seoul_map}/runs", json={"category": "음식점"})
+    run = a.post(f"/maps/{seoul_map}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202, run.text
     evidence = a.get(f"/runs/{run.json()['id']}/evidence").json()
     assert evidence, "칩으로 낸 반대 사유도 이 run의 근거에 올라와야 한다"

@@ -8,6 +8,7 @@
 import pytest
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     PLACES, _pin, plan_with, members, own_db, place_ids, real_client,
 )
 
@@ -38,7 +39,7 @@ def _start(a, b, map_id, place_ids):
     pin = _pin(a, map_id, "R", place_ids)
     r = b.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": TWO_CONDITIONS})
     assert r.status_code == 200, r.text
-    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202, run.text
     return run.json()["id"]
 

@@ -23,11 +23,20 @@ def _auth(user_id="user_1"):
     return session_cookie(user_id)
 
 
+# 「추천 받기」가 보내는 지도 가운데 — _seed_ready_map의 핀(35.1, 129.0) 자리. center는 필수라 시험이 본문에 직접 적는다(#1354)
+RUN_CENTER = {"lat": 35.1, "lng": 129.0}
+
+
 @pytest.fixture()
-def app_client(db_session):
+def app_client(db_session, monkeypatch):
     from fastapi.testclient import TestClient
 
     from main import app
+    from recommend import flows
+
+    # 시험 DB에는 시·도 경계도 장소도 없어 중심의 시·도를 못 정한다 — 모르면 통과로 본다(시·도를 못 정하는 경우를 보는 시험은 따로 바꿔 끼운다)
+    real_sido_at = flows.places_api.sido_at
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *args, **kwargs: real_sido_at(*args, **kwargs) or "sido")
 
     def _override_get_db_session():
         with session_scope(db_session) as s:
@@ -97,13 +106,13 @@ def test_idempotency_key_header_returns_the_same_run_and_rejects_a_short_key(app
     """#811 — 같은 Idempotency-Key로 두 번 보내면 같은 run(202), 8자 미만 키는 422. 키가 없으면 매번 새 run."""
     _seed_ready_map(db_session)
     headers = {"Idempotency-Key": "click-0001-abcdef"}
-    first = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers=headers, cookies=_auth())
-    second = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers=headers, cookies=_auth())
+    first = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, headers=headers, cookies=_auth())
+    second = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, headers=headers, cookies=_auth())
     assert first.status_code == second.status_code == 202
     assert first.json()["id"] == second.json()["id"] and second.json()["attempt_no"] == 1
-    assert app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers={"Idempotency-Key": "short"},
+    assert app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, headers={"Idempotency-Key": "short"},
                            cookies=_auth()).status_code == 422
-    third = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth())
+    third = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, cookies=_auth())
     assert third.json()["id"] != first.json()["id"]
 
 
@@ -111,10 +120,10 @@ def test_post_run_with_execute_returns_a_done_run_and_the_result_carries_the_sna
     """#845·#847 — execute: true는 근거 조립 뒤 곧바로 첫 검색까지 한 요청에서 끝낸다(202, status done). 결과(또는 0건의 NO_RESULTS
     detail)에 이번에 쓴 근거 스냅샷과 조건 0개 고지가 있다. execute를 생략하면 지금까지처럼 collecting_evidence다."""
     _seed_ready_map(db_session)
-    legacy = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth())
+    legacy = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, cookies=_auth())
     assert legacy.status_code == 202 and legacy.json()["status"] == "collecting_evidence"
 
-    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "execute": True}, cookies=_auth())
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER, "execute": True}, cookies=_auth())
     assert created.status_code == 202 and created.json()["status"] == "done"
     result = app_client.get(f"/runs/{created.json()['id']}/result", cookies=_auth())
     body = result.json()["detail"] if result.status_code == 404 else result.json()
@@ -126,7 +135,7 @@ def test_post_run_with_execute_returns_a_done_run_and_the_result_carries_the_sna
 
 def test_widen_returns_run_with_default_radius_and_409_at_limit(app_client, db_session):
     _seed_ready_map(db_session)
-    created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth()).json()
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, cookies=_auth()).json()
     assert (created["default_radius_m"], created["next_default_radius_m"]) == (3000, 4000)   # 모든 카테고리 3km(#1385, #1370)
     assert created["default_radius_walk_min"] == 38   # 호환용 round(m/80)
     run_id = created["id"]
@@ -199,7 +208,7 @@ def test_readiness_non_member_is_404(app_client, db_session):
 def test_full_golden_path_run_to_execute_to_result_to_publish(app_client, db_session):
     _seed_ready_map(db_session)
 
-    created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth())
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, cookies=_auth())
     assert created.status_code == 202
     run_id = created.json()["id"]
     assert created.json()["status"] == "collecting_evidence"
@@ -235,7 +244,7 @@ def test_other_members_cannot_operate_someone_elses_run_execution(app_client, db
     접근할 수 없어야 한다 — evidence는 협업적이라 별도 테스트(아래)로 뺐다(#32 결정)."""
     _seed_ready_map(db_session)
 
-    created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1"))
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, cookies=_auth("user_1"))
     run_id = created.json()["id"]
 
     for method, path in [
@@ -257,7 +266,7 @@ def test_other_members_can_view_and_add_evidence_on_someone_elses_run(app_client
     본인만 보인다, 위 test_other_members_cannot_operate 참고)."""
     _seed_ready_map(db_session)
 
-    created = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1"))
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, cookies=_auth("user_1"))
     run_id = created.json()["id"]
 
     get_resp = app_client.get(f"/runs/{run_id}/evidence", cookies=_auth("user_2"))
@@ -273,7 +282,7 @@ def test_other_members_can_view_and_add_evidence_on_someone_elses_run(app_client
 
 def _evidence_run(app_client, db_session) -> str:
     _seed_ready_map(db_session)
-    return app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1")).json()["id"]
+    return app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, cookies=_auth("user_1")).json()["id"]
 
 
 def _add(app_client, run_id, texts):

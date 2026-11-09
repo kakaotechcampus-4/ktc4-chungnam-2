@@ -49,6 +49,7 @@ _EXERCISED: set[tuple[str, str]] = set()   # 이 모듈의 테스트들이 실�
 SPEC = yaml.safe_load((Path(__file__).resolve().parents[2] / "docs" / "api-spec.yaml").read_text(encoding="utf-8"))
 _REGISTRY = Registry().with_resource("urn:pingo-spec", Resource.from_contents(SPEC, default_specification=DRAFT202012))
 from auth.testing import session_cookie
+from integration.real_places_fixtures import RUN_CENTER
 
 
 def _template_for(path: str, method: str) -> str | None:
@@ -244,7 +245,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
         assert c.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
 
     assert a.get(f"/maps/{map_id}/recommend/readiness").status_code == 200
-    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202
     run_id = run.json()["id"]
     assert a.get(f"/runs/{run_id}/evidence").status_code == 200
@@ -367,7 +368,7 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert b.delete(f"/pins/{pins[0]}/reaction").status_code == 204
 
     # 추천: 근거 수정 → 실행 → 반경 넓히기(15→20→25→30분, 그다음 409) → 다시 추천 → 게시
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     evidence = a.get(f"/runs/{run_id}/evidence").json()
     # b도 🚫 사유를 남겨서 첫 줄이 b의 것일 수 있다 — a가 끌 수 있는 자기 줄을 고른다(근거 줄 권한은 own, #1294)
     own_line = next(e for e in evidence if e["permissions"]["can_disable"])
@@ -936,7 +937,7 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
         assert c.put(f"/pins/{pin_ids[0]}/reaction", json={"type": "like"}).status_code == 200
         assert c.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
 
-    runs = [a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"] for _ in range(3)]
+    runs = [a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"] for _ in range(3)]
     for run_id in (runs[0], runs[2]):
         assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
         assert a.post(f"/runs/{run_id}/execute").status_code == 202
@@ -974,7 +975,7 @@ def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client
     assert "curated_nearby" not in readiness["카페"]   # 의견 핀이 없다
     fake_places.curate_all()   # 이제부터 샘플 장소가 추천 후보 풀에 들어간다
 
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     result = a.get(f"/runs/{run_id}/result").json()
