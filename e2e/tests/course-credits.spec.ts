@@ -38,7 +38,8 @@ test('확정 장소 하나만 날짜에 넣고 코스를 짜면, 남은 곳을 �
 
   await test.step('「남은 곳 한 번에 넣기」를 누르면 일정에 저장된다', async () => {
     await planner.getByRole('button', { name: '남은 2곳 한 번에 넣기' }).click()
-    await expect(planner.getByText('반영했어요')).toHaveCount(2)
+    // 다 반영하면 뜨는 완료 카드("고칠 점을 다 반영했어요")는 세지 않는다 — 부분 일치를 끈다(#1714).
+    await expect(planner.getByText('반영했어요', { exact: true })).toHaveCount(2)
     await planner.getByRole('link', { name: '장소 확정' }).click()
     await expect(planner.getByText(/모든 장소를 일정에 넣었어요/)).toBeVisible()
   })
