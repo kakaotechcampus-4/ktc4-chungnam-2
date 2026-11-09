@@ -53,11 +53,13 @@ import { ConnectionBanner } from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop, useIsPc } from '@/features/shell/useIsDesktop'
+import { useTabNews } from '@/features/shell/tabNews'
 import Avatar from '@/ui/Avatar'
 import ErrorBoundary from '@/ui/ErrorBoundary'
 import { PingoMark } from '@/ui/Pingo'
 import { ClearButton } from '@/ui/TextField'
 import Wordmark from '@/ui/Wordmark'
+import TipBubble from '@/ui/TipBubble'
 
 /** 넓은 화면 패널이 미끄러지는 시간. 패널·덧칠의 `duration-300` 과 같은 값이다. */
 
@@ -515,7 +517,7 @@ export default function MapLayout() {
               </div>
               <nav aria-label="지도 탭" className="mt-2 flex gap-1 pb-2">
                 {TABS.filter((tab) => !tab.mobileOnly).map((tab) => (
-                  <PanelTab key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} />
+                  <PanelTab key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} mapId={mapId} tab={tab.path.slice(1)} />
                 ))}
               </nav>
             </div>
@@ -687,6 +689,8 @@ export default function MapLayout() {
                 to={`/maps/${mapId}${tab.path}`}
                 end={tab.end}
                 label={tab.label}
+                mapId={mapId}
+                tab={tab.path.slice(1)}
                 icon={
                   tab.path === '/me' ? <MeIcon name={me?.display_name} unread={unread > 0} />
                   : tab.Icon ? <tab.Icon size={24} />
@@ -786,40 +790,74 @@ function MeIcon({ name, unread }: { name?: string; unread: boolean }) {
  * 하단 탭 칸 하나 — 아이콘 + 11/500 라벨, 비활성 ink-500(흰 바탕 대비 약 5:1). AI 추천도 같은 모양이다(핑고 얼굴).
  * 지금 탭은 칸 전체를 채운 회색 알약(muted) 위 파란 글자다(네이버 지도 시안).
  */
-function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
+function TabLink({ to, end, label, icon, mapId, tab }: { to: string; end?: boolean; label: string; icon: ReactNode; mapId: string; tab: string }) {
+  const news = useTabNews(mapId, tab)
+  const bubble = useBubble(news)
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
-        `press flex flex-col items-center justify-center gap-0.5 rounded-full text-label font-medium ${isActive ? 'bg-muted text-link' : 'text-ink-500'}`
+        `press relative flex flex-col items-center justify-center gap-0.5 rounded-full text-label font-medium ${isActive ? 'bg-muted text-link' : 'text-ink-500'}`
       }
     >
       {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 네 칸 높이를 맞춘다. */}
-      <span className="flex size-7 items-center justify-center">{icon}</span>
+      <span className="relative flex size-7 items-center justify-center">
+        {icon}
+        {news && <NewsDot />}
+      </span>
       {label}
+      {news && <span className="sr-only">, {news}</span>}
+      {/* 새 소식이 오면 탭 위에 4초 동안 말풍선(#1704). 점은 그 탭에 들어갈 때까지 남는다. */}
+      {bubble && <TipBubble>{bubble}</TipBubble>}
     </NavLink>
   )
+}
+
+/** 새 소식 점 — 프로필 탭의 안 읽은 알림 점과 같은 귤색 점(DESIGN.md 새 소식은 귤색). */
+function NewsDot() {
+  return <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />
+}
+
+/** 새 소식 글이 생기거나 바뀌면 그 글을 잠깐 보인다. */
+const BUBBLE_MS = 4000
+function useBubble(news: string | undefined) {
+  const [shown, setShown] = useState<string | undefined>()
+  useEffect(() => {
+    if (!news) return setShown(undefined)
+    setShown(news)
+    const t = setTimeout(() => setShown(undefined), BUBBLE_MS)
+    return () => clearTimeout(t)
+  }, [news])
+  return shown
 }
 
 /**
  * 패널 머리의 탭 하나(#1538). 파란 면 위 흰 14/700 글자, 지금 탭은 brand-700 칸으로 한 단계 진하다(카카오맵 탭 모양).
  * 지금 탭을 다시 누르면 이동하지 않는다 — 이동하면 보던 핀 상세(?pin=)가 사라진다.
  */
-function PanelTab({ to, end = false, label }: { to: string; end?: boolean; label: string }) {
+function PanelTab({ to, end = false, label, mapId, tab }: { to: string; end?: boolean; label: string; mapId: string; tab: string }) {
   const active = useMatch({ path: to, end }) !== null
+  // 넓은 화면은 점만 단다 — 패널 머리 위로 말풍선을 띄울 자리가 없다(#1704).
+  const news = useTabNews(mapId, tab)
   return (
     <NavLink
       to={to}
       end={end}
       onClick={(e) => active && e.preventDefault()}
       className={({ isActive }) =>
-        `hit-y-44 flex min-h-9 items-center rounded-md px-3 text-sm font-bold break-keep text-white transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-white ${
+        `hit-y-44 relative flex min-h-9 items-center rounded-md px-3 text-sm font-bold break-keep text-white transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-white ${
           isActive ? 'bg-brand-700' : 'hover:bg-white/15'
         }`
       }
     >
       {label}
+      {news && (
+        <>
+          <NewsDot />
+          <span className="sr-only">, {news}</span>
+        </>
+      )}
     </NavLink>
   )
 }
