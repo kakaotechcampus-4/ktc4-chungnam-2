@@ -103,11 +103,11 @@ def _drain(sub):
     return [(i.type, i.payload) for i in items]
 
 
-def test_first_connection_announces_online_to_other_public_subscribers_not_itself(d):
+def test_first_connection_announces_online_to_public_subscribers_including_itself(d):
     watcher = d.subscribe("m1", channel="public", user_id="u2")
     _drain(watcher)
     me = d.subscribe("m1", channel="public", user_id="u1")
-    assert _drain(me) == []   # 방금 붙은 연결은 REST 구성원 목록으로 현황을 받는다
+    assert _drain(me) == [("member.presence", {"user_id": "u1", "online": True})]   # 자기 이벤트도 온다
     assert _drain(watcher) == [("member.presence", {"user_id": "u1", "online": True})]
 
 
@@ -123,6 +123,7 @@ def test_second_tab_and_private_channel_announce_nothing(d):
 def test_presence_stays_inside_its_map_and_never_reaches_private_channel(d):
     other_map = d.subscribe("m2", channel="public", user_id="u9")
     private = d.subscribe("m1", channel="private", user_id="u2")
+    _drain(other_map)   # 자기 접속 알림은 뺀다
     d.subscribe("m1", channel="public", user_id="u1")
     assert _drain(other_map) == []
     assert _drain(private) == []   # 개인 채널 구독자에게 새지 않는다
@@ -190,11 +191,13 @@ async def test_other_member_joining_reaches_open_public_stream_as_presence_chunk
         return agen, pending
 
     a, a_pending = await open_stream("user-a")
+    own = await asyncio.wait_for(a_pending, timeout=1)   # 자기 자신의 접속도 온다(화면이 거른다)
+    assert own == 'event: member.presence\ndata: {"user_id": "user-a", "online": true}\n\n'
+    a_pending = asyncio.ensure_future(a.__anext__())
     b, b_pending = await open_stream("user-b")
     try:
         chunk = await asyncio.wait_for(a_pending, timeout=1)
         assert chunk == 'event: member.presence\ndata: {"user_id": "user-b", "online": true}\n\n'
-        assert not b_pending.done()   # 방금 붙은 연결에는 보내지 않는다
     finally:
         for agen, pending in ((a, a_pending), (b, b_pending)):
             pending.cancel()

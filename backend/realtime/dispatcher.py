@@ -91,15 +91,15 @@ class Dispatcher:
         if self._closing:
             self._close(sub)   # 종료 중 — 알리지 않는다(unsubscribe가 짝을 맞춘다)
         elif became_online:
-            self._announce(map_id, user_id, online=True, skip=sub)   # 첫 연결 — 방금 붙은 연결은 REST로 현황을 받는다
+            self._announce(map_id, user_id, online=True)   # 첫 연결 — 자기 자신도 받는다(docs/events.md, 화면이 거른다)
         return sub
 
-    def _announce(self, map_id: str, user_id: str, *, online: bool, skip: Subscription | None = None) -> None:
+    def _announce(self, map_id: str, user_id: str, *, online: bool) -> None:
         """member.presence를 그 지도의 전체 채널 구독자에게 메모리에서 바로 보낸다 — event_log에 쓰지 않는다
         (접속 기록을 남기지 않고, 커밋 전 트랜잭션과 섞일 일도 없다). seq가 없어 SSE id 줄이 없고 재전송되지 않는다."""
         row = PresenceEvent(map_id=map_id, payload={"user_id": user_id, "online": online})
         for sub in list(self._subscribers.get(map_id, [])):
-            if sub is not skip and sub.wants(row):
+            if sub.wants(row):
                 self._put(map_id, sub, row)
 
     def expire_presence(self) -> None:
