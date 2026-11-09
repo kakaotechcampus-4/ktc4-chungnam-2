@@ -12,7 +12,8 @@ type ExternalSearch = { query: string; url: string; naver_url?: string }
  */
 export default function ExternalSearchLink({ search, className }: { search: ExternalSearch; className: string }) {
   return (
-    <div className="space-y-1">
+    // 글자 링크 두 개가 한 줄에 붙지 않게 사이를 띄우고, 좁으면 줄을 바꾼다. 폭을 채우는 버튼은 그대로 위아래로 쌓인다.
+    <div className="flex flex-wrap justify-center gap-x-4 gap-y-1">
       <a href={search.url} target="_blank" rel="noopener noreferrer" className={className}>
         카카오맵에서 더 찾아보기 <ExternalLink size={16} aria-hidden="true" />
       </a>
@@ -21,7 +22,7 @@ export default function ExternalSearchLink({ search, className }: { search: Exte
           네이버 지도에서 찾아보기 <ExternalLink size={16} aria-hidden="true" />
         </a>
       )}
-      <p className="text-xs text-ink-500">검색어 ‘{search.query}’</p>
+      <p className="w-full text-xs text-ink-500">검색어 ‘{search.query}’</p>
     </div>
   )
 }
