@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import BottomSheet from './BottomSheet'
 import MapControls from './MapControls'
@@ -66,10 +66,16 @@ export default function TabSheet({
   )
 }
 
+/** 끊긴 뒤 이만큼 지나도 다시 붙지 않았을 때만 띠를 띄운다 — 휴대폰은 와이파이↔LTE 전환에도 잠깐 끊겼다 붙는다. */
+const SHOW_AFTER_MS = 2500
+
 /**
  * 연결 끊김 띠(#299). 지도 위에 띄우면 핀·지도 버튼을 가리고, 노란 면은 확정 골드와 겹친다.
- * 그래서 시트 윗변에 회색 띠로 붙이고 문구를 자르지 않는다.
- * 넓은 화면은 시트 윗변이 없어서 지도 영역 왼쪽 위, 칩 아래에 떠 있는 띠(`floating`)로 둔다(#338).
+ * 그래서 휴대폰은 시트 윗변에 회색 띠로 붙이고 문구를 자르지 않는다.
+ * 넓은 화면은 시트 윗변이 없어서 지도 영역 위쪽 가운데, 칩 줄 아래에 떠 있는 띠(`floating`)로 둔다(#338, #1575).
+ * - 자동으로 다시 붙는 중(reconnecting): 2.5초 지나도 끊겨 있을 때만 차분하게 알린다. 모달로 막지 않는다 — 실시간 소식만 멈출 뿐 화면은 그대로 쓸 수 있다.
+ * - 다시 붙기를 포기함(closed): 바로, 「다시 연결」 버튼과 함께 굵게.
+ * 연결되면 부르는 쪽이 그리지 않는다(다시 끊기면 시계가 새로 돈다).
  */
 export function ConnectionBanner({
   state,
@@ -80,17 +86,23 @@ export function ConnectionBanner({
   onReconnect: () => void
   floating?: boolean
 }) {
+  const [late, setLate] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setLate(true), SHOW_AFTER_MS)
+    return () => clearTimeout(t)
+  }, [])
+  if (state === 'reconnecting' && !late) return null
   return (
     <div
       role="status"
-      className={`flex items-center gap-2 bg-ink-100 px-4 py-1.5 text-xs font-medium text-ink-700 ${floating ? 'pointer-events-auto rounded-xl shadow-float' : 'rounded-t-2xl'}`}
+      className={`flex items-center gap-2 bg-ink-100 px-4 py-1.5 text-xs text-ink-700 ${floating ? 'pointer-events-auto rounded-xl shadow-float' : 'rounded-t-2xl'}`}
     >
       <TriangleAlert size={14} className="shrink-0 text-[var(--warn-line)]" aria-hidden="true" />
       {state === 'reconnecting' ? (
-        '연결이 끊겼어요. 다시 연결하는 중…'
+        <span className="font-medium">연결이 끊겼어요. 다시 연결하는 중…</span>
       ) : (
         <>
-          <span className="flex-1">연결이 끊겼어요</span>
+          <span className="flex-1 font-bold text-ink-900">연결이 끊겼어요</span>
           <button type="button" onClick={onReconnect} className="hit-44 font-bold text-brand-600">
             다시 연결
           </button>
