@@ -92,25 +92,7 @@ function PinCard({
           )}
         </div>
         <p className="mt-0.5 text-xs text-ink-500"><UnknownName text={card.meta} /></p>
-        <p className="mt-1.5 flex items-center gap-2 text-xs" aria-label={summaryLabel(card)}>
-          {ORDER.map((type) => {
-            const r = REACTION[type]
-            const mine = card.mine === type
-            return (
-              <span
-                key={type}
-                aria-hidden="true"
-                className={`flex items-center gap-0.5 ${mine ? `rounded-sm border px-1.5 font-semibold ${r.chip}` : ''}`}
-              >
-                <span className={mine ? '' : r.color}>{r.mark}</span>
-                <span className={mine ? '' : 'text-ink-700'}>
-                  {card.counts[type]}
-                  {mine && ' · 나'}
-                </span>
-              </span>
-            )
-          })}
-        </p>
+        <ReactionCounts card={card} className="mt-1.5" />
         {news && news.lines.length > 0 && (
           <ul className="mt-1.5 space-y-0.5 rounded-md bg-brand-50 px-2 py-1 text-xs text-selected">
             {news.lines.map((line) => (
@@ -125,7 +107,32 @@ function PinCard({
   )
 }
 
-function summaryLabel(card: PinCardView) {
+/** 좋음, 반대, 미확인 수 한 줄. 핀 찍기 목록 카드와 AI 코스 날짜별 카드가 같이 쓴다. */
+export function ReactionCounts({ card, className = '' }: { card: Pick<PinCardView, 'counts' | 'mine'>; className?: string }) {
+  return (
+    <p className={`flex items-center gap-2 text-xs ${className}`} aria-label={summaryLabel(card)}>
+      {ORDER.map((type) => {
+        const r = REACTION[type]
+        const mine = card.mine === type
+        return (
+          <span
+            key={type}
+            aria-hidden="true"
+            className={`flex items-center gap-0.5 ${mine ? `rounded-sm border px-1.5 font-semibold ${r.chip}` : ''}`}
+          >
+            <span className={mine ? '' : r.color}>{r.mark}</span>
+            <span className={mine ? '' : 'text-ink-700'}>
+              {card.counts[type]}
+              {mine && ' · 나'}
+            </span>
+          </span>
+        )
+      })}
+    </p>
+  )
+}
+
+function summaryLabel(card: Pick<PinCardView, 'counts' | 'mine'>) {
   const parts = ORDER.map((t) => `${REACTION[t].label} ${card.counts[t]}`)
   return `${parts.join(', ')}${card.mine ? `, 내 의견 ${REACTION[card.mine].label}` : ', 아직 의견 없음'}`
 }

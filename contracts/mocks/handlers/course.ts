@@ -110,7 +110,7 @@ function exampleFixes(mode: CourseRunMock["mode"], dates: string[], routable: Ro
     id: "fix_1", kind: "closed", strength: "hard",
     text: `${b.pins[0].name}은(는) ${label(b.i)}에 쉬어요`,
     moves: swap,
-    resolved_text: `${label(a.i)}과(와) ${label(b.i)}을(를) 통째로 바꾸면 ${b.pins[0].name} 휴무가 풀려요`,
+    resolved_text: `${label(a.i)}과(와) ${label(b.i)}을(를) 통째로 바꾸면 ${b.pins[0].name} 휴무 문제가 해결돼요`,
     remaining_text: null, not_fixed_reason: null,
   }];
   const crowded = full.find((d) => d.pins.length >= 2); // 1곳 옮기기: 가장 먼저 나오는 2곳 이상인 날의 마지막 장소를 다른 날로
