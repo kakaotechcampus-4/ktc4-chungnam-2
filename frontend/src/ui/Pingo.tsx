@@ -239,7 +239,11 @@ const POSES: Record<PingoMood, Pose> = {
 const FLY_BOX = { x: -26, y: 0, w: 100, h: 70 }
 const CAPE = 'M47 30C47 48 30 61 4 66Q1 61-6 63Q-5 57-13 57Q-9 51-16 47C-4 45 8 39 17 30Z'
 
-export default function Pingo({ size = 40, mood = 'default', peek = false }: { size?: number; mood?: PingoMood; peek?: boolean }) {
+/**
+ * celebrate: 설렘(heart) 표정에서 하트 두 개가 한 번 떠올랐다 사라진다(약 1초, #1706). AI 추천 결과가 처음 뜰 때만 켠다.
+ * 상태가 아니라 결과 도착을 알리는 한 번짜리라 반복하지 않는다(DESIGN.md Motion "핑고 예외"). 동작 줄이기면 그리지 않는다.
+ */
+export default function Pingo({ size = 40, mood = 'default', peek = false, celebrate = false }: { size?: number; mood?: PingoMood; peek?: boolean; celebrate?: boolean }) {
   const clip = useId()
   // 시안 「BOTTOM NAVIGATION」: 상자 윗변에 손을 걸치고 고개만 내민다. 눈 아래에서 자른다.
   const fly = mood === 'fly'
@@ -313,6 +317,16 @@ export default function Pingo({ size = 40, mood = 'default', peek = false }: { s
         </g>
       </g>
       {!peek && pose.extra?.(cap)}
+      {celebrate && mood === 'heart' && (
+        <>
+          <g className="motion-safe:animate-pingo-heart-rise opacity-0 motion-reduce:hidden" style={{ transformBox: 'fill-box', transformOrigin: 'center' }}>
+            {at(9, 22, 0.75, HEART, 'var(--pingo-blush)')}
+          </g>
+          <g className="motion-safe:animate-pingo-heart-rise opacity-0 [animation-delay:180ms] motion-reduce:hidden" style={{ transformBox: 'fill-box', transformOrigin: 'center' }}>
+            {at(56, 17, 0.6, HEART, 'var(--pingo-blush)')}
+          </g>
+        </>
+      )}
     </svg>
   )
 }

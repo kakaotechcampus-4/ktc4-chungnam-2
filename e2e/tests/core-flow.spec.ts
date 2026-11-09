@@ -37,7 +37,7 @@ test('방장이 반대한 곳을 빼고 추천받아 지도에 올리면 구성�
     // 크레딧을 쓰기 전에 확인 창을 거친다(#1363).
     await owner.getByRole('alertdialog').getByRole('button', { name: '추천받기' }).click()
     await expect(owner.getByText(/음식점 대안 \d곳을 찾았어요/)).toBeVisible({ timeout: 30_000 })
-    await expect(owner.getByText('지도에 올린 곳만 구성원 모두에게 보여요')).toBeVisible()
+    await expect(owner.getByText('지도에 올린 곳만 모두에게 보여요')).toBeVisible()
 
     const cards = owner.getByRole('article')
     const count = await cards.count()
@@ -51,6 +51,8 @@ test('방장이 반대한 곳을 빼고 추천받아 지도에 올리면 구성�
       await expect(card).toContainText('출처')
     }
     // 같은 점수면 매운맛이 「모름」인 곳보다 「없다고 확인된」 곳이 먼저다(#1288)
+    // 구성원별 줄은 "누가"를 펼쳐야 보인다(#1706).
+    await cards.first().getByRole('button', { name: /누가/ }).click()
     await expect(cards.first()).toContainText('조건 1/1 충족')
     picked = (await cards.first().getByRole('heading', { level: 3 }).getByRole('button').innerText()).trim()
   })
