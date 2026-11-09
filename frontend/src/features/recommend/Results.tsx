@@ -3,10 +3,10 @@ import { ExternalLink, RotateCw } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import RunAdvice from '@/features/agent/RunAdvice'
+import CreditBox from '@/features/credits/CreditBox'
 import type { MemberView } from '@/features/maps/model'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
-import { balanceText } from '@/features/credits/model'
 import { useCreditsQuery } from '@/features/credits/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
@@ -40,7 +40,7 @@ export function BackToReadiness({ mapId }: { mapId: string }) {
 }
 
 /**
- * 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 그 아래 「↻ 다시 추천」과 남은 크레딧. count 는 이번 실행이 새로 찾은 곳(new_count)이다.
+ * 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 그 아래 「↻ 다시 추천」과 오른쪽 크레딧 칸(CreditBox, 「크레딧 안 써요」). count 는 이번 실행이 새로 찾은 곳(new_count)이다.
  * 다시 추천은 고친 조건으로, 지금 후보를 빼고 찾는다(#845). 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D5) — 그래서 확인 창 없이 바로 간다.
  * 버튼이 작다는 의견으로 핑고 안내 칸 아래 btn-md 로 옮겼다(#1363).
  * 조건을 고치는 요청이 끝나기 전에는 막는다 — 고친 게 빠진 채 찾지 않게. 결과(실패 포함)는 요청 훅이 처리한다(#349).
@@ -62,14 +62,14 @@ export function ResultsHeader({ mapId, run, count }: { mapId: string; run: Recom
           />
         </div>
       </div>
-      <div className="mt-2 flex items-center gap-3">
+      <div className="mt-2 flex gap-2">
         <button type="button" disabled={!!busy} onClick={() => retry.mutate(run)} className="btn-outline btn-md flex-1">
           <RotateCw size={16} aria-hidden="true" /> {busy ?? '다시 추천'}
         </button>
         {/* 숫자는 GET /credits/me 그대로(#733). 못 받으면 비운다 — 다시 추천은 크레딧과 무관하게 된다. */}
-        {credits && <span className="shrink-0 text-label text-ink-500">{balanceText(credits)}</span>}
+        {credits && <CreditBox cost={0} credits={credits} />}
       </div>
-      <p className="mt-1.5 text-label text-ink-500"><Sentences text="고친 조건으로, 지금 후보를 빼고 찾아 드려요 · 크레딧은 쓰지 않아요" /></p>
+      <p className="mt-1.5 text-label text-ink-500"><Sentences text="고친 조건으로, 지금 후보를 빼고 찾아 드려요" /></p>
     </div>
   )
 }

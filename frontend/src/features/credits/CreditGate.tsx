@@ -2,11 +2,11 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 
 import GuestAccountNotice from '@/features/auth/GuestAccountNotice'
-import Coin from '@/ui/Coin'
 import Notice from '@/ui/Notice'
 import Sentences from '@/ui/Sentences'
 
-import { adButtonText, adOfferText, balanceText, creditBlock, guestCreditText, insufficientText, type CreditFeature } from './model'
+import CreditBox from './CreditBox'
+import { adButtonText, adOfferText, creditBlock, guestCreditText, insufficientText, type CreditFeature } from './model'
 import { useCreditsQuery } from './queries'
 import { useAdCharge } from './useAdCharge'
 
@@ -76,15 +76,7 @@ export default function CreditGate({
       {/* 잔액을 못 받아도 버튼은 막지 않는다 — 최종 판정은 서버다. 숫자는 응답에서만 읽는다(#733). */}
       <div className="flex gap-2">
         <div className="min-w-0 flex-1">{children}</div>
-        {credits.data && (
-          <div className="flex h-13 shrink-0 flex-col justify-center rounded-xl border border-ink-200 bg-white px-3">
-            <p className="flex items-center gap-1 text-sm font-bold text-coin-text">
-              <Coin size={16} />
-              {credits.data.prices[feature]} 크레딧 사용
-            </p>
-            <p className="text-xs text-ink-600">{balanceText(credits.data)}</p>
-          </div>
-        )}
+        {credits.data && <CreditBox cost={credits.data.prices[feature]} credits={credits.data} />}
       </div>
       {credits.error && <p className="text-center text-xs text-ink-500">남은 크레딧을 불러오지 못했어요</p>}
     </div>
