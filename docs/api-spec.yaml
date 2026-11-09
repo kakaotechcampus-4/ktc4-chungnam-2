@@ -565,6 +565,66 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/InviteNotFound" }
 
+  /invites/{token}/cover:
+    get:
+      tags: [maps]
+      summary: |
+        초대 화면의 지도 대표 이미지(#1625) — 로그인 없이 연다. `InviteSummary.cover_url`이 가리키는 주소다.
+        `GET /maps/{mapId}/cover`와 같은 이미지·형식·캐시 규칙이고, 권한은 요약처럼 토큰이다.
+        없는 토큰 404, 끈·만료 링크 410, 올린 이미지가 없으면 404(화면은 `InviteSummary.region`으로 지역 기본 그림을 그린다).
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+        - { name: v, in: query, required: false, schema: { type: string }, description: "캐시 구분용 갱신 시각. 서버는 읽지 않는다 — `cover_url`을 그대로 쓴다" }
+      responses:
+        "200":
+          description: 이미지 바이트
+          headers:
+            Cache-Control: { schema: { type: string }, description: "private, max-age=31536000, immutable" }
+          content:
+            image/webp: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/InviteNotFound" }
+        "410": { $ref: "#/components/responses/InviteGone" }
+
+  /invites/{token}/preview:
+    get:
+      tags: [maps]
+      summary: |
+        초대 링크 미리보기 문서(#1625) — 카톡 같은 메신저의 미리보기 봇 전용이다. 화면(FE)은 부르지 않는다.
+        메신저는 스크립트를 실행하지 않아 화면의 고정 og 태그만 읽는다. 그래서 앞단 Caddy가 미리보기 봇의 `/invites/{token}` 요청만
+        이 경로로 보낸다(`deploy/Caddyfile`). 사람이 여는 요청은 그대로 화면이다.
+        og 제목은 「{초대자}님이 {지도 제목} 지도에 초대했어요」, 설명은 날짜·구성원 수·핀 수, 그림은 대표 이미지가 있으면 `preview-image`, 없으면 기본 그림(`/og-image.png`)이다.
+        메타 태그에는 조각을 나눠 줄 자리가 없어 사용자 글을 문장에 넣고 HTML 이스케이프한다. 더 쓸 수 없는 링크도 200으로 서비스 기본 미리보기를 준다.
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: og 태그만 담은 HTML
+          content:
+            text/html: { schema: { type: string } }
+
+  /invites/{token}/preview-image:
+    get:
+      tags: [maps]
+      summary: |
+        초대 링크 미리보기 그림(#1625) — 대표 이미지를 1200×630으로 가운데 맞춰 자르고 오른쪽 아래에 워드마크를 얹은 JPEG.
+        `preview` 문서의 `og:image`가 `v`를 붙여 가리킨다(사진을 바꾸면 주소가 바뀌어 메신저가 새로 가져간다). 권한은 토큰이다.
+        없는 토큰·올린 이미지가 없음·열 수 없는 이미지 404, 끈·만료 링크 410.
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+        - { name: v, in: query, required: false, schema: { type: string }, description: "캐시 구분용 갱신 시각. 서버는 읽지 않는다" }
+      responses:
+        "200":
+          description: 미리보기 그림
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/InviteNotFound" }
+        "410": { $ref: "#/components/responses/InviteGone" }
+
   /invites/{token}/accept:
     post:
       tags: [maps]
@@ -1257,6 +1317,30 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Reaction" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /pins/{pinId}/photos:
+    get:
+      tags: [pins]
+      summary: |
+        핀 상세 블로그 사진(#1157) — 핀이 가리키는 자체 DB 장소를 다룬 블로그 사진의 미리보기 최대 3장.
+        서버가 그 장소의 상호명과 구, 도로명 주소로 카카오(다음) 이미지 검색을 부르고, 이모티콘, 지도 캡처, 링크 미리보기, 작은 사진, **사람 얼굴이 보이는 사진**을 뺀다(얼굴은 미리보기를 받아 메모리에서 검출하고 버린다)
+        (규칙은 `places/photos.py` 한 곳). **응답은 저장하거나 캐시하지 않고 넘기기만 한다**(#53과 같은 규칙) — 열 때마다 새로 부른다.
+        화면은 "블로그 사진"으로 밝히고 출처 사이트 이름을 붙이며, 누르면 `link_url`(원문 글)을 새 창으로 연다.
+        실시간 핀(`source: live`)은 주소를 저장하지 않아 빈 배열이다. 주소가 없는 장소, 개발 모드(PLACES_MODE=dev)도 빈 배열이다.
+        구성원 누구나 조회한다(반응 목록과 같은 권한). 사용자당 호출 상한이 있다(초과 시 429, 장소 검색과 같은 상한을 따로 센다).
+      parameters: [ { $ref: "#/components/parameters/PinId" } ]
+      responses:
+        "200":
+          description: OK. 없으면 빈 배열 — 지어내지 않는다
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 3
+                items: { $ref: "#/components/schemas/PinPhoto" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/PlacesUnavailable" }
 
   # ---------- recommend (3절, 5-5~5-6-1) ----------
   /maps/{mapId}/recommend/readiness:
@@ -2265,7 +2349,7 @@ components:
 
     InviteSummary:
       type: object
-      description: 초대 수락 전 화면용 요약. 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다. 예외는 `already_member_map_id` 하나다 — 요청한 사람이 이미 그 지도의 구성원일 때만 준다(#1563)
+      description: 초대 수락 전 화면용 요약. 대표 이미지와 여행 지역은 준다(#1625, 카드 그림). 지도 내용(핀의 이름·위치 등)과 내부 식별자(map_id)는 포함하지 않는다 — 수락 응답(Map)에서 받는다. 핀은 개수(pin_count)만 준다. 예외는 `already_member_map_id` 하나다 — 요청한 사람이 이미 그 지도의 구성원일 때만 준다(#1563)
       required: [title, start_date, end_date, member_count, pin_count, inviter_display_name, expires_at]
       properties:
         title: { type: string, maxLength: 100 }
@@ -2275,6 +2359,8 @@ components:
         pin_count: { type: integer, minimum: 0, description: "지도에 올라와 있는 핀 수 — 초대 카드 「핀 12개」 표시용 (2026-10-04, FE 요청)" }
         inviter_display_name: { type: string, maxLength: 50, description: "초대 링크를 발급한 사람. 탈퇴했으면 '탈퇴한 구성원'" }
         expires_at: { type: string, format: date-time }
+        region: { $ref: "#/components/schemas/MapRegion", description: "지도의 여행 지역(#1625). 대표 이미지가 없을 때 화면이 지역 기본 그림을 그리는 데 쓴다. 지역 없이 만든 지도는 키가 없다" }
+        cover_url: { type: [string, "null"], description: "방장이 올린 대표 이미지 주소(#1625). API 기준 상대 경로 `/invites/{token}/cover?v=<갱신 시각(마이크로초)>` — `Map.cover_url`과 같은 v다. 올린 이미지가 없으면 키가 없다(null도 같은 뜻)" }
         already_member_map_id: { type: string, description: "요청에 로그인 세션(게스트 포함)이 있고 그 사람이 **이미 이 지도의 구성원이면** 그 지도의 id(#1563). 화면은 수락 카드를 건너뛰고 바로 그 지도로 간다(기획안 6절 「구성원 흐름」). 세션이 없거나, 구성원이 아니거나, 이미 나간 사람에게는 **필드를 주지 않는다** — 링크만 가진 사람이 지도 id를 알아내지 못하게 하려는 원래 규칙 그대로다. 토큰이 만료(410)·없음(404)이면 지금처럼 오류다. 이 조회는 구성원 여부만 보고 아무것도 바꾸지 않는다(수락은 여전히 `POST /invites/{token}/accept`)" }
 
     Invite:
@@ -2828,6 +2914,15 @@ components:
           items: { type: string, maxLength: 50 }
           description: "반대 사유 칩 id(ReasonChip.id). 없으면 빈 배열"
         updated_at: { type: string, format: date-time, description: "그 반응을 남기거나 마지막으로 바꾼 시각" }
+
+    PinPhoto:
+      type: object
+      description: "블로그 사진 한 장(#1157). 카카오가 만든 미리보기 주소와 원문 글 주소, 출처 사이트 이름. 저장하지 않는다(#53과 같은 규칙)"
+      required: [thumbnail_url, link_url, site_name]
+      properties:
+        thumbnail_url: { type: string, maxLength: 2000, description: "카카오 미리보기 이미지 주소. 사진 원본 주소가 아니다" }
+        link_url: { type: string, maxLength: 2000, description: "사진이 실린 원문 글 주소. 새 창으로 연다" }
+        site_name: { type: string, maxLength: 100, description: "출처 사이트 이름(예 네이버블로그). 모르면 빈 문자열" }
 
     Reaction:
       type: object

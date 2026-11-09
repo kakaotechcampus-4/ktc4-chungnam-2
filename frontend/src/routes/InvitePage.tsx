@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, Navigate, useNavigate, useParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
 import { isUnauthorized } from '@/features/auth/api'
@@ -10,13 +10,14 @@ import { DISPLAY_NAME_MAX } from '@/features/auth/model'
 import { randomGuestName } from '@/features/auth/guestName'
 import { useGuestJoinMutation, useMeQuery } from '@/features/auth/queries'
 import { inviteErrorMessage, inviteProblem, type InviteProblem, type InviteView } from '@/features/maps/model'
+import { MapCover } from '@/features/maps/MapLook'
 import { useAcceptInviteMutation, useInviteSummaryQuery } from '@/features/maps/queries'
 import BackButton from '@/ui/BackButton'
 import EntryFrame from '@/ui/EntryFrame'
 import EmptyState from '@/ui/EmptyState'
 import { josaRo } from '@/ui/josa'
 import PingoLoading from '@/ui/PingoLoading'
-import MapIllustration from '@/ui/MapIllustration'
+import CoverPingo from '@/ui/CoverPingo'
 import TextField from '@/ui/TextField'
 import Sentences from '@/ui/Sentences'
 import BusyLabel from '@/ui/BusyLabel'
@@ -53,6 +54,10 @@ export default function InvitePage() {
       </div>
     )
   }
+
+  // 이미 구성원이면 수락 카드 없이 그 지도로 간다(기획안 6절 구성원 흐름, #1563).
+  const memberOf = summary.data?.alreadyMemberMapId
+  if (memberOf) return <Navigate to={`/maps/${memberOf}`} replace />
 
   // 누구로 참여하는지는 버튼 글이 말한다 — 아래 작은 줄로 두면 안 보였다(#1427).
   const name = me.data?.display_name
@@ -177,7 +182,11 @@ function InviteCard({ invite }: { invite: InviteView }) {
       <p className="mb-3 text-center text-sm text-ink-500">{invite.inviter}님이 초대했어요</p>
       {/* 넓은 화면은 바깥이 이미 카드라 테두리를 빼 카드 안 카드가 되지 않게 한다. */}
       <div className="rounded-xl border border-ink-200 bg-surface p-4 text-center md:border-0 md:p-0">
-        <MapIllustration />
+        {/* 그 지도의 대표 사진(없으면 지역 그림)이라 어떤 여행인지 바로 보인다(#1625). */}
+        <div className="relative overflow-hidden rounded-xl">
+          <MapCover map={invite} className="block aspect-[2/1] w-full" />
+          <CoverPingo />
+        </div>
         <h1 className="mt-4 text-2xl font-bold text-ink-900">{invite.title}</h1>
         <p className="mt-1 text-sm text-ink-500">{invite.dates}</p>
         <p className="mt-1 text-xs text-ink-500">

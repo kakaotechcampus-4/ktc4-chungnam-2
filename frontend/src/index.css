@@ -553,6 +553,18 @@
         animation-timing-function: step-end;
     }
 }
+/* 코치마크(ui/CoachMark) 짚은 자리 — 둘레를 덮개 색으로 크게 덮어 그 자리만 밝게 남기고, 흰 테두리로 한 번 더 짚는다. */
+.coach-spot {
+    box-shadow: 0 0 0 2px var(--surface-card), 0 0 0 9999px var(--scrim);
+    animation: enter-fade 200ms ease-out;
+    transition: left 150ms ease-out, top 150ms ease-out, width 150ms ease-out, height 150ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+    .coach-spot {
+        animation: none;
+        transition: none;
+    }
+}
 @keyframes press-fill {
     to { stroke-dashoffset: 0; }
 }

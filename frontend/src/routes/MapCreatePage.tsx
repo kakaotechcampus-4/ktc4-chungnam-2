@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router'
-import { ChevronLeft } from 'lucide-react'
+import { useNavigate } from 'react-router'
 
 import ErrorText from '@/ErrorText'
 import { createMapErrorMessage, titleServerError, tripReady, type TripDraft } from '@/features/maps/model'
 import { useCreateMapMutation, useMapsQuery } from '@/features/maps/queries'
 import TripFields from '@/features/maps/TripFields'
+import BackButton from '@/ui/BackButton'
 import EntryFrame from '@/ui/EntryFrame'
 import BusyLabel from '@/ui/BusyLabel'
 
@@ -34,10 +34,9 @@ export default function MapCreatePage() {
   return (
     // 넓은 화면은 입구 카드다(#1269) — 버튼은 맨 아래가 아니라 칸 바로 아래.
     <EntryFrame as="form" onSubmit={submit} className="bg-ink-50 px-4 pb-6 pt-4">
-      <header className="mb-6 flex items-center gap-3">
-        <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-surface shadow-float">
-          <ChevronLeft size={20} />
-        </Link>
+      {/* 지도 밖 빈 바탕 화면은 갈 곳을 적은 글자 버튼이다 — 초대 화면과 같다(#1623, #1655). */}
+      <header className="mb-6">
+        <BackButton label="내 지도 목록" onClick={() => navigate('/')} />
         <h1 className="text-2xl font-bold text-ink-900">새 지도</h1>
       </header>
 

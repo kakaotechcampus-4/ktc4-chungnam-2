@@ -1,6 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
-import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import ErrorText from '@/ErrorText'
@@ -12,11 +11,13 @@ import PlaceReviews from '@/features/reviews/PlaceReviews'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
 import { useAddToShortlistMutation, useUnconfirm } from '@/features/shortlist/queries'
+import BlogPhotos from '@/ui/BlogPhotos'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Mark from '@/ui/Mark'
 import ProgressBar from '@/ui/ProgressBar'
 import FieldError from '@/ui/FieldError'
 import { josa } from '@/ui/josa'
+import MapAppLinks from '@/ui/MapAppLinks'
 import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import Sentences from '@/ui/Sentences'
@@ -27,7 +28,7 @@ import BusyLabel from '@/ui/BusyLabel'
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
 import { asReactionType, authorName, FILTER_CATEGORIES, hasAiEvidence, inputExample, participants, pinEditErrorMessage, toOpinions, type OpinionView, type Pin, type PinCategory, type PinUpdateRequest, type ReactionDto, type ReactionType, type ReasonChip } from './model'
-import { useMyReactionMutation, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
+import { useMyReactionMutation, usePinPhotosQuery, usePinTrashQuery, useReactionsQuery, useReasonChipsQuery, useTrashPinMutation, useUpdatePinMutation } from './queries'
 
 /** 반응 색 세트(colors.md 시맨틱 — 배경·선·글자 세 값이 한 세트). 용어·기호는 기획안 9절 고정. */
 const R: Record<ReactionType, { mark: ReactNode; label: string; bg: string; line: string; text: string }> = {
@@ -233,6 +234,17 @@ function EditPinDialog({ pin, mapId, onCancel }: { pin: Pin; mapId: string; onCa
   )
 }
 
+/** 블로그 사진 줄(#1157). 실시간 핀은 부르지 않고 그리지 않는다. */
+function PinPhotos({ pin }: { pin: Pin }) {
+  const photos = usePinPhotosQuery(pin)
+  if (pin.source === 'live') return null
+  return (
+    <div className="py-1">
+      <BlogPhotos photos={photos.data} loading={photos.isPending} failed={photos.isError} />
+    </div>
+  )
+}
+
 /** 핀 상세 본문(Figma 5절 '마킹된 장소 상세'). */
 export function PinDetailBody({
   pin,
@@ -258,24 +270,15 @@ export function PinDetailBody({
       <div className="space-y-1">
         <p className="flex flex-wrap items-center gap-x-1 text-body text-ink-600">
           {pin.category}
+          {/* 동네는 서버가 자체 DB 주소에서 뽑는다. 실시간 핀과 주소 없는 장소는 없어서 비운다(#1564). */}
+          {pin.neighborhood && <span>· {pin.neighborhood}</span>}
           <span className="text-ink-500">· {pin.created_by === myId ? '내가 찍은 핀' : <UnknownName text={`${authorName(pin)}님이 찍은 핀`} />}</span>
-          {/* 사진·주소·전화는 핀 응답에 없다(카카오 응답 저장 금지, #53) — 자세한 정보는 카카오맵 새 창으로. */}
-          {(pin.place_url || pin.naver_url) && (
-            <span className="ml-auto flex flex-wrap justify-end gap-x-3">
-              {pin.place_url && (
-                <a href={pin.place_url} target="_blank" rel="noopener noreferrer" className="btn-link">
-                  카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
-                </a>
-              )}
-              {/* 네이버 지도 검색 링크(#1513) */}
-              {pin.naver_url && (
-                <a href={pin.naver_url} target="_blank" rel="noopener noreferrer" className="btn-link">
-                  네이버 지도에서 보기 <ExternalLink size={12} aria-hidden="true" />
-                </a>
-              )}
-            </span>
-          )}
         </p>
+        <PinPhotos pin={pin} />
+        {/* 주소, 영업시간은 원본 장소 페이지에서 본다(카카오 응답 저장 금지, #53). 바로 눈에 띄게 버튼 줄로 둔다. 사진은 위 블로그 사진 줄(#1157). */}
+        <div className="py-1">
+          <MapAppLinks kakao={pin.place_url} naver={pin.naver_url} />
+        </div>
         <PinMemo pin={pin} mapId={mapId} />
         {isLive(pin) && <LiveInfo pin={pin} />}
         {hasAiEvidence(pin) && <AiPinEvidence pin={pin} members={members} />}

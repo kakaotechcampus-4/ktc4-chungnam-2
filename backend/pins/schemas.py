@@ -199,6 +199,14 @@ class PinUpdateRequest(BaseModel):
         return self
 
 
+class PinPhoto(BaseModel):
+    """GET /pins/{pinId}/photos 한 장 — 그 장소를 다룬 블로그 사진의 카카오 미리보기(#1157). 저장하지 않는다."""
+
+    thumbnail_url: str
+    link_url: str
+    site_name: str
+
+
 class Reaction(BaseModel):
     """None인 필드(reason_text·reason_chip_ids·display_name)는 응답에서 생략한다 — 라우터가
     response_model_exclude_none을 쓴다(스펙: 없으면 필드 생략). display_name은 GET /reactions 전용."""
