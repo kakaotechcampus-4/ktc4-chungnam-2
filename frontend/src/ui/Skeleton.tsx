@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
+import OfflineState from './OfflineState'
+import { useOnline } from './useOnline'
+
 /** 뼈대 한 칸 — 글줄·칩·칸 자리. 크기와 모양(반경)은 부르는 쪽이 `className`으로 준다(`h-4 w-2/3`, `h-8 w-20 rounded-full`). */
 export function Bone({ className = '' }: { className?: string }) {
   return <div className={`rounded-sm bg-ink-100 ${className}`} />
@@ -23,11 +26,13 @@ export default function Skeleton({
   children: ReactNode
 }) {
   const [shown, setShown] = useState(delayMs === 0)
+  const online = useOnline()
   useEffect(() => {
     if (delayMs === 0) return
     const t = setTimeout(() => setShown(true), delayMs)
     return () => clearTimeout(t)
   }, [delayMs])
+  if (!online) return <OfflineState compact />
   if (!shown) return null
   return (
     <>

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import { Check, Loader2 } from 'lucide-react'
+import { Check, Loader2, WifiOff } from 'lucide-react'
+
+import { useOnline } from './useOnline'
 
 /**
  * 버튼 안의 기다림 표시(#1668, 버튼 상태 「로딩」). 기다리는 동안 도는 아이콘 + 「저장하는 중…」, 아니면 원래 글자.
@@ -20,6 +22,7 @@ export default function BusyLabel({
   doneText?: string
   children: ReactNode
 }) {
+  const online = useOnline()
   if (done) {
     return (
       <>
@@ -29,6 +32,15 @@ export default function BusyLabel({
     )
   }
   if (!busy) return <>{children}</>
+  // 끊긴 동안 요청은 멈춰 있다가 연결되면 이어서 간다 — 끝없이 도는 대신 그렇게 알린다(#1722).
+  if (!online) {
+    return (
+      <>
+        <WifiOff size={16} aria-hidden="true" className="shrink-0" />
+        연결되면 보낼게요
+      </>
+    )
+  }
   return (
     <>
       <Loader2 size={16} aria-hidden="true" className="shrink-0 animate-spin motion-reduce:animate-none" />
