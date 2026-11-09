@@ -67,10 +67,10 @@ export function PinDetailHeader({
   const busy = add.isPending || remove.isPending
   const navigate = useNavigate()
   const name = pin.place_name ?? '이 장소'
-  // 넣을 때만 토스트로 확정 리스트로 가는 길을 준다(#1030). 뺄 때는 버튼이 그대로 남아 다시 누르면 되므로 글자만 바뀐다.
+  // 넣으면 확정 리스트로 가는 길을(#1030), 빼면 「되돌리기」를 토스트로 준다 — 핀 모양만으로는 뺐다는 걸 놓친다(#1576).
   const toggle = () =>
     confirmed
-      ? remove.unconfirm(pin, { undo: false })
+      ? remove.unconfirm(pin)
       : add.mutate(pin.id, {
           onSuccess: () =>
             showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
@@ -382,6 +382,7 @@ function subjectOf(people: { name: string; isMe: boolean }[]) {
 function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>) {
   // 내 의견은 위 「내 의견」에 이미 있어서 갈린 의견에선 뺀다.
   const split = all.filter((o) => !o.isMe)
+  const waiting = unknown.filter((m) => !m.isMe)
   const [showLikes, setShowLikes] = useState(false)
   const nameOf = (o: { name: string; isMe: boolean }) => `${o.name}${o.isMe ? ' (나)' : ''}`
 
@@ -419,9 +420,11 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
           )}
         </div>
       )}
-      {unknown.some((m) => !m.isMe) && (
-        <p className="text-body text-ink-500">
-          <Mark kind="unknown" /> {subjectOf(unknown.filter((m) => !m.isMe))} 아직 의견을 남기지 않았어요
+      {waiting.length > 0 && (
+        // 의견을 기다리는 사람은 눈에 띄게 둔다 — 여럿이면 「○○님 외 N명」으로 줄인다(#1576).
+        <p className="flex items-center gap-1.5 rounded-xl border border-brand-200 bg-brand-100 px-3 py-2.5 text-body font-semibold text-[var(--selected-text)]">
+          <Mark kind="unknown" /> {waiting.length > 1 ? `${waiting[0].name}님 외 ${waiting.length - 1}명이` : `${waiting[0].name}님이`} 아직 의견을
+          남기지 않았어요
         </p>
       )}
     </section>
@@ -429,6 +432,7 @@ function Opinions({ split: all, likes, unknown }: ReturnType<typeof toOpinions>)
 }
 
 function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
+  const reasons = o.text ? [...o.chips, `“${o.text}”`] : o.chips
   return (
     <li className="space-y-1 px-3 py-2.5">
       <p className="flex flex-wrap items-center gap-1.5 text-body">
@@ -436,9 +440,9 @@ function OpinionRow({ o, name }: { o: OpinionView; name: string }) {
           {R[o.type].mark} {R[o.type].label}
         </span>
         <span className="font-medium text-ink-900">{name}</span>
-        {o.chips.length > 0 && <span className="font-bold text-ink-900">· {o.chips.join(' · ')}</span>}
       </p>
-      {o.text && <p className="text-body text-ink-600">“{o.text}”</p>}
+      {/* 고른 칩과 쓴 글은 같은 줄·같은 글자로 둔다 — 칩만 굵게 이름 옆에 붙어 있어 사람마다 모양이 달랐다(#1576). 쓴 글만 따옴표다. */}
+      {reasons.length > 0 && <p className="text-body text-ink-700">{reasons.join(' · ')}</p>}
     </li>
   )
 }
