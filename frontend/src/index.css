@@ -66,6 +66,7 @@
     --color-ink-900: var(--ink-900);
     --color-danger: var(--action-danger);
     --color-warn-text: var(--warn-text);
+    --color-coin-text: var(--coin-text);
     --color-scrim: var(--scrim);
     /* 역할 이름(#1412) — 흰 카드 면, 파랑 글자, 고른 칸 글자. 밝은 화면에선 white·brand-600·brand-700 과 같고 다크에서 따로 간다. */
     --color-surface: var(--surface-card);

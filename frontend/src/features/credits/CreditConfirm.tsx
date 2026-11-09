@@ -1,3 +1,4 @@
+import Coin from '@/ui/Coin'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 
 import { balanceText, type CreditFeature } from './model'
@@ -30,7 +31,10 @@ export default function CreditConfirm({
       detail={
         credits.data ? (
           <div className="space-y-1 text-ink-700">
-            <p className="font-semibold text-ink-900">{credits.data.prices[feature]} 크레딧을 써요</p>
+            <p className="flex items-center gap-1.5 font-bold text-coin-text">
+              <Coin size={18} />
+              {credits.data.prices[feature]} 크레딧을 써요
+            </p>
             <p>{balanceText(credits.data)}</p>
           </div>
         ) : undefined

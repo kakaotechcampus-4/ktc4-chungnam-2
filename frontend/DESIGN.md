@@ -185,6 +185,10 @@ components:
 ### 핑고 경고 분홍
 - **pingo-alert** (`#DC6A6A`, 캐릭터 시안 Alert Pink): 핑고 ALERT(의견 부족·주의)의 모자·머리 핀·물음표에만 쓴다. 글자·면·버튼에는 쓰지 않는다.
 
+### 크레딧 동전
+- **coin-face · coin-rim · coin-shine** (`#FFC633` · `#C77A00` · `#FFF0B3`): 크레딧 동전 그림(`ui/Coin`)에만 쓴다. 확정 골드(`#F5B301`)보다 주황 쪽으로 진하게 갈라 놓았고, 면·버튼 바탕에는 쓰지 않는다 — 확정과 섞이지 않게 동전 모양이 뜻을 맡는다.
+- **coin-text** (`#8A4F00`, 흰 바탕 6.6:1): 「N 크레딧 사용」·「N 크레딧을 써요」처럼 쓸 크레딧을 알리는 글자에만 쓴다.
+
 ### Semantic
 - **좋음** (good-bg / good-line / good-text), **조율·주의** (warn-*), **반대** (bad-bg / pin-red / bad-text): 배경·선·글자가 한 세트다. 선 색을 글자에 쓰지 않는다. 주의 글자는 `#9C5A00`이다 — 라벤더 회색 위에서도 4.5:1을 넘기게 `#A35F00`에서 조금 어둡게 했다(#1521).
 
@@ -367,7 +371,7 @@ components:
 | 구글 로그인 버튼(#1514) | `GoogleButton` (흰 바탕 + ink-200 테두리 + 구글 「G」 로고, 카카오 버튼 바로 아래 같은 크기. 게스트 전환은 「Google로 계정 만들기」) | `features/auth/GoogleButton` |
 | 게스트에게 카카오·구글 계정 권하기(계정 줄 아래) | `GuestAccountNotice` (ink-50 면 + 한 줄 + `KakaoButton` + `GoogleButton`). 게스트 표시는 `tag tag-neutral` 「게스트」 | `features/auth/GuestAccountNotice` |
 | 아래에서 올라오는 모달 | `ModalSheet` | `features/shell/ModalSheet` |
-| 크레딧 쓰는 AI 실행 전 확인(「추천받기」·「코스 짜기」, 쓸 크레딧 · 남은 크레딧, `note` 한 줄 — 추천은 찾는 범위) | `CreditConfirm` (`ConfirmDialog` + 회색 상자 두 줄) | `features/credits/CreditConfirm` |
+| 크레딧 쓰는 AI 실행 전 확인(「추천받기」·「코스 짜기」, 쓸 크레딧 · 남은 크레딧, `note` 한 줄 — 추천은 찾는 범위) | `CreditConfirm` (`ConfirmDialog` + 회색 상자 두 줄, 첫 줄은 `Coin` + coin-text 700) | `features/credits/CreditConfirm` |
 | 입구 화면 틀(좁으면 세로 띠, 768px 이상 가운데 카드) | `EntryFrame` | `ui/EntryFrame` |
 | 왼쪽 패널 옆에 붙는 패널(넓은 화면만, 딤 없음) | `SidePanel` | `features/shell/SidePanel` |
 | 화면 모드 고르기(기기 설정 · 밝게 · 어둡게, #1412) | `ThemeControl` (`SegmentedControl`) · 값과 적용은 `features/shell/theme` | `features/shell/ThemeControl` |
@@ -383,7 +387,7 @@ components:
 | 삭제한 핀(지도 정보의 `btn-text` 「삭제한 핀」 + 바닥 시트, 줄마다 이름·분류·삭제한 사람·남은 날, 「되돌리기」 `btn-outline btn-sm`, #864) | `PinTrashSheet` | `features/map/PinTrashSheet` |
 | 핀을 끌어 삭제하는 자리(끌 때만 나타남. 흰 알약 h-12 + 그림자 + 뚜껑 열리는 휴지통 아이콘 + 「삭제하기」, 위에 오면 brand-600 테두리 2px · brand-50 면 · 「놓으면 삭제」. 자리는 토스트와 같다, #1012) · 붙이는 함수 | `TrashDropZone` · `attachTrashDrag` | `features/map/TrashDropZone` · `features/map/pinDrag` |
 | 패널·시트 안 이전 화면(넓은 화면에선 패널 헤더 ‹ 로 옮김) | `PanelBackLink` (모바일은 `BackButton`) | `features/shell/PanelBackLink` |
-| 장소 검색 최근 검색어 | `RecentSearches` (검색창이 비어 있고 포커스가 있을 때 아래 흰 카드: 「최근 검색」 12/600 ink-500 + 「전체 삭제」 `btn-text`, 줄마다 시계 아이콘·검색어·✕. 이 브라우저에 계정마다 8개, 검색어만 남기고 지도 링크·결과는 남기지 않는다) | `features/search/RecentSearches` |
+| 장소 검색 최근 검색어 | `RecentSearches` (검색창이 비어 있고 포커스가 있을 때 검색창 바로 밑에 붙는 흰 카드 — 열리면 검색창은 아래 모서리를 펴고, 둘이 한 덩어리로 brand-600 1px 둘레 + 이음매 ink-100 선이다. 브라우저 입력 기록은 `autoComplete="off"`로 끈다: 「최근 검색」 12/600 ink-500 + 「전체 삭제」 `btn-text`, 줄마다 시계 아이콘·검색어·✕. 이 브라우저에 계정마다 8개, 검색어만 남기고 지도 링크·결과는 남기지 않는다) | `features/search/RecentSearches` |
 | 알림 | `showToast` (+ 「되돌리기」·「다시 시도」 동작) | `features/shell/toast` |
 | 사람 | `Avatar` (회색 면 + 첫 글자, 32·44) | `ui/Avatar` |
 | 별점(보기·고르기, #953) | `StarRating` (`onChange` 없으면 보기 — 평균은 가까운 별 수로 칠하고 숫자는 옆 글자로. 있으면 별 하나가 라디오, 누르는 곳 44px. 켜짐 `--action-fill` · 꺼짐 `--line-control`, 골드는 확정 전용이라 쓰지 않는다) | `ui/StarRating` |
@@ -394,6 +398,8 @@ components:
 | 핑고 밖에서 찾는 출구 | `ExternalSearchLink` 「카카오맵에서 더 찾아보기」(새 창) 뒤에 같은 모양 「네이버 지도에서 찾아보기」(`naver_url`이 있을 때, #1513) + 12 ink-500 「검색어 ‘…’」. 색·크기는 놓이는 자리가 준다 | `ui/ExternalSearchLink` |
 | 카테고리 아이콘(마킹된 장소 카드 왼쪽, #1454) | `CategoryIcon` (ink-100 면 36 + 반경 12 + ink-600 선 아이콘 20). 선 경로 `categoryIconPath`는 검색 결과 핀과 같이 쓴다 | `ui/CategoryIcon` |
 | 마지막으로 본 뒤 새로 생긴 핀·의견 알림(마킹된 장소 맨 위, #1454) | `NewSinceBanner` (아래 「핀 항목」 줄) | `features/map/NewSinceBanner` |
+| AI 실행 버튼 오른쪽 크레딧 글(동전 + 「N 크레딧 사용」 또는 「크레딧 안 써요」 + 「?」 / 「남은 크레딧 N/30」) | `CreditBox` (`cost`, 0이면 안 씀. 테두리 없는 글 버튼이고, 누르면 `MenuPopover`에 FAQ 크레딧 장면 + 답) | `features/credits/CreditBox` |
+| 크레딧 동전(글 옆 기호, 16×16) | `Coin` (테두리 · 금색 면 · 세로 홈 · 빛, 색은 `--coin-*`) | `ui/Coin` |
 | 글 옆 기호(좋음·반대·미확인·확정·통과·미충족·펼치기) | `Mark kind=…` — 핑고 결의 직접 그린 그림(면은 통통하게 채움, 선은 굵기 2.4·끝 둥글게, 16×16, currentColor). 반대는 채운 원에 X를 오려 낸다 | `ui/Mark` |
 | AI 코스 작업 기록(한 줄 · 이해 카드) | `WorkLog` | `features/course/WorkLog` |
 | 작업 기록 한 줄 · 「누가」 칩(AI 코스와 「핑고가 한 일」이 같이 쓴다, #1300) | `StepRow` · `ByChip` | `ui/WorkStep` |
@@ -499,9 +505,9 @@ components:
 
 ### AI 추천 결과 (#849)
 - 「추천받기」 한 번에 결과까지 간다(사유 정리 + 첫 검색, #845). 결과 전에 근거를 확인하는 화면은 없다.
-- 준비 화면의 「○○ 추천받기」 아래에는 쓸 크레딧과 남은 크레딧 N/상한을 응답 값으로 둔다(#432, 추천 횟수 상한은 크레딧으로 바뀌어 없다).
+- 준비 화면의 「○○ 추천받기」 아래에는 쓸 크레딧과 남은 크레딧 N/상한을 응답 값으로 둔다(#432, 추천 횟수 상한은 크레딧으로 바뀌어 없다). 「코스 짜기」도 같다(`CreditGate`). 버튼 오른쪽에 크레딧 글(`CreditBox`, 테두리·면 없음 — 칸 모양이면 누르는 버튼처럼 읽혔다)을 두고, `Coin` + 「N 크레딧 사용」(14/700 coin-text), 그 아래 「남은 크레딧 N/30」(13 ink-600)을 둔다. 버튼은 남은 폭을 채운다. 버튼 아래 11px 회색 한 줄로는 크레딧을 쓴다는 걸 놓쳤다. 글을 누르면(터치·클릭 같게, 호버는 휴대폰에 없어 쓰지 않는다) 설명 풍선에 자주 묻는 질문의 크레딧 장면과 답이 뜬다 — 글은 FAQ 한 곳에서 읽는다. 「?」(ink-400 14)가 누를 수 있다는 표시다.
 - 결과 맨 위는 「이 조건으로 찾았어요」 접힌 카드(`ConditionsCard`, 흰 면 + ink-200 테두리 + 반경 12)다. 접힌 줄은 「조건 N개」 + 12 ink-500 고지 「이 추천은 이렇게 정리한 조건으로 나왔어요. 조건을 고쳐 다시 추천 받을 수 있어요」이고, 고친 게 있으면 12/700 warn-text 「고친 조건 N개는 다시 추천할 때 반영돼요」을 더한다. 펼치면 그 자리에서 ×·＋(`EvidenceGroups`)를 쓰고, 지금 결과에 안 쓰인 줄에는 `tag-warn` 「아직 적용 전」을 붙인다. 뺀 줄은 점선 테두리 + 취소선으로 「뺀 조건」에 모아 「다시 넣기」를 둔다. 묶음은 「꼭 지킬 조건」(후보를 빼는 줄, 빼기 전에 확인 창. 칩 앞에 쓴 사람 이름 13/400 ink-500, 내 줄은 「(나)」, #1561) → 「피하고 싶어요 — 순위를 낮춰요」(후보는 남고 순위만 낮추는 줄, 칩 이름 「○○ 피하기」, 확인 창 없이 되돌리기 토스트, 아래 12 ink-500 한 줄) → 「있으면 좋은 조건」 순서다. 줄이 어느 묶음인지는 서버의 `filters_candidates`로 정하고 키 목록을 화면에 두지 않는다(#1260). 필드가 없으면(구버전 서버) 꼭 줄은 「꼭 지킬 조건」이다.
-- 「다시 추천」은 핑고 안내 칸 바로 아래 `btn-outline btn-md`(아이콘 16)이고, 오른쪽에 11/500 ink-500 「남은 크레딧 N/30」을 둔다(#1363 — 글자 링크가 작다는 의견). 크레딧을 쓰지 않아 확인 창 없이 바로 간다. 그 아래 11/500 ink-500 한 줄 「고친 조건으로, 지금 후보를 빼고 찾아 드려요 · 크레딧은 쓰지 않아요」. ＋가 끝나기 전에는 「다시 추천」을 막고 버튼 글자가 「조건 반영 중…」이다.
+- 「다시 추천」은 핑고 안내 칸 바로 아래 `btn-outline btn-md`(아이콘 16)이고, 오른쪽에 크레딧 글(`CreditBox`, 「크레딧 안 써요」 / 「남은 크레딧 N/30」)을 둔다(#1363 — 글자 링크가 작다는 의견, #1571 — 추천받기와 같은 칸). 크레딧을 쓰지 않아 확인 창 없이 바로 간다. 그 아래 11/500 ink-500 한 줄 「고친 조건으로, 지금 후보를 빼고 찾아 드려요」. ＋가 끝나기 전에는 「다시 추천」을 막고 버튼 글자가 「조건 반영 중…」이다.
 - 후보는 이번에 새로 찾은 곳 → 「이미 지도에 올린 곳」(14/700 소제목) 순서다. 이번 검색이 0곳(`new_count` 0)이면 `Notice` 「이번엔 새로 찾은 곳이 없어요…」 + 「반경 넓히기」다.
 - 추천을 상한까지 다 받으면 카드는 읽기 전용이다(×·＋ 없음, 고지 자리에 「이번 지도에서 더 추천 받을 수 없어서 조건을 고칠 수 없어요」).
 
