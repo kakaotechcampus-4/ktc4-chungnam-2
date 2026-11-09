@@ -508,17 +508,18 @@ function TrashScene() {
  * → ④ 「신규 핀 찍기」 → ⑤ 그 자리에 핀. 터치는 클릭이 짧게 누르기, 우클릭이 길게 누르기(원이 차오름) + 위 말풍선이다.
  * 지도 판(`layer`)이 통째로 옮겨 간다 — 판 밖까지 그려 두어 옮겨도 가장자리가 비지 않는다.
  */
-const GESTURE_PHASES = [800, 300, 900, 700, 700, 700, 300, 1600, 400]
+const GESTURE_PHASES = [800, 300, 900, 700, 700, 700, 300, 1400, 600, 900, 900, 400]
 /** 처음 누르는 곳(공원)과 옮긴 뒤 핀을 찍는 곳(판 %). */
 const TAP: [number, number] = [64, 30]
 const MENU_AT: [number, number] = [32, 62]
 const SHIFT: [number, number] = [50 - TAP[0], 50 - TAP[1]]
-const POINTER_LABEL = { mouse: ['클릭', '우클릭'], touch: ['짧게 누르기', '길게 누르기'] }
+const POINTER_LABEL = { mouse: ['클릭', '우클릭', '눌러서 끌기'], touch: ['짧게 누르기', '길게 누르기', '길게 눌러 끌기'] }
+const TRASH_AT: [number, number] = [50, 86]
 
 function MapGestureScene({ touch }: { touch: boolean }) {
   // 움직임 줄이기면 핀을 찍은 ⑦에 머문다.
   const phase = usePhaseLoop(GESTURE_PHASES, 7)
-  const moved = phase >= 2 && phase < 8
+  const moved = phase >= 2 && phase < 11
   // 우클릭은 누르자마자, 길게 누르기는 원이 다 찬 뒤(⑤)에 뜬다.
   const menuOpen = phase >= (touch ? 5 : 4) && phase <= 6
   const [tapX, tapY] = TAP
@@ -527,11 +528,13 @@ function MapGestureScene({ touch }: { touch: boolean }) {
   const pinInLayer: [number, number] = [mx - SHIFT[0], my - SHIFT[1]]
   // 손(커서·손가락)이 있는 곳과 보일지. 메뉴 단추는 마우스는 누른 자리 오른쪽 아래, 터치는 위 말풍선이다.
   const press: [number, number] = touch ? [mx, my - 13] : [mx + 14, my + 8]
-  const hand: [number, number] = phase <= 2 ? TAP : phase === 5 || phase === 6 ? press : MENU_AT
-  const handShown = touch ? phase <= 1 || phase === 3 || phase === 4 || phase === 6 : phase <= 6
-  const label = phase === 1 ? POINTER_LABEL[touch ? 'touch' : 'mouse'][0] : phase === 4 ? POINTER_LABEL[touch ? 'touch' : 'mouse'][1] : null
+  const grab: [number, number] = [mx, my - 6]
+  const hand: [number, number] = phase <= 2 ? TAP : phase === 5 || phase === 6 ? press : phase === 8 ? grab : phase === 9 ? [TRASH_AT[0], TRASH_AT[1] - 6] : MENU_AT
+  const handShown = (touch ? phase <= 1 || phase === 3 || phase === 4 || phase === 6 : phase <= 6) || phase === 8 || phase === 9
+  const labels = POINTER_LABEL[touch ? 'touch' : 'mouse']
+  const label = phase === 1 ? labels[0] : phase === 4 ? labels[1] : phase === 8 ? labels[2] : null
   return (
-    <div className={`absolute inset-0 transition-opacity duration-300 motion-reduce:transition-none ${phase === 8 ? 'opacity-0' : ''}`}>
+    <div className={`absolute inset-0 transition-opacity duration-300 motion-reduce:transition-none ${phase === 11 ? 'opacity-0' : ''}`}>
       <div
         className={`absolute inset-0 ${phase === 2 ? 'transition-transform duration-500 ease-out motion-reduce:transition-none' : ''}`}
         style={{ transform: moved ? `translate(${SHIFT[0]}%, ${SHIFT[1]}%)` : undefined }}
@@ -546,14 +549,28 @@ function MapGestureScene({ touch }: { touch: boolean }) {
         <At x={30} y={48}>
           <ScenePin />
         </At>
-        {phase === 7 && (
-          <At x={pinInLayer[0]} y={pinInLayer[1]}>
-            <div className="enter-drop">
+        {phase >= 7 && phase <= 9 && (
+          <At x={pinInLayer[0]} y={pinInLayer[1]} className={phase >= 8 ? 'opacity-40' : ''}>
+            <div className={phase === 7 ? 'enter-drop' : ''}>
               <ScenePin />
             </div>
           </At>
         )}
       </div>
+      {(phase === 9 || phase === 10) && (
+        <At x={TRASH_AT[0]} y={TRASH_AT[1]} anchor="center">
+          <span className={`enter-pop flex items-center gap-1 rounded-full bg-surface px-2.5 py-1 text-label font-bold text-ink-900 shadow-float ${phase === 10 ? 'ring-2 ring-[var(--bad-line)]' : ''}`}>
+            <Trash2 size={12} aria-hidden="true" /> 삭제하기
+          </span>
+        </At>
+      )}
+      {(phase === 8 || phase === 9) && (
+        <At x={hand[0]} y={hand[1] + 6} className={phase === 9 ? 'transition-[left,top] duration-700 ease-in-out motion-reduce:transition-none' : ''}>
+          <div className="scale-110">
+            <ScenePin />
+          </div>
+        </At>
+      )}
       {menuOpen && (
         <At x={mx} y={my} anchor="center">
           <span className="enter-pop block size-3 rounded-full border-2 border-white bg-brand-600 shadow-float" />
@@ -582,11 +599,11 @@ function MapGestureScene({ touch }: { touch: boolean }) {
           x={hand[0]}
           y={hand[1]}
           anchor={touch ? 'center' : 'top-left'}
-          className={`z-10 ${touch ? '' : 'transition-[left,top] duration-500 ease-in-out motion-reduce:transition-none'}`}
+          className={`z-10 ${!touch || phase === 9 ? `transition-[left,top] ${phase === 9 ? 'duration-700' : 'duration-500'} ease-in-out motion-reduce:transition-none` : ''}`}
         >
           {touch ? (
             <span
-              key={phase}
+              key={phase === 9 ? 8 : phase}
               className={`enter-fade block size-7 rounded-full border-2 border-white bg-ink-900/30 transition-transform duration-150 motion-reduce:transition-none ${
                 phase === 1 || phase === 6 ? 'scale-75' : ''
               }`}
