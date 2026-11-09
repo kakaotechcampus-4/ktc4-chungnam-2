@@ -107,6 +107,10 @@ export default function BottomSheet({
             onStageChange(3)
           }
         },
+        // 누르면 아래에 내용이 펼쳐지는 자리(`data-sheet-expand`, 핀 상세 의견 고르기)는 누름이 끝난 뒤(click) 3단계로 편다.
+        // 2단계는 안쪽 스크롤이 막혀 펼쳐진 사유 칸이 탭 막대 뒤에 가려졌다(#1694). 손을 뗀 뒤라 누름이 빗나가지 않는다.
+        // 포털로 띄운 모달 안의 누름은 closest 가 시트 DOM을 거치지 않아 여기서 걸리지 않는다.
+        onClickCapture: (e: React.MouseEvent) => (e.target as Element).closest?.('[data-sheet-expand]') && onStageChange(3),
       }
     : {}
 
