@@ -3,6 +3,7 @@ import { useState } from 'react'
 import ErrorText from '@/ErrorText'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
+import EmptyState from '@/ui/EmptyState'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
 import Sentences from '@/ui/Sentences'
@@ -32,7 +33,7 @@ export default function TrashSheet({ trash, onClose }: { trash: TrashView; onClo
       <p className="mb-4 mt-1 text-sm text-ink-500">
         <Sentences text={`삭제한 지 ${trash.retentionDays}일 안에는 복구할 수 있어요. 복구하면 구성원과 핀, 의견이 그대로 돌아와요`} />
       </p>
-      {trash.items.length === 0 && <p className="text-sm text-ink-500">복구할 지도가 없어요</p>}
+      {trash.items.length === 0 && <EmptyState title="복구할 지도가 없어요" />}
       <ul className="space-y-2">
         {trash.items.map((m) => (
           <li key={m.id} className="rounded-xl bg-ink-50 px-3 py-2.5">
