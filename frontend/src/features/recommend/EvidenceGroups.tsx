@@ -8,7 +8,7 @@ import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import TextField from '@/ui/TextField'
 
-import { evidenceLabel, evidenceLimitMessage, groupEvidence, mergeTags, notEnforcedNote, type EvidenceLineDto } from './model'
+import { evidenceLabel, evidenceLimitMessage, groupEvidence, mergeTags, notEnforcedNote, tagAuthor, type EvidenceLineDto } from './model'
 import { usePatchEvidenceMutation } from './queries'
 
 /** 「+」 글 한 줄 길이(docs/api-spec.yaml EvidencePatchRequest.add[].text, 앞뒤 공백을 뗀 뒤 1~140자). */
@@ -133,7 +133,7 @@ export default function EvidenceGroups({
           // 같은 태그는 하나로 합친다. 내 몫이 하나라도 있으면 × 를 붙인다.
           mergeTags(groups.preferred).map(({ tag, all, mine }) =>
             chip(
-              { ...all[0], fact_label: null, text: `#${tag}` },
+              { ...all[0], fact_label: null, text: `#${tag}`, ...tagAuthor(all) },
               null,
               mine.length > 0 ? () => toggle(mine, false) : undefined,
             ),
@@ -147,6 +147,11 @@ export default function EvidenceGroups({
           groups.unused.map((line) => chip(line, null, editable(line) ? () => toggle([line], false) : undefined)),
           unusedNotes,
         )}
+
+      {/* × 는 내가 건 줄에만 있다 — 없는 칩이 섞여 보이면 오류로 읽혀서 이유를 한 줄 적는다. */}
+      {lines.some((l) => l.is_active && l.badge !== 'reference' && !editable(l)) && (
+        <p className="text-xs text-ink-500">× 는 내가 건 조건에만 있어요. 다른 구성원의 조건은 그 사람이 뺄 수 있어요</p>
+      )}
 
       {removed.length > 0 &&
         group(
@@ -241,3 +246,4 @@ export default function EvidenceGroups({
     </div>
   )
 }
+

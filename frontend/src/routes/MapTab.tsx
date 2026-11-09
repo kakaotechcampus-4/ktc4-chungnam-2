@@ -196,6 +196,7 @@ export default function MapTab() {
           since={newSince.since}
           newPins={[...newSince.news.values()].filter((n) => n.newPin).length}
           newOpinions={[...newSince.news.values()].reduce((sum, n) => sum + opinionCount(n), 0)}
+          truncated={newSince.truncated}
           onDismiss={newSince.dismiss}
         />
       )}
@@ -228,7 +229,7 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
 const TASK_ROWS = 3
 
 /**
- * 「내 의견 2/3곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547). 남은 곳이 있을 때만 그린다.
+ * 「내가 남긴 의견 2/3곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547). 남은 곳이 있을 때만 그린다.
  * 확정된 핀은 의견을 안 남겨도 할 일로 보지 않는다(목록 카드의 「의견 남기기」와 같은 기준).
  * 줄은 끝낸 곳 하나(있으면)와 남은 곳 — 남은 곳을 누르면 그 핀이 열린다.
  */
@@ -244,7 +245,7 @@ export function MyOpinionProgress({ pins, onOpen, onShowLeft }: { pins: Pin[]; o
   return (
     <div className="mb-3">
       <TaskProgress
-        title="내 의견"
+        title="내가 남긴 의견"
         done={doneList.length}
         total={open.length}
         unit="곳"
