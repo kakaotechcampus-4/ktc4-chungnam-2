@@ -474,9 +474,10 @@ def _acceptable_invite_or_raise(db: Session, token: str) -> InviteRow:
     return invite_row
 
 
-def get_invite_summary(db: Session, *, token: str) -> InviteSummary:
+def get_invite_summary(db: Session, *, token: str, viewer_id: str | None = None) -> InviteSummary:
     """로그인 없이 호출된다(#23) — 토큰이 곧 접근 권한이라 제목·기간·구성원 수·초대자 이름만
-    돌려준다. 쓰기 없음(used_count도 안 올린다)."""
+    돌려준다. 쓰기 없음(used_count도 안 올린다). viewer_id(로그인 세션이 있을 때)가 이미 그 지도 구성원이면
+    지도 id를 함께 준다(#1563) — 구성원 판정은 role_in_map이다(지도 삭제 여부는 위에서 이미 걸렀다)."""
     invite_row = _acceptable_invite_or_raise(db, token)
     map_row = get_map_or_404(db, invite_row.map_id)
     inviter_name = auth_api.display_names(db, [invite_row.created_by]).get(invite_row.created_by)
@@ -486,6 +487,7 @@ def get_invite_summary(db: Session, *, token: str) -> InviteSummary:
         pin_count=_pin_counts(db, [map_row.id])[map_row.id],
         inviter_display_name=inviter_name,
         expires_at=invite_row.expires_at,
+        already_member=viewer_id is not None and role_in_map(db, map_id=map_row.id, user_id=viewer_id) is not None,
     )
 
 

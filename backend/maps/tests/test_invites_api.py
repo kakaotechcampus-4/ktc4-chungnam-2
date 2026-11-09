@@ -240,3 +240,39 @@ def test_invite_summary_inviter_without_user_row_falls_back_to_withdrawn_label(a
 def test_other_maps_routes_still_require_login(app_client):
     """public_router 분리가 다른 라우트의 인증을 풀지 않았는지."""
     assert app_client.get("/maps").status_code == 401
+
+
+# ---- GET /invites/{token}의 already_member_map_id(#1563) ----
+
+def _summary(app_client, token, user_id=None):
+    return app_client.get(f"/invites/{token}", cookies=_auth(user_id) if user_id else None)
+
+
+def test_summary_marks_existing_member_with_map_id_only_for_them(app_client):
+    map_id = _create_map(app_client, user_id="user_1")["id"]
+    token = app_client.post(f"/maps/{map_id}/invite", cookies=_auth("user_1")).json()["token"]
+    app_client.post(f"/invites/{token}/accept", cookies=_auth("user_2"))
+
+    assert _summary(app_client, token, "user_1").json()["already_member_map_id"] == map_id  # 방장
+    assert _summary(app_client, token, "user_2").json()["already_member_map_id"] == map_id  # 구성원
+    assert "already_member_map_id" not in _summary(app_client, token, "outsider").json()    # 비구성원
+    anonymous = _summary(app_client, token)                                               # 세션 없음 — 401이 아니다
+    assert anonymous.status_code == 200 and "already_member_map_id" not in anonymous.json()
+    assert "map_id" not in anonymous.json()
+
+
+def test_summary_with_invalid_session_is_still_public(app_client):
+    token = app_client.post(
+        f"/maps/{_create_map(app_client)['id']}/invite", cookies=_auth("user_1")
+    ).json()["token"]
+    resp = app_client.get(f"/invites/{token}", cookies={"session": "garbage"})
+    assert resp.status_code == 200 and "already_member_map_id" not in resp.json()
+
+
+def test_summary_after_leaving_has_no_map_id_and_errors_stay(app_client):
+    map_id = _create_map(app_client)["id"]
+    token = app_client.post(f"/maps/{map_id}/invite", cookies=_auth("user_1")).json()["token"]
+    app_client.post(f"/invites/{token}/accept", cookies=_auth("user_2"))
+    assert app_client.delete(f"/maps/{map_id}/members/me", cookies=_auth("user_2")).status_code == 204
+    assert "already_member_map_id" not in _summary(app_client, token, "user_2").json()
+    assert _summary(app_client, "no-such-token", "user_1").status_code == 404
