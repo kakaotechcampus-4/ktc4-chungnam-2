@@ -79,16 +79,54 @@ def _visible_pins_clause(map_id: str):
     return and_(PinRow.map_id == map_id, PinRow.deleted_at.is_(None))
 
 
-def _count_members_with_opinion(db: Session, map_id: str) -> int:
-    """이 지도의 보이는 핀 중 하나에든 ♥·🚫를 남긴 서로 다른 현재 구성원 수. 삭제된 핀의 반응은 세지 않고
-    (「삭제된 핀은 세지 않는다」), 탈퇴한 사용자는 뺀다. 보이는 핀의 판정은 목록·집계와 같다."""
-    user_ids = db.execute(
-        select(ReactionRow.user_id)
+def reaction_counts_by_user(db: Session, map_id: str) -> dict[str, int]:
+    """이 지도의 보이는 핀에 지금 남아 있는 ♥·🚫 반응 수를 사용자별로 센다(#1562) — 쿼리 한 번. 반응은 핀 하나에 한 사람당 하나라
+    「의견을 남긴 핀 수」와 같다. 지운 핀(휴지통)의 반응은 세지 않는다. 보이는 핀의 판정은 목록·집계와 같다.
+    members_with_opinion(아래)도 이 값에서 나온다 — 한 곳에서 정한다."""
+    rows = db.execute(
+        select(ReactionRow.user_id, func.count())
         .join(PinRow, PinRow.id == ReactionRow.pin_id)
         .where(_visible_pins_clause(map_id))
-        .distinct()
-    ).scalars().all()
+        .group_by(ReactionRow.user_id)
+    ).all()
+    return {user_id: n for user_id, n in rows}
+
+
+def _count_members_with_opinion(db: Session, map_id: str) -> int:
+    """이 지도의 보이는 핀 중 하나에든 ♥·🚫를 남긴 서로 다른 현재 구성원 수. 삭제된 핀의 반응은 세지 않고
+    (「삭제된 핀은 세지 않는다」), 탈퇴한 사용자는 뺀다."""
+    user_ids = list(reaction_counts_by_user(db, map_id))
     return len(set(user_ids) - auth_api.withdrawn_user_ids(db, user_ids))
+
+
+def list_new_since(
+    db: Session, *, map_id: str, since: datetime, exclude_user_id: str, limit: int,
+) -> tuple[list[str], list[dict], bool]:
+    """since 뒤의 새 핀·새 반응(#1556) — 지금 지도에 있는 핀만, exclude_user_id(요청자)가 찍거나 남긴 것은 뺀다. 최근 것부터 각 limit개이고
+    한 개 더 읽어 잘렸는지 안다. 새 핀은 created_at(AI 추천 핀은 게시 시각, 되살린 핀은 옛 시각이라 안 들어간다),
+    새 반응은 updated_at 기준이다. 이름은 이 모듈이 모른다(maps가 채운다)."""
+    pin_ids = db.execute(
+        select(PinRow.id)
+        .where(_visible_pins_clause(map_id), PinRow.created_at > since, PinRow.created_by != exclude_user_id)
+        .order_by(PinRow.created_at.desc(), PinRow.id.desc())
+        .limit(limit + 1)
+    ).scalars().all()
+    reactions = db.execute(
+        select(
+            ReactionRow.pin_id, ReactionRow.user_id, ReactionRow.type,
+            ReactionRow.reason_text, ReactionRow.reason_chip_ids, ReactionRow.updated_at,
+        )
+        .join(PinRow, PinRow.id == ReactionRow.pin_id)
+        .where(_visible_pins_clause(map_id), ReactionRow.updated_at > since, ReactionRow.user_id != exclude_user_id)
+        .order_by(ReactionRow.updated_at.desc(), ReactionRow.id.desc())
+        .limit(limit + 1)
+    ).all()
+    return (
+        [str(i) for i in pin_ids[:limit]],
+        [{"pin_id": str(r.pin_id), "user_id": r.user_id, "type": r.type, "reason_text": r.reason_text,
+          "reason_chip_ids": list(r.reason_chip_ids or []), "updated_at": r.updated_at} for r in reactions[:limit]],
+        len(pin_ids) > limit or len(reactions) > limit,
+    )
 
 
 def count_pins(db: Session, map_id: str, principal: Principal, members_total: int) -> FilterCounts:
