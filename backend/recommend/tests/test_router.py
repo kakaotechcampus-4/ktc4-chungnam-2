@@ -483,12 +483,23 @@ def test_run_outside_the_trip_region_is_422_with_the_label_and_resending_the_key
 
 
 @pytest.mark.no_center_shim
-def test_run_without_center_is_422_and_charges_nothing_1331(app_client, db_session):
+def test_run_without_center_is_422_and_charges_nothing_1331(app_client, db_session, monkeypatch):
     """지도 중심이 앵커다(#1331). 준비된 지도여도 center 없는 「추천 받기」는 422 VALIDATION_ERROR이고 run도 차감도 남지 않는다."""
     _seed_ready_map(db_session)
     response = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1"))
     assert response.status_code == 422 and response.json()["code"] == "VALIDATION_ERROR"
+    assert [error["loc"][-1] for error in response.json()["detail"]["errors"]] == ["center"]   # 요청 모델이 center 필수로 막는다(#1354)
     assert app_client.get("/maps/map_1/runs", cookies=_auth("user_1")).json() == []
+
+    # 같은 Idempotency-Key로 이미 만든 run이 있어도 center 없는 재시도는 422다 — 옛 키 재시도 호환은 지웠다(#1354)
+    from recommend import flows
+    monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")   # 시험 DB에는 시·도 경계가 없다
+    headers = {"Idempotency-Key": "required-center-0001"}
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": {"lat": 35.1, "lng": 129.0}}, headers=headers,
+                              cookies=_auth("user_1"))
+    assert created.status_code == 202, created.text
+    resend = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, headers=headers, cookies=_auth("user_1"))
+    assert resend.status_code == 422 and resend.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_center_with_unknown_sido_returns_422(app_client, db_session, monkeypatch):

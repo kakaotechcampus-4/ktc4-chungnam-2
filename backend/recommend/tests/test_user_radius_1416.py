@@ -37,8 +37,8 @@ def test_hash_ignores_an_explicit_default_and_changes_with_another_radius():
     assert core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), 3000) == omitted   # 명시한 3000은 생략과 같다
     assert core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), 2000) != omitted
     assert core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), 2000) != core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), 2500)
-    # radius_m이 없는 옛 요청의 해시는 이전 값 그대로(옛 키 재시도 호환)
-    assert core.idempotency_request_hash("m", "카페") == core.idempotency_request_hash("m", "카페", False, None, None)
+    # radius_m이 없는 요청의 해시는 이전 값 그대로(radius_m이 생기기 전에 만든 키 재시도 호환)
+    assert omitted == core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), None)
 
 
 # ---------------------------------------------------------------- 요청 본문 검증 (HTTP)

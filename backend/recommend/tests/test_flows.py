@@ -892,20 +892,6 @@ def test_readiness_counts_a_live_pin_with_an_opinion(db_session):
     }
 
 
-@pytest.mark.no_center_shim
-def test_create_run_without_center_is_a_validation_error_1331(db_session):
-    """지도 중심이 앵커다(#1331) — center 없는 run 생성은 422다. 준비 판정을 통과한 지도여도, 핀에서 지역을 만들어 주지 않는다."""
-    _make_members(db_session, user_ids=["user_1"])
-    pin = _make_pin(db_session, category="음식점")
-    _react(db_session, pin, user_id="user_1", type="like")
-    db_session.commit()
-
-    with pytest.raises(AppError) as exc_info:
-        flows.create_run(db_session, map_id="map_1", category="음식점", requested_by="user_1", evidence_planner=PLANNER)
-    assert exc_info.value.code == "VALIDATION_ERROR"
-    assert db_session.query(RecommendRun).count() == 0
-
-
 def test_create_run_with_only_live_pins_works_with_a_center_1331(db_session, monkeypatch):
     """live 핀(좌표 없음)만 있어도 지도 중심이 앵커라 run을 만들 수 있다 — 핀 좌표는 시작 조건(의견 핀 1곳)에만 쓰인다."""
     monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
