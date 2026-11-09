@@ -32,7 +32,7 @@ test('방장이 반대한 곳을 빼고 추천받아 지도에 올리면 구성�
 
   let picked = ''
   await test.step('방장이 음식점 추천을 받는다', async () => {
-    await owner.getByRole('link', { name: 'AI 추천' }).click()
+    await owner.getByRole('link', { name: 'AI 추천', exact: true }).click()
     await owner.getByRole('button', { name: '음식점 추천받기' }).click()
     // 크레딧을 쓰기 전에 확인 창을 거친다(#1363).
     await owner.getByRole('alertdialog').getByRole('button', { name: '추천받기' }).click()

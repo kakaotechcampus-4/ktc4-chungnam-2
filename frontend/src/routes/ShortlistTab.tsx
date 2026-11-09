@@ -211,7 +211,17 @@ export default function ShortlistTab() {
                 </CoachMark>
               )}
               <CategoryChips value={category} onChange={(c) => setCategory(c as PinFilters['category'])} className="-mx-1 px-1" />
-              {shown.length === 0 && <p className="text-sm text-ink-500">이 분류에는 확정된 곳이 없어요</p>}
+              {/* 필터 결과 없음 — 회색 글 한 줄은 눈에 안 띄고 푸는 길이 없었다(#1659). 마킹 탭 필터 0곳과 같은 모양. */}
+              {shown.length === 0 && (
+                <EmptyState
+                  title="이 분류에는 확정된 곳이 없어요"
+                  action={
+                    <button type="button" onClick={() => setCategory(null)} className="btn-outline btn-md">
+                      전체 보기
+                    </button>
+                  }
+                />
+              )}
               <ShortlistList
                 items={shown}
                 dayLabel={day ? dayOrdinal(edit.dates.indexOf(day)) : ''}
