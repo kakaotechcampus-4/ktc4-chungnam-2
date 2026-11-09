@@ -7,6 +7,7 @@ import SegmentedControl from '@/ui/SegmentedControl'
 import SheetTitle from '@/ui/SheetTitle'
 import TextArea from '@/ui/TextArea'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
 
 import { FEEDBACK_CATEGORIES, feedbackErrorMessage, type FeedbackCategory } from './model'
 import { useSendFeedbackMutation } from './queries'
@@ -66,8 +67,8 @@ export default function FeedbackSheet({
 
       {send.error && <ErrorText message={feedbackErrorMessage(send.error)} error={send.error} />}
 
-      <button type="button" onClick={submit} disabled={!ready || send.isPending} className="btn-primary btn-lg mt-3 w-full">
-        {send.isPending ? '보내는 중…' : '보내기'}
+      <button aria-busy={send.isPending} type="button" onClick={submit} disabled={!ready || send.isPending} className="btn-primary btn-lg mt-3 w-full">
+        <BusyLabel busy={send.isPending} busyText="보내는 중…">보내기</BusyLabel>
       </button>
     </ModalSheet>
   )

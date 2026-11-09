@@ -7,6 +7,7 @@ import { pinErrorMessage } from '@/features/search/model'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
 import MapAppLinks from '@/ui/MapAppLinks'
 
 import type { AdDto } from './api'
@@ -82,8 +83,8 @@ function AdCard({ mapId, category, ad }: { mapId: string; category: RecommendCat
             이미 지도에 있어요
           </button>
         ) : (
-          <button type="button" disabled={create.isPending} onClick={pinIt} className="btn-outline btn-sm">
-            {create.isPending ? '올리는 중…' : '지도에 올리기'}
+          <button aria-busy={create.isPending} type="button" disabled={create.isPending} onClick={pinIt} className="btn-outline btn-sm">
+            <BusyLabel busy={create.isPending} busyText="올리는 중…">지도에 올리기</BusyLabel>
           </button>
         )}
         <MapAppLinks kakao={place.place_url} naver={place.naver_url} variant="inline" onOpen={click} />
