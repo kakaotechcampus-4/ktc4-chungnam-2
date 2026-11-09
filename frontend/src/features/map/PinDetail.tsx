@@ -478,6 +478,18 @@ function MyOpinion({
   const [chips, setChips] = useState<string[]>(saved?.reason_chip_ids ?? [])
   const [text, setText] = useState(saved?.reason_text ?? '')
   const react = useMyReactionMutation(mapId, pin)
+  // 등록이 끝나면 버튼이 잠깐 초록 체크로 바뀐 뒤 닫는다(#1712). 바로 닫으면 누른 버튼에서 끝난 걸 볼 틈이 없었다.
+  // 등록 뒤 핀 목록을 다시 받으며 부모가 다시 그려져도 타이머가 처음부터 다시 돌지 않게 닫는 함수는 ref로 붙잡는다.
+  const [done, setDone] = useState(false)
+  const onDoneRef = useRef(onDone)
+  useEffect(() => {
+    onDoneRef.current = onDone
+  })
+  useEffect(() => {
+    if (!done) return
+    const t = setTimeout(() => onDoneRef.current(), DONE_MS)
+    return () => clearTimeout(t)
+  }, [done])
   const missingReason = type === 'against' && chips.length === 0 && text.trim() === ''
   // 사유 없이 반대를 누르면 버튼을 끄지 않고 이유를 입력칸 아래에 알린다 — 꺼진 버튼은 왜 막혔는지 읽히지 않는다(#959).
   const [triedEmpty, setTriedEmpty] = useState(false)
@@ -499,8 +511,9 @@ function MyOpinion({
     }
     react.mutate(body, {
       onSuccess: () => {
+        // 토스트는 바로 — 화면 읽기도 이 글로 알고, 닫은 뒤에도 남는다.
         showToast('의견을 남겼어요')
-        onDone()
+        setDone(true)
       },
       onError: (err) =>
         showToast(
@@ -604,11 +617,13 @@ function MyOpinion({
       <button
         aria-busy={react.isPending}
         type="button"
-        onClick={submit}
+        onClick={() => !done && submit()}
         disabled={!type || react.isPending}
-        className="btn-primary btn-md w-full"
+        className={`btn-primary btn-md w-full ${done ? 'btn-done' : ''}`}
       >
-        <BusyLabel busy={react.isPending} busyText="등록하는 중…">의견 등록</BusyLabel>
+        <BusyLabel busy={react.isPending} busyText="등록하는 중…" done={done} doneText="등록했어요">
+          의견 등록
+        </BusyLabel>
       </button>
     </section>
   )
@@ -622,3 +637,6 @@ function PinParticipants({ pin, memberCount, names }: { pin: Pin; memberCount: n
   if (names) return <PeopleProof names={names} total={memberCount} verb="이 의견을 남겼어요" />
   return <ProgressBar label={`${participants(pin)}/${memberCount}명이 의견을 남겼어요`} value={participants(pin)} max={memberCount} className="pb-1" />
 }
+
+/** 의견 등록 뒤 초록 체크를 보이는 시간. 그 뒤 목록으로 돌아간다. */
+const DONE_MS = 900
