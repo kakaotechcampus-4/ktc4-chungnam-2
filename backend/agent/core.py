@@ -2938,8 +2938,9 @@ def render_run_advice(run_id: str, row: Any) -> RunAdvice | None:
 
 # ---------------------------------------------------------------- 지도 현황 문단 (8.2, #1168)
 # 칸 계산은 코드, 판단과 문장은 모델, 모순만 코드가 막는다(2026-11-03 결정, #1152). 칸에는 사실만 둔다 — 상태 이름은 붙이지
-# 않는다. 먼저 볼 카테고리는 7절 순위 규칙(fallback_order) 하나로 정한다(#582에서 순위를 코드로 옮긴 것과 같은 판단을 모델이
-# 다시 하지 않는다). 칸에는 사유 글, 이름, 장소 이름이 없어 모델 입력에도 문단에도 없다(2절 11, 13번).
+# 않는다. 먼저 볼 카테고리는 코드가 정한다(status_first_signal) — 「다음에 무엇을」은 제안 카드 한 곳이 말하고 문단은 카드가 없을
+# 때만 권한다(#1749). 순위는 7절 순위 규칙(fallback_order) 하나다(#582에서 순위를 코드로 옮긴 것과 같은 판단을 모델이 다시 하지
+# 않는다). 칸에는 사유 글, 이름, 장소 이름이 없어 모델 입력에도 문단에도 없다(2절 11, 13번).
 
 STATUS_PARAGRAPH_MAX = 400   # api-spec AgentMapStatus.paragraph maxLength
 # 먼저 볼 이유 — 1순위 신호 유형의 고정 문구. 카테고리 공백은 출발이 urgent_dday 안일 때만 「출발이 가까운데」를 붙인다(아래)
@@ -2951,20 +2952,45 @@ FIRST_REASONS = {
     "schedule": "확정 일정에 쉬는 날 방문이나 긴 이동이 있다",
 }
 FIRST_REASON_GAP_NOT_URGENT = "확정한 곳이 아직 없다"
+# 문단이 먼저 보자고 하지 않는 신호 — 정책(12.3)에서 사람이 닫은 막힌 곳으로 막힌 것(같은 fingerprint가 닫힘, 연속 닫힘 백오프).
+# model_cap, daily_limit는 비용·빈도 제한이지 덜 급하다는 판단이 아니라 넣지 않는다(#1749)
+STATUS_CLOSED_REASONS = ("duplicate", "backoff")
 # 「먼저」, 「부터」로 카테고리를 권하는 말(검증 4). "음식점부터", "음식점을 먼저", "먼저 음식점을"
 _FIRST_WORDS = r"(?:먼저|부터)"
 _CATEGORY_JOSA = r"(?:을|를|은|는|이|가|도|의)?"
 
 
-def status_cells(snap: Snapshot, signals: Sequence[Signal], policy: PriorityPolicy) -> dict[str, Any]:
+def status_first_signal(
+    signals: Sequence[Signal], blocked: Iterable[Blocked], history: History, now: datetime, policy: PriorityPolicy,
+) -> Signal | None:
+    """현황 문단이 먼저 볼 신호(8.2, #1749). 「다음에 무엇을」은 제안 카드 한 곳이 말하고, 문단은 카드가 없을 때만 권한다 — 틀린
+    권유보다 권하지 않는 쪽이다. history는 저장이 끝난 뒤의 이력이다(방금 넣은 카드와 방금 내려간 카드가 반영된 것). blocked는
+    이번 관찰의 정책 결과(check_policy)다.
+
+    - 사람에게 보이는 활성 제안이 있으면 None. shadow 유형(is_shadow)의 제안은 없는 것으로 본다
+    - 수락한 막힌 곳을 지켜보는 중이고(is_watching) 수락 + FOLLOWUP_MIN_WAIT 전이면 None — 수락한 버튼으로 움직일 시간이다(6.9)
+    - 그 밖에는 STATUS_CLOSED_REASONS로 막힌 신호만 빼고 7절 순위 규칙(fallback_order)의 1순위. 남은 신호가 없으면 None"""
+    active = history.active
+    if active is not None and not is_shadow(active.diagnosis):
+        return None
+    if any(is_watching(h) and h.resolved_at is not None and now < h.resolved_at + FOLLOWUP_MIN_WAIT
+           for h in history.suggestions):
+        return None
+    closed = {b.signal_id for b in blocked if b.reason in STATUS_CLOSED_REASONS}
+    left = [s for s in signals if s.id not in closed]
+    return fallback_order(left, policy)[0] if left else None
+
+
+def status_cells(snap: Snapshot, signals: Sequence[Signal], first: Signal | None, policy: PriorityPolicy) -> dict[str, Any]:
     """지도 현황 칸(8.2) — 모델 입력이자 저장(agent_map_status.cells)이다. 사실만 담는다.
 
     - dday: 출발까지 남은 날(여행 중이면 0 이하)
     - categories(`categories.pinnable()` 순서): confirmed(확정 수), pins(확정이 아닌 핀 수), split_pins(확정이 아닌 핀 중 ♥와 🚫가
       함께 있고 ♥ ≥ 🚫 — 6.3의 시간 조건과 무관), stalled(이번 관찰에서 그 카테고리 정체 신호가 났는가), unreacted_pins(확정이
       아닌 핀 중 반응이 하나도 없는 핀 수)
-    - first_category, first_reason: 이번 관찰에서 탐지된 신호(정책 전)를 7절 순위 규칙으로 정렬한 1순위의 카테고리와 이유(고정
-      문구). 신호가 없으면 둘 다 null. 반응 공백과 일정 점검은 카테고리가 없어 first_category가 null이다"""
+    - first_category, first_reason: 먼저 볼 신호(first — status_first_signal이 정한다)의 카테고리와 이유(고정 문구). first가
+      없으면 둘 다 null — 제안 카드가 떠 있거나 수락 직후이거나 신호가 없다. 반응 공백과 일정 점검은 카테고리가 없어
+      first_category가 null이다"""
     stalled = {s.category for s in signals if s.diagnosis == "stall"}
     cells = []
     for c in categories.pinnable():
@@ -2979,7 +3005,6 @@ def status_cells(snap: Snapshot, signals: Sequence[Signal], policy: PriorityPoli
             "unreacted_pins": sum(not snap.reactions_of(p.pin_id) for p in open_pins),
         })
     dday = (snap.map.start_date - snap.today).days
-    first = fallback_order(signals, policy)[0] if signals else None
     reason = None
     if first is not None:
         reason = FIRST_REASONS[first.diagnosis]

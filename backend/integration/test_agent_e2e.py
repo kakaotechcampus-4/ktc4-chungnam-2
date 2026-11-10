@@ -414,10 +414,11 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     ]
     steps_text = json.dumps(sug["steps"], ensure_ascii=False)
     assert not any(leak in steps_text for leak in (*names.values(), SPICY, ALLERGY, "m1", "m2", "m3"))
-    # 같은 관찰 끝에서 만든 지도 현황 문단(8.2). 칸에 이름과 사유 글이 없어 문단에도 없다
+    # 같은 관찰 끝에서 만든 지도 현황 문단(8.2). 칸에 이름과 사유 글이 없어 문단에도 없다. 정체 카드가 떠 있어 먼저 볼 곳은
+    # 카드가 말하고 문단은 권하지 않는다(#1749)
     [status_run] = e2e.runs(map_id, trigger="status")
     assert (status_run.outcome, status_run.used_model) == ("status_updated", True)
-    assert body["status"]["paragraph"] == "지도 현황을 정리했어요. 음식점부터 보면 좋겠어요."
+    assert body["status"]["paragraph"] == "지도 현황을 정리했어요."
 
     # 우리 조건 요약도 같은 관찰에서 만들어졌다. 알러지 사유는 개수와 고정 안내만, 원문은 어디에도 없다(2절 11번)
     summary = next(s for s in body["summaries"] if s["category"] == "음식점")
