@@ -290,7 +290,7 @@ def test_open_pin_kept_when_tried_and_fit():
     assert verified.outcome == "suggested"
     action = verified.draft.actions[0]
     assert (action["type"], action["label"], action["params"]["pin_ids"]) == ("open_pin", "이 핀 보기", ["c1"])
-    assert verified.draft.title == "확정 리스트에 카페가 아직 없어요"
+    assert verified.draft.title == "확정한 장소에 카페가 아직 없어요"
 
 
 def test_open_pin_dropped_for_against_closed_no_coords_and_untried():

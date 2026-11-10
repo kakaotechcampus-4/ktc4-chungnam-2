@@ -123,7 +123,7 @@ def test_has_unseen_is_per_member_and_view_is_idempotent(world, client):
 
     state = u1.get(f"/maps/{map_id}/agent").json()
     assert state["has_unseen"] is True
-    assert state["active_suggestion"]["title"] == "확정 리스트에 카페가 아직 없어요"
+    assert state["active_suggestion"]["title"] == "확정한 장소에 카페가 아직 없어요"
     assert state["active_suggestion"]["advice"] == [
         {"segments": [{"kind": "text", "text": "확정 2곳 중 카페 0곳"}], "is_guess": False}]
 

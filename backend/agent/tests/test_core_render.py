@@ -41,9 +41,9 @@ def test_no_reaction_template_keeps_slots_and_refs_only():
 
 
 @pytest.mark.parametrize("category, title", [
-    ("음식점", "확정 리스트에 음식점이 아직 없어요"),
-    ("카페", "확정 리스트에 카페가 아직 없어요"),
-    ("관광지", "확정 리스트에 관광지가 아직 없어요"),
+    ("음식점", "확정한 장소에 음식점이 아직 없어요"),
+    ("카페", "확정한 장소에 카페가 아직 없어요"),
+    ("관광지", "확정한 장소에 관광지가 아직 없어요"),
 ])
 def test_category_gap_template_title_and_particle(category, title):
     draft = core.render_template(_signal("category_gap", category=category))
@@ -62,7 +62,7 @@ def test_category_gap_for_non_recommendable_category_searches_instead():
     """추천 대상이 아닌 카테고리(숙소가 다시 핀이 될 때)는 추천 대신 검색 버튼."""
     draft = core.render_template(_signal("category_gap", category="숙소"))
 
-    assert draft.title == "확정 리스트에 숙소가 아직 없어요"
+    assert draft.title == "확정한 장소에 숙소가 아직 없어요"
     assert [(a["type"], a["label"]) for a in draft.actions] == [("search_place", "숙소 검색")]
 
 

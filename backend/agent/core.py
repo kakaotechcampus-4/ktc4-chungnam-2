@@ -865,7 +865,7 @@ def _gap_action(c: str, action_type: str) -> tuple[str, str, dict[str, Any]]:
 
 
 def _category_gap_draft(sig: Signal) -> Draft:
-    """카테고리 공백(6.5). 제목 "확정 리스트에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳".
+    """카테고리 공백(6.5). 제목 "확정한 장소에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳".
     버튼은 하나다 — 추천 준비가 됐으면 추천 받기, 핀은 있는데 의견이 없으면 「핀에 의견 남기기」(미확인 필터), 핀이 없거나 추천 대상이
     아니면 검색(숙소가 다시 핀이 될 때 쓴다). 준비가 안 된 카테고리에 추천 받기를 붙이지 않는다(#1583). 「핀 보기」는 카테고리 필터만
     걸어 누른 사람이 할 일이 생기지 않아 뺐다(#1317)."""
@@ -875,7 +875,7 @@ def _category_gap_draft(sig: Signal) -> Draft:
     in_category = CountClaim(id="c2", kind="count", subject="category", subject_id=c, metric="confirmed", value=0)
     first = _gap_action(c, base_actions("category_gap", c, gap_state=sig.features.get("gap_state"))[0])
     return Draft(
-        title=f"확정 리스트에 {c}{_josa(c, '이', '가')} 아직 없어요",
+        title=f"확정한 장소에 {c}{_josa(c, '이', '가')} 아직 없어요",
         claims=[confirmed.model_dump(), in_category.model_dump()],
         advice=[{"slot_text": f"확정 {{c1.value}}곳 중 {c} {{c2.value}}곳", "is_guess": False}],
         actions=_actions(first),
@@ -1543,7 +1543,7 @@ _SLOT = re.compile(r"\{(c\d+)(\.value)?\}")   # {cN.value}는 값, {cN}은 인�
 _MODEL_TITLES = {
     "stall": lambda c: f"{c} 후보가 반대 의견 뒤로 멈춰 있어요",
     "split": lambda c: "의견이 갈린 핀이 있어요",
-    "category_gap": lambda c: f"확정 리스트에 {c}{_josa(c, '이', '가')} 아직 없어요",   # 템플릿(6.5)과 같은 제목
+    "category_gap": lambda c: f"확정한 장소에 {c}{_josa(c, '이', '가')} 아직 없어요",   # 템플릿(6.5)과 같은 제목
 }
 
 

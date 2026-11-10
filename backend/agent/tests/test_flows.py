@@ -73,7 +73,7 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
 
     sug = world.one(AgentSuggestion, map_id=map_id)
     assert (sug.diagnosis, sug.category, sug.status, sug.shadow) == ("category_gap", "카페", "active", False)
-    assert sug.title == "확정 리스트에 카페가 아직 없어요"
+    assert sug.title == "확정한 장소에 카페가 아직 없어요"
     assert sug.advice == [{"slot_text": "확정 {c1.value}곳 중 카페 {c2.value}곳", "is_guess": False}]
     assert [c["value"] for c in sug.claims] == [2, 0]
     assert sug.expires_at == world.now + constants.SUGGESTION_TTL
