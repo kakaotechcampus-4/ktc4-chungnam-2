@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Popover } from 'radix-ui'
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
 
+import ModalSheet from '@/features/shell/ModalSheet'
+import { useIsDesktop } from '@/features/shell/useIsDesktop'
+
+import SheetTitle from './SheetTitle'
 import { ClearButton } from './TextField'
 
 const WEEK = ['일', '월', '화', '수', '목', '금', '토']
@@ -31,8 +35,14 @@ function shown(day: string) {
   return `${y}.${m}.${d} (${WEEK[weekday(day)]})`
 }
 
+/** 달력 창·시트의 이름. */
+const PICK_LABEL = '날짜 고르기'
+const TRIGGER = 'min-h-11 min-w-0 flex-1 text-left outline-none'
+
 /**
- * 날짜 입력칸(`field` 틀) + 누르면 아래에 붙는 달력. 브라우저 날짜 칸의 달력은 색·글자를 못 바꿔서 대신 쓴다.
+ * 날짜 입력칸(`field` 틀) + 누르면 뜨는 달력. 브라우저 날짜 칸의 달력은 색·글자를 못 바꿔서 대신 쓴다.
+ * 넓은 화면은 칸 아래에 붙는 창, 좁은 화면은 바닥 시트(`ModalSheet`)다 — 6주 달력(약 400px)이 들어갈 자리가
+ * 폰에서는 칸 위·아래 어디에도 없어, 위로 뒤집힌 창의 달 넘기기 줄이 화면 밖으로 잘렸다(#1765).
  * 바깥 `<label>`로 감싸면 그 글자가 칸 이름이 된다. `min`·`max` 밖의 날은 누를 수 없다.
  * 달력은 화살표(하루·한 주), PageUp/PageDown(한 달)으로 옮기고 Enter로 고른다. Esc는 닫기.
  */
@@ -56,38 +66,69 @@ export default function DatePicker({
   'aria-describedby'?: string
 }) {
   const [open, setOpen] = useState(false)
+  const desktop = useIsDesktop()
+
+  const face = value ? shown(value) : <span className="text-ink-500">{placeholder}</span>
+  const tail =
+    value && clearLabel ? (
+      <ClearButton label={clearLabel} onClick={() => onChange('')} />
+    ) : (
+      <CalendarDays size={16} className="shrink-0 text-ink-500" aria-hidden="true" />
+    )
+  const calendar = (className?: string) => (
+    <Calendar
+      autoFocus
+      fixedWeeks
+      value={value}
+      min={min}
+      max={max}
+      className={className}
+      onPick={(day) => {
+        onChange(day)
+        setOpen(false)
+      }}
+    />
+  )
+
+  if (!desktop) {
+    return (
+      <>
+        <div className="field w-full">
+          <button type="button" {...aria} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)} className={TRIGGER}>
+            {face}
+          </button>
+          {tail}
+        </div>
+        {/* 고르면 시트째 뺀다(지역 고르기 시트와 같다). 이미 시트 안(카톡 가져오기)이면 그 위에 겹치고, 닫으면 아래 시트로 돌아간다. */}
+        {open && (
+          <ModalSheet label={PICK_LABEL} onClose={() => setOpen(false)}>
+            <SheetTitle>{PICK_LABEL}</SheetTitle>
+            {calendar('mx-auto mt-3 w-[19.25rem] max-w-full')}
+          </ModalSheet>
+        )}
+      </>
+    )
+  }
+
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Anchor className="field w-full">
-        <Popover.Trigger {...aria} className="min-h-11 min-w-0 flex-1 text-left outline-none">
-          {value ? shown(value) : <span className="text-ink-500">{placeholder}</span>}
+        <Popover.Trigger {...aria} className={TRIGGER}>
+          {face}
         </Popover.Trigger>
-        {value && clearLabel ? (
-          <ClearButton label={clearLabel} onClick={() => onChange('')} />
-        ) : (
-          <CalendarDays size={16} className="shrink-0 text-ink-500" aria-hidden="true" />
-        )}
+        {tail}
       </Popover.Anchor>
       <Popover.Portal>
+        {/* 높이는 칸 위·아래 남은 자리까지 — 넘치면 창 안에서 내린다(MenuPopover와 같다). */}
         <Popover.Content
-          aria-label="날짜 고르기"
+          aria-label={PICK_LABEL}
           align="start"
           sideOffset={8}
           collisionPadding={16}
           onOpenAutoFocus={(e) => e.preventDefault()}
-          className="z-50 rounded-2xl border border-ink-200 bg-surface p-4 shadow-float outline-none"
+          className="z-50 max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-2xl border border-ink-200 bg-surface p-4 shadow-float outline-none"
         >
-          <Calendar
-            autoFocus
-            fixedWeeks
-            value={value}
-            min={min}
-            max={max}
-            onPick={(day) => {
-              onChange(day)
-              setOpen(false)
-            }}
-          />
+          {calendar()}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
