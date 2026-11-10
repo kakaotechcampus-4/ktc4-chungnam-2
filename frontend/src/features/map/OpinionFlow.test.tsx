@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
@@ -66,7 +66,27 @@ describe('핀 찍기 목록의 할 일 묶음과 바로 반응(#1696)', () => {
     await userEvent.click(screen.getByRole('button', { name: `${name} 좋음` }))
     await vi.waitFor(() => expect(client.getQueryData<Pin[]>(pinKeys.list(MAP))!.find((p) => p.id === todo[0].id)!.my_reaction?.type).toBe('like'))
   })
+  it('♥는 버튼 안에서 끝난 표시를 보인 뒤 카드가 남김 모양이 된다(#1736)', async () => {
+    const pins = await fetchPins(MAP)
+    const todo = pins.filter(isTodo)
+    setup(<LiveList initial={pins} todoIds={new Set(todo.map((p) => p.id))} />, pins)
+
+    const name = todo[0].place_name!
+    const like = screen.getByRole('button', { name: `${name} 좋음` })
+    await userEvent.click(like)
+    // 등록이 끝나도 바로 사라지지 않고 초록 "남겼어요"를 보인다.
+    await vi.waitFor(() => expect(like).toHaveClass('btn-done'))
+    expect(like).toHaveTextContent('남겼어요')
+    // 잠시 뒤 카드가 남김 모양(내 의견 태그)이 되고 반응 버튼이 사라진다.
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: `${name} 좋음` })).not.toBeInTheDocument(), { timeout: 3000 })
+  })
 })
+
+/** 캐시를 읽어 다시 그리는 목록 — 실제 화면처럼 ♥ 뒤 바뀐 핀이 카드에 반영된다. */
+function LiveList({ initial, todoIds }: { initial: Pin[]; todoIds: ReadonlySet<string> }) {
+  const { data } = useQuery({ queryKey: pinKeys.list(MAP), queryFn: () => initial, staleTime: Infinity })
+  return <PinList mapId={MAP} pins={data ?? initial} memberCount={4} onSelect={() => {}} todoIds={todoIds} />
+}
 
 describe('핀 카드를 누르면 상세가 열린다(#1724)', () => {
   it('포인터를 붙잡아 클릭이 카드로 와도 열리고, 이름 버튼은 한 번만, 바로 반응 버튼은 열지 않는다', async () => {

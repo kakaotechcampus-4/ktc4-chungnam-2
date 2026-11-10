@@ -1,7 +1,8 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { useMeQuery } from '@/features/auth/queries'
 import { showToast } from '@/features/shell/toast'
+import BusyLabel, { DONE_MS } from '@/ui/BusyLabel'
 import CategoryIcon from '@/ui/CategoryIcon'
 import Mark from '@/ui/Mark'
 
@@ -114,7 +115,9 @@ function PinCard({
   drag: { pin: Pin; memberCount: number } | null
 }) {
   const ref = useTrashDrag(drag)
-  const todo = !card.confirmed && card.mine === null
+  // ♥를 누른 뒤 끝난 표시가 보이는 동안(#1736)은 할 일 모양을 붙잡아 둔다 — 바로 남김 모양으로 바뀌면 버튼이 사라져 끝난 걸 볼 틈이 없었다.
+  const [holding, setHolding] = useState(false)
+  const todo = (!card.confirmed && card.mine === null) || holding
   const face = card.confirmed ? FACE.confirmed : todo ? FACE.todo : FACE.done
   // 이름은 장소 이름으로 시작한다(e2e pinRow). 보이는 글자는 모두 이 이름에 담고 따로 읽히지 않게 숨긴다.
   const label = [`${card.name} ${card.meta}`, card.confirmed && '확정됨', news?.newPin && '새 핀', summaryLabel(card)].filter(Boolean).join(', ')
@@ -151,7 +154,7 @@ function PinCard({
               <Mark kind="check" size={12} /> 확정됨
             </span>
           ) : (
-            card.mine && (
+            !todo && card.mine && (
               <span aria-hidden="true" className={`tag ${card.mine === 'like' ? 'tag-good' : 'tag-bad'}`}>
                 {REACTION[card.mine].mark} 내 의견 {REACTION[card.mine].label}
               </span>
@@ -162,7 +165,7 @@ function PinCard({
           <UnknownName text={card.meta} />
         </p>
         <ReactionCounts card={card} plain className="mt-1.5" />
-        {todo && <QuickReact mapId={mapId} pin={pin} onAgainst={() => onSelect({ against: true })} />}
+        {todo && <QuickReact mapId={mapId} pin={pin} onHold={setHolding} onAgainst={() => onSelect({ against: true })} />}
         {news && news.lines.length > 0 && (
           <ul className="mt-1.5 space-y-0.5 rounded-md bg-surface px-2 py-1 text-xs text-selected">
             {news.lines.map((line) => (
@@ -181,28 +184,55 @@ function PinCard({
  * 할 일 카드의 바로 반응(#1696). "미확인"은 반응이 아니라 아직 안 남긴 사람 수라 버튼이 없다.
  * 버튼은 카드를 덮은 이름 버튼 위에 올라오고(relative z-10), 끌어서 버리기가 잡지 않게 data-no-drag 를 단다.
  */
-function QuickReact({ mapId, pin, onAgainst }: { mapId: string; pin: Pin; onAgainst: () => void }) {
+function QuickReact({ mapId, pin, onHold, onAgainst }: { mapId: string; pin: Pin; onHold: (hold: boolean) => void; onAgainst: () => void }) {
   const react = useMyReactionMutation(mapId, pin)
   const name = pin.place_name ?? '이 장소'
+  // 버튼 상태(#1736, UI 참고 모음): 누르는 동안 버튼 안에 "남기는 중…", 끝나면 DONE_MS 동안 초록 "남겼어요" 뒤 카드가 남김 모양이 된다.
+  const [done, setDone] = useState(false)
+  const holdRef = useRef(onHold)
+  useEffect(() => {
+    holdRef.current = onHold
+  })
+  useEffect(() => {
+    if (!done) return
+    const t = setTimeout(() => holdRef.current(false), DONE_MS)
+    return () => clearTimeout(t)
+  }, [done])
   function like() {
+    onHold(true)
     react.mutate(
       { type: 'like' },
       {
-        onSuccess: () =>
+        onSuccess: () => {
+          setDone(true)
           showToast('좋음을 남겼어요', {
             label: '되돌리기',
             onClick: () => react.mutate(null, { onError: () => showToast('의견을 되돌리지 못했어요') }),
-          }),
-        onError: () => showToast('의견을 등록하지 못했어요', { label: '다시 시도', onClick: like }),
+          })
+        },
+        onError: () => {
+          onHold(false)
+          showToast('의견을 등록하지 못했어요', { label: '다시 시도', onClick: like })
+        },
       },
     )
   }
+  const busy = react.isPending || done
   return (
     <div data-no-drag className="relative z-10 mt-2.5 grid grid-cols-2 gap-1.5">
-      <button type="button" onClick={like} disabled={react.isPending} aria-label={`${name} 좋음`} className="btn-neutral btn-sm bg-surface">
-        <span className={REACTION.like.color}>{REACTION.like.mark}</span> 좋음
+      <button
+        type="button"
+        onClick={like}
+        disabled={busy}
+        aria-busy={react.isPending}
+        aria-label={`${name} 좋음`}
+        className={`btn-neutral btn-sm bg-surface ${done ? 'btn-done' : ''}`}
+      >
+        <BusyLabel busy={react.isPending} busyText="남기는 중…" done={done} doneText="남겼어요">
+          <span className={REACTION.like.color}>{REACTION.like.mark}</span> 좋음
+        </BusyLabel>
       </button>
-      <button type="button" onClick={onAgainst} aria-label={`${name} 반대, 이유 쓰기`} className="btn-neutral btn-sm bg-surface">
+      <button type="button" onClick={onAgainst} disabled={busy} aria-label={`${name} 반대, 이유 쓰기`} className="btn-neutral btn-sm bg-surface">
         <span className={REACTION.against.color}>{REACTION.against.mark}</span> 반대
       </button>
     </div>
