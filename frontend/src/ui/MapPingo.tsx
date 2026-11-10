@@ -21,7 +21,7 @@ for (const src of [back, diagDownLeft, diagDownRight, diagUpLeft, diagUpRight, w
 
 const IMG = 'absolute inset-0 size-full select-none'
 /** 그림 파일 이름은 핑고가 보는 쪽이다(#1746 — 이름과 보는 쪽이 어긋나 방향이 틀렸다). */
-const DIAGONAL ={ 'up-left': diagUpLeft, 'up-right': diagUpRight, 'down-left': diagDownLeft, 'down-right': diagDownRight }
+const DIAGONAL = { 'up-left': diagUpLeft, 'up-right': diagUpRight, 'down-left': diagDownLeft, 'down-right': diagDownRight }
 
 /** 새 조언이 있다는 표시 — 평면 「!」 말풍선(새 소식 귤색 `--advice-alert`, 흰 테두리). 핑고 머리 오른쪽 위에 떠서 천천히 들썩인다. */
 function AlertBubble() {
