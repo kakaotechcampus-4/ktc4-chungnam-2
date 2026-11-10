@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Sear
 
 import AgentButton from '@/features/agent/AgentButton'
 import { useMeQuery } from '@/features/auth/queries'
+import CourseRunWatcher from '@/features/course/CourseRunWatcher'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
 import { MIN_LEVEL } from '@/features/map/camera'
 import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
@@ -316,6 +317,14 @@ export default function MapLayout() {
     fittedResult.current = key
     controller.current?.fitPins(points)
   }, [onRecommendTab, mapReady, run, result])
+
+  // 동선(「동선 보기」로 고른 날, AI 코스)이 켜지거나 바뀌면 선 전체가 보이게 맞춘다 — 켰는데 1번 장소가 화면 밖에 있던 것을 고쳤다.
+  // 이미 다 보이면 그대로 두고(force 없음), 같은 동선은 다시 맞추지 않아 사람이 옮겨 둔 지도를 뺏지 않는다.
+  const routeKey = routeDrawings.flatMap((d) => d.stops.map((p) => `${p.lat},${p.lng}`)).join('|')
+  useEffect(() => {
+    if (!mapReady || !routeKey) return
+    controller.current?.fitPins(routeKey.split('|').map((p) => ({ lat: Number(p.split(',')[0]), lng: Number(p.split(',')[1]) })))
+  }, [mapReady, routeKey])
 
   // 지도 빈 곳 누르기는 어느 탭이든 같다(#1028, 멘토 리뷰 #816). 고른 것(핀 상세·검색 결과·AI 후보)이 있으면 풀고,
   // 없으면 누른 자리를 가운데로 옮긴다(#1613). 「신규 핀 찍기」 메뉴는 우클릭·길게 누르기로만 연다(#1549).
@@ -749,6 +758,8 @@ export default function MapLayout() {
       {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
       {/* 카톡 가져오기 시트는 탭 화면 밖 한 자리에서 그린다 — 목록 머리가 바뀌어도 함께 사라지지 않게(#1045). */}
       <ImportSheetHost mapId={mapId} />
+      {/* 짜는 중인 AI 코스를 탭 밖에서도 지켜본다(#1719). */}
+      <CourseRunWatcher mapId={mapId} />
       {/* 핀을 지도 위에 끌어다 놓아 옮기기(#1549). 화면 크기와 상관없이 하나만 둔다. */}
       <PinMoveHost mapId={mapId} />
       {/* 확정 탭 「일정 짜기」 패널(넓은 화면만) — 탭을 떠나면 닫힌다. */}
