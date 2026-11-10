@@ -276,9 +276,11 @@ export function buildCandidates(regionLabel: string) {
       member_fulfillment: {
         satisfied: 1,
         total: 2,
+        // 지도 구성원의 id 를 쓴다 — 없는 id 면 화면이 이름 대신 「구성원」을 보여 준다
         by_member: [
+          { user_id: ME_USER_ID, satisfied: true },
           {
-            user_id: "u_demo_1",
+            user_id: "u_2",
             satisfied: false,
             conditions: [
               { fact_key: "spicy_focused", fact_label: "매운맛 전문", evidence_line_id: null, status: "met" as const },

@@ -14,6 +14,7 @@ import { useShell } from '@/features/shell/shellContext'
 import TabSheet from '@/features/shell/TabSheet'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import DayRoute from '@/features/shortlist/DayRoute'
+import { useMeQuery } from '@/features/auth/queries'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { scheduledIds, UNSET_DAY } from '@/features/shortlist/schedule'
@@ -41,6 +42,7 @@ import TipBubble from '@/ui/TipBubble'
 export default function ShortlistTab() {
   const { mapId } = useShell()
   const shortlist = useShortlistQuery(mapId)
+  const myId = useMeQuery().data?.id
   const pins = usePinsQuery(mapId).data ?? []
   const members = useMembersQuery(mapId).data ?? []
   const routeOn = useRouteStore((s) => s.on)
@@ -244,6 +246,7 @@ export default function ShortlistTab() {
               )}
               <ShortlistList
                 items={shown}
+                myId={myId}
                 dayLabel={day ? dayOrdinal(edit.dates.indexOf(day)) : ''}
                 onPut={day ? (item) => putInDay(item.pin.id, item.pin.place_name ?? '이 장소', day) : undefined}
                 onOpen={setOpenPin}
