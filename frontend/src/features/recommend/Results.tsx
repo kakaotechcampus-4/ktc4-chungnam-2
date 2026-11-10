@@ -43,6 +43,9 @@ export function BackToReadiness({ mapId }: { mapId: string }) {
   return <PanelBackLink label="AI 추천" onBack={() => setRun(mapId, undefined)} />
 }
 
+/** 다시 추천 설명. 머리와 목록 끝이 같은 글을 쓴다. 작은 회색 글로는 눈에 띄지 않아 13px, 진한 색으로 뒀다(#1729). */
+const RETRY_HINT = '변경된 조건으로, 새롭게 다시 찾아드려요'
+
 /**
  * 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 둘째 줄 "509곳을 거르고 3곳을 골랐어요 어떻게 골랐나요"(#1706, 예전엔 목록 위 따로 한 줄),
  * 그 아래 "다시 추천"과 오른쪽 크레딧 칸(CreditBox, "크레딧 안 써요"). count 는 이번 실행이 새로 찾은 곳(new_count)이다.
@@ -69,6 +72,7 @@ export function ResultsHeader({ mapId, run, count, removed, onHow }: { mapId: st
         {/* 숫자는 GET /credits/me 그대로(#733). 못 받으면 비운다 — 다시 추천은 크레딧과 무관하게 된다. */}
         {credits && <CreditBox cost={0} credits={credits} />}
       </div>
+      <p className="mt-1.5 text-body font-medium text-ink-700">{RETRY_HINT}</p>
     </div>
   )
 }
@@ -177,7 +181,9 @@ export function ResultsBody({
         <div className="space-y-1.5 pt-2 text-center">
           <p className="text-body text-ink-600">마음에 드는 곳이 없나요?</p>
           <RetryButton mapId={mapId} run={run} label="다른 곳 다시 추천" className="btn-primary btn-lg w-full" />
-          <p className="text-label text-ink-500">크레딧을 쓰지 않아요. 지금 후보를 빼고, 고친 조건으로 찾아요</p>
+          <p className="text-body font-medium text-ink-700">
+            <Sentences text={`크레딧을 쓰지 않아요. ${RETRY_HINT}`} />
+          </p>
         </div>
       </div>
     </div>
@@ -289,7 +295,9 @@ export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; coun
         <h4 className="mb-1 text-sm font-bold text-ink-900">순위는 이렇게 정했어요</h4>
         <ul className="list-inside list-disc space-y-0.5">
           <li><Sentences text="있으면 좋은 조건을 많이 맞출수록 앞에 뒀어요" /></li>
-          <li><Sentences text="지역마다 1위를 먼저 뽑고 남은 자리를 채웠어요" /></li>
+          {/* 규칙의 정본은 docs/constraints.md "상위 3곳 선택"이다. 동네 안배는 동점일 때만 작동한다(#1288). */}
+          <li><Sentences text="순위가 같으면 아직 안 고른 동네를 먼저 골랐어요" /></li>
+          <li><Sentences text="그래도 같으면 기준 장소에서 가까운 곳을 먼저 골랐어요" /></li>
         </ul>
       </section>
     </div>
