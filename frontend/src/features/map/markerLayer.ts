@@ -8,7 +8,7 @@ import { isPlaced, participationRatio, type Pin, type PlacedPin } from './model'
 export interface MarkerLayer {
   /**
    * 들어온 목록과 지금 떠 있는 마커를 비교해 추가·삭제만 한다. 구성원 수는 핀 색(참여율)의 분모다.
-   * fresh 는 마지막으로 본 뒤 새 핀·의견이 있는 핀 id(#1454) — 파란 점을 단다.
+   * fresh 는 마지막으로 본 뒤 새 핀·의견이 있는 핀 id(#1454) — 귤색 점을 단다.
    */
   sync(pins: Pin[], memberCount: number, fresh?: ReadonlySet<string>): void
   /** 상세를 연 핀을 크게·맨 위로·이름과 함께 보여 준다. null 이면 해제. */

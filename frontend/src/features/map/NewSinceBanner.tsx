@@ -25,7 +25,7 @@ export default function NewSinceBanner({
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold text-selected">{timeAgo(since)}에 본 뒤로 새로 생겼어요</p>
         <p className="mt-0.5 text-xs text-ink-600">{what}</p>
-        <p className="text-xs text-ink-600">지도에 파란 점이 찍힌 핀이에요</p>
+        <p className="text-xs text-ink-600">지도에 귤색 점이 찍힌 핀이에요</p>
         {truncated && <p className="text-xs text-ink-600">새 소식이 더 있어요. 지도를 둘러봐 주세요</p>}
       </div>
       <button type="button" onClick={onDismiss} className="btn-text shrink-0 text-sm">
