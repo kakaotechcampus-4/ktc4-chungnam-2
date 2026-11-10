@@ -1150,14 +1150,17 @@ def _sse_open(s, dl):
 
 
 def _sse_event(s, dl, wait=SSE_LINE_WAIT):
-    """control이 아닌 다음 이벤트(dict). 스트림이 끝났으면 "eof", 시간 초과면 None."""
+    """control과 member.presence가 아닌 다음 이벤트(dict). 스트림이 끝났으면 "eof", 시간 초과면 None.
+
+    member.presence는 누가 연결하든 아무 때나 온다(자기 접속 포함, docs/events.md, #1551).
+    접속 상태를 보는 케이스는 없어서 control처럼 건너뛴다(#1741)."""
     while True:
         it = s.get(dl, wait)
         if it is None:
             return None
         if it[0] != "ev":
             return "eof"
-        if it[1].get("event") != "control":
+        if it[1].get("event") not in ("control", "member.presence"):
             return it[1]
 
 

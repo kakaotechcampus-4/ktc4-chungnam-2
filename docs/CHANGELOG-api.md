@@ -35,7 +35,7 @@
 - **`GET /invites/{token}/preview`**: 메신저 미리보기 봇 전용 HTML(og 태그). 앞단 Caddy가 봇(`kakaotalk-scrap` 등)의 `/invites/{token}`만 보낸다(`deploy/Caddyfile`). 더 쓸 수 없는 링크도 200으로 기본 미리보기다.
 - **`GET /invites/{token}/preview-image`**: 대표 이미지 1200×630 + 오른쪽 아래 워드마크 JPEG. 서버에 Pillow가 새로 들어온다(`requirements.txt`).
 - FE: 초대 카드가 대표 이미지(없으면 지역 그림)와 오른쪽 아래 핑고 얼굴을 그린다. 타입 재생성(`npm run gen:types`), 목 서버는 요약에 `region`·`cover_url`을 싣는다.
-- 배포: `deploy/Caddyfile`이 바뀐다. Caddy를 다시 읽어야 미리보기가 바뀐다(`deploy_rules.md`). 카톡은 한 번 읽은 미리보기를 한동안 저장해서, 이미 보낸 링크는 늦게 바뀐다.
+- 배포: `deploy/Caddyfile`이 바뀐다. edge(Caddy)를 다시 시작해야 미리보기가 바뀐다(`deploy_rules.md` 「Caddyfile을 바꾼 배포 뒤」). 카톡은 한 번 읽은 미리보기를 한동안 저장해서, 이미 보낸 링크는 늦게 바뀐다.
 
 ## 2026-11-10, AI 코스 끊긴 run을 「실행 상한 + 여유」 뒤에 끝낸다 (#1609)
 
