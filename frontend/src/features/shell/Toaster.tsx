@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import Sentences from '@/ui/Sentences'
 
-import { CONTROLS } from './layout'
+import { CONTROLS, INSIDE_SPOT_BOTTOM } from './layout'
 
 import { useToastStore } from './toast'
 
@@ -13,7 +13,7 @@ import { useToastStore } from './toast'
  * 시트 윗변 위에 둔 채 폭을 버튼 묶음 왼쪽까지로 줄인다(넘치면 두 줄, #308).
  */
 /**
- * `inside` 면 시트 윗변 위가 아니라 시트 안 아래쪽(AI 버튼 위)에 띄운다 — 3단계처럼 시트 위에 자리가 없을 때.
+ * `inside` 면 시트 윗변 위가 아니라 시트 안, 탭 바 윗변 12px 위에 띄운다 — 3단계처럼 시트 위에 자리가 없을 때(`INSIDE_SPOT_BOTTOM`, #1752).
  * `docked` 면 넓은 화면의 지도 영역 바닥 16px 위 가운데다. 지도 버튼과 같은 높이라 겹치면 버튼 왼쪽까지로 줄인다(#338).
  */
 export default function Toaster({
@@ -57,7 +57,7 @@ export default function Toaster({
     <div
       role="status"
       style={{
-        bottom: docked ? 16 : inside ? 48 : `calc(100% + 12px${mode === 'raised' ? ` + ${CONTROLS.stackHeight}px` : ''})`,
+        bottom: docked ? 16 : inside ? INSIDE_SPOT_BOTTOM : `calc(100% + 12px${mode === 'raised' ? ` + ${CONTROLS.stackHeight}px` : ''})`,
         // 좁힐 때는 버튼 묶음 왼쪽 8px까지만 쓴다.
         right: mode === 'narrow' ? CONTROLS.right + CONTROLS.size + 8 : undefined,
       }}

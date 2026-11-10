@@ -9,6 +9,13 @@ export const TAB_BAR = { h: 64, gap: 12 }
 /** 화면 바닥에서 탭 바 윗변까지 — 탭 바 높이 + 바닥 틈 + 홈 표시줄. */
 export const TAB_BAR_SPACE = `calc(${TAB_BAR.h + TAB_BAR.gap}px + env(safe-area-inset-bottom, 0px))`
 
+/**
+ * 시트 3단계처럼 시트 위에 자리가 없을 때 시트 안에 토스트·휴지통을 띄우는 높이(`bottom`) — 탭 바 윗변 12px 위.
+ * 시트는 화면 바닥까지 깔려서(`fixed bottom-0`) 시트 안 bottom 이 탭 바와 같은 바닥에서 잰 값이다.
+ * 바닥 48px 로 두었을 땐 떠 있는 탭 바 뒤에 깔려 크롬에선 안 보이고 파이어폭스에선 조금 삐져나왔다(#1752).
+ */
+export const INSIDE_SPOT_BOTTOM = `calc(${TAB_BAR_SPACE} + 12px)`
+
 /** 지도 버튼 한 변 44px(터치 최소), 화면 오른쪽 여백 16px, 세 개를 쌓은 높이 + 시트와의 틈. */
 export const CONTROLS = { size: 44, right: 16, stackHeight: 44 * 3 + 12 }
 

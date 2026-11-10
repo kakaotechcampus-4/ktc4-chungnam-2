@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { binCenter, usePinDragStore, type PinDrag } from './pinDrag'
 import { useTrashPinMutation } from './queries'
 import { usePinSelection } from './usePinSelection'
+import { INSIDE_SPOT_BOTTOM } from '@/features/shell/layout'
 
 /** 놓은 핀이 통으로 들어가는 시간, 그 뒤 뚜껑이 닫히는 시간(ms). 합쳐 0.5초 이하(DESIGN Motion). */
 const SWALLOW_MS = 250
@@ -13,7 +14,7 @@ const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matc
 
 /**
  * 핀을 끌 때만 나타나는 휴지통(#1012). 자리는 토스트와 같다 — 모바일은 시트 윗변 12px 위 가운데(`above`),
- * 3단계처럼 시트 위에 지도가 없으면 시트 안 아래쪽(`inside`), 넓은 화면은 지도 영역 바닥 16px 위 가운데(`docked`).
+ * 3단계처럼 시트 위에 지도가 없으면 시트 안, 탭 바 윗변 12px 위(`inside`, `INSIDE_SPOT_BOTTOM`), 넓은 화면은 지도 영역 바닥 16px 위 가운데(`docked`).
  * 지도 버튼(오른쪽)과 겹치지 않는다. 위에 핀이 오면 테두리가 brand-600 이 되고 뚜껑이 열린다.
  * 놓으면 바로 지우고(확인 창 없음, 되돌리기 알림은 useTrashPinMutation), 핀이 작아지며 들어간 뒤 뚜껑이 닫힌다.
  * 포인터 전용이다. 키보드·스크린리더는 핀 상세의 「핀 삭제」를 쓴다.
@@ -59,7 +60,7 @@ export default function TrashDropZone({ mapId, placement }: { mapId: string; pla
   const open = drag.over && !closing
   // 지도 위에 놓은 뒤(옮기기, #1549)에는 휴지통을 거두고 그림만 남긴다.
   if (drag.phase !== 'drag' && drag.phase !== 'drop') return createPortal(<Ghost drag={drag} />, document.body)
-  const bottom = placement === 'docked' ? 16 : placement === 'inside' ? 48 : 'calc(100% + 12px)'
+  const bottom = placement === 'docked' ? 16 : placement === 'inside' ? INSIDE_SPOT_BOTTOM : 'calc(100% + 12px)'
   return (
     <>
       <div style={{ bottom }} className="pointer-events-none absolute inset-x-4 z-20 flex justify-center" aria-hidden="true">
