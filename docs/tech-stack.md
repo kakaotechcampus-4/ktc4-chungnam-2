@@ -1,6 +1,6 @@
 # 기술 스택
 
-작성 기준: `develop`(2026-11-03, 숫자와 상태는 2026-11-10에 다시 맞춤). 이 문서는 **지도**다 — 버전과 동작의 정본은 각 절의 근거 파일이고, 어긋나면 파일이 맞다. 숫자(경로 수, 버전)는 이 시점에 읽은 값이라 시간이 지나면 달라질 수 있다. 확인하지 못한 것은 「확인 못 함」으로 적는다. 제품 스펙은 `최종기획안.md`, 기술 계약은 `docs/`가 정본이다(루트 `CLAUDE.md`의 문서 지도).
+작성 기준: `develop`(2026-11-03, 숫자와 상태는 2026-11-11에 다시 맞춤). 이 문서는 **지도**다 — 버전과 동작의 정본은 각 절의 근거 파일이고, 어긋나면 파일이 맞다. 숫자(경로 수, 버전)는 이 시점에 읽은 값이라 시간이 지나면 달라질 수 있다. 확인하지 못한 것은 「확인 못 함」으로 적는다. 제품 스펙은 `최종기획안.md`, 기술 계약은 `docs/`가 정본이다(루트 `CLAUDE.md`의 문서 지도).
 
 ## 1. 한눈에 보기
 
@@ -37,6 +37,7 @@
 | DB 드라이버 | psycopg2-binary | 2.9.9 | DB URL `postgresql://` |
 | 공간 | geoalchemy2 / pyproj | 0.15.2 / 3.6.1 | 좌표·거리, 공공데이터 좌표 변환(`places/ingest.py`) |
 | 이미지 | pillow | 12.3.0 | 초대 링크 미리보기 그림(대표 사진 자르기 + 워드마크, `maps/preview.py`, #1625) |
+| 얼굴 거르기 | numpy / opencv-python-headless | 2.4.6 / 5.0.0.93 | 블로그 사진에서 사람 얼굴이 보이는 사진 빼기(YuNet, `places/photos.py`, #1157) |
 | HTTP 클라이언트 | httpx | 0.27.2 | 카카오 OAuth, 장소 소스, 링크 해석 |
 | LLM SDK | openai | 3.22.1(파일 표기) | `llm/client.py` — 실제 설치 버전은 확인 못 함 |
 | 설정 | python-dotenv, pyyaml | 1.2.2, 6.0.2 | `common/settings.py`, `agent/core.py` |
@@ -107,7 +108,7 @@
 
 근거: `docs/api-spec.yaml`, `docs/openapi-workflow.md`, `contracts/`.
 
-- **OpenAPI 3.1**, 경로 78개·오퍼레이션 96개·스키마 148개·태그 14개(auth, maps, pins, places, recommend, shortlist, realtime, notifications, feedback, ads, course, credits, reviews, agent). 전역 보안은 쿠키 `session`.
+- **OpenAPI 3.1**, 경로 83개·오퍼레이션 101개·스키마 150개·태그 14개(auth, maps, pins, places, recommend, shortlist, realtime, notifications, feedback, ads, course, credits, reviews, agent). 전역 보안은 쿠키 `session`.
 - **타입 생성**: `contracts`의 `npm run gen:types`(openapi-typescript 7.13)가 `contracts/src/types/api.d.ts`를 만들고 **커밋한다**. CI가 `gen:types` 뒤 `git diff --exit-code`로 어긋남을 잡는다.
 - **목 서버**: `contracts/mocks/`의 msw 핸들러가 상태를 가진 인메모리 스토어로 응답한다. 시나리오 11개(`empty`, `happy-path`, `no-results`, `region-conflict`, `guest`, `withdrawn-relogin`, `credits-empty`, `credits-full`, `agent-declared`, `agent-linked`, `agent-schedule`). SSE도 흉내 낸다.
 - **lint**: `@redocly/cli`(`npm run lint:spec`). **CI에서는 돌지 않는다.**
@@ -119,6 +120,7 @@
 |---|---|---|
 | 카카오·구글 OAuth | 로그인(구글은 #1514, 같은 방식) | FE는 인가 URL을 만들지 않고 `/auth/kakao/login`으로 이동, 서버가 state 쿠키를 심고 카카오로 보낸다(`auth/core.py`, `auth/service.py`) |
 | 카카오 로컬 검색 | 장소 검색 | 서버가 `dapi.kakao.com`을 부른다. **응답 저장·캐시·LLM 전송 금지**, 장소 ID와 `place_url`만 저장 가능(`docs/architecture.md` 2절, #53). `integration/test_kakao_no_store_e2e.py`, `test_places_no_kakao_leak.py`가 검사 |
+| 카카오 이미지 검색 | 핀 상세의 블로그 사진(`GET /pins/{pinId}/photos`, #1157) | 핀을 열 때마다 부르고 미리보기·원문 주소·출처 이름만 넘긴다. 저장·캐시하지 않고, 얼굴 검사도 메모리에서만 한다 |
 | 카카오맵 SDK | 지도 표시, 실시간 핀 위치 재조회 | FE가 직접. 결과는 메모리에만 둔다 |
 | 네이버 | 장소 소스 코드는 있으나 기본 꺼짐(`PLACES_SOURCES=kakao`) | `naver.me` 단축 링크의 **리다이렉트 한 번**만 따라간다(#1048) |
 | 공공데이터 | 인허가 음식점·카페, TourAPI 관광지 적재 | `places/ingest.py`, `load` 스크립트 |
@@ -126,8 +128,8 @@
 | 광고 | 추천 탭은 자체 등록 광고(CSV 스크립트, `docs/ads.md`). 크레딧 광고는 제공자 스위치 `CREDIT_AD_PROVIDER`(`""`/fake/adsense/gpt) | adsense·gpt는 아직 구현 안 됨, 운영에서 fake면 서버가 뜨지 않는다. 페이즈 1 운영은 둘 다 쓰지 않는다(추천 탭 광고는 등록하지 않고 크레딧 광고는 비움, 기획안 16절) |
 
 ### LLM
-- **제공자**: OpenAI를 직접 호출한다(2026-11-02, #1120). 모델 `gpt-6-luna`(`LLM_MODEL`로 바꿀 수 있다). **환경변수 이름은 엘리스 시절 그대로** `ELICE_ML_API_BASE_URL`·`ELICE_ML_API_KEY`다. 코드의 기본 주소는 빈 문자열이고(비면 호출이 실패), `https://api.openai.com/v1`은 `deploy/env/*.env.example`에 들어 있다. **운영 서버가 실제로 전환됐는지는 서버 env를 확인해야 한다**(`deploy_rules.md`는 운영이 아직 옛 설정이라고 적는다).
-- **호출 방식**: `chat.completions.parse` + Pydantic 구조화 출력, 타임아웃 15초, 재시도 0. 단가·일일 예산(3,000원)은 `common/settings.py`. 호출 1건마다 `llm_calls`에 한 행(종류와 결과 `ok`·`refusal`·`empty`·`timeout`·`invalid_schema`·`call_failed`, #870)을 남긴다.
+- **제공자**: OpenAI를 직접 호출한다(2026-11-02, #1120). 모델 `gpt-6-luna`(`LLM_MODEL`로 바꿀 수 있다). **환경변수 이름은 엘리스 시절 그대로** `ELICE_ML_API_BASE_URL`·`ELICE_ML_API_KEY`다. 코드의 기본 주소는 빈 문자열이고(비면 호출이 실패), `https://api.openai.com/v1`은 `deploy/env/*.env.example`에 들어 있다. 운영은 `v0.1.0` 배포 때 OpenAI 주소와 운영 프로젝트 키로 바꿨다(`deploy_rules.md` 「배포 전에 정할 것」, #1528).
+- **호출 방식**: `chat.completions.parse` + Pydantic 구조화 출력, 타임아웃 15초, 재시도 0. 단가·일일 예산(3,000원)은 `common/settings.py`. 호출 1건마다 `llm_calls`에 한 행(종류와 결과 `ok`·`ok_repeated_json`·`refusal`·`empty`·`timeout`·`invalid_schema`·`call_failed`, #870)을 남긴다.
 - **호출 지점(정확히)**: **요청 중 호출은 v1에서 ② 사유 구조화(`plan_evidence`) 하나**다. ③-a-1 장소 라벨링(`label_place`)은 **v1 스텁이라 모델을 부르지 않는다**(원자료에 값이 있을 때만 known). 호출 종류는 `llm/models.py`의 `CALLS` 7개 — `plan_evidence`, `agent_diagnose`, `agent_status`, `agent_web_check`, `course_goals`, `course_direct`, `course_turn`(뒤의 여섯은 v2 에이전트·AI 코스, `course_turn`은 평가·시연 전용).
 - **모델이 하지 않는 일**: 실격 필터, 선호 순위(점수), 반경·동선 계산, 카카오 대화 해석은 전부 코드가 한다(`CLAUDE.md`의 「모델 호출」 절).
 
@@ -158,6 +160,7 @@
 | `deploy` | 수동 또는 호출로 SSM으로 서버의 `sync.sh`·`deploy.sh` 실행. 운영은 `v` 태그만 |
 | `staging-check` | 매일 06:00(KST) 서버 안에서 QA 하네스 실행 |
 | `uptime` | 10분마다 서버 밖에서 운영·스테이징의 `/`와 `/api/health` 확인. 실패하면 경보 이슈를 열고 회복하면 닫는다(#1280) |
+| `security-audit` | PR, 매주 월요일, 의존성 파일 변경 때 pip-audit·npm audit(알림 전용, `docs/security.md`, #1430) |
 | `llm-cost`, `move-to-rds` | 수동 실행 |
 | `assign-mentor`, `convention-check`, `notify-discord` | main 대상 PR 보조(안내용, 차단 안 함) |
 
@@ -183,7 +186,8 @@
 |---|---|---|
 | 개인 SSE 채널 | 스펙·목에는 있고 FE 구독 확인 못 함 | #13 |
 | 운영 LLM 제공자 전환 | v0.1.0 배포 때 OpenAI 직접 호출로 맞춤(`deploy_rules.md` 「배포 전에 정할 것」) | #1203 |
-| RDS `max_connections`, 운영 마이그레이션 실제 리비전 | 확인 못 함 | #1203, #1204 |
+| RDS `max_connections` | 확인 못 함 | #1203 |
+| 운영 마이그레이션 리비전 | `v0.2.0` 배포(2026-11-11)에서 `0070`까지 올림 | #1767 |
 | 백업 복원 검증 | 아직 없음 | #1204 |
 | 폴러 큐 상한·스레드 경계 | 상한 없음 | #1211 |
 | OpenAPI lint(`lint:spec`) | CI에서 안 돎 | #1204 |

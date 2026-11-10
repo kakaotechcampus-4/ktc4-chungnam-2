@@ -188,7 +188,7 @@ core.py로 옮긴다.
 이 목록 밖에서 커밋하는 코드는 리뷰에서 의심한다.
 
 **예외: 모델을 부르기 직전에는 읽기 트랜잭션을 롤백한다(#275).** "커밋은 `session_scope` 한 곳에서만"은
-그대로다. 다만 모델 호출은 최대 15초+재시도라, 그 앞에서 읽기만 했어도 열려 있는 트랜잭션이 DB 연결
+그대로다. 다만 모델 호출은 최대 15초라, 그 앞에서 읽기만 했어도 열려 있는 트랜잭션이 DB 연결
 하나를 계속 잡아 동시 요청이 풀 크기를 넘으면 다른 요청이 연결을 못 얻는다. 그래서 flow는 **읽기 → 롤백 →
 모델 → 쓰기** 순서로 쓰고, 모델 호출 직전에 `db.rollback()`으로 연결을 풀에 돌려준다. 롤백은 아무것도
 저장하지 않으므로 저장 지점이 하나라는 원칙과 부딪치지 않는다. 롤백 뒤에는 세션의 ORM 객체가 만료되므로
@@ -219,13 +219,14 @@ core.py로 옮긴다.
 | 요청 상한 | `common/ratelimit.py` `SlidingWindowLimiter` | 장소 검색, 링크 해석, 피드백, 게스트 입장 등의 키별 최근 요청 시각 | 각 모듈 import 시점 | 오래된 기록은 호출마다 지운다. 프로세스가 끝나면 사라진다(API 컨테이너 1개 전제) |
 | 접속 상태 | `realtime/presence.py` | 지도별 열린 SSE 연결 수, 끊긴 뒤 30초 유예 | import 시점 | 마지막 연결이 끊기고 유예가 지나면 지운다(#1551) |
 | `agent_loop` | `agent/loop.py` | 개발용 관찰 반복 작업 | lifespan 시작(`AGENT_LOOP_IN_PROCESS=True`일 때만) | lifespan 종료 때 `agent_loop.stop()`(dispatcher보다 먼저) |
-| `dispatcher` | `realtime/dispatcher.py` | 지도별 SSE 구독자 목록, 마지막으로 처리한 `event_log.seq`, 순번 구멍 추적 시각 | import 시점에 생성, lifespan에서 초기화하고 폴링 시작 | 지금은 lifespan 종료 때 폴링 작업 취소만. #130에서 정지 대기와 SSE 정리 |
+| `dispatcher` | `realtime/dispatcher.py` | 지도별 SSE 구독자 목록, 마지막으로 처리한 `event_log.seq`, 순번 구멍 추적 시각 | import 시점에 생성, lifespan에서 초기화하고 폴링 시작 | lifespan 종료 때 `request_stop` 뒤 폴링 작업이 끝나기를 기다리고(`SHUTDOWN_TIMEOUT`을 넘으면 취소) `close_subscriptions`로 SSE를 정리한다(#130) |
 
 `SessionLocal`은 `engine`에 묶인 세션 공장이라 따로 상태를 들고 있지 않다.
 
 **읽기 전용.** 기동 때 한 번 만들어지고 이후 바뀌지 않는다. `settings`(frozen dataclass), FastAPI
-`app`과 모듈별 `router`가 여기 속한다. 카카오 API 호출은 `httpx.post`, `httpx.get`을 호출마다
-새로 불러서 상주하는 HTTP 연결 풀은 없다.
+`app`과 모듈별 `router`가 여기 속한다. auth의 카카오·구글 호출은 `httpx.post`, `httpx.get`을 호출마다
+새로 부른다. places의 외부 호출 클라이언트(`places/api.py`의 `_service`·`_image_search`·`_link_client`, `httpx.Client`)와
+얼굴 검출기(`_face_detector`, YuNet, #1157)는 처음 쓸 때 한 번 만들어 `lru_cache`로 프로세스 끝까지 둔다.
 
 ### 접근 경로
 

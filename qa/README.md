@@ -12,7 +12,7 @@
 - 서버는 `PINGO_ENV=staging`과 `QA_LOGIN_SECRET`으로 띄웁니다(`deploy_rules.md`의 "스테이징" 절). 하네스는 같은 값을 환경 변수로 받아 `POST /auth/qa-login`으로 사용자를 만듭니다. 값은 출력하지 않습니다.
 - 실행: `PYTHONUTF8=1 QA_LOGIN_SECRET=... python qa/harness/run_api_cases.py --base-url http://localhost:8010 [ID ...]`. backend 폴더가 아니어도 되고 httpx만 있으면 됩니다.
 - 장소는 `GET /places/search` 결과 중 핀을 만들 수 있는 것에서 고릅니다. 서버 메모리를 비워야 하는 L05.guest11은 SKIP입니다.
-- 배포 주소가 생기기 전(#168)에는 로컬 서버를 staging으로 띄워 돌립니다. DB는 `pingo_eval`(개발 DB 복사본)을 씁니다.
+- 스테이징은 GitHub Actions의 `staging-check`가 서버의 스테이징 컨테이너 안에서 공개 주소로 돌립니다(매일 06:00, 릴리스 전에는 그 main 커밋으로, `deploy_rules.md` 「배포할 때마다」). 로컬에서는 서버를 staging으로 띄워 돌리고 DB는 `pingo_eval`(개발 DB 복사본)을 씁니다.
 
 `seed_agent_demo.py`는 "핑고 AI 조언" 시연 지도를 만듭니다(#1301). API와 QA 로그인만 쓰고 DB나 시각은 건드리지 않습니다. 정체(기본)와 갈림(`--scenario split`) 두 가지가 있고, `--tick`을 주면 제안이 뜰 때까지 관찰을 돌립니다. `--followup stuck|resolve`는 수락 뒤 후속 관찰(지켜보는 중 → 다음 방법 → 충돌 선언, 또는 풀림)을 만듭니다(#1345, G07~G09). 사용법은 파일 머리말과 `docs/demo-guide.md` 장면 8에 있습니다.
 

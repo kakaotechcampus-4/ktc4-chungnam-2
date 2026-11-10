@@ -47,7 +47,7 @@
 | 모델 호출 | 어느 가격에 넣나 | 비고 |
 |---|---|---|
 | `evidence_add` | `recommend_run` | 「+」 근거 추가. run당 글 10개(`recommend/core.py`의 `MANUAL_EVIDENCE_LIMIT`, 넘으면 409 `EVIDENCE_LIMIT`)가 남용을 막는다 |
-| `agent_diagnose`, `agent_summary`, `agent_status`, `agent_web_check` | 사람이 누르는 실행 전체(#1478) | 서버 백그라운드. 실측을 다시 뽑아 위 표 「원가와 산정」에 몫을 넣고, 올림 결과가 바뀌면 가격을 고친다. 진단은 지도 하루 상한(구성원 수 × 4), 지도 현황(`agent_status`, #1168)과 웹 확인(`agent_web_check`, #1216)은 서비스 일일 예산(agent-v2 19절)이 따로 막는다 |
+| `agent_diagnose`, `agent_summary`, `agent_status`, `agent_web_check` | 사람이 누르는 실행 전체(#1478) | 서버 백그라운드. 실측을 다시 뽑아 위 표 「원가와 산정」에 몫을 넣고, 올림 결과가 바뀌면 가격을 고친다. 진단은 지도 하루 상한(구성원 수 × 4), 지도 현황(`agent_status`, #1168)은 관찰 끝에 칸이 바뀔 때만 돌고, 웹 확인(`agent_web_check`, #1216)은 서비스 일일 예산(agent-v2 19절, `llm.api.web_check`)이 따로 막는다 |
 
 다른 모듈은 가격 숫자를 들지 않는다. `credits.api.charge(feature=...)`만 부른다. 화면은 가격과 보상을 `GET /credits/me`로 받고 숫자를 적지 않는다.
 
@@ -90,7 +90,7 @@
   - 화면: "크레딧이 부족해요. 후기를 쓰면 {review_reward} 크레딧을 드려요" + 「후기 쓰러 가기」(확정 탭으로). `review_reward`는 `GET /credits/me`에서 받는다.
   - `ad.available`이고 광고가 준비됐으면 그 아래에 고지 한 줄 「광고를 끝까지 보면 {ad.reward} 크레딧을 드려요. 오늘 {ad.daily_max - ad.used_today}번 남았어요」과 「광고 보고 {ad.reward} 크레딧 받기」(3.7).
 - 게스트(추천, 코스, `GET /credits/me`): `403 GUEST_NOT_ALLOWED`, `detail = { initial_credits }`.
-  - 화면: "카카오로 로그인하면 {initial_credits} 크레딧을 드려요" + 카카오 전환. 게스트는 `GET /credits/me`를 받을 수 없으므로 숫자는 이 `detail`에서만 온다(정책 값을 화면에 적지 않는다, #733).
+  - 화면: "카카오로 로그인하면 {initial_credits} 크레딧을 드려요" + 카카오·구글 계정 만들기 버튼(`GuestAccountNotice`, #1514). 게스트는 `GET /credits/me`를 받을 수 없으므로 숫자는 이 `detail`에서만 온다(정책 값을 화면에 적지 않는다, #733).
 
 ### 3.6 잔액 상한 (2026-11-01, #981)
 

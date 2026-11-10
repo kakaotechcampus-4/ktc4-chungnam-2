@@ -34,9 +34,9 @@
 
 | 타협 | 왜 지금은 괜찮나 | 다시 볼 때 |
 |---|---|---|
-| 요청 상한 5곳(`common.ratelimit`)이 메모리에서 센다 | 환경마다 프로세스가 하나다. 배포로 다시 뜨면 셈이 처음부터다 | 워커나 서버를 늘리기 전에 같은 모양(`SlidingWindowLimiter`)으로 Postgres에 옮긴다 |
+| 요청 상한 6곳(`common.ratelimit`)이 메모리에서 센다 | 환경마다 프로세스가 하나다. 배포로 다시 뜨면 셈이 처음부터다 | 워커나 서버를 늘리기 전에 같은 모양(`SlidingWindowLimiter`)으로 Postgres에 옮긴다 |
 | AI 코스 계산이 응답 뒤 `BackgroundTasks`로 돈다 | 서버(VM)는 요청이 끝나도 CPU를 준다. 배포로 다시 뜨면 그 run은 실행 상한 + 여유(`agent/course/constants.py`의 `STALE_AFTER`, #1609)가 지난 뒤 시작 정리나 요청·조회가 끝낸다 | 작업 큐로 옮길 때 |
-| DB가 같은 서버에 있고 덤프도 같은 디스크에 있다 | 시연까지의 데이터다 | RDS로 옮기면 풀린다(#873, RDS 자동 백업). 옮긴 뒤에도 `backup.sh` 덤프는 서버 디스크에 쌓인다 |
+| 덤프가 서버 디스크에만 있다(암호화 안 됨) | 시연까지의 데이터다. DB는 RDS로 옮겨 자동 백업(7일)이 따로 있다(#873) | 서버가 끝나기 전에 밖으로 옮긴다(아래 「AWS가 끝나기 전에」) |
 | 운영과 스테이징이 RDS 한 대를 나눠 쓴다 | DB와 계정이 나뉘어 서로 열지 못한다. 부하가 작다 | 스테이징 부하(측정, QA)가 운영 응답을 늦추면 |
 
 ### 비밀이 새면 (멘토 리뷰, 2026-10-30)
@@ -97,7 +97,7 @@
 
 - 첫 설정(`rds-setup.sh`) 완료. 스테이징 19:10에 옮김(표 33개 일치, 그 뒤 staging-check PASS 71·FAIL 0, INFO와 SKIP은 옮기기 전과 같음). 운영 19:20에 옮김(표 32개 일치 — 운영은 0043 전 버전이라 하나 적다, 열리지 않은 시간 약 36초).
 - 스테이징 이전은 성공했지만 마지막 기록 줄의 버그로 실패 표시가 났다(#875에서 고침).
-- **운영 배포 예외**: 옮긴 뒤 운영 로그인이 안 됐다. RDS 문제가 아니라 운영 이미지가 #819(카카오 state 쿠키 경로) 수정 전 코드라, 쿠키가 `/auth/kakao`에 붙어 `/api/auth/kakao/callback`으로 돌아올 때 브라우저가 보내지 않았다(옮기기 전부터 같은 상태). `deploy` 워크플로는 운영에 `v` 태그만 받아서, Session Manager에서 `./deploy.sh prod sha-17dd07d`(develop, 스테이징과 같은 이미지)로 직접 올렸다. RDS 앱 계정으로 백업, 마이그레이션(0043)까지 통과했고 로그인과 지도 열기를 확인했다. 다음 정식 릴리스(develop → main → `v` 태그)부터 규칙대로 돌아간다. → 2026-11-08 첫 정식 릴리스 `v0.1.0`(main `c129bcf3`, 마이그레이션 0043 → 0068)을 이 순서로 올렸다(#1528). 롤백 기준도 이제 `v0.1.0`이다.
+- **운영 배포 예외**: 옮긴 뒤 운영 로그인이 안 됐다. RDS 문제가 아니라 운영 이미지가 #819(카카오 state 쿠키 경로) 수정 전 코드라, 쿠키가 `/auth/kakao`에 붙어 `/api/auth/kakao/callback`으로 돌아올 때 브라우저가 보내지 않았다(옮기기 전부터 같은 상태). `deploy` 워크플로는 운영에 `v` 태그만 받아서, Session Manager에서 `./deploy.sh prod sha-17dd07d`(develop, 스테이징과 같은 이미지)로 직접 올렸다. RDS 앱 계정으로 백업, 마이그레이션(0043)까지 통과했고 로그인과 지도 열기를 확인했다. 다음 정식 릴리스(develop → main → `v` 태그)부터 규칙대로 돌아간다. → 2026-11-08 첫 정식 릴리스 `v0.1.0`(main `c129bcf3`, 마이그레이션 0043 → 0068)을 이 순서로 올렸다(#1528). → 2026-11-11 `v0.2.0`(main `1d6a604`, 마이그레이션 0069·0070, 배포 직전 덤프 `pingo_prod-2026-11-11-0405.dump`, staging-check PASS 118·FAIL 0)을 같은 순서로 올렸다(#1767). 롤백하면 `v0.1.0`으로 간다.
 - `finish`(19:33) 뒤 서버의 모든 `docker compose` 명령이 `depends on undefined service "db"`로 실패했다. `compose.yml`의 API가 `depends_on: db (required: false)`를 갖고 있었는데, Compose v5는 정의되지 않은 서비스는 required가 false여도 거절한다. 돌던 컨테이너는 영향이 없었다. DB 의존을 `compose.db.yml`로 옮겨 고쳤다(#877). 머지하면 스테이징 배포의 `sync.sh`가 서버 파일을 맞춘다.
 
 ### AWS가 끝나기 전에(2026-11-20)
@@ -107,8 +107,9 @@
 ## 배포할 때마다
 
 - **스테이징**: develop에 머지하면 `images.yml`이 이미지를 만들고 스테이징에 올린다. 따로 할 일이 없다.
-  - 배포로 API·화면 컨테이너가 다시 뜨는 10~30초 동안 앞단 프록시(Caddy)는 연결을 최대 30초 다시 시도한다(`deploy/Caddyfile`의 `lb_try_duration 30s`, #1403). 그동안 요청은 느려질 뿐 502로 실패하지 않는다. 연결을 잡고 있던 SSE는 끊기고 FE가 마지막 `id`로 다시 연결한다. Caddy 설정은 `sync.sh`가 배포 때마다 다시 읽는다(`caddy reload`).
-  - 초대 링크 미리보기(#1625): Caddy가 메신저 미리보기 봇(카톡 `kakaotalk-scrap` 등)의 `/invites/{token}`만 API의 `/invites/{token}/preview`로 보낸다. Caddyfile을 바꾼 배포 뒤에는 `curl -A "kakaotalk-scrap/1.0" <주소>/invites/<토큰>`이 og 태그만 담은 짧은 문서를, 봇 이름 없는 `curl <주소>/invites/<토큰>`이 화면(index.html)을 돌려주는지 본다. `caddy reload`가 실패하면 Caddy는 옛 설정으로 계속 돈다 — `sync.sh` 출력에서 reload 오류를 본다.
+  - 배포로 API·화면 컨테이너가 다시 뜨는 10~30초 동안 앞단 프록시(Caddy)는 연결을 최대 30초 다시 시도한다(`deploy/Caddyfile`의 `lb_try_duration 30s`, #1403). 그동안 요청은 느려질 뿐 502로 실패하지 않는다. 연결을 잡고 있던 SSE는 끊기고 FE가 마지막 `id`로 다시 연결한다. Caddyfile이 바뀌면 `sync.sh`가 `caddy reload`를 부르지만, 지금은 이것으로 새 설정이 읽히지 않는다. `deploy/compose.yml`이 Caddyfile 한 파일을 바인드 마운트하는데 `sync.sh`가 파일을 새로 만들어(`--remove-destination`), 돌던 edge는 옛 파일을 계속 보고 reload도 옛 설정을 읽는다. 2026-11-11 `v0.2.0` 배포 뒤 초대 링크 미리보기(#1625)가 이 때문에 edge를 다시 시작하기 전까지 안 됐다. 코드로 고치기 전까지는 아래 「Caddyfile을 바꾼 배포 뒤」를 따른다.
+  - 초대 링크 미리보기(#1625): Caddy가 메신저 미리보기 봇(카톡 `kakaotalk-scrap` 등)의 `/invites/{token}`만 API의 `/invites/{token}/preview`로 보낸다. Caddyfile을 바꾼 배포 뒤에는 `curl -A "kakaotalk-scrap/1.0" <주소>/invites/<토큰>`이 og 태그만 담은 짧은 문서를, 봇 이름 없는 `curl <주소>/invites/<토큰>`이 화면(index.html)을 돌려주는지 본다. `sync.sh`의 reload가 오류 없이 끝나도 옛 설정일 수 있으니, 이 확인은 edge를 다시 시작한 뒤에 한다.
+  - **Caddyfile을 바꾼 배포 뒤**(고치기 전까지): Session Manager에서 `cd /srv/pingo/deploy && docker compose restart edge`를 돌리고, 위 초대 링크 `curl` 두 개로 확인한다. edge와 서버의 Caddyfile은 운영과 스테이징이 함께 쓰므로 한 번 다시 시작하면 두 환경에 모두 적용되고, 다시 시작하는 몇 초 동안은 두 주소가 모두 열리지 않는다. 바뀌었는지는 `git diff --stat <이전 태그> <새 태그> -- deploy/Caddyfile`로 본다.
 - **운영(릴리스)**: 1) develop → main PR(멘토 리뷰)을 머지한다. 2) Actions의 `deploy`를 스테이징, `sha-<main 커밋 7자리>`로 돌린다. 3) Actions의 `staging-check`(QA 하네스를 서버의 스테이징 컨테이너 안에서 공개 주소로 돈다, 비밀은 서버 밖으로 나오지 않는다)를 그 커밋으로 돌린다. 매일 06:00에도 develop으로 돈다. 4) 통과하면 그 main 커밋에 `v0.x.y` 태그를 단다 → `images.yml`이 그 태그로 이미지를 만든다. 5) `deploy`를 운영, `v0.x.y`로 돌린다. 운영은 배포 직전에 DB를 덤프한다(`deploy/backup.sh`). 6) 아래 「지울 칸」 표를 본다. 줄의 칸을 읽던 코드가 방금 올린 태그에 없으면 그 줄의 줄이기 이슈를 진행한다. 이 태그가 이제 이전 릴리스 호환 검사의 기준이라 그 칸을 지우는 PR이 통과한다(#1465).
 - **롤백**: `deploy`를 운영, 이전 `v` 태그로 돌린다. 버그는 그 버전 위에서 고치지 않고 develop에서 고쳐 다음 버전으로 올린다(멘토). 건강 확인에 실패한 배포는 `deploy.sh`가 이전 태그로 되돌린다.
 - **환경 변수를 바꿀 때**: 서버의 `deploy/env/<환경>.env`를 고치고 그 환경을 다시 올린다. 새 키를 더한 PR은 `backend/.env.example`과 `deploy/env/*.env.example`을 같이 고친다. 값은 저장소나 채팅에 남기지 않는다.
