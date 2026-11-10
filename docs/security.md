@@ -11,7 +11,7 @@
 | 쿠키 | `session`·`kakao_oauth_state`·`google_oauth_state`(#1514)·`pending_account` 모두 HttpOnly, SameSite=Lax. 운영은 Secure 강제 | `backend/auth/router.py`, `backend/common/settings.py`(COOKIE_SECURE 가드) |
 | 로그인 CSRF | 서버가 만든 `state`를 서명 쿠키에 넣고 콜백에서 대조. 콜백 링크는 한 번만 쓴다 | `docs/CHANGELOG-api.md`(로그인 CSRF 항목) |
 | 운영 설정 가드 | CORS `*` 금지, 비밀값 32자 이상·기본값 금지, DB TLS(sslmode), 주소 https·호스트 일치 | `backend/common/settings.py`(#1210) |
-| 요청 제한 | 검색·링크 가져오기·피드백·게스트 입장에 인메모리 슬라이딩 윈도 | `backend/common/ratelimit.py` — 프로세스 재시작 시 초기화, 인스턴스가 여럿이면 각자 센다 |
+| 요청 제한 | 검색·링크 가져오기·블로그 사진(#1157)·피드백·게스트 입장에 인메모리 슬라이딩 윈도 | `backend/common/ratelimit.py` — 프로세스 재시작 시 초기화, 인스턴스가 여럿이면 각자 센다 |
 | 저장소 | secret scanning, push protection 켜짐. `develop` 브랜치 보호(필수 검사 `contracts`·`pytest`·`frontend`, 관리자 포함) | GitHub 설정 |
 | 의존성 | Dependabot alerts 켜짐 | GitHub 설정 |
 
