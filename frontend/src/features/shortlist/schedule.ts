@@ -90,9 +90,3 @@ export function droppedCount(schedule: Schedule, from: string[], to: string[]): 
   for (const [day, ids] of Object.entries(schedule.days)) if (before.has(day) && !after.has(day)) n += ids.length
   return n
 }
-
-/** 이 고침으로 마지막 빈 날이 채워지는지(#1723, 컨페티). 하루짜리 여행은 첫 장소로 바로 채워져서 치지 않는다. */
-export function fillsLastDay(before: Schedule, next: Schedule, dates: string[]): boolean {
-  const full = (s: Schedule) => dates.every((d) => s.days[d]?.length)
-  return dates.length > 1 && !full(before) && full(next)
-}

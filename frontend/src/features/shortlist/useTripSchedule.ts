@@ -1,11 +1,10 @@
 import { dayOrdinal } from '@/features/course/model'
 import { useMapQuery } from '@/features/maps/queries'
 import { showToast } from '@/features/shell/toast'
-import { fireConfetti } from '@/ui/confetti'
 import { josa } from '@/ui/josa'
 
 import { currentSchedule, useSaveSchedule, useSchedule, useScheduleQuery } from './scheduleQueries'
-import { dayOf, fillsLastDay, place, tripDays, UNSET_DAY, type DropSpot, type Schedule } from './schedule'
+import { dayOf, place, tripDays, UNSET_DAY, type DropSpot, type Schedule } from './schedule'
 import { useQueryClient } from '@tanstack/react-query'
 
 /**
@@ -44,16 +43,11 @@ export function useScheduleEdit(mapId: string) {
     if (trip.ready) saveNow(next)
   }
   const now = () => currentSchedule(queryClient, mapId)
-  // 내가 넣거나 옮겨서 마지막 빈 날을 채운 순간(#1723). 다른 구성원의 변경과 되돌리기는 이 길을 지나지 않는다.
-  const saveMine = (next: Schedule) => {
-    if (trip.ready && fillsLastDay(schedule, next, dates)) fireConfetti()
-    save(next)
-  }
 
   /** 확정 리스트에서 그날로 넣는다(여러 곳이면 고른 순서대로). */
   function put(pinIds: string[], names: string[], day: string, index?: number) {
     if (pinIds.length === 0 || !trip.ready) return
-    saveMine(place(schedule, pinIds, day, index))
+    save(place(schedule, pinIds, day, index))
     const what = pinIds.length === 1 ? `${names[0]}${josa(names[0], '을', '를')}` : `${pinIds.length}곳을`
     showToast(`${what} ${dayName(day)}에 넣었어요`, { label: '되돌리기', onClick: () => save(place(now(), pinIds, null)) })
   }
@@ -71,7 +65,7 @@ export function useScheduleEdit(mapId: string) {
   function drop(pinId: string, name: string, spot: DropSpot) {
     if (spot.day === UNSET_DAY) return takeOut(pinId, name)
     if (!dayOf(schedule, pinId)) return put([pinId], [name], spot.day, spot.index)
-    saveMine(place(schedule, [pinId], spot.day, spot.index))
+    save(place(schedule, [pinId], spot.day, spot.index))
   }
 
   /** 그날 안에서 한 칸 위(-1)·아래(+1)로(키보드 ↑↓). */

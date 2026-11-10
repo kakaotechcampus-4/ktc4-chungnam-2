@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { Pin } from '@/features/map/model'
 
 import { scheduleDrawing } from './model'
-import { dayOf, droppedCount, EMPTY_SCHEDULE, fillsLastDay, place, routeDay, scheduledIds, tripDays, type Schedule } from './schedule'
+import { dayOf, droppedCount, EMPTY_SCHEDULE, place, routeDay, scheduledIds, tripDays, type Schedule } from './schedule'
 
 const S = (days: Schedule['days']): Schedule => ({ days })
 
@@ -66,19 +66,5 @@ describe('일정 — 여행 날짜를 고치기 전에 빠질 장소 수를 미�
     // 이미 기간 밖에 남아 있던 날(아직 정리 전)은 이번 수정 때문에 빠지는 게 아니라 세지 않는다.
     const stale = S({ ...planned.days, '2026-10-20': ['x'] })
     expect(droppedCount(stale, now, tripDays('2026-11-01', '2026-11-02'))).toBe(1)
-  })
-})
-
-describe('마지막 빈 날을 채우는 순간(#1723)', () => {
-  const dates = ['2026-11-01', '2026-11-02']
-  it('빈 날이 남아 있다가 다 채워질 때만 참이다', () => {
-    expect(fillsLastDay(S({ '2026-11-01': ['a'] }), S({ '2026-11-01': ['a'], '2026-11-02': ['b'] }), dates)).toBe(true)
-    expect(fillsLastDay(EMPTY_SCHEDULE, S({ '2026-11-01': ['a'] }), dates)).toBe(false)
-    // 이미 다 찬 일정에서 더 넣거나 순서를 바꿔도 다시 뿌리지 않는다.
-    const full = S({ '2026-11-01': ['a'], '2026-11-02': ['b'] })
-    expect(fillsLastDay(full, S({ '2026-11-01': ['a', 'c'], '2026-11-02': ['b'] }), dates)).toBe(false)
-  })
-  it('하루짜리 여행은 치지 않는다', () => {
-    expect(fillsLastDay(EMPTY_SCHEDULE, S({ '2026-11-01': ['a'] }), ['2026-11-01'])).toBe(false)
   })
 })
