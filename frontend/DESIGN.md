@@ -353,7 +353,7 @@ components:
 | 고르는 목록(필터 드롭다운) | `Select` (칸: "라벨 값 ▾" 높이 32, 누르는 곳 44, ink-200 테두리 반경 8, 열리면 brand-600 테두리, 폭은 가장 긴 선택지, 줄 폭을 넘으면 값을 "…"로 줄인다. 목록: 칸 바로 아래 6px, 흰 면 + ink-200 테두리 + 반경 12 + `shadow-float`, 줄 높이 44, 14/400, 짚은 줄 ink-50 면, 고른 줄 `text-selected` 600 + 오른쪽 ✓. 위아래, Enter, Esc. 브라우저 기본 `select`는 쓰지 않는다 — 글자, 색을 못 바꿔서다, #1695) | `ui/Select` |
 | 짧은 표시 | `tag` + `tag-{neutral·ai·good·warn·bad}` | `index.css` |
 | 입력칸 | 한 줄 `TextField` · 여러 줄 `TextArea`(둘 다 ✕·글자 수 포함) · `ClearButton` | `ui/TextField` · `ui/TextArea` · `index.css` |
-| 날짜 입력·달력 | `DatePicker` (`field` 틀에 「2026.11.20 (금)」, 누르면 아래에 달력) · 화면에 바로 까는 달력 `Calendar`(확정 탭 「넣을 날짜」). 고른 날 brand-600 채운 원 · 오늘 brand 테두리 한 줄 · 일요일 `--day-sun-text`(빨강 글자) · 토요일 `--day-sat-text`(파랑 글자), 주말 면은 없다 · 범위 밖은 면 없이 ink-300 흐린 숫자만(누를 수 없음, 회색 원은 고를 수 있는 날보다 눈에 띄어서 뺐다, #1554). `rangeWeeks`면 `min`~`max`가 든 주만 그리고 달 넘기기가 없다(달이 바뀌는 1일은 「11.1」). 비워도 되는 칸만 ✕. 브라우저 날짜 칸은 달력 색을 못 바꿔서 쓰지 않는다 | `ui/DatePicker` |
+| 날짜 입력·달력 | `DatePicker` (`field` 틀에 「2026.11.20 (금)」, 누르면 아래에 달력) · 화면에 바로 까는 달력 `Calendar`(확정 탭 「넣을 날짜」). 고른 날 brand-600 채운 원 · 오늘 brand 테두리 한 줄 · 일요일 `--day-sun-text`(빨강 글자) · 토요일 `--day-sat-text`(파랑 글자), 주말 면은 없다 · 범위 밖은 면 없이 ink-300 흐린 숫자만(누를 수 없음, 회색 원은 고를 수 있는 날보다 눈에 띄어서 뺐다, #1554). `rangeWeeks`면 `min`~`max`가 든 주만 그리고 달 넘기기가 없다(달이 바뀌는 1일은 「11.1」). `DatePicker` 창은 늘 6주 높이다(`fixedWeeks`, 짧은 달은 아래가 빈 줄) — 칸 아래 자리가 모자라 창이 칸 위로 뜨면 달마다 높이가 바뀌어 달 넘기기 버튼이 오르내렸다(#1759). 비워도 되는 칸만 ✕. 브라우저 날짜 칸은 달력 색을 못 바꿔서 쓰지 않는다 | `ui/DatePicker` |
 | 시트·모달 제목 | `SheetTitle` (20/700) | `ui/SheetTitle` |
 | 누군지 모르는 사람(탈퇴한 작성자) | `UnknownName` (글 안의 「(알 수 없음)」만 ink-400) | `ui/UnknownName` |
 | 시트 안 이전 화면, 지도 밖 화면의 내 지도 목록 가기 | `BackButton` 「‹ 핀 찍기」, 초대 화면과 지도 만들기 「‹ 내 지도 목록」(#1623, #1655) | `ui/BackButton` |

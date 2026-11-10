@@ -79,6 +79,7 @@ export default function DatePicker({
         >
           <Calendar
             autoFocus
+            fixedWeeks
             value={value}
             min={min}
             max={max}
@@ -105,6 +106,8 @@ const DAY_TONE: Record<number, string> = {
  * 달 넘기기도 그 범위 안에서만 된다.
  * `rangeWeeks`면 한 달 대신 `min`~`max`가 든 주만 그린다(여행 날짜를 고르는 곳 — 달 경계를 넘어도 이어서). 그때는 달 넘기기가 없다.
  * `autoFocus`면 처음에 커서 날로 초점을 옮긴다(달력 창을 열 때). 화면에 까는 곳은 끈다 — 탭을 열 때 초점을 뺏지 않는다.
+ * `fixedWeeks`면 한 달을 늘 6주 높이로 그린다(짧은 달은 아래가 빈 줄). 창으로 뜨는 달력(`DatePicker`)이 쓴다 —
+ * 칸 아래 자리가 모자라 창이 칸 위로 뜨면, 달마다 높이가 바뀌어 달 넘기기 버튼이 오르내렸다(#1759).
  */
 export function Calendar({
   value,
@@ -114,6 +117,7 @@ export function Calendar({
   autoFocus = false,
   dayName,
   rangeWeeks = false,
+  fixedWeeks = false,
   marked,
   className = 'w-[19.25rem]',
 }: {
@@ -126,6 +130,8 @@ export function Calendar({
   dayName?: (day: string) => string | undefined
   /** `min`·`max`가 든 주만 그린다. 둘 다 있어야 켜진다. */
   rangeWeeks?: boolean
+  /** 한 달을 늘 6주 높이로 그린다. `rangeWeeks`일 때는 쓰지 않는다. */
+  fixedWeeks?: boolean
   /** 숫자 아래 점을 찍을 날(동선 보기의 장소를 넣은 날). 점은 보이기만 하고 뜻은 `dayName`으로 읽힌다. */
   marked?: (day: string) => boolean
   className?: string
@@ -192,7 +198,8 @@ export function Calendar({
           <span key={w} className={`py-1.5 ${DAY_TONE[i] ?? ''}`}>{w}</span>
         ))}
       </div>
-      <div ref={grid} onKeyDown={onKey} className="grid grid-cols-7 gap-y-1">
+      {/* 6주 고정은 줄 6개를 날짜 칸 높이(44px)로 미리 깐다 — 빈 줄도 높이를 갖는다. */}
+      <div ref={grid} onKeyDown={onKey} className={`grid grid-cols-7 gap-y-1 ${fixedWeeks && !weeksOnly ? 'grid-rows-[repeat(6,2.75rem)]' : ''}`}>
         {/* 1일 앞의 빈칸 — 다른 달 날짜는 그리지 않는다. */}
         {!weeksOnly && weekday(first) > 0 && <span style={{ gridColumn: `span ${weekday(first)}` }} />}
         {days.map((day) => {
