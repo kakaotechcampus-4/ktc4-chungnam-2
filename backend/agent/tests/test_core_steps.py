@@ -89,7 +89,7 @@ def test_ranking_appears_only_when_rules_chose_among_several_signals():
 
 
 @pytest.mark.parametrize("diagnosis, category, evidence, affected, text", [
-    ("no_reaction", None, ("p1", "p2", "p3"), 2, "아직 확인되지 않은 핀이 3개 있어요"),
+    ("no_reaction", None, ("p1", "p2", "p3"), 2, "아직 의견을 다 못 모은 핀이 3개 있어요"),
     ("category_gap", "음식점", ("p1", "p2", "p3"), 3, "확정한 3곳 중 음식점이 없어요"),
     ("split", "카페", ("r1", "r2", "r3"), 3, "카페 핀 하나에서 3명의 의견이 좋음과 반대로 갈렸어요"),
 ])

@@ -88,7 +88,7 @@ def test_valid_stall_needs_no_count_claims():
     v = _verify(out, top=STALL)
 
     assert v.outcome == "suggested"
-    assert v.draft.title == "음식점 후보가 반대 의견 뒤로 멈춰 있어요"
+    assert v.draft.title == "음식점에 반대가 나온 뒤로 새 후보가 없어요"
     assert v.draft.actions[0]["params"] == {"category": "음식점"}   # 비운 카테고리는 신호의 카테고리
     assert v.draft.analysis is None
 

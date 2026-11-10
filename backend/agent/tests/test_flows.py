@@ -130,10 +130,10 @@ def test_no_reaction_suggestion_renders_pin_names(world, monkeypatch):
     tick(world)
 
     sug = world.one(AgentSuggestion, map_id=map_id)
-    assert sug.diagnosis == "no_reaction" and sug.title == "아직 확인되지 않은 핀이 {c1.value}개 있어요"
+    assert sug.diagnosis == "no_reaction" and sug.title == "아직 의견을 다 못 모은 핀이 {c1.value}개 있어요"
     assert "성수 칼국수" not in json.dumps(sug.advice + sug.claims, ensure_ascii=False)   # 이름은 저장하지 않는다
     [(_, payload)] = world.agent_events(map_id)
-    assert payload["title"] == "아직 확인되지 않은 핀이 3개 있어요"
+    assert payload["title"] == "아직 의견을 다 못 모은 핀이 3개 있어요"
     # 장소 이름을 찾지 못한 핀(pl_b)은 지어내지 않고 줄을 뺀다
     assert sorted((line["segments"] for line in payload["advice"]), key=str) == [   # 핀 이름은 pin 조각(#717)
         [{"kind": "pin", "text": "성수 곱창", "pin_id": live_pin}], [{"kind": "pin", "text": "성수 칼국수", "pin_id": db_pin}]]
