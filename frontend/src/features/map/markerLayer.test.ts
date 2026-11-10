@@ -187,3 +187,21 @@ describe('AI 후보 이름표(placeLabels)', () => {
     expect(items.map(shown)).toEqual([false, false])
   })
 })
+
+describe('AI 후보와 지도 핀 이름표를 한 번에 정리(#1744)', () => {
+  it('후보 이름표가 지도 핀 이름표와 겹치면 후보가 남고, 후보를 치우면 지도 핀 이름표가 돌아온다', () => {
+    const { maps, map } = fakeMaps(4)
+    const layer = createMarkerLayer(maps, map, () => {}, () => {})
+    layer.sync([pin('1', 130, 102)], 4)
+    const el = createCandidateMarkerElement({ rank: 1, name: '후보1' }, () => {})
+    setPinLabel(el, '후보1', 'quiet')
+    document.body.appendChild(el)
+    const shown = () => el.querySelector<HTMLElement>('[data-pin-name]')?.style.visibility !== 'hidden'
+
+    layer.setLeadLabels(() => [{ id: 'ai:1', el, name: '후보1', x: 100, y: 100, keep: false }])
+    expect([shown(), labelShown('1')]).toEqual([true, false])
+
+    layer.setLeadLabels(() => [])
+    expect(labelShown('1')).toBe(true)
+  })
+})

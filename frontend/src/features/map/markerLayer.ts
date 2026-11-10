@@ -15,8 +15,16 @@ export interface MarkerLayer {
   select(pinId: string | null): void
   /** 점 전체가 들어오도록 시야를 바로 맞춘다(지도를 처음 열 때). */
   fit(points: { lat: number; lng: number }[]): void
+  /**
+   * 지도 핀보다 먼저 자리를 잡는 이름표 — AI 추천 탭의 AI 후보(#1744). 지도 핀과 한 번에 겹침을 정리해,
+   * 후보 이름표와 지도 핀 이름표가 서로를 덮지 않는다. 화면 좌표가 지도 움직임 따라 바뀌어 정리할 때마다 부른다.
+   */
+  setLeadLabels(get: () => LabelItem[]): void
   destroy(): void
 }
+
+/** 겹침 정리에 넘기는 이름표 하나. x·y 는 핀 끝의 화면 좌표, keep 은 고른 핀이다. */
+export type LabelItem = { id: string; el: HTMLElement; name: string; x: number; y: number; keep: boolean }
 
 type Placed = PlacedPin
 
@@ -55,12 +63,12 @@ const overlaps = (a: Box, b: Box) => a.l < b.r && b.l < a.r && a.t < b.b && b.t 
 const bodyBox = ({ x, y }: { x: number; y: number }): Box => ({ l: x - BODY.w / 2, t: y - BODY.h, r: x + BODY.w / 2, b: y })
 
 /**
- * 이름표를 겹치지 않게 남긴다 — 지도 핀(markerLayer)과 AI 후보(MapCanvas)가 같이 쓴다.
+ * 이름표를 겹치지 않게 남긴다 — 지도 핀과 AI 후보(setLeadLabels)를 한 번에 정리한다.
  * items 를 중요한 순서로 받아, 앞서 남긴 이름표나 다른 핀 몸통(bodies)을 덮지 않는 것만 남긴다.
  * keep(고른 핀)은 언제나 남고 그 자리를 먼저 차지한다. 멀리 보면(far) keep 만 남는다. x·y 는 핀 끝의 화면 좌표다.
  */
 export function placeLabels(
-  items: { id: string; el: HTMLElement; name: string; x: number; y: number; keep: boolean }[],
+  items: LabelItem[],
   bodies: { id: string; x: number; y: number }[],
   far: boolean,
 ) {
@@ -107,6 +115,7 @@ export function createMarkerLayer(
   /** 한 번 떨어진 핀. 의견이 달려 마커를 다시 그려도 또 떨어지지 않게 한다. */
   const dropped = new Set<string>()
   let selected: string | null = null
+  let leadLabels: () => LabelItem[] = () => []
   /** 겹쳐서 묶음 핀 뒤로 숨은 핀(#1576). */
   const grouped = new Set<string>()
   let groups: { overlay: kakao.maps.CustomOverlay; lat: number; lng: number }[] = []
@@ -170,7 +179,8 @@ export function createMarkerLayer(
    * 옮기거나 확대가 끝날 때(idle)마다 다시 정한다 — 핀은 많아야 수십 개다.
    */
   function relabel() {
-    if (elements.size === 0) return
+    const lead = leadLabels()
+    if (elements.size === 0 && lead.length === 0) return
     const far = map.getLevel() > LABEL_MAX_LEVEL
     const proj = map.getProjection()
     const at = new Map<string, { x: number; y: number }>()
@@ -199,7 +209,7 @@ export function createMarkerLayer(
       const p = at.get(id)
       return el && p ? [{ id, el, name: info.get(id)!.name, x: p.x, y: p.y, keep: id === selected }] : []
     })
-    placeLabels(items, bodies, far)
+    placeLabels([...lead, ...items], [...bodies, ...lead], far)
   }
   maps.event.addListener(map, 'idle', relabel)
 
@@ -278,6 +288,11 @@ export function createMarkerLayer(
       // 지도를 처음 열 때만 쓴다 — 아직 본 화면이 없어서 바로 맞춘다. 그 뒤의 맞추기는 MapCanvas 가 나눠서 움직인다(#1026).
       const pad = fitPadding(window.innerHeight, isDesktopNow())
       map.setBounds(bounds, pad.top, pad.right, pad.bottom, pad.left)
+    },
+
+    setLeadLabels(get) {
+      leadLabels = get
+      relabel()
     },
 
     destroy() {

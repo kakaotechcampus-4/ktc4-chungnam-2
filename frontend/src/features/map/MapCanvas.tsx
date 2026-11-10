@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { allInside, dragHeading, fitCenter, fitLevel, fitPadding, groupNear, view, zoomSteps } from './camera'
 import { attachLongPress } from './longPress'
-import { createMarkerLayer, LABEL_MAX_LEVEL, mapFade, PIN_GROUP_PX, placeLabels, type MarkerLayer } from './markerLayer'
+import { createMarkerLayer, mapFade, PIN_GROUP_PX, type MarkerLayer } from './markerLayer'
 import { setMapBridge, usePinDragStore } from './pinDrag'
 import {
   createCandidateMarkerElement,
@@ -597,7 +597,7 @@ export default function MapCanvas({
 
   // AI 후보 핑고 핀. 많아야 몇 곳이고 결과·선택이 바뀔 때만 와서 검색 결과처럼 매번 새로 그린다.
   // 고른 후보는 핀 위로, 끌어안는 핑고(11)보다도 위로 올린다.
-  // 지도 핀처럼 누르지 않아도 이름표가 보인다. 겹치면 고른 후보 > 순위 높은 순으로 남고, 멀리 보면 고른 후보만 남는다(placeLabels).
+  // 지도 핀처럼 누르지 않아도 이름표가 보인다. 겹치면 고른 후보 > 순위 높은 순으로 남고, 멀리 보면 고른 후보만 남는다.
   useEffect(() => {
     const m = mapRef.current
     if (!ready || !m) return
@@ -617,18 +617,17 @@ export default function MapCanvas({
       return { c, el, overlay }
     })
     const order = [...drawn].sort((a, b) => Number(b.c.selected) - Number(a.c.selected) || a.c.rank - b.c.rank)
-    const relabel = () => {
+    // 겹침 정리는 지도 핀과 한 번에 한다(markerLayer.setLeadLabels) — 따로 하면 후보 이름표와 지도 핀 이름표가 서로를 덮는다.
+    const layer = layerRef.current
+    layer?.setLeadLabels(() => {
       const proj = map.getProjection()
-      const at = order.map(({ c, el }) => {
+      return order.map(({ c, el }) => {
         const { x, y } = proj.containerPointFromCoords(new maps.LatLng(c.lat, c.lng))
-        return { id: c.id, el, name: c.name, keep: c.selected, x, y }
+        return { id: `ai:${c.id}`, el, name: c.name, keep: c.selected, x, y }
       })
-      placeLabels(at, at, map.getLevel() > LABEL_MAX_LEVEL)
-    }
-    relabel()
-    maps.event.addListener(map, 'idle', relabel)
+    })
     return () => {
-      maps.event.removeListener(map, 'idle', relabel)
+      layer?.setLeadLabels(() => [])
       drawn.forEach(({ overlay }) => overlay.setMap(null))
     }
   }, [candidates, ready])
