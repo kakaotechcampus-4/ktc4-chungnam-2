@@ -46,13 +46,15 @@ export default function TaskProgress({
         </span>
       </div>
       <ProgressTrack value={done} max={total} labelledBy={id} valueText={`${total}${unit} 중 ${done}${unit}`} />
-      <ul className="space-y-0.5">
-        {items.map((item) => (
-          <li key={item.key}>
-            <TaskRow item={item} />
-          </li>
-        ))}
-      </ul>
+      {items.length > 0 && (
+        <ul className="space-y-0.5">
+          {items.map((item) => (
+            <li key={item.key}>
+              <TaskRow item={item} />
+            </li>
+          ))}
+        </ul>
+      )}
       {(hint || more) && (
         <div className="flex items-end justify-between gap-2">
           {hint && (

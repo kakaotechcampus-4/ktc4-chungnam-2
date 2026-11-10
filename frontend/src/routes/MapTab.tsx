@@ -209,7 +209,7 @@ export default function MapTab() {
       {/* 핀은 있는데 구성원이 나 하나면 초대를 권한다(기획안 6절, #1560). */}
       {pins && pins.length > 0 && memberCount === 1 && <AloneInvite mapId={mapId} />}
       {pins && filters.opinion !== 'none' && (
-        <MyOpinionProgress pins={pins} onOpen={selectPin} onShowLeft={() => setFilter('opinion', 'none')} recommendHref={`/maps/${mapId}/recommend`} />
+        <MyOpinionProgress pins={pins} recommendHref={`/maps/${mapId}/recommend`} />
       )}
       {shown && shown.length > 0 && <PinList mapId={mapId} pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} todoIds={order?.todo} />}
     </TabSheet>
@@ -233,24 +233,17 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
   )
 }
 
-/** 할 일 카드에 보이는 줄 수. 남은 곳이 더 있으면 「남은 N곳 모두 보기」로 필터를 연다. */
-const TASK_ROWS = 3
-
 /**
  * 「내가 남긴 의견 2/3곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547).
  * 다 남기면 완료 카드 「모든 핀에 의견을 남겼어요」 + AI 추천으로 가는 버튼이다(#1659, 빈 화면 「모두 완료」). 확정되지 않은 핀이 없으면 그리지 않는다.
  * 확정된 핀은 의견을 안 남겨도 할 일로 보지 않는다(목록 카드와 같은 기준 `isTodo`).
- * 줄은 끝낸 곳 하나(있으면)와 남은 곳 — 남은 곳을 누르면 그 핀이 열린다.
+ * 핀 이름 줄은 두지 않는다. 남은 핀은 바로 아래 "의견 남길 핀" 묶음이 보여 줘서 같은 이름이 두 번 나왔다(#1733).
  */
 export function MyOpinionProgress({
   pins,
-  onOpen,
-  onShowLeft,
   recommendHref,
 }: {
   pins: Pin[]
-  onOpen: (pinId: string) => void
-  onShowLeft: () => void
   /** 다 남겼을 때 다음 할 일(AI 추천) 주소. 없으면 다 남겼을 때 그리지 않는다. */
   recommendHref?: string
 }) {
@@ -274,10 +267,6 @@ export function MyOpinionProgress({
       </div>
     )
   }
-  const name = (p: Pin) => p.place_name ?? '이름 없는 장소'
-  const shownDone = doneList.slice(0, 1).map((p) => ({ key: p.id, label: name(p), done: true }))
-  const shownLeft = leftList.slice(0, TASK_ROWS - shownDone.length).map((p) => ({ key: p.id, label: name(p), done: false, onClick: () => onOpen(p.id) }))
-  const hidden = leftList.length - shownLeft.length
   return (
     <div className="mb-3">
       <TaskProgress
@@ -285,15 +274,8 @@ export function MyOpinionProgress({
         done={doneList.length}
         total={open.length}
         unit="곳"
-        items={[...shownDone, ...shownLeft]}
+        items={[]}
         hint={`남은 ${leftList.length}곳에 의견을 남기면 AI 추천이 더 정확해져요`}
-        more={
-          hidden > 0 && (
-            <button type="button" onClick={onShowLeft} className="btn-link shrink-0 text-sm">
-              남은 {leftList.length}곳 모두 보기
-            </button>
-          )
-        }
       />
     </div>
   )
