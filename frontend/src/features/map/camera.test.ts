@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { allInside, dragHeading, fitCenter, fitLevel, groupNear, MAX_LEVEL, zoomSteps } from './camera'
+import { allInside, fitCenter, fitLevel, groupNear, MAX_LEVEL, walkHeading, zoomSteps } from './camera'
 
 const size = { w: 1000, h: 800 }
 const none = { top: 0, right: 0, bottom: 0, left: 0 }
@@ -64,16 +64,28 @@ describe('겹친 검색 결과 묶기(#1174)', () => {
   })
 })
 
-describe('지도를 끈 방향(#1433)', () => {
-  it('8방향 중 가장 가까운 쪽, 조금 떨린 것은 방향이 없다', () => {
-    expect(dragHeading({ x: 12, y: -4 })).toBe('right')
-    expect(dragHeading({ x: -12, y: 4 })).toBe('left')
-    expect(dragHeading({ x: 10, y: -9 })).toBe('up-right')
-    expect(dragHeading({ x: -9, y: -10 })).toBe('up-left')
-    expect(dragHeading({ x: 8, y: 6 })).toBe('down-right')
-    expect(dragHeading({ x: -12, y: 5 })).toBe('down-left')
-    expect(dragHeading({ x: 3, y: -9 })).toBe('up')
-    expect(dragHeading({ x: -3, y: 9 })).toBe('down')
-    expect(dragHeading({ x: 2, y: -3 })).toBeNull()
+describe('지도 위 핑고가 걷는 쪽(#1433, #1746)', () => {
+  it('화면이 가는 쪽, 곧 끈 쪽의 반대다 — 8방향', () => {
+    expect(walkHeading({ x: 20, y: -4 }, null)).toBe('left')
+    expect(walkHeading({ x: -20, y: 4 }, null)).toBe('right')
+    expect(walkHeading({ x: 3, y: -20 }, null)).toBe('down')
+    expect(walkHeading({ x: -3, y: 20 }, null)).toBe('up')
+    expect(walkHeading({ x: 14, y: -13 }, null)).toBe('down-left')
+    expect(walkHeading({ x: -13, y: -14 }, null)).toBe('down-right')
+    expect(walkHeading({ x: 12, y: 10 }, null)).toBe('up-left')
+    expect(walkHeading({ x: -15, y: 10 }, null)).toBe('up-right')
+  })
+
+  it('12px 보다 덜 끌면 정하지 않는다 — 손떨림', () => {
+    expect(walkHeading({ x: 8, y: -6 }, null)).toBeNull()
+    expect(walkHeading({ x: 8, y: -6 }, 'left')).toBeNull()
+  })
+
+  it('지금 방향에서 조금 기울면 그대로, 크게 꺾으면 바꾼다', () => {
+    // 끈 쪽 → 에서 30° 기움: 칸 경계(22.5°)는 넘지만 그대로 '왼쪽'
+    const tilt = (deg: number) => ({ x: 20 * Math.cos((deg * Math.PI) / 180), y: -20 * Math.sin((deg * Math.PI) / 180) })
+    expect(walkHeading(tilt(30), null)).toBe('down-left')
+    expect(walkHeading(tilt(30), 'left')).toBe('left')
+    expect(walkHeading(tilt(60), 'left')).toBe('down-left')
   })
 })

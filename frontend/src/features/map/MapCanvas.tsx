@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
-import { allInside, dragHeading, fitCenter, fitLevel, fitPadding, groupNear, view, zoomSteps } from './camera'
+import { allInside, fitCenter, fitLevel, fitPadding, groupNear, view, walkHeading, zoomSteps } from './camera'
 import { attachLongPress } from './longPress'
 import { createMarkerLayer, mapFade, PIN_GROUP_PX, type MarkerLayer } from './markerLayer'
 import { setMapBridge, usePinDragStore } from './pinDrag'
@@ -262,7 +262,8 @@ export default function MapCanvas({
           })
         const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-        // 끈 방향(#1433) — 끌기 시작한 자리의 좌표가 화면에서 손가락을 따라 움직인 쪽. 지도 위 핑고가 그쪽을 보며 걷는다.
+        // 지도 위 핑고가 걷는 쪽(#1433, #1746) — 끌기 시작한 자리의 좌표가 화면에서 손가락을 따라 움직인 만큼을 재고,
+        // 핑고는 그 반대(화면이 가는 쪽)로 걷는다(camera.walkHeading).
         let dragAnchor: kakao.maps.LatLng | null = null
         let dragAt = { x: 0, y: 0 }
         const onDragStart = () => {
@@ -276,10 +277,15 @@ export default function MapCanvas({
         const onDrag = () => {
           if (!dragAnchor) return
           const p = map.getProjection().containerPointFromCoords(dragAnchor)
-          const heading = dragHeading({ x: p.x - dragAt.x, y: p.y - dragAt.y })
+          const { mapHeading, setMapHeading } = useSheetStore.getState()
+          const heading = walkHeading({ x: p.x - dragAt.x, y: p.y - dragAt.y }, mapHeading)
           if (!heading) return
           dragAt = p
-          useSheetStore.getState().setMapHeading(heading)
+          if (heading !== mapHeading) setMapHeading(heading)
+        }
+        // 두 손가락으로 확대·축소하면 기준 좌표의 화면 자리가 축척 따라 튄다 — 그 거리는 끈 것이 아니라 기준을 다시 잡는다.
+        const rebaseDrag = () => {
+          if (dragAnchor) dragAt = map.getProjection().containerPointFromCoords(dragAnchor)
         }
         const onIdle = () => callbacks.current.onMovingChange(false)
         // 도형 위를 누르면 카카오가 지도 click 대신(또는 함께) 도형 click 을 준다 — 어느 쪽이 와도 한 번만 알린다.
@@ -312,6 +318,7 @@ export default function MapCanvas({
         maps.event.addListener(map, 'rightclick', onRightClick)
         maps.event.addListener(map, 'dragstart', press.cancel)
         maps.event.addListener(map, 'zoom_changed', fade)
+        maps.event.addListener(map, 'zoom_changed', rebaseDrag)
         detach = () => {
           stopMoves()
           maps.event.removeListener(map, 'dragstart', onDragStart)
@@ -323,6 +330,7 @@ export default function MapCanvas({
           container.removeEventListener('contextmenu', blockMenu)
           press.detach()
           maps.event.removeListener(map, 'zoom_changed', fade)
+          maps.event.removeListener(map, 'zoom_changed', rebaseDrag)
         }
 
         mapRef.current = { maps, map }
