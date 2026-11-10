@@ -123,7 +123,7 @@ def test_has_unseen_is_per_member_and_view_is_idempotent(world, client):
 
     state = u1.get(f"/maps/{map_id}/agent").json()
     assert state["has_unseen"] is True
-    assert state["active_suggestion"]["title"] == "확정 리스트에 카페가 아직 없어요"
+    assert state["active_suggestion"]["title"] == "확정한 장소에 카페가 아직 없어요"
     assert state["active_suggestion"]["advice"] == [
         {"segments": [{"kind": "text", "text": "확정 2곳 중 카페 0곳"}], "is_guess": False}]
 
@@ -163,7 +163,7 @@ def test_render_uses_live_pin_query_and_drops_deleted_pin(world, client, monkeyp
 
     sug = client("u1").get(f"/maps/{map_id}/agent").json()["active_suggestion"]
 
-    assert sug["title"] == "아직 확인되지 않은 핀이 3개 있어요"
+    assert sug["title"] == "아직 의견을 다 못 모은 핀이 3개 있어요"
     assert sorted((line["segments"][0]["text"], line["segments"][0]["pin_id"]) for line in sug["advice"]) == [
         ("성수 곱창", live_pin), ("성수 칼국수", db_pin)]   # 핀 이름은 pin 조각(#717)
     assert all([s["kind"] for s in line["segments"]] == ["pin"] for line in sug["advice"])

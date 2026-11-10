@@ -31,7 +31,7 @@ def run(db, map_id, **kw):
 def suggestion(db, map_id, *, run_id=None, status="active", **kw):
     fields = {
         "map_id": map_id, "run_id": run_id, "diagnosis": "category_gap", "category": "카페",
-        "fingerprint": f"fp-{uuid.uuid4()}", "evidence_hash": "eh", "title": "확정 리스트에 카페가 아직 없어요",
+        "fingerprint": f"fp-{uuid.uuid4()}", "evidence_hash": "eh", "title": "확정한 장소에 카페가 아직 없어요",
         "claims": [], "advice": [], "actions": [], "status": status, "expires_at": NOW + timedelta(hours=24),
     } | kw
     return add(db, AgentSuggestion(**fields))

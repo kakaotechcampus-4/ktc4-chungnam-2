@@ -81,7 +81,7 @@ export function useDismissSuggestionMutation(mapId: string) {
 
 /**
  * agent.* 이벤트를 페이로드로 상태에 적용한다(docs/events.md 다시 받기 표, agent-v2 16.4). 모두 덮어쓰기라 두 번 와도 같다.
- * 시트가 열려 있으면 시트가 has_unseen 을 보고 바로 view 를 부른다 — 여기서는 점만 켠다.
+ * 시트가 열려 있으면 시트가 has_unseen 을 보고 바로 view 를 부른다 — 여기서는 지도 위 말풍선만 켠다.
  */
 export function agentEventHandlers(queryClient: QueryClient, mapId: string): Record<string, (e: MessageEvent) => void> {
   const update = (fn: (s: AgentStateDto) => AgentStateDto) => queryClient.setQueryData<AgentStateDto>(agentKeys.state(mapId), (s) => s && fn(s))

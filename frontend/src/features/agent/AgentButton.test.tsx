@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
@@ -38,14 +38,28 @@ describe('「핑고 AI 조언」 말풍선(#1433)', () => {
     const user = userEvent.setup({ delay: null })
     const { unmount } = mount()
     const button = () => screen.getByRole('button', { name: /^핑고 AI 조언/ })
-    for (let i = 0; i < 2; i++) {
-      expect(within(button()).getByText('핑고 AI 조언')).toBeInTheDocument()
-      await user.click(button())
-      await user.keyboard('{Escape}')
-    }
+    // 목 서버에 안 본 제안이 있어 첫 번째는 제안 문장으로 뜨고, 보고 나면 기능 이름으로 돌아온다.
+    await user.click(await screen.findByRole('button', { name: /새 제안/ }))
+    await user.keyboard('{Escape}')
+    expect(await within(button()).findByText('핑고 AI 조언')).toBeInTheDocument()
+    await user.click(button())
+    await user.keyboard('{Escape}')
     expect(within(button()).queryByText('핑고 AI 조언')).not.toBeInTheDocument()
     unmount()
     mount()
     expect(within(button()).queryByText('핑고 AI 조언')).not.toBeInTheDocument()
+  })
+
+  it('안 본 새 제안은 열어 본 횟수와 상관없이 제목을 말하고, 열어 보면 사라진다', async () => {
+    localStorage.setItem('pingo-advice-opens', '2')
+    const user = userEvent.setup({ delay: null })
+    mount()
+    const title = '확정 리스트에 카페가 아직 없어요'
+    const button = await screen.findByRole('button', { name: `핑고 AI 조언, 새 제안: ${title}` })
+    expect(within(button).getByText(title)).toBeInTheDocument()
+    await user.click(button)
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.getByRole('button', { name: '핑고 AI 조언' })).toBeInTheDocument())
+    expect(screen.queryByText(title)).not.toBeInTheDocument()
   })
 })

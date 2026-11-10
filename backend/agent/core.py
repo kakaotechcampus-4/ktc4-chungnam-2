@@ -843,13 +843,13 @@ def _actions(*specs: tuple[str, str, Mapping[str, Any]]) -> list[dict[str, Any]]
 
 
 def _no_reaction_draft(sig: Signal) -> Draft:
-    """반응 공백(6.4). 제목 "아직 확인되지 않은 핀이 {n}개 있어요", 확인된 것은 핀 이름 한 줄씩, 버튼 "미확인 핀 보기".
+    """반응 공백(6.4). 제목 "아직 의견을 다 못 모은 핀이 {n}개 있어요", 확인된 것은 핀 이름 한 줄씩, 버튼 "미확인 핀 보기".
     누가 확인하지 않았는지는 쓰지 않는다. 핀 이름은 ref claim으로 가리키고 렌더 때 정한다."""
     pin_ids = list(sig.evidence_ids)
     refs = [RefClaim(id=f"c{i}", kind="ref", object="pin", ref_id=pid) for i, pid in enumerate(pin_ids, start=2)]
     count = CountClaim(id="c1", kind="count", subject="map", subject_id=None, metric="unseen", value=len(pin_ids))
     return Draft(
-        title="아직 확인되지 않은 핀이 {c1.value}개 있어요",
+        title="아직 의견을 다 못 모은 핀이 {c1.value}개 있어요",
         claims=[c.model_dump() for c in (count, *refs)],
         advice=[{"slot_text": f"{{{r.id}}}", "is_guess": False} for r in refs],
         actions=_actions(("show_pins", "미확인 핀 보기", {"pin_ids": pin_ids, "unseen_only": True})),
@@ -865,7 +865,7 @@ def _gap_action(c: str, action_type: str) -> tuple[str, str, dict[str, Any]]:
 
 
 def _category_gap_draft(sig: Signal) -> Draft:
-    """카테고리 공백(6.5). 제목 "확정 리스트에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳".
+    """카테고리 공백(6.5). 제목 "확정한 장소에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳".
     버튼은 하나다 — 추천 준비가 됐으면 추천 받기, 핀은 있는데 의견이 없으면 「핀에 의견 남기기」(미확인 필터), 핀이 없거나 추천 대상이
     아니면 검색(숙소가 다시 핀이 될 때 쓴다). 준비가 안 된 카테고리에 추천 받기를 붙이지 않는다(#1583). 「핀 보기」는 카테고리 필터만
     걸어 누른 사람이 할 일이 생기지 않아 뺐다(#1317)."""
@@ -875,14 +875,14 @@ def _category_gap_draft(sig: Signal) -> Draft:
     in_category = CountClaim(id="c2", kind="count", subject="category", subject_id=c, metric="confirmed", value=0)
     first = _gap_action(c, base_actions("category_gap", c, gap_state=sig.features.get("gap_state"))[0])
     return Draft(
-        title=f"확정 리스트에 {c}{_josa(c, '이', '가')} 아직 없어요",
+        title=f"확정한 장소에 {c}{_josa(c, '이', '가')} 아직 없어요",
         claims=[confirmed.model_dump(), in_category.model_dump()],
         advice=[{"slot_text": f"확정 {{c1.value}}곳 중 {c} {{c2.value}}곳", "is_guess": False}],
         actions=_actions(first),
     )
 
 
-SCHEDULE_TITLE = "일정에 다시 볼 곳이 있어요"
+SCHEDULE_TITLE = "일정에 다시 봐야 할 곳이 있어요"
 SCHEDULE_LINES = {   # 문제마다 한 줄(많아야 SCHEDULE_LINES_MAX). day는 「n일차」의 n, 핀은 ref claim으로 렌더 때 이름을 채운다
     "closed": "{day}일차에 쉬는 날인 곳이 있어요 · {pin}",
     "travel": "{day}일차 이동이 길어요",
@@ -896,7 +896,7 @@ def _day_number(day: str | None) -> int | None:
 
 
 def _schedule_draft(sig: Signal) -> Draft:
-    """일정 점검(6.10). 제목 「일정에 다시 볼 곳이 있어요」, 확인된 것은 문제마다 한 줄(쉬는 날은 그 핀 이름, 이동 과다는 날만), 버튼은
+    """일정 점검(6.10). 제목 「일정에 다시 봐야 할 곳이 있어요」, 확인된 것은 문제마다 한 줄(쉬는 날은 그 핀 이름, 이동 과다는 날만), 버튼은
     「AI 코스로 고쳐 보기」(open_course) 하나. 사람이 넣은 일정을 바꾸지 않는다 — 고칠 안은 사람이 누른 AI 코스가 낸다."""
     claims: list[dict[str, Any]] = []
     lines = []
@@ -935,7 +935,7 @@ ACTION_SHORT = {   # 해 본 것을 짧게 부르는 이름(작업 기록, 지�
     "widen_radius": "반경 바꾸기", "open_evidence": "근거 보기", "open_pin": "이 핀 보기", "open_course": "AI 코스 짜기",
 }
 # 충돌 선언(attempt 2) 문구 — core 상수 한 곳(6.9). 조건을 완화하자고 하지 않고 「어느 조건 때문에」도 쓰지 않는다(가드레일 4)
-DECLARE_TITLE = "{c}에서 해 본 것을 남겨 둘게요"
+DECLARE_TITLE = "{c}{eun} 제가 해 볼 방법을 다 써 봤어요. 함께 정해 주세요"
 SCHEDULE_SUBJECT = "일정"   # 카테고리가 없는 일정 점검(#1356)을 부르는 이름 — 충돌 선언 제목, 지켜보는 줄
 DECLARE_PREVIEW = "지금 조건으로 미리 찾아보면 {c1.value}곳이 남아요"
 DECLARE_CLOSING = "어떤 조건을 지킬지는 여러분이 정해요"
@@ -1200,7 +1200,7 @@ def declare_draft(sig: Signal, preview: Mapping[str, Any] | None = None) -> Draf
                                 value=passed).model_dump())
         lines.append({"slot_text": DECLARE_PREVIEW, "is_guess": False})
     lines.append({"slot_text": DECLARE_CLOSING, "is_guess": False})
-    return Draft(title=DECLARE_TITLE.format(c=subject_of(sig.diagnosis, sig.category)), claims=claims, advice=_clean(lines),
+    return Draft(title=DECLARE_TITLE.format(c=(subj := subject_of(sig.diagnosis, sig.category)), eun=_josa(subj, "은", "는")), claims=claims, advice=_clean(lines),
                  actions=[])
 
 
@@ -1541,9 +1541,9 @@ _SLOT = re.compile(r"\{(c\d+)(\.value)?\}")   # {cN.value}는 값, {cN}은 인�
 
 # 모델 유형 제목 — 모델 출력에는 제목이 없어 코드가 정한다(카테고리 이름뿐, 숫자와 인용 없음)
 _MODEL_TITLES = {
-    "stall": lambda c: f"{c} 후보가 반대 의견 뒤로 멈춰 있어요",
+    "stall": lambda c: f"{c}에 반대가 나온 뒤로 새 후보가 없어요",
     "split": lambda c: "의견이 갈린 핀이 있어요",
-    "category_gap": lambda c: f"확정 리스트에 {c}{_josa(c, '이', '가')} 아직 없어요",   # 템플릿(6.5)과 같은 제목
+    "category_gap": lambda c: f"확정한 장소에 {c}{_josa(c, '이', '가')} 아직 없어요",   # 템플릿(6.5)과 같은 제목
 }
 
 
@@ -2044,7 +2044,7 @@ def action_at(actions: Sequence[Mapping[str, Any]], index: int) -> AgentAction |
 STEP_DETECT = {   # 감지. n은 stall 🚫 반응 수, no_reaction 핀 수, category_gap 확정 수, split 반응한 사람 수, schedule 문제 수
     "stall": lambda c, n: f"{c}에 반대 의견 {n}개가 남은 뒤로 새 후보가 없어요",
     "split": lambda c, n: f"{c} 핀 하나에서 {n}명의 의견이 좋음과 반대로 갈렸어요",
-    "no_reaction": lambda c, n: f"아직 확인되지 않은 핀이 {n}개 있어요",
+    "no_reaction": lambda c, n: f"아직 의견을 다 못 모은 핀이 {n}개 있어요",
     "category_gap": lambda c, n: f"확정한 {n}곳 중 {c}{_josa(c, '이', '가')} 없어요",
     "schedule": lambda c, n: f"AI 코스 점검으로 확정 일정을 봤어요 · 다시 볼 곳 {n}개",
 }

@@ -73,7 +73,7 @@ def test_tick_saves_code_type_suggestion_and_emits_agent_suggested(world):
 
     sug = world.one(AgentSuggestion, map_id=map_id)
     assert (sug.diagnosis, sug.category, sug.status, sug.shadow) == ("category_gap", "카페", "active", False)
-    assert sug.title == "확정 리스트에 카페가 아직 없어요"
+    assert sug.title == "확정한 장소에 카페가 아직 없어요"
     assert sug.advice == [{"slot_text": "확정 {c1.value}곳 중 카페 {c2.value}곳", "is_guess": False}]
     assert [c["value"] for c in sug.claims] == [2, 0]
     assert sug.expires_at == world.now + constants.SUGGESTION_TTL
@@ -130,10 +130,10 @@ def test_no_reaction_suggestion_renders_pin_names(world, monkeypatch):
     tick(world)
 
     sug = world.one(AgentSuggestion, map_id=map_id)
-    assert sug.diagnosis == "no_reaction" and sug.title == "아직 확인되지 않은 핀이 {c1.value}개 있어요"
+    assert sug.diagnosis == "no_reaction" and sug.title == "아직 의견을 다 못 모은 핀이 {c1.value}개 있어요"
     assert "성수 칼국수" not in json.dumps(sug.advice + sug.claims, ensure_ascii=False)   # 이름은 저장하지 않는다
     [(_, payload)] = world.agent_events(map_id)
-    assert payload["title"] == "아직 확인되지 않은 핀이 3개 있어요"
+    assert payload["title"] == "아직 의견을 다 못 모은 핀이 3개 있어요"
     # 장소 이름을 찾지 못한 핀(pl_b)은 지어내지 않고 줄을 뺀다
     assert sorted((line["segments"] for line in payload["advice"]), key=str) == [   # 핀 이름은 pin 조각(#717)
         [{"kind": "pin", "text": "성수 곱창", "pin_id": live_pin}], [{"kind": "pin", "text": "성수 칼국수", "pin_id": db_pin}]]

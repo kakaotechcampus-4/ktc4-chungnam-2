@@ -879,7 +879,7 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
 
     first = suggest("카페")
     state = a.get(f"/maps/{map_id}/agent").json()
-    assert state["active_suggestion"]["title"] == "확정 리스트에 카페가 아직 없어요" and state["has_unseen"] is True
+    assert state["active_suggestion"]["title"] == "확정한 장소에 카페가 아직 없어요" and state["has_unseen"] is True
     assert a.post(f"/agent/suggestions/{first}/view").status_code == 204
     assert a.post(f"/agent/suggestions/{first}/view").status_code == 204          # 멱등
     assert a.get(f"/maps/{map_id}/agent").json()["has_unseen"] is False

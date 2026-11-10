@@ -72,7 +72,7 @@ def test_export_masks_member_text_and_keeps_agent_words(world, factory, tmp_path
     [signal] = [s for s in run.signals if s["fingerprint"] == sug.fingerprint]
     assert json.loads(split["신호 특징값"]) == signal["features"]
     assert rows["no_reaction"]["제안 문장"].splitlines() == [
-        "아직 확인되지 않은 핀이 3개 있어요", "- 「[핀]」", "- 「[핀]」", "- 「[핀]」"]
+        "아직 의견을 다 못 모은 핀이 3개 있어요", "- 「[핀]」", "- 「[핀]」", "- 「[핀]」"]
     assert rows["category_gap"]["버튼"] in ("카페 검색", "관광지 검색")
 
 

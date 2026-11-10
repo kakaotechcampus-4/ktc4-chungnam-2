@@ -72,7 +72,6 @@
   --pingo-line: var(--brand-300);
   --pingo-text: var(--brand-700);
   --pingo-outline: var(--ink-300); /* 평면 핑고 외곽선. brand-50 면 위에서도 몸이 묻히지 않게 */
-  --advice-alert: var(--notify-dot); /* 「핑고 AI 조언」 새 조언 「!」 말풍선(MapPingo, #1433). 새 소식 귤색 그대로, 흰 「!」 5.2:1 */
   /* 바깥 서비스 색 — 그 서비스로 가는 버튼·표시에만 쓴다(카카오 로그인, 지도 앱 링크 MapAppLinks). 다크 모드에서도 그대로다. */
   --kakao-yellow: #FEE500;
   --naver-green: #03C75A;

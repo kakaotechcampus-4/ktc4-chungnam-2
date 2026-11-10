@@ -22,19 +22,6 @@ for (const src of [back, diagDownLeft, diagDownRight, diagUpLeft, diagUpRight, w
 const IMG = 'absolute inset-0 size-full select-none'
 const DIAGONAL = { 'up-left': diagUpLeft, 'up-right': diagUpRight, 'down-left': diagDownLeft, 'down-right': diagDownRight }
 
-/** 새 조언이 있다는 표시 — 평면 「!」 말풍선(새 소식 귤색 `--advice-alert`, 흰 테두리). 핑고 머리 오른쪽 위에 떠서 천천히 들썩인다. */
-function AlertBubble() {
-  return (
-    <svg viewBox="0 0 24 24" className="enter-pop absolute -right-[16%] -top-[6%] size-[42%] overflow-visible drop-shadow-[0_1px_2px_rgba(31,28,25,0.25)]">
-      <g className="origin-bottom-left [transform-box:fill-box] motion-safe:animate-pingo-bob">
-        <path d="M12 2a9 9 0 1 1-4.7 16.7L3 21l1.6-4.6A9 9 0 0 1 12 2z" style={{ fill: 'var(--advice-alert)' }} stroke="white" strokeWidth="2" strokeLinejoin="round" />
-        <rect x="10.7" y="5.8" width="2.6" height="7.2" rx="1.3" fill="white" />
-        <circle cx="12" cy="15.9" r="1.5" fill="white" />
-      </g>
-    </svg>
-  )
-}
-
 /** 잘 때 덮는 이불 — 3D 그림(144px)과 같은 좌표에서 팔과 몸 아래쪽을 덮는다. 접어 내린 단은 밝게, 아래로 갈수록 진하게 해 둥글게 보인다. */
 function Blanket() {
   return (
@@ -52,7 +39,7 @@ function Blanket() {
   )
 }
 
-/** 자는 동안 머리 왼쪽 위로 「z」가 차례로 떠오르다 사라진다(오른쪽 위는 새 조언 말풍선 자리). */
+/** 자는 동안 머리 왼쪽 위로 「z」가 차례로 떠오르다 사라진다. */
 function Snore() {
   return (
     <svg viewBox="0 0 40 40" className="absolute -left-[6%] top-0 size-[40%] overflow-visible font-bold" style={{ fill: 'var(--ink-500)' }}>
@@ -90,20 +77,18 @@ function SideWalk({ left }: { left: boolean }) {
  * - 아래: 정면으로 걸음마다 한 칸씩 내려온다. 사용자 쪽으로 오는 방향이라 ↙·↘(반측면)처럼 얼굴이 보인다.
  * - 대각선: 반측면 그림이 그쪽을 보고 위·아래처럼 걷는다. 원본 반측면(`01_반측면`)이 오른쪽 아래이고, 왼쪽은 뒤집어 빛을 다시 맞춘 그림,
  *   위쪽 둘은 눈을 지운 그림이다 — 몸이 둥글고 좌우가 같아서 반대쪽 아래를 보는 모습을 뒤에서 본 모양이 된다(`~/ktc4-drafts-review/pingo-diagonals.py`).
- * 원본 렌더의 빛은 오른쪽 위다. 서 있으면 정면이고 `wave`·`alert` 면 손을 흔든다. `alert`(새 조언)면 머리 옆에 「!」 말풍선이 뜬다.
+ * 원본 렌더의 빛은 오른쪽 위다. 서 있으면 정면이고 `wave` 면 손을 흔든다.
  * `idle` 이면 쉰다 — 졸 땐 눈을 반쯤 감고 꾸벅이고, 잘 땐 눈을 감고 이불을 덮은 채 숨 쉬며 「z」가 떠오른다.
  * 크기는 부르는 쪽 className 으로 준다. 움직임 줄이기면 그쪽을 보기만 하고(쉴 때는 그 모습으로 서서) 움직이지 않는다.
  */
 export default function MapPingo({
   heading,
   wave: waving = false,
-  alert = false,
   idle = null,
   className = '',
 }: {
   heading: MapHeading | null
   wave?: boolean
-  alert?: boolean
   idle?: IdleStage
   className?: string
 }) {
@@ -129,10 +114,9 @@ export default function MapPingo({
           {idle === 'sleep' && <Blanket />}
         </span>
       ) : (
-        <img src={waving || alert ? wave : front} alt="" draggable={false} className={IMG} />
+        <img src={waving ? wave : front} alt="" draggable={false} className={IMG} />
       )}
       {resting === 'sleep' && <Snore />}
-      {alert && <AlertBubble />}
     </span>
   )
 }

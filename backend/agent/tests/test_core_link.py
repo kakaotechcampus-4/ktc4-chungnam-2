@@ -152,7 +152,7 @@ def test_schedule_template_has_one_line_per_problem_and_the_course_button():
     sig = core.detect_schedule(_schedule_snap(_schedule(closed_first=True, far=True)))[0]
     draft = core.render_template(sig)
 
-    assert draft.title == "일정에 다시 볼 곳이 있어요"
+    assert draft.title == "일정에 다시 봐야 할 곳이 있어요"
     assert [a["type"] for a in draft.actions] == ["open_course"]
     assert draft.actions[0]["label"] == "AI 코스로 고쳐 보기"
     assert [line["slot_text"] for line in draft.advice] == ["1일차에 쉬는 날인 곳이 있어요 · {c1}", "1일차 이동이 길어요"]
@@ -189,7 +189,7 @@ def test_schedule_followup_skips_to_declaration_with_the_schedule_title():
     assert core.is_declaration(follow)                   # open_course 하나뿐이라 다음 방법이 없다
     assert follow.evidence_ids == sig.evidence_ids
     draft = core.render_followup_template(follow)
-    assert draft.title == "일정에서 해 본 것을 남겨 둘게요" and draft.actions == []
+    assert draft.title == "일정은 제가 해 볼 방법을 다 써 봤어요. 함께 정해 주세요" and draft.actions == []
 
 
 def test_schedule_goes_first_when_departure_is_near():
@@ -290,7 +290,7 @@ def test_open_pin_kept_when_tried_and_fit():
     assert verified.outcome == "suggested"
     action = verified.draft.actions[0]
     assert (action["type"], action["label"], action["params"]["pin_ids"]) == ("open_pin", "이 핀 보기", ["c1"])
-    assert verified.draft.title == "확정 리스트에 카페가 아직 없어요"
+    assert verified.draft.title == "확정한 장소에 카페가 아직 없어요"
 
 
 def test_open_pin_dropped_for_against_closed_no_coords_and_untried():

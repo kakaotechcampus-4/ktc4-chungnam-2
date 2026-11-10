@@ -320,7 +320,7 @@ def _render(draft):
 def test_declaration_lists_what_was_tried_and_has_no_buttons():
     draft = _declare({"passed_count": 3})
     assert draft.actions == []
-    assert draft.title == "음식점에서 해 본 것을 남겨 둘게요"
+    assert draft.title == "음식점은 제가 해 볼 방법을 다 써 봤어요. 함께 정해 주세요"
     texts = ["".join(seg.text for seg in segs) for segs in _render(draft)]
     assert texts == ["음식점 추천 받기를 해 봤어요", "음식점 검색을 해 봤어요", "지금 조건으로 미리 찾아보면 3곳이 남아요",
                      core.DECLARE_CLOSING]
