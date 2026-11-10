@@ -141,7 +141,7 @@ export default function MapLayout() {
   }, [searchFocused])
   const recent = useRecentSearches(myId)
   const recentOpen = searchFocused && recentWanted && recent.list.length > 0
-  // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
+  // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 귤색 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
   // 받기 전(loadedPins 없음)에 떠나면 적지 않는다 — 빈 모습을 적으면 다음에 모든 핀이 새 핀으로 보인다.
   const { news } = useNewSince(mapId, loadedPins, myId)
   useSaveSeenOnLeave(mapId, myId)

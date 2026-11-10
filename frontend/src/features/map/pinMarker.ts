@@ -5,13 +5,13 @@ import { pinGlyph } from '@/ui/pinGlyph'
 import { kindLabel, type Pin } from './model'
 
 
-/** 새 소식 점 — 핀 머리 오른쪽 위(#1454). */
+/** 새 소식 점 — 핀 머리 오른쪽 위(#1454). 새 소식 귤색이다 — 파란 점은 내 위치 표시로 읽혔다(#1756). */
 const FRESH_DOT =
-  '<span data-new-dot aria-hidden="true" style="position:absolute;left:28px;top:3px;width:10px;height:10px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff"></span>'
+  '<span data-new-dot aria-hidden="true" style="position:absolute;left:28px;top:3px;width:10px;height:10px;border-radius:9999px;background:var(--notify-dot);border:2px solid #fff"></span>'
 
 /**
  * 지도 위 핀 — 일반(올린 AI 추천 포함)·확정. 핀 그림은 `ui/pinGlyph` 한 곳에서 만든다(색의 진하기는 참여율, 구성원별 색 구분은 없다 #26).
- * fresh: 마지막으로 본 뒤 새로 생긴 핀·의견이 있는 핀(#1454) — 머리 오른쪽 위에 파란 점을 단다(목록 「새 핀」 태그와 같은 브랜드 파랑).
+ * fresh: 마지막으로 본 뒤 새로 생긴 핀·의견이 있는 핀(#1454) — 머리 오른쪽 위에 귤색 점을 단다(새 소식 점, `--notify-dot`).
  */
 export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => void, fresh = false): HTMLElement {
   const el = document.createElement('button')
@@ -36,7 +36,7 @@ export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => v
 /**
  * 화면에서 겹친 지도 핀 여러 곳(#1576). 핀 모양 그대로 머리에 곳 수를 적는다(`pinGlyph` count).
  * 모두 확정이면 확정 핀 색, 하나라도 아니면 일반 핀 색이고 진하기는 묶음 안에서 가장 높은 참여율이다.
- * 새 소식이 있는 핀이 하나라도 있으면 파란 점을 단다. 누르면 확대해 풀거나, 더 확대해도 겹치면 그 핀들 목록을 연다(MapCanvas).
+ * 새 소식이 있는 핀이 하나라도 있으면 귤색 점을 단다. 누르면 확대해 풀거나, 더 확대해도 겹치면 그 핀들 목록을 연다(MapCanvas).
  * 이름은 setAttribute 로만 넣는다(마크업으로 해석되지 않게).
  */
 export function createPinGroupMarkerElement(

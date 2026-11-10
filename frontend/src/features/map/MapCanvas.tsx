@@ -135,7 +135,7 @@ export default function MapCanvas({
   pins: Pin[]
   /** 핀 색(참여율)의 분모 — 지도 전체 구성원 수. */
   memberCount: number
-  /** 마지막으로 본 뒤 새 핀·의견이 있는 핀(#1454) — 파란 점. */
+  /** 마지막으로 본 뒤 새 핀·의견이 있는 핀(#1454) — 귤색 점. */
   freshPinIds?: ReadonlySet<string>
   /** 상세를 연 핀(주소의 ?pin=). 지도에서 강조한다. */
   selectedPinId?: string | null
