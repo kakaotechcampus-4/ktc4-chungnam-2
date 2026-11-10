@@ -1493,7 +1493,7 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     expect(state.summaries[0].category).toBe("음식점");
     expect(state.summaries[0].not_filtered.notices[0]).toContain("가게에 직접 확인");
     expect(state.active_suggestion.claims).toBeUndefined(); // 서버 내부 값은 싣지 않는다
-    expect(state.status.paragraph).toContain("부터 보면 좋겠어요"); // 지도 현황 문단(#1152)
+    expect(state.status.paragraph).not.toContain("부터"); // 지도 현황 문단(#1152). 제안 카드가 있으면 먼저 볼 곳은 카드가 말한다(#1749)
     expect(state.active_suggestion.facts).toEqual([]); // 우리 데이터 확인은 사실 다툼에만(#1152)
   });
 
