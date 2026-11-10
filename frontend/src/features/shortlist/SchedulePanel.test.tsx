@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-li
 import userEvent from '@testing-library/user-event'
 import { server, resetScenario } from '@pingo/contracts/mocks/node'
 import { MemoryRouter } from 'react-router'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EditMapDialog } from '@/features/maps/MapLifecycle'
 import type { MapHeaderView } from '@/features/maps/model'
@@ -17,13 +17,20 @@ import { forgetSchedule } from './scheduleStore'
 const BASE = 'http://localhost'
 const MAP = 'map_1' // 목 서버 지도: 2026-10-10 ~ 10-12(3일)
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => {
+  server.listen({ onUnhandledRequest: 'error' })
+  // jsdom 에는 matchMedia 가 없다(날짜 칸이 넓은 화면인지 보고 창과 시트를 고른다, #1765).
+  vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
+})
 afterEach(() => {
   server.resetHandlers()
   resetScenario('happy-path')
   forgetSchedule()
 })
-afterAll(() => server.close())
+afterAll(() => {
+  server.close()
+  vi.unstubAllGlobals()
+})
 
 // 목 서버의 확정 리스트에 핀 셋을 넣는다(흑돼지식당·우진해장국·카페 한라).
 beforeEach(async () => {
