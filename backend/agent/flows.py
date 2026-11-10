@@ -34,7 +34,8 @@ resolved로 쓴다. 저장 직전에도 잠근 사본으로 다시 보고, 풀�
 **지도 현황 문단(8.2, #1168)**: 관찰 끝(요약 다음)에서 `update_status`가 칸(core.status_cells)을 계산해, 마지막으로 만들려 한 칸과
 다를 때만 모델(Gateway.status)을 부른다. 별도 트랜잭션, 별도 agent_runs 행(trigger=status)이다. 모델을 부르지만 지도 하루
 상한에는 세지 않는다(service.MODEL_RUN_TRIGGERS에 없다 — 비용은 서비스 일일 예산, 19절). 검증(core.verify_status)에서 떨어지면
-지난 문단을 그대로 둔다. 새 이벤트는 없다 — 시트를 열 때 받는다.
+지난 문단을 그대로 둔다. 새 이벤트는 없다 — 시트를 열 때 받는다. 먼저 볼 곳(first_category)은 저장이 끝난 뒤의 이력으로 정해,
+제안 카드가 떠 있거나 수락 직후면 비운다(core.status_first_signal, #1749).
 
 **추천 막힘 조언(9절, #587)**: `advise_run`. AI 추천 결과 화면의 `GET /runs/{runId}/advice`(agent/router.py)가 부른다. 관찰과
 따로 돌고(요청 안), 종류·문장·버튼은 코드가 정한다(core.choose_run_advice, #750 — 모델 없음). 읽기 → 고르기 → 쓰기를 짧은
@@ -444,6 +445,9 @@ def observe_map(
             db, map_id, snap.latest_seq, next_check_at=_next_check(snap, hist, now, th, new_expires_at),
             observed_at=now, token=token,
         )
+        # 저장이 끝난 뒤의 제안 이력 — 현황 문단이 지금 카드(방금 넣었거나 남은 것)와 지켜보는 곳을 본다(#1749). 저장 전
+        # hist.active는 방금 내려간 카드일 수 있다
+        saved = replace(hist, suggestions=service.list_past(db, map_id))
     trace.model_recorded()   # 진단의 모델 사용은 위 행에 남았다. 요약에서 실패해도 다시 세지 않는다
 
     # 8. 요약 (별도 흐름, 별도 트랜잭션)
@@ -452,7 +456,8 @@ def observe_map(
 
     # 9. 지도 현황 문단 (8.2, 별도 트랜잭션). 칸이 바뀌었을 때만 모델을 부른다
     trace.stage = "status"
-    update_status(map_id, snap, signals, hist, now, policy=policy, session_factory=session_factory, gateway=gateway)
+    update_status(map_id, snap, signals, saved, now, blocked=blocked, policy=policy, session_factory=session_factory,
+                  gateway=gateway)
     return outcome
 
 
@@ -742,15 +747,20 @@ def update_summary(
 
 def update_status(
     map_id: str, snap: snapshot.Snapshot, signals: list[core.Signal], hist: core.History, now: datetime, *,
-    policy: core.PriorityPolicy, session_factory: SessionFactory = SessionLocal, gateway: deps.AgentLlmGateway | None = None,
+    blocked: list[core.Blocked], policy: core.PriorityPolicy, session_factory: SessionFactory = SessionLocal,
+    gateway: deps.AgentLlmGateway | None = None,
 ) -> str | None:
     """칸(core.status_cells)을 계산해, 마지막으로 만들려 한 칸(hist.status_hash)과 다를 때만 모델을 한 번 부른다. agent_runs에 남긴
     outcome을 돌려주고, 칸이 같거나 저장 단계에서 지도가 삭제된 것을 보면 None.
 
+    hist는 관찰의 저장이 끝난 뒤의 이력이고 blocked는 그 관찰의 정책 결과다 — 먼저 볼 신호(core.status_first_signal)가 지금 카드와
+    사람이 닫은 막힌 곳을 본다(#1749).
+
     모델은 세션 없이 부른다(12.6). 실패(AgentCallFailed)와 검증 실패는 다시 묻지 않고 지난 문단을 둔다(2절 10번) — 그 칸의 해시는
     status 관찰 행에 남아 같은 칸으로는 다시 부르지 않는다. used_model=true지만 trigger=status라 지도 하루 상한에 세지 않는다
     (service.MODEL_RUN_TRIGGERS, 3절). 문단에는 사유 원문, 이름, 장소 이름이 없다 — 칸에 없다."""
-    cells = core.status_cells(snap, signals, policy)
+    first = core.status_first_signal(signals, blocked, hist, now, policy)
+    cells = core.status_cells(snap, signals, first, policy)
     digest = core.status_hash(cells)
     if digest == hist.status_hash:
         return None

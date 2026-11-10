@@ -6,6 +6,8 @@
 - trigger=status 행은 used_model=true지만 지도 하루 상한(model_runs_today)에 세지 않는다
 - 모델 호출 중 DB 연결을 들고 있지 않다(12.6). 문단과 칸에 사유 글, 이름, 장소 이름이 없다(2절 11, 13번)
 - GET /maps/{mapId}/agent의 status가 api-spec(AgentMapStatus)과 같다
+- 먼저 볼 곳(first_category)은 저장이 끝난 뒤의 카드를 본다 — 카드가 떠 있으면 비우고, 카드가 내려간 관찰에서는 다음 1순위,
+  닫은 카드의 막힌 곳은 권하지 않는다(#1749)
 """
 
 import json
@@ -21,7 +23,7 @@ from referencing.jsonschema import DRAFT202012
 from sqlalchemy import text
 
 from agent import deps, flows, service, tools
-from agent.models import AgentMapStatus, AgentRun
+from agent.models import AgentMapStatus, AgentRun, AgentSuggestion
 from agent.schemas import AgentCallFailed, AgentReply, AgentUsage, StatusOutput
 from agent.tests.world import World, fake_places, real_now
 from auth.testing import session_cookie
@@ -189,6 +191,75 @@ def test_failed_cells_are_not_asked_again(world):
     assert run.outcome_detail["reason"] == "timeout" and run.verification is None
     assert len(gateway.cells) == 1
     assert world.rows(AgentMapStatus, map_id=map_id) == []
+
+
+# ---------------------------------------------------------------- 먼저 볼 곳 — 카드가 말한다 (#1749)
+
+def _tour_gap_map(world, *, start_in=30):
+    """음식점·카페가 하나씩 확정돼 관광지만 비었다 — 관찰하면 관광지 공백 카드(코드 유형, 템플릿)가 뜬다."""
+    map_id = world.map(start=world.today + timedelta(days=start_in))
+    for category in ("음식점", "카페"):
+        world.confirm(map_id, world.pin(map_id, category=category))
+    world.event(map_id)
+    return map_id
+
+
+def _cafe_split(world, map_id):
+    """카페 후보 하나에 셋이 ♥♥🚫 — 갈림 신호(weight 3)가 공백(2)보다 앞이다. 진단은 고정 응답 스텁이라 카드가 없다(silent)."""
+    pin_id = world.pin(map_id, category="카페")
+    for user, type_, ago in (("u1", "like", 30), ("u2", "like", 29), ("u3", "against", 28)):
+        world.react(pin_id, user, type_, hours_ago=ago, text="웨이팅이 길어요" if type_ == "against" else None)
+    world.event(map_id, seconds_ago=0)
+
+
+def _card(world, map_id):
+    return world.one(AgentSuggestion, map_id=map_id)
+
+
+def test_active_card_empties_first_and_the_next_top_comes_after_it_goes(world):
+    map_id = _tour_gap_map(world)
+    gateway = StatusGateway()
+
+    observe(world, map_id, gateway)                                 # 관광지 공백 카드가 뜬 관찰
+    assert (_card(world, map_id).category, _card(world, map_id).status) == ("관광지", "active")
+    assert gateway.cells[-1]["first_category"] is None
+
+    _cafe_split(world, map_id)                                      # 카드가 떠 있는 채 더 급한 카페 갈림이 생겼다
+    observe(world, map_id, gateway, after=timedelta(minutes=5))
+
+    assert len(gateway.cells) == 2 and gateway.cells[-1]["categories"][1]["split_pins"] == 1
+    assert (gateway.cells[-1]["first_category"], gateway.cells[-1]["first_reason"]) == (None, None)
+    assert _card(world, map_id).status == "active"
+
+    world.confirm(map_id, world.pin(map_id, category="관광지"), hours_ago=0)   # 관광지가 채워져 카드가 내려간다
+    world.event(map_id, seconds_ago=0)
+    observe(world, map_id, gateway, after=timedelta(minutes=10))
+
+    assert _card(world, map_id).status == "superseded"
+    assert (gateway.cells[-1]["first_category"], gateway.cells[-1]["first_reason"]) == ("카페", "의견이 갈린 핀이 있다")
+
+
+def test_dismissed_card_is_not_recommended_next(world):
+    """출발이 가까워 관광지 공백 카드가 카페 갈림보다 앞에 뜬다. 사람이 카드를 닫으면 다음 관찰의 문단은 닫은 관광지가 아니라 카페를
+    권한다 — 닫은 막힌 곳은 정책이 duplicate로 막고 문단도 그 신호를 뺀다."""
+    map_id = _tour_gap_map(world, start_in=2)
+    _cafe_split(world, map_id)
+    gateway = StatusGateway()
+
+    observe(world, map_id, gateway)
+    card = _card(world, map_id)
+    assert (card.category, gateway.cells[-1]["first_category"]) == ("관광지", None)
+
+    with world.factory() as db:
+        assert service.resolve_suggestion(db, card.id, status="dismissed", user_id=world.uid("u1"),
+                                          now=world.now + timedelta(minutes=1))
+        db.commit()
+    observe(world, map_id, gateway, after=timedelta(minutes=5))
+
+    last = max(world.rows(AgentRun, map_id=map_id, trigger="activity"), key=lambda r: r.started_at)
+    assert [b["reason"] for b in last.blocked] == ["duplicate"]   # 닫은 관광지 공백. 카페 갈림은 진단까지 갔다(silent)
+    assert _card(world, map_id).status == "dismissed"             # 새 카드는 없다
+    assert (gateway.cells[-1]["first_category"], gateway.cells[-1]["first_reason"]) == ("카페", "의견이 갈린 핀이 있다")
 
 
 # ---------------------------------------------------------------- 검증 다섯 가지 — 걸리면 지난 문단 유지
