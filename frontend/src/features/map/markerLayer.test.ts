@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createMarkerLayer, LABEL_MAX_LEVEL, mapFade, PIN_GROUP_PX } from './markerLayer'
+import { createMarkerLayer, LABEL_MAX_LEVEL, mapFade, PIN_GROUP_PX, placeLabels } from './markerLayer'
 import type { Pin } from './model'
+import { createCandidateMarkerElement, setPinLabel } from './pinMarker'
 
 /** 카카오 SDK 대신 쓰는 가짜. 위도·경도를 그대로 화면 좌표(px)로 쓴다 — lat 이 y, lng 가 x. */
 function fakeMaps(level: number) {
@@ -160,5 +161,47 @@ describe('바탕 지도 옅게', () => {
     expect(steps[1]).toBeGreaterThan(steps[0])
     expect(steps[2]).toBeGreaterThan(steps[1])
     expect(mapFade(1)).toBe(1)
+  })
+})
+
+describe('AI 후보 이름표(placeLabels)', () => {
+  /** MapCanvas 처럼 고른 후보 > 순위 순으로 넘긴다. */
+  const candidate = (rank: number, x: number, y: number) => {
+    const el = createCandidateMarkerElement({ rank, name: `후보${rank}` }, () => {})
+    setPinLabel(el, `후보${rank}`, 'quiet')
+    document.body.appendChild(el)
+    return { id: String(rank), el, name: `후보${rank}`, x, y, keep: false }
+  }
+  const shown = (c: { el: HTMLElement }) => c.el.querySelector<HTMLElement>('[data-pin-name]')?.style.visibility !== 'hidden'
+
+  it('누르지 않아도 이름표가 있고, 겹치면 순위 높은 후보만 남는다', () => {
+    const items = [candidate(1, 100, 100), candidate(2, 130, 102), candidate(3, 400, 100)]
+    placeLabels(items, items, false)
+    expect(items[0].el.querySelector('[data-pin-name="quiet"]')?.textContent).toBe('후보1')
+    expect(items.map(shown)).toEqual([true, false, true])
+  })
+
+  it('멀리 보면 이름표가 숨는다', () => {
+    const items = [candidate(1, 0, 100), candidate(2, 400, 100)]
+    placeLabels(items, items, true)
+    expect(items.map(shown)).toEqual([false, false])
+  })
+})
+
+describe('AI 후보와 지도 핀 이름표를 한 번에 정리(#1744)', () => {
+  it('후보 이름표가 지도 핀 이름표와 겹치면 후보가 남고, 후보를 치우면 지도 핀 이름표가 돌아온다', () => {
+    const { maps, map } = fakeMaps(4)
+    const layer = createMarkerLayer(maps, map, () => {}, () => {})
+    layer.sync([pin('1', 130, 102)], 4)
+    const el = createCandidateMarkerElement({ rank: 1, name: '후보1' }, () => {})
+    setPinLabel(el, '후보1', 'quiet')
+    document.body.appendChild(el)
+    const shown = () => el.querySelector<HTMLElement>('[data-pin-name]')?.style.visibility !== 'hidden'
+
+    layer.setLeadLabels(() => [{ id: 'ai:1', el, name: '후보1', x: 100, y: 100, keep: false }])
+    expect([shown(), labelShown('1')]).toEqual([true, false])
+
+    layer.setLeadLabels(() => [])
+    expect(labelShown('1')).toBe(true)
   })
 })

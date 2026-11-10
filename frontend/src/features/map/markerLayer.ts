@@ -15,8 +15,16 @@ export interface MarkerLayer {
   select(pinId: string | null): void
   /** 점 전체가 들어오도록 시야를 바로 맞춘다(지도를 처음 열 때). */
   fit(points: { lat: number; lng: number }[]): void
+  /**
+   * 지도 핀보다 먼저 자리를 잡는 이름표 — AI 추천 탭의 AI 후보(#1744). 지도 핀과 한 번에 겹침을 정리해,
+   * 후보 이름표와 지도 핀 이름표가 서로를 덮지 않는다. 화면 좌표가 지도 움직임 따라 바뀌어 정리할 때마다 부른다.
+   */
+  setLeadLabels(get: () => LabelItem[]): void
   destroy(): void
 }
+
+/** 겹침 정리에 넘기는 이름표 하나. x·y 는 핀 끝의 화면 좌표, keep 은 고른 핀이다. */
+export type LabelItem = { id: string; el: HTMLElement; name: string; x: number; y: number; keep: boolean }
 
 type Placed = PlacedPin
 
@@ -51,6 +59,32 @@ export const PIN_GROUP_PX = 24
 
 type Box = { l: number; t: number; r: number; b: number }
 const overlaps = (a: Box, b: Box) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
+/** 핀 끝(화면 좌표)에서 핀 몸통 상자. */
+const bodyBox = ({ x, y }: { x: number; y: number }): Box => ({ l: x - BODY.w / 2, t: y - BODY.h, r: x + BODY.w / 2, b: y })
+
+/**
+ * 이름표를 겹치지 않게 남긴다 — 지도 핀과 AI 후보(setLeadLabels)를 한 번에 정리한다.
+ * items 를 중요한 순서로 받아, 앞서 남긴 이름표나 다른 핀 몸통(bodies)을 덮지 않는 것만 남긴다.
+ * keep(고른 핀)은 언제나 남고 그 자리를 먼저 차지한다. 멀리 보면(far) keep 만 남는다. x·y 는 핀 끝의 화면 좌표다.
+ */
+export function placeLabels(
+  items: LabelItem[],
+  bodies: { id: string; x: number; y: number }[],
+  far: boolean,
+) {
+  const shown: Box[] = []
+  for (const it of items) {
+    const label = it.el.querySelector<HTMLElement>('[data-pin-name]')
+    if (!label) continue
+    // 그려지기 전(지도 밖)이면 폭이 0이라 글자 수로 어림한다.
+    const w = label.offsetWidth || Math.min(it.name.length, 8) * 12 + 16
+    const box = { l: it.x - w / 2, t: it.y + PIN_LABEL.gap, r: it.x + w / 2, b: it.y + PIN_LABEL.gap + PIN_LABEL.h }
+    const free =
+      it.keep || (!far && !shown.some((s) => overlaps(s, box)) && !bodies.some((o) => o.id !== it.id && overlaps(bodyBox(o), box)))
+    showPinLabel(it.el, free)
+    if (free) shown.push(box)
+  }
+}
 
 /** 이 값이 그대로면 오버레이를 다시 만들 이유가 없다. */
 function signature(pin: Placed, ratio: number, fresh: boolean): string {
@@ -81,6 +115,7 @@ export function createMarkerLayer(
   /** 한 번 떨어진 핀. 의견이 달려 마커를 다시 그려도 또 떨어지지 않게 한다. */
   const dropped = new Set<string>()
   let selected: string | null = null
+  let leadLabels: () => LabelItem[] = () => []
   /** 겹쳐서 묶음 핀 뒤로 숨은 핀(#1576). */
   const grouped = new Set<string>()
   let groups: { overlay: kakao.maps.CustomOverlay; lat: number; lng: number }[] = []
@@ -144,16 +179,19 @@ export function createMarkerLayer(
    * 옮기거나 확대가 끝날 때(idle)마다 다시 정한다 — 핀은 많아야 수십 개다.
    */
   function relabel() {
-    if (elements.size === 0) return
+    const lead = leadLabels()
+    if (elements.size === 0 && lead.length === 0) return
     const far = map.getLevel() > LABEL_MAX_LEVEL
     const proj = map.getProjection()
     const at = new Map<string, { x: number; y: number }>()
     for (const [id, p] of info) if (!grouped.has(id)) at.set(id, proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)))
-    const body = (id: string, { x, y }: { x: number; y: number }) => ({ id, box: { l: x - BODY.w / 2, t: y - BODY.h, r: x + BODY.w / 2, b: y } })
     // 묶음 핀도 이름표가 덮으면 안 되는 몸통이다. 묶음 핀은 이름표가 없다 — 이름은 누르면 나오는 목록에 있다.
     const bodies = [
-      ...[...at].map(([id, p]) => body(id, p)),
-      ...groups.map((g, i) => body(`group:${i}`, proj.containerPointFromCoords(new maps.LatLng(g.lat, g.lng)))),
+      ...[...at].map(([id, p]) => ({ id, x: p.x, y: p.y })),
+      ...groups.map((g, i) => {
+        const { x, y } = proj.containerPointFromCoords(new maps.LatLng(g.lat, g.lng))
+        return { id: `group:${i}`, x, y }
+      }),
     ]
 
     const order = [...info.keys()].sort((a, b) => {
@@ -166,22 +204,12 @@ export function createMarkerLayer(
         pa.created - pb.created
       )
     })
-    const shown: Box[] = []
-    for (const id of order) {
+    const items = order.flatMap((id) => {
       const el = elements.get(id)
       const p = at.get(id)
-      if (!el || !p) continue
-      const label = el.querySelector<HTMLElement>('[data-pin-name]')
-      if (!label) continue
-      // 그려지기 전(지도 밖)이면 폭이 0이라 글자 수로 어림한다.
-      const w = label.offsetWidth || Math.min(info.get(id)!.name.length, 8) * 12 + 16
-      const box = { l: p.x - w / 2, t: p.y + PIN_LABEL.gap, r: p.x + w / 2, b: p.y + PIN_LABEL.gap + PIN_LABEL.h }
-      // 고른 핀은 언제나 보이고, 그 자리를 먼저 차지한다.
-      const free =
-        id === selected || (!far && !shown.some((s) => overlaps(s, box)) && !bodies.some((o) => o.id !== id && overlaps(o.box, box)))
-      showPinLabel(el, free)
-      if (free) shown.push(box)
-    }
+      return el && p ? [{ id, el, name: info.get(id)!.name, x: p.x, y: p.y, keep: id === selected }] : []
+    })
+    placeLabels([...lead, ...items], [...bodies, ...lead], far)
   }
   maps.event.addListener(map, 'idle', relabel)
 
@@ -260,6 +288,11 @@ export function createMarkerLayer(
       // 지도를 처음 열 때만 쓴다 — 아직 본 화면이 없어서 바로 맞춘다. 그 뒤의 맞추기는 MapCanvas 가 나눠서 움직인다(#1026).
       const pad = fitPadding(window.innerHeight, isDesktopNow())
       map.setBounds(bounds, pad.top, pad.right, pad.bottom, pad.left)
+    },
+
+    setLeadLabels(get) {
+      leadLabels = get
+      relabel()
     },
 
     destroy() {

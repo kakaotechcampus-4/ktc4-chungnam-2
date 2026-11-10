@@ -117,6 +117,7 @@ export function createSearchGroupMarkerElement(names: string[], onClick: () => v
  * 올리기 전 AI 후보(#843). 요청한 사람의 AI 추천 탭에서만 화면에 그린다 — 서버의 지도는 바꾸지 않는다(가드레일 1).
  * 핑고 핀(그림은 `ui/pinGlyph`의 candidate).
  * 카드와 같은 순위 숫자는 오른쪽 위 배지다. 「지도에 올리기」를 하면 일반 핀 모양의 핀이 된다.
+ * 이름표는 지도 핀처럼 누르지 않아도 보인다 — MapCanvas 가 setPinLabel 로 달고 placeLabels 로 겹침을 정리한다.
  * 고른 후보는 한 번 튀어 커지고(pin-bounce) 핑고가 위에서 머리를 끌어안는다 — 몸은 MapCanvas 가 핀 뒤에, 손은 여기서 앞에 그린다.
  */
 export function createCandidateMarkerElement(c: { rank: number; name: string; selected?: boolean }, onClick: () => void): HTMLElement {
@@ -209,7 +210,7 @@ export const PIN_LABEL = { gap: 6, h: 21 }
  * 회색 테두리 흰 알약일 땐 핀과도 바탕 지도와도 이어지지 않아 따로 뜬 상자로 보였다. 색은 핀 종류(`data-pin-tone`)를 따른다.
  * - quiet: 지도에 찍힌 핀은 누르지 않아도 이름이 보인다. 길면 말줄임한다. 겹치면 markerLayer 가 숨긴다
  * - selected: 고른 핀·후보·검색 결과(#308). 핀 색으로 채워 어느 것을 골랐는지 보이고, 이름을 다 보인다
- * - null: 떼어 낸다(검색 결과·AI 후보는 고를 때만 이름이 있다)
+ * - null: 떼어 낸다(검색 결과는 고를 때만 이름이 있다. AI 후보는 지도 핀처럼 quiet 로 늘 단다)
  * 꼬리는 바깥 틀에, 말줄임은 안쪽 글자에 둔다 — 한 겹이면 말줄임의 overflow:hidden 이 꼬리를 잘랐다.
  * 이름은 textContent 로만 넣는다(마크업으로 해석되지 않게). 읽는 이름은 버튼 aria-label 이 이미 갖고 있어 aria-hidden 이다.
  */
