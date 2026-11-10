@@ -855,32 +855,36 @@ def _member_condition_entries(
 
 
 def build_reason(candidate_checks: Sequence[Check], criteria: Mapping[str, bool]) -> str:
-    """Candidate.reason — 실제로 통과한 체크와 충족한 선호 라벨에서 조립한 한 줄(가드레일 5).
-    모델을 부르지 않는다. 두 종류만 말한다: 1) 이번 run의 활성 실격 조건 중 known으로 통과한
-    것 2) 선호 기준(criteria) 중 이 후보가 known+참인 것. 몇 명이 충족했는지는 말하지 않는다 — 구성원은 자기 조건을
-    전부 충족해야 세는데 이 줄은 하나라도 맞는 라벨을 나열해서 "충족: 양식 (0/1명)"처럼 어긋난다(#631). 인원은
-    카드의 member_fulfillment가 따로 보여 준다. 표시 이름이 없는 키는 말하지 않는다 — 안 본 것을 통과했다고 하지 않기 위해서다. 말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지
-    않는다)."""
+    """Candidate.reason — 실제로 통과한 체크와 충족한 선호를 센 한 줄(가드레일 5). 모델을 부르지 않는다.
+    조건 이름은 적지 않고 몇 개를 맞췄는지만 말한다. 이름은 바로 아래 조건 체크가 보여 줘서 같은 말을 두 번 했다(#1705).
+    두 종류만 센다: 1) 이번 run의 활성 실격 조건 중 known으로 통과한 것 2) 원하는 선호 중 이 후보가 known+참인 것.
+    몇 명이 충족했는지는 말하지 않는다. 구성원은 자기 조건을 전부 충족해야 세는데 이 줄은 조건을 세서 어긋난다(#631).
+    인원은 카드의 member_fulfillment가 보여 준다. 표시 이름이 없는 키는 세지 않는다. 안 본 것을 통과했다고 하지 않기 위해서다.
+    말할 근거가 하나도 없으면 고른 과정 그대로를 적는다(추천 근거를 지어내지 않는다)."""
     known_passed = {c.fact_key for c in candidate_checks if c.confidence == "known" and c.passed}
-    disqualifier_labels = [
-        constraints.PASSED_LABELS[c.fact_key]
-        for c in candidate_checks
-        if c.fact_key in constraints.HARD_REGISTRY
-        and c.fact_key in constraints.PASSED_LABELS
-        and c.confidence == "known" and c.passed
+    disqualifiers = sum(
+        1 for key in known_passed if key in constraints.HARD_REGISTRY and key in constraints.PASSED_LABELS
+    )
+    wanted = [
+        fact_key
+        for fact_key, want in criteria.items()
+        if want is True and fact_key in constraints.PASSED_LABELS and fact_key in constraints.SOFT_FACT_KEYS
     ]
-    preference_labels = [
-        constraints.PASSED_LABELS[fact_key]
-        for fact_key in sorted(criteria)
-        if criteria[fact_key] is True and fact_key in known_passed and fact_key in constraints.PASSED_LABELS
-        and fact_key in constraints.SOFT_FACT_KEYS
-    ]
+    met = sum(1 for fact_key in wanted if fact_key in known_passed)
     parts: list[str] = []
-    if disqualifier_labels:
-        parts.append("통과한 실격 조건: " + ", ".join(disqualifier_labels))
-    if preference_labels:
-        parts.append("맞는 선호: " + ", ".join(preference_labels))
+    if disqualifiers:
+        parts.append(f"꼭 지킬 조건 {disqualifiers}개를 통과했어요")
+    if met:
+        parts.append(_preference_sentence(met, len(wanted)))
     return ". ".join(parts) if parts else "반경 안에서 실격 조건에 걸리지 않은 곳이에요"
+
+
+def _preference_sentence(met: int, wanted: int) -> str:
+    if wanted == 1:
+        return "있으면 좋은 조건을 맞췄어요"
+    if met == wanted:
+        return f"있으면 좋은 조건 {wanted}개를 모두 맞췄어요"
+    return f"있으면 좋은 조건 {wanted}개 중 {met}개를 맞췄어요"
 
 
 def select_top_candidates(

@@ -655,7 +655,18 @@ def test_opposing_heart_of_another_member_still_offsets_preference_author():
 def test_build_reason_lists_passed_disqualifiers_and_met_preferences():
     checks = [_check("is_crowded_large", passed=True), _check("quiet", passed=True)]
     reason = core.build_reason(checks, {"quiet": True})
-    assert reason == "통과한 실격 조건: 붐비는 대형 장소 아님. 맞는 선호: 조용함"
+    assert reason == "꼭 지킬 조건 1개를 통과했어요. 있으면 좋은 조건을 맞췄어요"
+
+
+def test_build_reason_counts_preferences_and_does_not_repeat_labels_1705():
+    """#1705 — 이름은 바로 아래 조건 체크가 보여 주므로 문장은 수만 말한다."""
+    checks = [_check("quiet", passed=True), _check("cuisine_western", passed=True)]
+    both = core.build_reason(checks, {"quiet": True, "cuisine_western": True})
+    assert both == "있으면 좋은 조건 2개를 모두 맞췄어요"
+    assert "조용함" not in both and "양식" not in both
+
+    partial = core.build_reason(checks[:1], {"quiet": True, "cuisine_western": True})
+    assert partial == "있으면 좋은 조건 2개 중 1개를 맞췄어요"
 
 
 def test_build_reason_does_not_claim_unknown_or_failed_checks():
@@ -665,7 +676,7 @@ def test_build_reason_does_not_claim_unknown_or_failed_checks():
         _check("local_flavor", passed=True, confidence="unknown"),
     ]
     reason = core.build_reason(checks, {"quiet": True, "local_flavor": True})
-    assert "붐비는" not in reason and "조용함" not in reason and "지역색" not in reason
+    assert reason == "반경 안에서 실격 조건에 걸리지 않은 곳이에요"
 
 
 def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
@@ -675,7 +686,7 @@ def test_build_reason_falls_back_to_selection_process_when_nothing_to_cite():
 
 def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
     """#631 — 한 구성원이 양식·조용함을 원했고 후보가 양식인데 조용한지는 모르면, 보이는 조건(양식)만 센다(#1100: 1/1).
-    이유 문장은 "맞는 선호: 양식"만 말하고 인원은 카드의 member_fulfillment가 말한다 — 같은 문장에 (0/1명)이 없다."""
+    이유 문장은 맞춘 조건 수만 말하고(모르는 조용함은 맞췄다고 세지 않는다) 인원은 카드의 member_fulfillment가 말한다 — 같은 문장에 (0/1명)이 없다."""
     hearted = [
         _place(_check("cuisine_western", passed=True), members=frozenset({"u1"})),
         _place(_check("quiet", passed=True), members=frozenset({"u1"})),
@@ -687,7 +698,7 @@ def test_reason_does_not_print_a_member_count_that_contradicts_the_label_631():
     reason = core.build_reason(candidate, criteria)
 
     assert (fulfillment["satisfied"], fulfillment["total"]) == (1, 1)
-    assert reason == "맞는 선호: 양식"
+    assert reason == "있으면 좋은 조건 2개 중 1개를 맞췄어요"
     assert "명)" not in reason
 
 

@@ -1267,7 +1267,7 @@ def test_execute_run_unwanted_unknown_soft_checks_still_feed_scoring(db_session)
     """점수 입력은 전체 soft 체크다 — 저장에서 빠져도 ♥ 핀 기준(cuisine_japanese)이 점수에 쓰인다."""
     _run, candidate = _run_with_wanted_and_unwanted_soft_keys(db_session)
     assert candidate.member_fulfillment["total"] >= 1 and candidate.member_fulfillment["satisfied"] >= 1
-    assert "일식" in candidate.reason
+    assert "맞췄어요" in candidate.reason
 
 
 def _run_with_written_season_preference(db_session, *, start_date, end_date):
@@ -1294,13 +1294,13 @@ def _run_with_written_season_preference(db_session, *, start_date, end_date):
 def test_season_key_counts_when_the_trip_overlaps_the_season(db_session):
     candidate = _run_with_written_season_preference(db_session, start_date="2027-03-31", end_date="2027-04-02")
     assert "cherry_blossom" in {c["fact_key"] for c in candidate.checks}
-    assert "벚꽃" in candidate.reason
+    assert "맞췄어요" in candidate.reason
 
 
 def test_season_key_outside_the_trip_is_neither_scored_nor_shown_as_met(db_session):
     candidate = _run_with_written_season_preference(db_session, start_date="2027-01-10", end_date="2027-01-12")
     assert "cherry_blossom" not in {c["fact_key"] for c in candidate.checks}
-    assert "벚꽃" not in candidate.reason
+    assert "맞췄어요" not in candidate.reason
 
 
 def test_publish_candidate_pin_checks_follow_the_same_filter(db_session):
@@ -1592,14 +1592,14 @@ def test_execute_run_fills_reason_member_fulfillment_and_place_source(db_session
 
     by_place = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     sourced, bare = by_place["sourced"], by_place["bare"]
-    assert sourced.reason == "통과한 실격 조건: 붐비는 대형 장소 아님. 맞는 선호: 조용함"
+    assert sourced.reason == "꼭 지킬 조건 1개를 통과했어요. 있으면 좋은 조건을 맞췄어요"
     # user_1은 실격 사유(너무 붐벼요)를 냈고 후보가 통과했으니 충족(#255). 이유 문장은 인원을 말하지 않는다(#631).
     assert _satisfied_view(sourced.member_fulfillment) == {"satisfied": 2, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": True},
     ]}
     assert sourced.place_source == source
     # 조용함을 모르는 후보 — 구성원은 집계 대상이지만 충족으로 세지 않고, 안 본 것을 이유로 들지 않는다.
-    assert bare.reason == "통과한 실격 조건: 붐비는 대형 장소 아님"
+    assert bare.reason == "꼭 지킬 조건 1개를 통과했어요"
     assert _satisfied_view(bare.member_fulfillment) == {"satisfied": 1, "total": 2, "by_member": [
         {"user_id": "user_1", "satisfied": True}, {"user_id": "user_2", "satisfied": False},
     ]}
@@ -2663,8 +2663,8 @@ def test_restaurant_heart_convenience_labels_do_not_outrank_a_written_preference
 
     candidates = {c.place_id: c for c in service.list_candidates(db_session, str(run.id))}
     assert candidates["sushi"].rank == 1 and candidates["buffet"].rank == 2
-    assert candidates["sushi"].reason == "맞는 선호: 일식"
-    assert "맞는 선호" not in candidates["buffet"].reason
+    assert candidates["sushi"].reason == "있으면 좋은 조건을 맞췄어요"
+    assert "맞췄어요" not in candidates["buffet"].reason
     assert "franchise" not in {c["fact_key"] for c in candidates["buffet"].checks}  # ♥에서 빠진 키는 응답 체크에도 없다
 
 
