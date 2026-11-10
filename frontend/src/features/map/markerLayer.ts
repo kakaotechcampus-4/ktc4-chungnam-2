@@ -51,6 +51,32 @@ export const PIN_GROUP_PX = 24
 
 type Box = { l: number; t: number; r: number; b: number }
 const overlaps = (a: Box, b: Box) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
+/** 핀 끝(화면 좌표)에서 핀 몸통 상자. */
+const bodyBox = ({ x, y }: { x: number; y: number }): Box => ({ l: x - BODY.w / 2, t: y - BODY.h, r: x + BODY.w / 2, b: y })
+
+/**
+ * 이름표를 겹치지 않게 남긴다 — 지도 핀(markerLayer)과 AI 후보(MapCanvas)가 같이 쓴다.
+ * items 를 중요한 순서로 받아, 앞서 남긴 이름표나 다른 핀 몸통(bodies)을 덮지 않는 것만 남긴다.
+ * keep(고른 핀)은 언제나 남고 그 자리를 먼저 차지한다. 멀리 보면(far) keep 만 남는다. x·y 는 핀 끝의 화면 좌표다.
+ */
+export function placeLabels(
+  items: { id: string; el: HTMLElement; name: string; x: number; y: number; keep: boolean }[],
+  bodies: { id: string; x: number; y: number }[],
+  far: boolean,
+) {
+  const shown: Box[] = []
+  for (const it of items) {
+    const label = it.el.querySelector<HTMLElement>('[data-pin-name]')
+    if (!label) continue
+    // 그려지기 전(지도 밖)이면 폭이 0이라 글자 수로 어림한다.
+    const w = label.offsetWidth || Math.min(it.name.length, 8) * 12 + 16
+    const box = { l: it.x - w / 2, t: it.y + PIN_LABEL.gap, r: it.x + w / 2, b: it.y + PIN_LABEL.gap + PIN_LABEL.h }
+    const free =
+      it.keep || (!far && !shown.some((s) => overlaps(s, box)) && !bodies.some((o) => o.id !== it.id && overlaps(bodyBox(o), box)))
+    showPinLabel(it.el, free)
+    if (free) shown.push(box)
+  }
+}
 
 /** 이 값이 그대로면 오버레이를 다시 만들 이유가 없다. */
 function signature(pin: Placed, ratio: number, fresh: boolean): string {
@@ -149,11 +175,13 @@ export function createMarkerLayer(
     const proj = map.getProjection()
     const at = new Map<string, { x: number; y: number }>()
     for (const [id, p] of info) if (!grouped.has(id)) at.set(id, proj.containerPointFromCoords(new maps.LatLng(p.lat, p.lng)))
-    const body = (id: string, { x, y }: { x: number; y: number }) => ({ id, box: { l: x - BODY.w / 2, t: y - BODY.h, r: x + BODY.w / 2, b: y } })
     // 묶음 핀도 이름표가 덮으면 안 되는 몸통이다. 묶음 핀은 이름표가 없다 — 이름은 누르면 나오는 목록에 있다.
     const bodies = [
-      ...[...at].map(([id, p]) => body(id, p)),
-      ...groups.map((g, i) => body(`group:${i}`, proj.containerPointFromCoords(new maps.LatLng(g.lat, g.lng)))),
+      ...[...at].map(([id, p]) => ({ id, x: p.x, y: p.y })),
+      ...groups.map((g, i) => {
+        const { x, y } = proj.containerPointFromCoords(new maps.LatLng(g.lat, g.lng))
+        return { id: `group:${i}`, x, y }
+      }),
     ]
 
     const order = [...info.keys()].sort((a, b) => {
@@ -166,22 +194,12 @@ export function createMarkerLayer(
         pa.created - pb.created
       )
     })
-    const shown: Box[] = []
-    for (const id of order) {
+    const items = order.flatMap((id) => {
       const el = elements.get(id)
       const p = at.get(id)
-      if (!el || !p) continue
-      const label = el.querySelector<HTMLElement>('[data-pin-name]')
-      if (!label) continue
-      // 그려지기 전(지도 밖)이면 폭이 0이라 글자 수로 어림한다.
-      const w = label.offsetWidth || Math.min(info.get(id)!.name.length, 8) * 12 + 16
-      const box = { l: p.x - w / 2, t: p.y + PIN_LABEL.gap, r: p.x + w / 2, b: p.y + PIN_LABEL.gap + PIN_LABEL.h }
-      // 고른 핀은 언제나 보이고, 그 자리를 먼저 차지한다.
-      const free =
-        id === selected || (!far && !shown.some((s) => overlaps(s, box)) && !bodies.some((o) => o.id !== id && overlaps(o.box, box)))
-      showPinLabel(el, free)
-      if (free) shown.push(box)
-    }
+      return el && p ? [{ id, el, name: info.get(id)!.name, x: p.x, y: p.y, keep: id === selected }] : []
+    })
+    placeLabels(items, bodies, far)
   }
   maps.event.addListener(map, 'idle', relabel)
 

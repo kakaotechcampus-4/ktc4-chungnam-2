@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { KakaoMapKeyMissingError, loadKakaoMaps } from './kakaoMap'
 import { allInside, dragHeading, fitCenter, fitLevel, fitPadding, groupNear, view, zoomSteps } from './camera'
 import { attachLongPress } from './longPress'
-import { createMarkerLayer, mapFade, PIN_GROUP_PX, type MarkerLayer } from './markerLayer'
+import { createMarkerLayer, LABEL_MAX_LEVEL, mapFade, PIN_GROUP_PX, placeLabels, type MarkerLayer } from './markerLayer'
 import { setMapBridge, usePinDragStore } from './pinDrag'
 import {
   createCandidateMarkerElement,
@@ -12,6 +12,7 @@ import {
   createSearchMarkerElement,
   createTapBubbleElement,
   markSelected,
+  setPinLabel,
 } from './pinMarker'
 import type { PlaceSearchResultDto } from '@/features/search/model'
 import { useSheetStore } from '@/features/shell/sheetStore'
@@ -596,23 +597,40 @@ export default function MapCanvas({
 
   // AI 후보 핑고 핀. 많아야 몇 곳이고 결과·선택이 바뀔 때만 와서 검색 결과처럼 매번 새로 그린다.
   // 고른 후보는 핀 위로, 끌어안는 핑고(11)보다도 위로 올린다.
+  // 지도 핀처럼 누르지 않아도 이름표가 보인다. 겹치면 고른 후보 > 순위 높은 순으로 남고, 멀리 보면 고른 후보만 남는다(placeLabels).
   useEffect(() => {
     const m = mapRef.current
     if (!ready || !m) return
-    const overlays = candidates.map((c) => {
+    const { maps, map } = m
+    const drawn = candidates.map((c) => {
       const el = createCandidateMarkerElement(c, c.onClick)
       if (c.selected) markSelected(el, c.name, true)
-      const overlay = new m.maps.CustomOverlay({
-        position: new m.maps.LatLng(c.lat, c.lng),
+      else setPinLabel(el, c.name, 'quiet')
+      const overlay = new maps.CustomOverlay({
+        position: new maps.LatLng(c.lat, c.lng),
         content: el,
         yAnchor: 1,
         clickable: true,
         zIndex: c.selected ? 12 : 4,
       })
-      overlay.setMap(m.map)
-      return overlay
+      overlay.setMap(map)
+      return { c, el, overlay }
     })
-    return () => overlays.forEach((o) => o.setMap(null))
+    const order = [...drawn].sort((a, b) => Number(b.c.selected) - Number(a.c.selected) || a.c.rank - b.c.rank)
+    const relabel = () => {
+      const proj = map.getProjection()
+      const at = order.map(({ c, el }) => {
+        const { x, y } = proj.containerPointFromCoords(new maps.LatLng(c.lat, c.lng))
+        return { id: c.id, el, name: c.name, keep: c.selected, x, y }
+      })
+      placeLabels(at, at, map.getLevel() > LABEL_MAX_LEVEL)
+    }
+    relabel()
+    maps.event.addListener(map, 'idle', relabel)
+    return () => {
+      maps.event.removeListener(map, 'idle', relabel)
+      drawn.forEach(({ overlay }) => overlay.setMap(null))
+    }
   }, [candidates, ready])
 
   // AI 추천 탭: 여행 지역 경계(action-fill 2px)와 그 밖 어둡게(ink-900 12%). 넓은 사각형에 지역 고리를 구멍으로 뚫은 다각형 하나다.
