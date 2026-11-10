@@ -426,7 +426,7 @@ describe('CourseBody — 확정 리스트 불러오기 실패', () => {
   it('실패하면 「장소가 모자라요」 안내 대신 오류와 「다시 불러오기」를 보인다', async () => {
     server.use(http.get('*/maps/:mapId/shortlist', () => error(500, 'INTERNAL')))
     renderSheet()
-    expect(await screen.findByText(/확정 리스트를 불러오지 못했어요/)).toBeInTheDocument()
+    expect(await screen.findByText(/확정한 장소를 불러오지 못했어요/)).toBeInTheDocument()
     expect(document.body).not.toHaveTextContent('2곳 이상 필요해요')
     expect(screen.getByRole('button', { name: '다시 불러오기' })).toBeInTheDocument()
   })

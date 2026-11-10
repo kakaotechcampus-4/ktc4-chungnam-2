@@ -152,7 +152,7 @@ describe('삭제와 되돌리기(목 서버)', () => {
     await addToShortlist(MAP, 'pin_1')
     renderHarness()
     await userEvent.click(await screen.findByRole('button', { name: '흑돼지식당 지우기' }))
-    await waitFor(() => expect(useToastStore.getState().toast?.message).toBe('확정 리스트에서도 빠졌어요'))
+    await waitFor(() => expect(useToastStore.getState().toast?.message).toBe('확정한 장소에서도 빠졌어요'))
     expect(within(list()).queryByText('흑돼지식당')).toBeNull()
 
     act(() => useToastStore.getState().toast?.action?.onClick())

@@ -55,15 +55,15 @@ export default function ShortlistExport({ mapId }: { mapId: string }) {
           kind,
           async () => {
             await copyText(load('txt').then((f) => f.blob.text()))
-            showToast('확정 리스트를 복사했어요. 단톡방에 붙여 넣어 보세요')
+            showToast('확정한 장소를 복사했어요. 단톡방에 붙여 넣어 보세요')
           },
-          '확정 리스트를 복사하지 못했어요',
+          '확정한 장소를 복사하지 못했어요',
         )
       : run(
           kind,
           async () => {
             const file = await load(kind)
-            saveFile(file.blob, file.filename ?? `확정리스트.${kind}`)
+            saveFile(file.blob, file.filename ?? `확정한 장소.${kind}`)
           },
           '파일을 받지 못했어요',
         )

@@ -287,7 +287,7 @@ class TestCheckGoals:
         tr, h = self.labeled([("p1", "관광지", ("quiet",)), ("p2", "카페", ("quiet",))])
         none = self.check(tr, h, goal)
         assert none["feasible"] is False and none["reasons"] == [G.NO_TAGGED_PLACE] and none["facts"]["tagged_places"] == 0
-        assert G.check_sentence(tr, none, goal) == "‘둘째 날 (화)에 공연 장소 넣기’ 목표는 어려워 보여요. 확정 리스트에 공연 장소가 없어요."
+        assert G.check_sentence(tr, none, goal) == "‘둘째 날 (화)에 공연 장소 넣기’ 목표는 어려워 보여요. 확정한 장소 중에 공연 장소가 없어요."
         tr2, _ = self.labeled([("p1", "관광지", ("performance",)), ("p2", "카페", ("quiet",))])
         assert self.check(tr2, {"p1": ALL_OPEN}, goal)["feasible"] is True
         closed = {"p1": {TUE.weekday(): "closed"}}

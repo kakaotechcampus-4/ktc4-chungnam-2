@@ -40,7 +40,7 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
   const shortlist = useShortlistQuery(mapId)
   const enrich = useEnrichPin()
 
-  if (shortlist.error) return <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />
+  if (shortlist.error) return <ErrorText message="확정한 장소를 불러오지 못했어요" error={shortlist.error} />
   if (edit.error)
     return (
       <div className="space-y-2">
@@ -54,7 +54,7 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
   if (edit.dates.length === 0) return <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
   const items = shortlist.data ?? []
   if (items.length === 0) {
-    return <EmptyState title="아직 확정된 장소가 없어요">핀 찍기 탭에서 확정 리스트에 넣으면 여기서 날짜별로 나눌 수 있어요</EmptyState>
+    return <EmptyState title="아직 확정된 장소가 없어요">핀 찍기 탭에서 장소를 확정하면 여기서 날짜별로 나눌 수 있어요</EmptyState>
   }
 
   const byId = new Map(items.map((i) => [i.pin.id, enrich(i.pin)]))

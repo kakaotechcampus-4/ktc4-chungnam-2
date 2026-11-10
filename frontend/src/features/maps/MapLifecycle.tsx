@@ -144,7 +144,7 @@ export function CopyMapConfirm({ mapId, onCancel }: { mapId: string; onCancel: (
   return (
     <ConfirmDialog
       title="이 지도를 복사할까요?"
-      body="날짜·지역·대표 이미지·색과 핀을 새 지도로 가져가요. 구성원의 의견, 구성원, 확정 리스트는 가져가지 않아요."
+      body="날짜·지역·대표 이미지·색과 핀을 새 지도로 가져가요. 구성원의 의견, 구성원, 확정한 장소는 가져가지 않아요."
       ok="복사"
       pending={copy.isPending}
       onCancel={onCancel}

@@ -25,7 +25,7 @@ export default function PinTrashSheet({ mapId, onClose }: { mapId: string; onClo
   function revive(id: string, name: string, wasConfirmed: boolean) {
     setFailedId(null)
     restore.mutate(id, {
-      onSuccess: () => showToast(`${name}${josa(name, '을', '를')} 되돌렸어요${wasConfirmed ? '. 확정 리스트에도 다시 올렸어요' : ''}`),
+      onSuccess: () => showToast(`${name}${josa(name, '을', '를')} 되돌렸어요${wasConfirmed ? '. 확정한 장소에도 다시 올렸어요' : ''}`),
       onError: () => setFailedId(id),
     })
   }
@@ -53,7 +53,7 @@ export default function PinTrashSheet({ mapId, onClose }: { mapId: string; onClo
                     <br />
                     {days_left}일 안에 되돌릴 수 있어요
                   </p>
-                  {was_confirmed && <p className="text-xs text-ink-500"><Sentences text="되돌리면 확정 리스트에도 다시 올라가요" /></p>}
+                  {was_confirmed && <p className="text-xs text-ink-500"><Sentences text="되돌리면 확정한 장소에도 다시 올라가요" /></p>}
                 </div>
                 <button
                   type="button"

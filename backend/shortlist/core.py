@@ -61,7 +61,7 @@ def reorder_mismatch(current_ids: list[str], requested_ids: list[str]) -> dict |
 EXPORT_HEADER = ("날짜", "순서", "이름", "분류", "링크", "메모")
 EXPORT_EMPTY_TXT = "확정한 장소가 아직 없어요\n"
 LIVE_NAME_SUFFIX = " (이름 확인 필요)"
-EXPORT_DEFAULT_NAME = "확정 리스트"
+EXPORT_DEFAULT_NAME = "확정한 장소"
 EXPORT_TITLE_MAX = 50
 _FILENAME_FORBIDDEN = frozenset("/\\:*?\"<>|")
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")   # 엑셀이 수식으로 읽는 첫 글자(수식 주입 방지)

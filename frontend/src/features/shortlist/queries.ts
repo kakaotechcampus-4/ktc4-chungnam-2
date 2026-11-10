@@ -29,7 +29,7 @@ function useRefreshAfterChange(mapId: string) {
 }
 
 /**
- * 「확정 리스트에 넣기」. 누르는 순간 그 핀을 확정으로 바꿔 보인다(#1676, 낙관적 UI) — 버튼과 지도 핀 색이 응답과 다시 받기를 기다리지 않는다.
+ * 「확정하기」. 누르는 순간 그 핀을 확정으로 바꿔 보인다(#1676, 낙관적 UI) — 버튼과 지도 핀 색이 응답과 다시 받기를 기다리지 않는다.
  * 넣으면 확정이라는 건 정의라 화면이 짐작하는 게 아니다. 실패하면 그 핀의 종류만 되돌린다(목록 전체를 옛 사진으로 덮으면 그사이 실시간으로 온 변경까지 지운다).
  */
 export function useAddToShortlistMutation(mapId: string) {
@@ -90,21 +90,21 @@ export function useUnconfirm(mapId: string) {
   const unconfirm = (pin: { id: string; place_name?: string | null }) => {
     // 빼는 중에 또 누르면 무시한다 — 두 번째가 404로 실패 토스트를 띄우고 첫 번째의 「되돌리기」를 지웠다. 줄은 누르는 순간 빠진다(#1676).
     const item = items?.find((i) => i.pin.id === pin.id)
-    if (!item) return showToast('확정 리스트를 불러오는 중이에요. 잠시 뒤에 다시 눌러 주세요')
+    if (!item) return showToast('확정한 장소를 불러오는 중이에요. 잠시 뒤에 다시 눌러 주세요')
     if (remove.isPending && remove.variables === item.id) return
     const name = pin.place_name ?? '이 장소'
     setRemoving(pin.id)
     remove.mutate(item.id, {
       onSettled: () => setRemoving(undefined),
       onSuccess: () =>
-        showToast(`${name}${josa(name, '을', '를')} 확정 리스트에서 뺐어요`, {
+        showToast(`${name}${josa(name, '을', '를')} 확정에서 뺐어요`, {
           label: '되돌리기',
           onClick: () => add.mutate(pin.id, { onError: () => showToast('되돌리지 못했어요') }),
         }),
-      onError: () => showToast('확정 리스트에서 빼지 못했어요'),
+      onError: () => showToast('확정에서 빼지 못했어요'),
     })
   }
-  /** 지금 빼는 중인 핀 — 핀 상세 버튼이 응답 전에 「확정 리스트에 넣기」로 바뀐다. 줄은 낙관적으로 이미 빠져서 목록에서 찾지 못해 따로 기억한다. */
+  /** 지금 빼는 중인 핀 — 핀 상세 버튼이 응답 전에 「확정하기」로 바뀐다. 줄은 낙관적으로 이미 빠져서 목록에서 찾지 못해 따로 기억한다. */
   return { unconfirm, isPending: remove.isPending, removingPinId }
 }
 

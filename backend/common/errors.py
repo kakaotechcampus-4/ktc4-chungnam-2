@@ -59,7 +59,7 @@ CATALOG: dict[str, tuple[int, str]] = {
     "PLACES_UNAVAILABLE": (503, "장소 검색을 지금은 쓸 수 없어요"),
     "RECOMMEND_FAILED": (500, "추천을 만들지 못했어요"),
     "SHORTLIST_CATEGORY_EMPTY": (200, "이 분류에 확정된 곳이 없어요"),
-    "SHORTLIST_STALE": (409, "확정 리스트가 바뀌었어요"),
+    "SHORTLIST_STALE": (409, "확정한 장소가 바뀌었어요"),
     "SHORTLIST_SCHEDULED": (409, "날짜별 일정을 쓰는 중이에요"),
     "UNAUTHORIZED": (401, "로그인이 필요해요"),
     "FORBIDDEN": (403, "권한이 없어요"),

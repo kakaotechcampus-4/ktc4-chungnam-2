@@ -445,8 +445,8 @@ def test_export_filename_uses_map_title_for_txt_and_csv(app_client, db_session):
     txt = app_client.get("/maps/map_1/shortlist/export", cookies=_auth())
     csv = app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth())
 
-    assert _filename_star(txt) == "부산 여행 확정 리스트.txt"
-    assert _filename_star(csv) == "부산 여행 확정 리스트.csv"
+    assert _filename_star(txt) == "부산 여행 확정한 장소.txt"
+    assert _filename_star(csv) == "부산 여행 확정한 장소.csv"
     assert 'filename="shortlist.csv"' in csv.headers["content-disposition"]   # 한글은 ASCII fallback에서 빠진다
 
 
@@ -456,20 +456,20 @@ def test_export_filename_strips_dangerous_chars_and_cannot_inject_headers(app_cl
     resp = app_client.get("/maps/map_1/shortlist/export", cookies=_auth())
 
     assert resp.status_code == 200 and "set-cookie" not in resp.headers
-    assert _filename_star(resp) == "abcdefg Set-Cookie x=1 확정 리스트.txt"
+    assert _filename_star(resp) == "abcdefg Set-Cookie x=1 확정한 장소.txt"
     assert "/" not in _filename_star(resp)
 
 
 def test_export_filename_truncates_long_title(app_client, db_session):
     _insert_map(db_session, "가" * 300)
 
-    assert _filename_star(app_client.get("/maps/map_1/shortlist/export", cookies=_auth())) == "가" * 50 + " 확정 리스트.txt"
+    assert _filename_star(app_client.get("/maps/map_1/shortlist/export", cookies=_auth())) == "가" * 50 + " 확정한 장소.txt"
 
 
 def test_export_filename_falls_back_for_blank_or_deleted_map(app_client, db_session):
     _insert_map(db_session, " . ")
-    assert _filename_star(app_client.get("/maps/map_1/shortlist/export", cookies=_auth())) == "확정 리스트.txt"
+    assert _filename_star(app_client.get("/maps/map_1/shortlist/export", cookies=_auth())) == "확정한 장소.txt"
 
 
 def test_export_filename_is_default_when_map_has_no_title_row(app_client):
-    assert _filename_star(app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth())) == "확정 리스트.csv"
+    assert _filename_star(app_client.get("/maps/map_1/shortlist/export?format=csv", cookies=_auth())) == "확정한 장소.csv"

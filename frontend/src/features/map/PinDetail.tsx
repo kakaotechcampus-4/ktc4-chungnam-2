@@ -75,11 +75,11 @@ export function PinDetailHeader({
     if (confirmed) return remove.unconfirm(pin)
     add.mutate(pin.id, {
       onSuccess: () =>
-        showToast(`${name}${josa(name, '을', '를')} 확정 리스트에 넣었어요`, {
-          label: '확정 리스트 보기',
+        showToast(`${name}${josa(name, '을', '를')} 확정했어요`, {
+          label: '확정한 장소 보기',
           onClick: () => navigate(`/maps/${mapId}/shortlist`),
         }),
-      onError: () => showToast('확정 리스트에 넣지 못했어요'),
+      onError: () => showToast('확정하지 못했어요'),
     })
   }
 
@@ -101,7 +101,7 @@ export function PinDetailHeader({
               <><Mark kind="check" size={14} /> 확정됨</>
             ) : (
               <>
-                <Mark kind="star" size={14} /> 확정 리스트에 넣기
+                <Mark kind="star" size={14} /> 확정하기
               </>
             )}
           </button>

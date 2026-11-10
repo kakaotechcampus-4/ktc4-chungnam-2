@@ -451,7 +451,7 @@ _CHECK_SENTENCES = {
     FEW_INDOOR: "실내 장소가 적어서 그날을 실내 위주로 채우기 어려워요",
     PLACE_CLOSED_ON_DAY: "그 장소가 그날 쉬어요",
     NO_COMMON_OPEN_DAY: "두 장소가 함께 영업하는 날이 없어요",
-    NO_TAGGED_PLACE: "확정 리스트에 그런 장소가 없어요",                    # day_has는 check_sentence가 tag 이름을 넣어 바꾼다
+    NO_TAGGED_PLACE: "확정한 장소 중에 그런 곳이 없어요",                    # day_has는 check_sentence가 tag 이름을 넣어 바꾼다
     TAGGED_PLACE_CLOSED_ON_DAY: "그런 장소가 그날 모두 쉬어요",
     LABELS_UNKNOWN: "라벨을 아는 장소가 없어 판단할 수 없어요",
 }
@@ -528,7 +528,7 @@ def check_sentence(trip: Trip, check: dict, goal: Goal) -> str:
     if check["feasible"] is True:
         return f"{head} 가능해 보여요."
     noun = tag_noun(goal.tag) if goal.kind == "day_has" else ""
-    sentences = {**_CHECK_SENTENCES, NO_TAGGED_PLACE: f"확정 리스트에 {noun} 장소가 없어요",
+    sentences = {**_CHECK_SENTENCES, NO_TAGGED_PLACE: f"확정한 장소 중에 {noun} 장소가 없어요",
                  TAGGED_PLACE_CLOSED_ON_DAY: f"{noun} 장소가 그날 모두 쉬어요"}
     why = ". ".join(sentences[r] for r in check["reasons"]) or "영업 여부를 몰라 확인이 필요해요"
     return f"{head} 어려워 보여요. {why}."
