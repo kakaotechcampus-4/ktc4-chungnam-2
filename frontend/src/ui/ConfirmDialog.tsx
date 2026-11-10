@@ -1,10 +1,11 @@
 import { useEffect, type ReactNode } from 'react'
 import { AlertDialog } from 'radix-ui'
 import Sentences from './Sentences'
+import BusyLabel from './BusyLabel'
 
 /**
  * 확인 창(Figma 근거 확인 계열·로그아웃). 포커스 가두기·Esc 닫기는 Radix AlertDialog 가 맡는다(#299·#359).
- * 고르게 하는 창이라 딤을 눌러도 닫히지 않는다. 빨강(danger)은 파괴적 동작(빼기)에만 쓴다.
+ * 고르게 하는 창이라 딤을 눌러도 닫히지 않는다. 빨강(danger)은 되돌릴 수 없는 동작에만 쓴다 — 어디에 쓰는지는 DESIGN.md 버튼 표.
  */
 export default function ConfirmDialog({
   title,
@@ -58,7 +59,7 @@ export default function ConfirmDialog({
               if (!pending) onOk()
             }}
             // 입력칸이 많은 수정 창(지도 정보)이 낮은 화면에서 넘치면 창 안에서 스크롤한다.
-            className="enter-pop max-h-full w-full max-w-sm space-y-2 overflow-y-auto rounded-2xl bg-white p-5"
+            className="enter-pop max-h-full w-full max-w-sm space-y-2 overflow-y-auto rounded-2xl bg-surface p-5"
           >
             <AlertDialog.Title className="break-keep text-title font-bold text-ink-900">{title}</AlertDialog.Title>
             {detail && <div className="rounded-xl bg-ink-50 p-3 text-sm">{detail}</div>}
@@ -76,9 +77,12 @@ export default function ConfirmDialog({
               <button
                 type="submit"
                 disabled={pending}
+                aria-busy={pending}
                 className={`${danger ? 'btn-danger' : 'btn-primary'} btn-md`}
               >
-                {ok}
+                <BusyLabel busy={pending} busyText={ok}>
+                  {ok}
+                </BusyLabel>
               </button>
             </div>
           </form>

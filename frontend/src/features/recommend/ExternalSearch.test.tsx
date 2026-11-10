@@ -88,7 +88,7 @@ describe('카카오맵에서 더 찾아보기(#798)', () => {
     const result = await fetchResult(done.id)
     const r = run(done.id)
 
-    const view = renderWithClient(<ResultsBody mapId="map_1" run={r} result={result} members={[]} onHow={() => {}} />)
+    const view = renderWithClient(<ResultsBody mapId="map_1" run={r} result={result} members={[]} />)
     expect(result.external_search).toBeUndefined() // 목 결과는 후보가 넉넉하다
     expect(screen.queryByRole('link', { name: /카카오맵에서 더 찾아보기/ })).not.toBeInTheDocument()
     const cardLinks = screen.getAllByRole('link', { name: '카카오맵에서 보기' })
@@ -99,7 +99,7 @@ describe('카카오맵에서 더 찾아보기(#798)', () => {
 
     // 후보가 적은 결과 — 링크는 0곳 응답이 준 실제 목 링크를 싣는다.
     const search = noResultsExternalSearch(await noResultsError())!
-    renderWithClient(<ResultsBody mapId="map_1" run={r} result={{ ...result, candidates: result.candidates.slice(0, 2), external_search: search }} members={[]} onHow={() => {}} />)
+    renderWithClient(<ResultsBody mapId="map_1" run={r} result={{ ...result, candidates: result.candidates.slice(0, 2), external_search: search }} members={[]} />)
     expectExternalLink(search.query)
   })
 })

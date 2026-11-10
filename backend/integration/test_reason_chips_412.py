@@ -9,6 +9,7 @@
 import pytest
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     PLACES, _pin, fake_planner, plan_with, members, own_db, place_ids, real_client,
 )
 
@@ -27,7 +28,7 @@ def planner_calls(fake_planner, monkeypatch):
 
 
 def _run(client, map_id):
-    run = client.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = client.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202, run.text
     return run.json()["id"]
 

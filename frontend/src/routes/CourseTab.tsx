@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+
 import CourseBody from '@/features/course/CourseBody'
 import CourseMapLegend from '@/features/course/CourseMapLegend'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
@@ -5,6 +7,7 @@ import { usePinsQuery } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import { useMembersQuery } from '@/features/maps/queries'
 import { useShell } from '@/features/shell/shellContext'
+import { clearTabNews } from '@/features/shell/tabNews'
 import TabSheet from '@/features/shell/TabSheet'
 import SheetTitle from '@/ui/SheetTitle'
 import Sentences from '@/ui/Sentences'
@@ -20,6 +23,8 @@ export default function CourseTab() {
   const pins = usePinsQuery(mapId).data ?? []
   const members = useMembersQuery(mapId).data ?? []
   const openPin = selectedPinId ? pins.find((p) => p.id === selectedPinId) : undefined
+  // 들어오면 탭 막대의 새 소식 점을 지운다(#1719).
+  useEffect(() => clearTabNews(mapId, 'course'), [mapId])
 
   if (openPin) {
     return (

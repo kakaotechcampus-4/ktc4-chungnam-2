@@ -22,6 +22,9 @@
 - 다음 방법(#1347, 명세 6.9): 후속 케이스(case.followup)에서 해 본 행동을 원문에서 다시 고른 수와 검증 뒤 남은 수(0이어야 한다),
   f1 claim이 남은 수, 추천 결과를 짐작하거나 입력과 다른 사실을 쓴 문구(expect.result_guess_phrases — 남는 곳이 있는데 「찾지 못했」 등 — 결정 지시처럼 케이스 문구로, 원문 슬롯 밖과 렌더 text
   조각)를 센다.
+- 후보 수 문장(#1601, diagnose-v10): 「지키는」, 「지킨」이 문장에 나온 호출(#1253 뒤 🚫 사유는 거르지 않는다 — 0이어야 한다),
+  different_axes 갈림에서 both_sides_count를 p1 claim으로 쓴 호출, 둘 다 확인된 곳이 어긋나지 않는 곳보다 적은데(M < N)
+  「다 맞추」, 「맞는 곳」을 쓴 호출(0이어야 한다)을 센다. 원문 슬롯 밖과 렌더 text 조각을 따로 센다.
 - 엮기(#1358, 명세 6.10): 카테고리 공백에서 「이 핀 보기」를 기대한 호출 중 검증 뒤 남은 핀이 expect.pins인 수, 맞는 핀이 없는
   케이스에서 원문과 검증 뒤 open_pin 수(검증 뒤는 0이어야 한다), 🚫가 달린 핀을 try_in_schedule에 넣은 호출, 끼워 본 결과의
   tool_result claim이 남은 수, 갈림에서 try_in_schedule을 부른 수, 모델 원문(슬롯 밖)에 날 별칭(d1 …)을 쓴 문장을 센다 — 그 문장은 검증 5단계가 숫자로 보고 뺀다.
@@ -54,6 +57,8 @@ RESULTS_DIR = Path(__file__).with_name("results")
 PRICE_IN, PRICE_CACHED, PRICE_OUT = 152, 15, 761
 # 지시형만 센다 — v9부터 「확정 일정」, 「확정한 곳」 같은 명사가 사실 문장에 나와 「확정」 두 글자로는 지시가 아닌 것까지 잡힌다(#1358)
 FORBIDDEN_RAW = ("확정하", "확정해", "결정하세요", "여기로 가")
+KEEP_WORDS = ("지키는", "지킨")             # #1601: 🚫 사유는 거르지 않으니 「반대 사유를 지키는」은 사실이 아니다
+OVERCLAIM_WORDS = ("다 맞추", "맞는 곳")   # #1601: 모름이 섞인 수(M < N)를 다 맞춘다고 쓰지 않는다
 
 _local = threading.local()
 
@@ -171,7 +176,8 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
                       "decision_match": False, "button_match": False, "kept_actions": [],
                       "raw_echo": [], "shown_echo": [], "quoted_echo": [], "p1_claimed": False,
                       "raw_open_recommend": False, "raw_actions": [], "f1_claimed": False, "raw_guess": [], "shown_guess": [],
-                      "schedule_claimed": False, "kept_pins": []}
+                      "schedule_claimed": False, "kept_pins": [], "p1_paths": [],
+                      "raw_keep": [], "shown_keep": [], "raw_overclaim": [], "shown_overclaim": []}
     verified = fx.verify(world, key, out, tools)
     raw_text = " ".join(a.text for a in out.advice)
     row |= {
@@ -189,6 +195,7 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     }
     kept_ids = set((verified.record.get("claims") or {}).get("kept", []))
     row["p1_claimed"] = any(c.kind == "tool_result" and c.call_id == "p1" and c.id in kept_ids for c in out.claims)
+    row["p1_paths"] = sorted({c.path for c in out.claims if c.kind == "tool_result" and c.call_id == "p1" and c.id in kept_ids})
     row["f1_claimed"] = any(c.kind == "tool_result" and c.call_id == "f1" and c.id in kept_ids for c in out.claims)
     try_ids = {c["call_id"] for c in try_calls}
     row["schedule_claimed"] = any(c.kind == "tool_result" and c.call_id in try_ids and c.id in kept_ids for c in out.claims)
@@ -210,11 +217,22 @@ def run_diagnosis(case: dict[str, Any], run: int) -> dict[str, Any]:
     row["shown_echo"] = fx.decision_echoes((fx.segment_texts(seg) for seg in shown), phrases)
     row["quoted_echo"] = fx.decision_echoes((fx.segment_texts(seg, "quote") for seg in shown), phrases)
     row["shown_guess"] = fx.decision_echoes((fx.segment_texts(seg) for seg in shown), guesses)
+    overclaim = OVERCLAIM_WORDS if _unconfirmed(row) else ()
+    for name, words in (("keep", KEEP_WORDS), ("overclaim", overclaim)):
+        row[f"raw_{name}"] = fx.decision_echoes((fx.outside_slots(a.text) for a in out.advice), words)
+        row[f"shown_{name}"] = fx.decision_echoes((fx.segment_texts(seg) for seg in shown), words)
     if expected_silent:
         row["button_match"] = row["decision_match"]
     else:
         row["button_match"] = bool(row["kept_actions"]) and row["kept_actions"][0] in expect["actions"]
     return row
+
+
+def _unconfirmed(row: Mapping[str, Any]) -> bool:
+    """different_axes 갈림에서 둘 다 확인된 곳이 어긋나지 않는 곳보다 적다(M < N) — 모름이 섞인 수다(#1600)."""
+    preview = row.get("preview") or {}
+    n, m = preview.get("both_sides_count"), preview.get("both_sides_confirmed_count")
+    return row.get("conflict_type") == "different_axes" and n is not None and m is not None and m < n
 
 
 def _has_bracket(segment: Mapping[str, Any]) -> bool:
@@ -257,6 +275,7 @@ def summarize(cases: list[dict[str, Any]], diag: list[dict[str, Any]]) -> str:
                   f"| 원문에 결정 지시 표현 | {sum(bool(r.get('raw_forbidden')) for r in diag)} |",
                   *_echo_rows(diag),
                   *_preview_rows(diag),
+                  *_count_sentence_rows(diag),
                   *_followup_rows(diag),
                   *_link_rows(diag),
                   f"| 도구 호출 수(평균, 최대) | {_avg([len(r['tools']) for r in diag]):.1f}, {max(len(r['tools']) for r in diag)} |",
@@ -347,6 +366,22 @@ def _preview_rows(rows: list[dict[str, Any]]) -> list[str]:
             f"| 0곳인데 모델이 추천 받기를 고름(원문) | {_pct(sum(r['raw_open_recommend'] for r in zero), len(zero))} |",
             f"| 0곳인데 추천 받기가 남음(검증 뒤, 0이어야 한다) | {sum('open_recommend' in r['kept_actions'] for r in zero)} |",
             *_button_rows(rows)]
+
+
+def _count_sentence_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """후보 수 문장(#1601). 「지키는」은 모든 호출, 「다 맞추」는 M < N인 different_axes 호출이 분모다. 이전 결과 파일(칸 없음)은
+    다시 세지 않는다 — 원문은 결과 파일의 raw_advice로 따로 본다."""
+    keep_raw = sum(bool(r.get("raw_keep")) for r in rows)
+    keep_shown = sum(bool(r.get("shown_keep")) for r in rows)
+    axes = [r for r in rows if r.get("conflict_type") == "different_axes" and r.get("decision") == "suggest"
+            and (r.get("preview") or {}).get("both_sides_count")]
+    claimed = sum("both_sides_count" in r.get("p1_paths", []) for r in axes)
+    unconfirmed = [r for r in rows if _unconfirmed(r)]
+    over_raw = sum(bool(r.get("raw_overclaim")) for r in unconfirmed)
+    over_shown = sum(bool(r.get("shown_overclaim")) for r in unconfirmed)
+    return [f"| 「지키는」·「지킨」 — 원문/렌더 호출 수(0이어야 한다) | {keep_raw}/{keep_shown} |",
+            f"| different_axes(어긋나지 않는 곳 있음, suggest 중) both_sides_count를 p1 claim으로 씀 | {_pct(claimed, len(axes))} |",
+            f"| M < N인데 「다 맞추」·「맞는 곳」 — 원문/렌더 호출 수(0이어야 한다, 분모 {len(unconfirmed)}) | {over_raw}/{over_shown} |"]
 
 
 def _button_rows(rows: list[dict[str, Any]]) -> list[str]:

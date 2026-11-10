@@ -119,7 +119,7 @@ export interface StoreState {
   maps: Record<string, MapEntity>;
   members: Record<string, Member[]>; // mapId -> members
   pins: Record<string, Pin>; // pinId -> pin
-  reactions: Record<string, Reaction[]>; // pinId -> reactions
+  reactions: Record<string, (Reaction & { updated_at?: string })[]>; // pinId -> reactions. updated_at 은 새 소식(#1556)이 견주는 남기거나 바꾼 시각
   evidenceLines: Record<string, EvidenceLine[]>; // runId -> lines
   manualEvidenceCount: Record<string, number>; // runId -> 「+」로 추가한 줄 수(뺀 줄 포함, #707)
   regions: Record<string, Region[]>; // runId -> regions

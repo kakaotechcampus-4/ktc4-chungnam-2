@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router'
-import { ChevronLeft } from 'lucide-react'
+import { useNavigate } from 'react-router'
 
 import ErrorText from '@/ErrorText'
-import { createMapErrorMessage, tripReady, type TripDraft } from '@/features/maps/model'
+import { createMapErrorMessage, titleServerError, tripReady, type TripDraft } from '@/features/maps/model'
 import { useCreateMapMutation, useMapsQuery } from '@/features/maps/queries'
 import TripFields from '@/features/maps/TripFields'
+import BackButton from '@/ui/BackButton'
 import EntryFrame from '@/ui/EntryFrame'
+import BusyLabel from '@/ui/BusyLabel'
 
 /**
  * 지도 만들기 (#22, Figma 1절). 제목·날짜는 필수, 지역은 선택(시·도 목록).
@@ -33,23 +34,24 @@ export default function MapCreatePage() {
   return (
     // 넓은 화면은 입구 카드다(#1269) — 버튼은 맨 아래가 아니라 칸 바로 아래.
     <EntryFrame as="form" onSubmit={submit} className="bg-ink-50 px-4 pb-6 pt-4">
-      <header className="mb-6 flex items-center gap-3">
-        <Link to="/" aria-label="내 지도 목록으로" className="hit-44 flex size-8 items-center justify-center rounded-full bg-white shadow-float">
-          <ChevronLeft size={20} />
-        </Link>
+      {/* 지도 밖 빈 바탕 화면은 갈 곳을 적은 글자 버튼이다 — 초대 화면과 같다(#1623, #1655). */}
+      <header className="mb-6">
+        <BackButton label="내 지도 목록" onClick={() => navigate('/')} />
         <h1 className="text-2xl font-bold text-ink-900">새 지도</h1>
       </header>
 
-      <TripFields value={draft} onChange={setDraft} maxDays={maxDays} />
+      <TripFields value={draft} onChange={setDraft} maxDays={maxDays} serverError={create.error} />
 
-      {create.error && <ErrorText message={createMapErrorMessage(create.error)} error={create.error} />}
+      {/* 제목 때문에 거절됐으면 이유는 제목 칸 아래에 있다. */}
+      {create.error && !titleServerError(create.error) && <ErrorText message={createMapErrorMessage(create.error)} error={create.error} />}
 
       <button
+        aria-busy={create.isPending}
         type="submit"
         disabled={!ready || create.isPending}
         className="btn-primary btn-lg mt-auto md:mt-8"
       >
-        {create.isPending ? '만드는 중…' : '지도 만들기'}
+        <BusyLabel busy={create.isPending} busyText="만드는 중…">지도 만들기</BusyLabel>
       </button>
     </EntryFrame>
   )

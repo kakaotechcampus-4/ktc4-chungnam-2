@@ -10,7 +10,6 @@ import { useToastStore } from '@/features/shell/toast'
 import { useRouteStore } from '@/features/shortlist/routeStore'
 import { serverDays } from '@/features/shortlist/__fixtures__/serverSchedule'
 import { forgetSchedule } from '@/features/shortlist/scheduleStore'
-import { wholeText } from '@/test/text'
 
 import ShortlistTab from './ShortlistTab'
 
@@ -59,9 +58,11 @@ function renderTab() {
 }
 
 async function putTwoOnSecondDay() {
-  const days = within(await screen.findByRole('group', { name: '넣을 날짜' }))
-  expect(days.getByRole('button', { name: '첫째 날' })).toHaveAttribute('aria-pressed', 'true')
-  await userEvent.click(days.getByRole('button', { name: '둘째 날' }))
+  // 넣을 날짜는 여행 날짜만 고를 수 있는 달력이다 — 날 이름 끝에 「첫째 날」이 붙는다.
+  const days = within(await screen.findByRole('group', { name: /^넣을 날짜/ }))
+  expect(days.getByRole('button', { name: /첫째 날$/ })).toHaveAttribute('aria-pressed', 'true')
+  expect(days.getByRole('button', { name: /^2026년 10월 9일 / })).toBeDisabled()
+  await userEvent.click(days.getByRole('button', { name: /둘째 날$/ }))
   await userEvent.click(screen.getByRole('button', { name: '흑돼지식당 둘째 날에 넣기' }))
   await userEvent.click(await screen.findByRole('button', { name: '우진해장국 둘째 날에 넣기' }))
 }
@@ -71,8 +72,10 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     renderTab()
     await screen.findByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })
     expect(screen.queryByRole('button', { name: '일정 짜기' })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '동선 보기' }))
-    expect(await screen.findByText(wholeText('장소를 날짜별 일정에 넣으면 동선을 확인할 수 있어요'))).toBeInTheDocument()
+    const route = screen.getByRole('button', { name: '동선 보기' })
+    await userEvent.click(route)
+    // 이유는 누른 버튼 바로 옆 말풍선이다(#1704) — 화면 아래 토스트가 아니다.
+    expect(within(route.parentElement!).getByRole('status')).toHaveTextContent('장소를 날짜별 일정에 넣으면 동선을 확인할 수 있어요')
     expect(useRouteStore.getState().on).toBe(false)
   })
 
@@ -90,14 +93,57 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1']))
   })
 
+  it('다 넣으면 완료 카드의 「동선 보기」 하나만 남는다(#1680)', async () => {
+    renderTab()
+    await putTwoOnSecondDay()
+    const last = await screen.findByRole('button', { name: /둘째 날에 넣기$/ })
+    await userEvent.click(last)
+    expect(await screen.findByText('모든 장소를 일정에 넣었어요')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /^동선 보기/ })).toHaveLength(1)
+  })
+
+  it('카테고리 칩으로 리스트를 걸러 보고, 남은 곳이 없으면 알린다(#1559)', async () => {
+    renderTab()
+    await screen.findByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })
+    const chips = within(screen.getByRole('group', { name: '카테고리' }))
+
+    await userEvent.click(chips.getByRole('button', { name: '카페' }))
+    expect(screen.getByRole('button', { name: '카페 한라 첫째 날에 넣기' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })).not.toBeInTheDocument()
+
+    await userEvent.click(chips.getByRole('button', { name: '관광지' }))
+    expect(screen.getByText('이 분류에는 확정된 곳이 없어요')).toBeInTheDocument()
+
+    await userEvent.click(chips.getByRole('button', { name: '전체' }))
+    expect(screen.getByRole('button', { name: '흑돼지식당 첫째 날에 넣기' })).toBeInTheDocument()
+  })
+
+  it('일정 진행 막대 — 장소를 넣은 날 수와 가장 앞의 빈 날을 알린다(#1547)', async () => {
+    renderTab()
+    const bar = await screen.findByRole('progressbar', { name: /^일정/ })
+    expect(bar).toHaveAttribute('aria-valuenow', '0')
+    expect(bar).toHaveAttribute('aria-valuemax', '3')
+    expect(screen.getByRole('button', { name: '남은 일: 첫째 날 · 비어 있어요' })).toBeInTheDocument()
+
+    await putTwoOnSecondDay()
+    await waitFor(() => expect(screen.getByRole('progressbar', { name: /^일정/ })).toHaveAttribute('aria-valuenow', '1'))
+    expect(screen.getByText('둘째 날 · 2곳')).toBeInTheDocument()
+
+    // 빈 날을 누르면 그날이 넣을 날짜로 골라진다.
+    await userEvent.click(screen.getByRole('button', { name: '남은 일: 셋째 날 · 비어 있어요' }))
+    expect(within(screen.getByRole('group', { name: /^넣을 날짜/ })).getByRole('button', { name: /셋째 날$/ })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('동선 보기를 켜면 날짜 칩과 그날 순서가 보이고, ↑↓ 로 순서를 바꾸고 「빼기」로 리스트에 돌린다', async () => {
     renderTab()
     await putTwoOnSecondDay()
     await userEvent.click(screen.getByRole('button', { name: '동선 보기' }))
 
     // 장소를 넣은 첫 날(둘째 날)이 골라져 있다.
-    const days = within(await screen.findByRole('group', { name: '볼 날짜' }))
-    expect(days.getByRole('button', { name: '둘째 날' })).toHaveAttribute('aria-pressed', 'true')
+    // 볼 날짜도 달력이다 — 장소를 넣은 날은 읽는 이름에 곳 수가 붙는다.
+    const days = within(await screen.findByRole('group', { name: /^볼 날짜/ }))
+    expect(days.getByRole('button', { name: /둘째 날, 2곳$/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(days.getByRole('button', { name: /첫째 날$/ })).toHaveAttribute('aria-pressed', 'false')
     const second = () => within(screen.getByRole('region', { name: /^둘째 날/ }))
     expect(second().getAllByRole('listitem').map((li) => li.textContent)).toEqual([expect.stringMatching(/^1흑돼지식당/), expect.stringMatching(/^2우진해장국/)])
     expect(screen.getByRole('link', { name: /카카오맵에서 길찾기/ })).toHaveAttribute('href', expect.stringContaining('map.kakao.com/link/by/walk/'))
@@ -110,7 +156,7 @@ describe('확정 탭 — 날을 고르고 줄의 「넣기」로 일정에 넣�
     await waitFor(async () => expect((await serverDays(MAP))['2026-10-11']).toEqual(['pin_1']))
 
     // 다른 날은 비어 있다.
-    await userEvent.click(days.getByRole('button', { name: '첫째 날' }))
+    await userEvent.click(days.getByRole('button', { name: /첫째 날$/ }))
     expect(within(screen.getByRole('region', { name: /^첫째 날/ })).getByText('이 날은 비어 있어요')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /동선 보기/ }))

@@ -50,5 +50,5 @@ export const joinAsGuest = (displayName: string, inviteToken: string) =>
 
 export const logout = () => api<void>('/auth/logout', { method: 'POST' })
 
-/** 회원 탈퇴(#155). 반응·사유는 지워지고 찍은 핀은 '탈퇴한 구성원'의 이름으로 남는다. */
+/** 회원 탈퇴(#155). 반응·사유는 지워진다. 찍은 핀은 남고 작성자는 「(알 수 없음)」으로 보인다(map/model authorName). */
 export const withdraw = () => api<void>('/auth/withdraw', { method: 'POST' })

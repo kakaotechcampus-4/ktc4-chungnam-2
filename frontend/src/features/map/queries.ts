@@ -6,13 +6,14 @@ import type { User } from '@/features/auth/model'
 import { authKeys } from '@/features/auth/queries'
 import { showToast } from '@/features/shell/toast'
 
-import { createPin, deletePin, deleteReaction, fetchCounts, fetchPins, fetchPinTrash, fetchReactions, fetchReasonChips, putReaction, resolvePin, restorePin, updatePin } from './api'
+import { createPin, deletePin, deleteReaction, fetchCounts, fetchPinPhotos, fetchPins, fetchPinTrash, fetchReactions, fetchReasonChips, putReaction, resolvePin, restorePin, updatePin } from './api'
 import { useLivePlaceStore, withLivePlace } from './livePlaces'
 import { restorePinErrorMessage, withMyReaction, type Pin, type PinCategory, type PinCreateRequest, type PinResolveRequest, type PinUpdateRequest, type ReactionRequest } from './model'
 
 export const pinKeys = {
   list: (mapId: string) => ['pins', mapId] as const,
   reactions: (pinId: string) => ['pins', 'reactions', pinId] as const,
+  photos: (pinId: string) => ['pins', 'photos', pinId] as const,
   counts: (mapId: string) => ['pins', mapId, 'counts'] as const,
   trash: (mapId: string) => ['pins', mapId, 'trash'] as const,
   chips: (category: PinCategory) => ['reason-chips', category] as const,
@@ -77,7 +78,7 @@ export function useRestorePinMutation(mapId: string) {
  * realtime 의 표(refetchTable)대로 다시 받는다 — 다시 받을 목록을 여기에 또 적지 않는다.
  * 알림의 「되돌리기」는 화면이 닫힌 뒤에도 눌리므로 훅이 아니라 함수다.
  */
-function restoreInto(queryClient: QueryClient, mapId: string, pinId: string): Promise<Pin> {
+export function restoreInto(queryClient: QueryClient, mapId: string, pinId: string): Promise<Pin> {
   return restorePin(pinId).then((pin) => {
     queryClient.setQueryData<Pin[]>(pinKeys.list(mapId), (pins) => pins && [...pins.filter((p) => p.id !== pin.id), pin])
     void queryClient.invalidateQueries({ queryKey: pinKeys.trash(mapId) })
@@ -122,6 +123,21 @@ export function useResolveLivePin(mapId: string) {
 }
 
 /** 핀 상세 「구성원 의견」. 반응한 구성원만 온다. */
+/**
+ * 핀 상세 블로그 사진(#1157). 실시간 핀은 서버가 찾을 주소가 없어 부르지 않는다.
+ * 서버가 카카오 응답을 저장하거나 캐시하지 않듯 화면도 들고 있지 않는다 — 상세를 닫으면 바로 버리고(gcTime 0) 열 때마다 받는다.
+ * 실패해도 다시 부르지 않는다(카카오 호출 한도를 아낀다). 실패는 화면이 짧은 글로 알린다.
+ */
+export function usePinPhotosQuery(pin: Pin) {
+  return useQuery({
+    queryKey: pinKeys.photos(pin.id),
+    queryFn: () => fetchPinPhotos(pin.id),
+    enabled: pin.source !== 'live',
+    gcTime: 0,
+    retry: false,
+  })
+}
+
 export function useReactionsQuery(pinId: string) {
   return useQuery({ queryKey: pinKeys.reactions(pinId), queryFn: () => fetchReactions(pinId) })
 }

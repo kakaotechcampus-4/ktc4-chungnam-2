@@ -1,4 +1,4 @@
-"""지도 현황 문단(명세 8.2, #1168) — 칸 계산(모델 없음)과 모델 출력의 모순 검증 다섯 가지. 순수 함수.
+"""지도 현황 문단(명세 8.2, #1168) — 칸 계산(모델 없음), 먼저 볼 신호(#1749), 모델 출력의 모순 검증 다섯 가지. 순수 함수.
 
 검증은 하나라도 걸리면 통째로 버린다(지난 문단 유지는 test_flows_status.py가 본다).
 """
@@ -16,9 +16,15 @@ from llm.schemas import StatusState
 POLICY = core.load_policy()
 
 
-def _cells(s, now=NOW):
+def _signals(s, now=NOW):
     th = core.time_threshold(s.action_times, s.map.start_date, s.today)
-    return core.status_cells(s, core.detect_all(s, now, th), POLICY)
+    return core.detect_all(s, now, th)
+
+
+def _cells(s, now=NOW):
+    """카드도 막힌 신호도 없는 관찰의 칸."""
+    signals = _signals(s, now)
+    return core.status_cells(s, signals, core.status_first_signal(signals, [], core.History(), now, POLICY), POLICY)
 
 
 def _busy_snap(**kw):
@@ -97,6 +103,90 @@ def test_hash_is_stable_and_changes_with_cells():
     a, b = _cells(_busy_snap()), _cells(_busy_snap())
     assert core.status_hash(a) == core.status_hash(b)
     assert core.status_hash(a) != core.status_hash(_cells(_busy_snap(start_date=TODAY + timedelta(days=4))))
+
+
+# ---------------------------------------------------------------- 먼저 볼 신호 — 카드가 없을 때만 (#1749)
+
+BUSY = _busy_snap(start_date=TODAY + timedelta(days=5))
+SIGNALS = _signals(BUSY)
+ORDER = core.fallback_order(SIGNALS, POLICY)   # 음식점 갈림(weight 3) → 반응 공백(1)
+
+
+def _past(status, *, diagnosis="category_gap", category="관광지", fingerprint="fp-card", resolved_at=None, followup=None):
+    return core.PastSuggestion(id="h1", diagnosis=diagnosis, category=category, fingerprint=fingerprint, status=status,
+                               created_at=NOW - hours(2), resolved_at=resolved_at, followup=followup)
+
+
+def _accepted(ago, *, followup="watching"):
+    return _past("accepted", resolved_at=NOW - ago, followup=core.followup_record(followup, NOW - ago))
+
+
+def _first(*suggestions, blocked=()):
+    return core.status_first_signal(SIGNALS, list(blocked), core.History(suggestions=tuple(suggestions)), NOW, POLICY)
+
+
+def test_without_a_card_first_is_the_top_of_the_priority_rules():
+    assert [(s.diagnosis, s.category) for s in ORDER] == [("split", "음식점"), ("no_reaction", None)]
+    assert _first() == ORDER[0]
+    assert _first(_past("dismissed", resolved_at=NOW - hours(1))) == ORDER[0]   # 사람이 처리한 카드는 지금 카드가 아니다
+
+
+def test_active_card_means_no_first():
+    """관광지 공백 카드가 떠 있으면 음식점 갈림이 더 급해도 문단은 권하지 않는다 — 카드 한 곳이 말한다."""
+    assert _first(_past("active")) is None
+
+    cells = core.status_cells(BUSY, SIGNALS, _first(_past("active")), POLICY)
+    assert (cells["first_category"], cells["first_reason"]) == (None, None)
+    assert cells["categories"][0]["split_pins"] == 1   # 사실 칸은 그대로다
+
+
+def test_shadow_card_counts_as_no_card(monkeypatch):
+    monkeypatch.setattr(core, "SHADOW_DIAGNOSES", ("category_gap",))
+
+    assert _first(_past("active")) == ORDER[0]
+
+
+@pytest.mark.parametrize("ago, empty", [
+    (timedelta(0), True),
+    (core.FOLLOWUP_MIN_WAIT - timedelta(seconds=1), True),
+    (core.FOLLOWUP_MIN_WAIT, False),
+    (core.FOLLOWUP_MIN_WAIT + hours(1), False),
+])
+def test_right_after_accept_means_no_first(ago, empty):
+    """수락 + FOLLOWUP_MIN_WAIT 전에는 수락한 버튼으로 움직일 시간이다. 그 뒤에는 순위대로."""
+    assert _first(_accepted(ago)) == (None if empty else ORDER[0])
+
+
+def test_accept_whose_watch_ended_does_not_hold_first():
+    """수락 직후라도 막힌 곳이 풀려 지켜보기가 끝났으면(is_watching 아님) 순위대로."""
+    assert _first(_accepted(timedelta(minutes=1), followup="resolved")) == ORDER[0]
+
+
+@pytest.mark.parametrize("reason", ["duplicate", "backoff"])
+def test_signals_closed_by_people_are_skipped(reason):
+    assert _first(blocked=[core.Blocked(ORDER[0].id, reason)]) == ORDER[1]
+
+
+@pytest.mark.parametrize("reason", ["model_cap", "daily_limit"])
+def test_signals_held_by_cost_or_frequency_stay(reason):
+    """비용·빈도 제한이지 덜 급하다는 판단이 아니다."""
+    assert _first(blocked=[core.Blocked(ORDER[0].id, reason)]) == ORDER[0]
+
+
+def test_all_closed_means_no_first():
+    assert _first(blocked=[core.Blocked(s.id, "duplicate") for s in SIGNALS]) is None
+
+
+def test_dismissed_card_is_not_recommended_by_the_paragraph():
+    """닫은 카드와 같은 막힌 곳 — 정책(check_policy)이 막은 이유를 그대로 받아 문단도 다음 곳을 권한다."""
+    top = ORDER[0]
+    dismissed = _past("dismissed", diagnosis=top.diagnosis, category=top.category, fingerprint=top.fingerprint,
+                      resolved_at=NOW - hours(1))
+    hist = core.History(suggestions=(dismissed,))
+    _, blocked = core.check_policy(SIGNALS, hist, BUSY, NOW)
+
+    assert {b.signal_id: b.reason for b in blocked} == {top.id: "duplicate"}
+    assert core.status_first_signal(SIGNALS, blocked, hist, NOW, POLICY) == ORDER[1]
 
 
 # ---------------------------------------------------------------- 검증 다섯 가지

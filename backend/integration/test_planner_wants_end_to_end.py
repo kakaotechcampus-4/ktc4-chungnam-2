@@ -12,6 +12,7 @@
 import uuid
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     PLACES, _pin, fake_planner, members, own_db, place_ids, real_client,
 )
 
@@ -24,7 +25,7 @@ def test_wants_direction_flows_from_planner_to_result_on_real_places(members, pl
     assert b.put(f"/pins/{k_pin}/reaction", json={"type": "like", "reason_text": "회 좋아해"}).status_code == 200
     assert b.put(f"/pins/{s_pin}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
 
-    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202, run.text
     run_id = run.json()["id"]
 
@@ -64,7 +65,7 @@ def test_avoided_cuisine_is_penalized_and_unknown_label_passes_with_needs_check(
     for key in ("R", "B", "C"):
         _pin(a, map_id, key, place_ids)
     assert a.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": "한식 말고 다른 거"}).status_code == 200
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     result = a.get(f"/runs/{run_id}/result")

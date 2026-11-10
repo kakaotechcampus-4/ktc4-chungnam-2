@@ -46,6 +46,7 @@ _EXERCISED: set[tuple[str, str]] = set()   # 이 모듈의 테스트들이 실�
 SPEC = yaml.safe_load((Path(__file__).resolve().parents[2] / "docs" / "api-spec.yaml").read_text(encoding="utf-8"))
 _REGISTRY = Registry().with_resource("urn:pingo-spec", Resource.from_contents(SPEC, default_specification=DRAFT202012))
 from auth.testing import session_cookie
+from integration.real_places_fixtures import RUN_CENTER
 
 
 def _template_for(path: str, method: str) -> str | None:
@@ -191,6 +192,11 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
     assert a.get(f"/invites/{extra.json()['token']}").status_code == 410      # INVITE_REVOKED
     assert a.delete("/invites/no-such-token").status_code == 404
     assert a.get(f"/maps/{map_id}/members").status_code == 200
+    assert a.post(f"/maps/{map_id}/seen").status_code == 204   # #1556
+    news = a.get(f"/maps/{map_id}/news")
+    assert news.status_code == 200
+    # 다 본 소식의 as_of 를 돌려준다(#1672) — 본문 있는 요청도 지나간다
+    assert a.post(f"/maps/{map_id}/seen", json={"seen_at": news.json()["as_of"]}).status_code == 204
     # 방장 직접 넘기기(#468) — 구성원 403, 나 자신 422, 넘기고 되받는다(이후 단계는 a가 방장이라고 가정한다)
     assert b.post(f"/maps/{map_id}/owner", json={"user_id": "user_b"}).status_code == 403
     assert a.post(f"/maps/{map_id}/owner", json={"user_id": "user_a"}).status_code == 422
@@ -241,7 +247,7 @@ def test_every_response_in_the_golden_path_matches_the_openapi_spec(clients, pin
         assert c.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
 
     assert a.get(f"/maps/{map_id}/recommend/readiness").status_code == 200
-    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202
     run_id = run.json()["id"]
     assert a.get(f"/runs/{run_id}/evidence").status_code == 200
@@ -333,6 +339,11 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert a.patch("/auth/me", json={"display_name": "철수2"}).status_code == 200
     assert a.patch("/auth/me", json={"display_name": ""}).status_code == 422
 
+    assert a.post(f"/maps/{map_id}/seen").status_code == 204   # 새 소식(#1556)의 기준 시각 — 아래 반응이 이 뒤에 생긴다
+    # 시험 세션은 긴 트랜잭션이라 DB now()가 멈춰 있다 — 기준 시각을 1시간 앞으로 물러 「이 뒤에 생긴 것」이 구분되게 한다.
+    from sqlalchemy import text as _text
+    db_session.execute(_text("UPDATE memberships SET last_seen_at = last_seen_at - interval '1 hour' WHERE map_id = :m AND user_id = 'user_a'"), {"m": map_id})
+    db_session.commit()
     pins = []
     for key in ("seongsu-kalguksu", "seongsu-bunsik", "hongdae-ramen"):
         r = a.post(f"/maps/{map_id}/pins", json=pin_body(key))
@@ -361,10 +372,16 @@ def test_collaboration_extras_match_the_openapi_spec(clients, anon_client, db_se
     assert opinions.status_code == 200 and len(opinions.json()) == 2
     mine = [p for p in a.get(f"/maps/{map_id}/pins").json() if p["id"] == pins[0]][0]
     assert mine["my_reaction"]["type"] == "like"
+    # 새 소식(#1556) — a가 위에서 지도를 본 뒤 b가 남긴 사유 없는 ♥와 사유 있는 🚫가 지나간다. 사유 없는 반응은 reason_text 칸을 생략한다(null 아님).
+    news = a.get(f"/maps/{map_id}/news")
+    assert news.status_code == 200
+    by_pin = {r["pin_id"]: r for r in news.json()["new_reactions"]}
+    assert pins[0] in by_pin, news.json()
+    assert "reason_text" not in by_pin[pins[0]] and by_pin[pins[1]]["reason_text"] == "별로"
     assert b.delete(f"/pins/{pins[0]}/reaction").status_code == 204
 
     # 추천: 근거 수정 → 실행 → 반경 넓히기(15→20→25→30분, 그다음 409) → 다시 추천 → 게시
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     evidence = a.get(f"/runs/{run_id}/evidence").json()
     # b도 🚫 사유를 남겨서 첫 줄이 b의 것일 수 있다 — a가 끌 수 있는 자기 줄을 고른다(근거 줄 권한은 own, #1294)
     own_line = next(e for e in evidence if e["permissions"]["can_disable"])
@@ -633,6 +650,36 @@ def test_map_cover_and_color_match_the_openapi_spec(clients):
     assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
 
 
+def test_invite_cover_and_preview_match_the_openapi_spec(clients, anon_client):
+    """초대 화면 대표 이미지와 링크 미리보기(#1625) — 로그인 없이 요약의 region·cover_url, 이미지 200, 미리보기 문서 200,
+    미리보기 그림 200(JPEG)과 에러 봉투(없는 토큰 404, 끈 링크 410)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    a, _b, problems = clients
+    map_id = a.post("/maps", json={"title": "속초", "start_date": "2026-12-01", "end_date": "2026-12-02",
+                                   "region": {"label": "강원", "lat": 38.2, "lng": 128.6}}).json()["id"]
+    token = a.post(f"/maps/{map_id}/invite").json()["token"]
+    photo = BytesIO()
+    Image.new("RGB", (400, 300), (10, 90, 160)).save(photo, "JPEG")
+    assert a.put(f"/maps/{map_id}/cover", content=photo.getvalue(), headers={"Content-Type": "image/jpeg"}).status_code == 200
+
+    summary = anon_client.get(f"/invites/{token}").json()
+    assert summary["region"]["label"] == "강원"
+    assert anon_client.get(summary["cover_url"]).content == photo.getvalue()
+    assert anon_client.get(f"/invites/{token}/preview").text.count("og:image") >= 1
+    assert anon_client.get(f"/invites/{token}/preview-image").headers["content-type"] == "image/jpeg"
+    assert anon_client.get("/invites/no-such-token/cover").status_code == 404
+    assert anon_client.get("/invites/no-such-token/preview-image").status_code == 404
+    assert a.delete(f"/invites/{token}").status_code == 204
+    assert anon_client.get(f"/invites/{token}/cover").status_code == 410
+    assert anon_client.get(f"/invites/{token}/preview-image").status_code == 410
+
+    unique = list(dict.fromkeys(problems + anon_client._problems))
+    assert not unique, "응답이 스펙(docs/api-spec.yaml)과 다르다:\n- " + "\n- ".join(unique)
+
+
 def test_map_copy_matches_the_openapi_spec(clients, pin_body):
     """지도 복사(#1446) — 201(Map, 제목 「(1)」·핀 수), 에러 봉투(구성원 403, 모르는 지도 404)."""
     a, b, problems = clients
@@ -679,6 +726,36 @@ def test_pin_trash_list_matches_the_openapi_spec(clients, pin_body):
     assert a.post("/pins/00000000-0000-0000-0000-000000000000/restore").status_code == 404
     dup = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-bunsik"))
     assert dup.status_code == 409          # 방금 복구한 핀과 같은 장소
+
+
+def test_pin_photos_match_the_openapi_spec(clients, pin_body, monkeypatch):
+    """핀 블로그 사진(#1157, 스펙 PinPhoto). 카카오는 부르지 않고 사진 한 장을 돌려주는 대역으로 모양만 맞춘다.
+    구성원이 아니면 존재를 알리지 않는 404다."""
+    from places import api as places_api
+
+    photo = places_api.PlacePhoto(thumbnail_url="https://search1.kakaocdn.net/thumb/1", link_url="https://blog.naver.com/a/1", site_name="네이버블로그")
+    monkeypatch.setattr(places_api, "place_photos", lambda place_id, db=None: [photo])
+    monkeypatch.setattr(places_api, "check_photo_rate", lambda user_id: None)
+    a, b, problems = clients
+    map_id = a.post("/maps", json={"title": "성수", "start_date": "2026-12-01", "end_date": "2026-12-02"}).json()["id"]
+    pin_id = a.post(f"/maps/{map_id}/pins", json=pin_body("seongsu-kalguksu")).json()["id"]
+    resp = a.get(f"/pins/{pin_id}/photos")
+    assert resp.status_code == 200 and resp.json()[0]["site_name"] == "네이버블로그"
+    assert b.get(f"/pins/{pin_id}/photos").status_code == 404
+
+
+def test_place_photos_match_the_openapi_spec(clients, fake_places, monkeypatch):
+    """검색 결과 블로그 사진(#1681, 스펙 PinPhoto). 자체 DB 결과는 사진, 카카오 결과는 빈 배열, 모르는 자체 DB 번호는 404."""
+    from places import api as places_api
+
+    photo = places_api.PlacePhoto(thumbnail_url="https://search1.kakaocdn.net/thumb/1", link_url="https://blog.naver.com/a/1", site_name="네이버블로그")
+    monkeypatch.setattr(places_api, "place_photos", lambda place_id, db=None: [photo])
+    monkeypatch.setattr(places_api, "check_photo_rate", lambda user_id: None)
+    a, _, problems = clients
+    resp = a.get(f"/places/own:{fake_places.place_id('seongsu-kalguksu')}/photos")
+    assert resp.status_code == 200 and resp.json()[0]["site_name"] == "네이버블로그"
+    assert a.get("/places/kakao:seongsu-kalguksu/photos").json() == []
+    assert a.get("/places/own:no_such_place/photos").status_code == 404
 
 
 def test_live_pin_responses_match_the_openapi_spec(clients, pin_body):
@@ -812,7 +889,7 @@ def test_agent_endpoints_match_the_openapi_spec(clients, db_session, pin_body):
     assert a.post(f"/agent/suggestions/{first}/accept", json={"action_index": 9}).status_code == 422
     accepted = a.post(f"/agent/suggestions/{first}/accept", json={"action_index": 0})
     assert accepted.status_code == 200
-    assert accepted.json()["action"] == {"index": 0, "type": "open_recommend", "label": "카페 추천 받기",
+    assert accepted.json()["action"] == {"index": 0, "type": "search_place", "label": "카페 검색",   # 카페 핀이 없어 추천 준비 전(#1583)
                                          "params": {"category": "카페"}}
     assert b.post(f"/agent/suggestions/{first}/accept", json={"action_index": 0}).status_code == 409
     assert b.post(f"/agent/suggestions/{first}/dismiss").status_code == 409
@@ -933,7 +1010,7 @@ def test_run_advice_matches_the_openapi_spec(clients, pin_body, advice_sessions)
         assert c.put(f"/pins/{pin_ids[0]}/reaction", json={"type": "like"}).status_code == 200
         assert c.put(f"/pins/{pin_ids[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
 
-    runs = [a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"] for _ in range(3)]
+    runs = [a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"] for _ in range(3)]
     for run_id in (runs[0], runs[2]):
         assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
         assert a.post(f"/runs/{run_id}/execute").status_code == 202
@@ -971,7 +1048,7 @@ def test_kakao_search_links_match_the_openapi_spec(clients, pin_body, app_client
     assert "curated_nearby" not in readiness["카페"]   # 의견 핀이 없다
     fake_places.curate_all()   # 이제부터 샘플 장소가 추천 후보 풀에 들어간다
 
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     result = a.get(f"/runs/{run_id}/result").json()

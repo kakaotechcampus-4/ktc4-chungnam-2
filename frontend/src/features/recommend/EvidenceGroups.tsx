@@ -1,13 +1,15 @@
 import { useState, type ReactNode } from 'react'
 import { Ban, Check, Clock, Plus, Undo2, X } from 'lucide-react'
 
+import { useMeQuery } from '@/features/auth/queries'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import Notice from '@/ui/Notice'
 import TextField from '@/ui/TextField'
+import BusyLabel from '@/ui/BusyLabel'
 
-import { evidenceLabel, evidenceLimitMessage, groupEvidence, mergeTags, notEnforcedNote, type EvidenceLineDto } from './model'
+import { evidenceLabel, evidenceLimitMessage, groupEvidence, mergeTags, notEnforcedNote, tagAuthor, type EvidenceLineDto } from './model'
 import { usePatchEvidenceMutation } from './queries'
 
 /** 「+」 글 한 줄 길이(docs/api-spec.yaml EvidencePatchRequest.add[].text, 앞뒤 공백을 뗀 뒤 1~140자). */
@@ -15,7 +17,7 @@ const ADD_TEXT_MAX = 140
 
 /**
  * 모델이 사유를 어떻게 읽었는지 묶어 보여 주고 사람이 고치게 한다(최종기획안 5-5). 결과 화면의 조건 카드와 지역 확인 화면이 같이 쓴다.
- * - 꼭 지킬 조건: 줄마다 칩(누가 썼는지는 칩 title). 내 것만 × 로 뺀다(빼기 전에 한 번 묻는다)
+ * - 꼭 지킬 조건: 줄마다 칩. 칩 앞에 쓴 사람 이름(내 것은 「(나)」, 기획안 5-5, #1561). 내 것만 × 로 뺀다(빼기 전에 한 번 묻는다)
  * - 있으면 좋은 조건: 해시태그로 합친다. 내 몫이 든 태그에만 ×
  * - 적용 안 된 조건: 추천이 거르거나 점수에 쓰지 않는 줄(#742). 이유는 묶음 아래 한 줄. 알러지처럼 키가 없는 줄이 여기 온다
  * - 지금까지 나온 의견에서: 원문 인용
@@ -40,6 +42,7 @@ export default function EvidenceGroups({
   const [draft, setDraft] = useState('')
   const [addLimit, setAddLimit] = useState<string | null>(null)
   const groups = groupEvidence(lines)
+  const myId = useMeQuery().data?.id
   const editable = (line: EvidenceLineDto) => line.permissions.can_disable
 
   // 한 사유가 조건마다 줄로 나뉘어(#421) 같은 태그에 내 줄이 여럿일 수 있다 — 한 번에 같이 끄고 켠다.
@@ -59,12 +62,18 @@ export default function EvidenceGroups({
   const chip = (line: EvidenceLineDto, icon: ReactNode, onRemove?: () => void) => (
     <li
       key={line.id}
-      title={line.author_display_name ? `${line.author_display_name}의 조건` : undefined}
-      className={`flex items-center gap-1 rounded-full border bg-white py-1 pl-2.5 pr-1 text-body font-semibold text-ink-900 ${
+      className={`flex items-center gap-1 rounded-full border bg-surface py-1 pl-2.5 pr-1 text-body font-semibold text-ink-900 ${
         pending(line) ? 'border-dashed border-[var(--warn-line)]' : 'border-ink-200'
       }`}
     >
       {icon}
+      {/* 누가 건 조건인지 줄마다 보인다 — 툴팁은 휴대폰에서 볼 수 없어 글자로 둔다(#1561). */}
+      {line.author_display_name && (
+        <span className="font-normal text-ink-500">
+          {line.author_display_name}
+          {line.author_id === myId && '(나)'}
+        </span>
+      )}
       {evidenceLabel(line)}
       {pending(line) && <Clock size={12} className="text-[var(--warn-text)]" aria-label="아직 적용 전" />}
       {onRemove ? (
@@ -125,7 +134,7 @@ export default function EvidenceGroups({
           // 같은 태그는 하나로 합친다. 내 몫이 하나라도 있으면 × 를 붙인다.
           mergeTags(groups.preferred).map(({ tag, all, mine }) =>
             chip(
-              { ...all[0], fact_label: null, text: `#${tag}` },
+              { ...all[0], fact_label: null, text: `#${tag}`, ...tagAuthor(all) },
               null,
               mine.length > 0 ? () => toggle(mine, false) : undefined,
             ),
@@ -140,6 +149,11 @@ export default function EvidenceGroups({
           unusedNotes,
         )}
 
+      {/* × 는 내가 건 줄에만 있다 — 없는 칩이 섞여 보이면 오류로 읽혀서 이유를 한 줄 적는다. */}
+      {lines.some((l) => l.is_active && l.badge !== 'reference' && !editable(l)) && (
+        <p className="text-xs text-ink-500">× 는 내가 건 조건에만 있어요. 다른 구성원의 조건은 그 사람이 뺄 수 있어요</p>
+      )}
+
       {removed.length > 0 &&
         group(
           '뺀 조건',
@@ -147,7 +161,7 @@ export default function EvidenceGroups({
             <li key={line.id} className="flex items-center gap-1 rounded-full border border-dashed border-ink-300 py-1 pl-2.5 pr-1 text-body text-ink-500">
               <span className="line-through">{evidenceLabel(line)}</span>
               {editable(line) && (
-                <button type="button" aria-label={`${evidenceLabel(line)} 다시 넣기`} onClick={() => toggle([line], true)} className="hit-44 text-brand-600">
+                <button type="button" aria-label={`${evidenceLabel(line)} 다시 넣기`} onClick={() => toggle([line], true)} className="hit-44 text-link">
                   <Undo2 size={14} />
                 </button>
               )}
@@ -205,8 +219,8 @@ export default function EvidenceGroups({
               placeholder="예: 비 오면 실내로 가고 싶어요"
             />
           </div>
-          <button type="submit" disabled={patch.isPending || !draft.trim()} className="btn-link shrink-0 text-sm">
-            {patch.isPending ? '정리하는 중…' : '더하기'}
+          <button aria-busy={patch.isPending} type="submit" disabled={patch.isPending || !draft.trim()} className="btn-link shrink-0 text-sm">
+            <BusyLabel busy={patch.isPending} busyText="정리하는 중…">더하기</BusyLabel>
           </button>
         </form>
       ) : (
@@ -233,3 +247,4 @@ export default function EvidenceGroups({
     </div>
   )
 }
+

@@ -1,0 +1,6 @@
+# 검색과 AI 크롤러 모두 받는다(#1614). 초대 주소는 개인 링크라, /api 는 화면이 아니라 뺀다.
+User-agent: *
+Disallow: /api/
+Disallow: /invites/
+
+Sitemap: https://ktc-pingopingo.duckdns.org/sitemap.xml

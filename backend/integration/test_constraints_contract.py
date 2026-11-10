@@ -19,6 +19,7 @@ from auth.testing import session_cookie
 from recommend import constraints
 from recommend.core import apply_disqualifier_filters, build_check
 from recommend.models import EvidenceLine
+from integration.real_places_fixtures import RUN_CENTER
 
 CONSTRAINTS_MD = Path(__file__).resolve().parents[2] / "docs" / "constraints.md"
 
@@ -98,7 +99,7 @@ def _start_run_with_active_condition(a, b, db_session, fact_key: str, pin_body, 
         assert c.put(f"/pins/{pid}/reaction", json={"type": "like"}).status_code == 200
     for c in (a, b):
         assert c.put(f"/pins/{pins[1]}/reaction", json={"type": "against", "reason_text": "별로"}).status_code == 200
-    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202, run.text
     run_id = run.json()["id"]
     db_session.add(EvidenceLine(

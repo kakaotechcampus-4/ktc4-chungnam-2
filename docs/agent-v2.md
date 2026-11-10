@@ -1,6 +1,9 @@
 # 계획 보조 에이전트 모드 v2 구현 명세
 
-- 상태: 설계 확정 (2026-10-02), 마지막 개정 (2026-11-04, 아래 기록). 수치는 초기값이며 운영 기록을 보고 조정한다.
+- 상태: 설계 확정 (2026-10-02), 마지막 개정 (2026-11-10, 아래 기록). 수치는 초기값이며 운영 기록을 보고 조정한다.
+- 2026-11-10 개정(#1749): 지도 현황 문단(8.2)의 먼저 볼 곳(first_category, first_reason)은 제안 카드가 없을 때만 정한다. 카드가 떠 있거나 수락 직후(`FOLLOWUP_MIN_WAIT` 전)면 비우고, 그 밖에는 사람이 닫은 막힌 곳(duplicate·backoff)만 빼고 7절 순위 규칙의 1순위다 — 문단이 카드와 따로 신호를 줄 세워 한 화면에서 다른 곳을 권하던 것을 고쳤다.
+- 2026-11-09 개정(#1600, #1601): 미리 돌려 보기(6.7)의 절충 수를 ♥ 쪽과 🚫 쪽 조건 모두로 센다(`both_sides_count`, `both_sides_confirmed_count`) — #1253 뒤 일반 🚫 사유는 거르지 않는데 「🚫 쪽은 이미 걸렀다」고 가정하고 있었다. 진단 지시문 diagnose-v10(21.1).
+- 2026-11-09 개정(#1583): 눌러도 할 수 있는 게 없는 버튼 둘을 고쳤다. 카테고리 공백은 그 카테고리의 추천 준비(`recommend.api.get_readiness`, 스냅샷의 `ready_categories`)로 버튼을 고르고(6.5), 준비가 안 됐으면 모델 진단 없이 템플릿으로 간다. 반응 공백의 「미확인 핀 보기」는 화면이 쓰는 `unseen_only`를 params에 담는다(6.4). 스펙의 `AgentAction.params`는 그대로다.
 - 2026-11-04 개정(#1380): 진단 버튼의 근거는 코드가 이번 관찰 기록으로 채운다(11.2 6단계) — diagnose-v9 재평가에서 첫 버튼 탈락 11건이 모두 모델이 basis에 없는 id를 적은 것이었다(21.1). 6.10에 모델 상한에 걸린 카테고리 공백은 템플릿으로 낸다는 줄.
 - 2026-11-04 개정(#1356): AI 추천·AI 코스와 엮기(6.10) — 엔진은 도구로, 실행은 버튼으로. 코스 엔진으로 미확정 핀을 확정 일정에 끼워 보는 모델 도구 `try_in_schedule`, 카테고리 공백의 모델 진단(후보 핀이 있을 때), 일정 점검 유형(`schedule`, 코스 점검과 같은 판정), 새 행동 `open_pin`·`open_course`. 구현 #1357(agent), #1358(llm), #1359(FE).
 - 2026-11-04 개정(#1345): 후속 관찰과 충돌 선언(6.9) — 수락한 제안을 막힌 곳 하나로 보고 풀렸는지 매 관찰마다 코드가 본다. 그대로면 이미 해 본 것과 다른 방법(진단을 다시 부름), 그래도 그대로면 해 본 것을 남기는 충돌 선언(가드레일 10)이다. 신호 순위는 코드 그대로이고 후속 신호를 먼저 본다(7절). 계약(api-spec `attempt`·`tried`·`tracking`, data-model 세 칸)은 같은 PR, 구현은 #1346(agent), #1347(llm), #1348(FE).
@@ -73,11 +76,11 @@
 9. 수락: 한 사람이 시트를 열면 그 사람의 점만 사라진다(열람은 사람마다). 다른 사람이 버튼을 누르면 서버는 실행하지 않고 동작(open_recommend)만 돌려주고(16.3), agent.resolved(status=accepted)가 나간다. 그 뒤 세 번째 사람이 닫으려 하면 409 SUGGESTION_RESOLVED다.
 10. 다음 관찰: 10분 뒤 tick은 같은 신호를 다시 찾지만 사람이 이미 판단한 제안이라 거른다(blocked: duplicate). 모델도 다시 부르지 않는다.
 11. (#1345, 6.9) 지켜봄: 수락한 제안은 「지켜보는 중」이 된다. 30분 뒤 다른 카테고리에서 2명이 움직였는데 음식점에 새 핀이 없으면 그대로다. 진단을 「해 본 것: 음식점 추천 받기」와 함께 다시 불러 남은 방법(「음식점 검색」)을 낸다. 새 핀이 올라오면 「풀렸어요」로 끝난다.
-12. (#1345) 그래도 그대로면 충돌 선언이다: 해 본 것 두 줄과 지금 조건으로 미리 찾은 수, 「어떤 조건을 지킬지는 여러분이 정해요」. 버튼은 없고 그 막힌 곳은 더 보지 않는다. 11·12는 #1346 구현 뒤 e2e 케이스로 끝까지 돈다.
+12. (#1345) 그래도 그대로면 충돌 선언이다: 해 본 것 두 줄과 지금 조건으로 미리 찾은 수, 「어떤 조건을 지킬지는 여러분이 정해요」. 버튼은 없고 그 막힌 곳은 더 보지 않는다. 11·12(지켜봄 → 다음 방법 → 충돌 선언)도 같은 파일의 `test_accepted_stall_is_watched_then_next_method_then_declaration`가 끝까지 돈다. same_axis 갈림이 미리 세고 「추천 받기」로 가는 것도 e2e(`test_same_axis_split_is_previewed_and_points_to_recommend_not_pins`)로 본다.
 
 같은 파일의 다른 케이스: 모델이 시간 초과면 다시 묻지 않고 model_failed 한 행만 남기며 요약은 그대로 갱신된다. 사유 글 속 지시문을 모델이 인용해도 화면에는 검증한 범위만 quote 조각으로 간다. 결과가 0곳인 추천 run에는 모델 없이 반경 조언이 요청자에게만 한 번 붙고, 버튼을 한 번 누르면 조언이 말한 만큼 결과가 늘어난다.
 
-**코드와 모델의 분담.** 모델은 진단(agent_diagnose) 하나에만 쓴다. 정체와 갈림이 왜 생겼는지를 사유 글을 읽고 설명하는 일이라 코드로 쓰기 어렵다. 그 밖은 모두 코드다: 탐지 4종, 개입 정책, 신호 순위(7절), 요약의 칸 나누기와 문장(8절), 추천 막힘 조언(9.1), 출력 검증과 렌더(11절), 저장 직전 재확인(12.4). 코드로 옮긴 근거는 평가 숫자다. 우선순위는 #534에서 모델의 1순위가 기본 순서와 맞은 비율이 reasoning_effort none 100%, low 88%, 기본값 90%였고, 다르게 둔 경우가 모두 규칙 셋으로 설명돼 코드로 옮겼다(#582, 7절, 21.1). 조언은 #588 평가(23건 × 5회 = 115회)에서 종류 일치가 84/90(93%)이었고 남은 실패가 모두 정해진 절차를 어긴 것이라 코드로 옮겼다(#749, 9.1). 모델이 무엇을 내든 에이전트는 실행하지 않는다. 버튼은 사람이 원래 하던 동작으로만 이어지고 사람이 누른다(2절 4번).
+**코드와 모델의 분담.** 모델은 진단(agent_diagnose) 하나에만 쓴다. 정체와 갈림이 왜 생겼는지를 사유 글을 읽고 설명하는 일이라 코드로 쓰기 어렵다. 그 밖은 모두 코드다: 탐지 5종(일정 점검 schedule 포함, #1356), 개입 정책, 신호 순위(7절), 요약의 칸 나누기와 문장(8절), 추천 막힘 조언(9.1), 출력 검증과 렌더(11절), 저장 직전 재확인(12.4). 코드로 옮긴 근거는 평가 숫자다. 우선순위는 #534에서 모델의 1순위가 기본 순서와 맞은 비율이 reasoning_effort none 100%, low 88%, 기본값 90%였고, 다르게 둔 경우가 모두 규칙 셋으로 설명돼 코드로 옮겼다(#582, 7절, 21.1). 조언은 #588 평가(23건 × 5회 = 115회)에서 종류 일치가 84/90(93%)이었고 남은 실패가 모두 정해진 절차를 어긴 것이라 코드로 옮겼다(#749, 9.1). 모델이 무엇을 내든 에이전트는 실행하지 않는다. 버튼은 사람이 원래 하던 동작으로만 이어지고 사람이 누른다(2절 4번).
 
 ## 2. 넘지 말 것
 
@@ -144,7 +147,9 @@ flow 함수에는 판단을 두지 않는다. `if`가 늘어나면 그 분기는
 ## 5. 상수 초기값
 
 ```python
-# backend/agent/constants.py  (초기값. 조정 기준은 20절)
+# backend/agent/constants.py 발췌 (값의 정본은 그 파일이다. 조정 기준은 20절)
+# 이 블록에 없는 상수: SUMMARY_FAILED_RETRY(30분), FACT_LINES_MAX(2), WEB_CHECK_REUSE(24시간), TRY_IN_SCHEDULE_MAX_PINS(5),
+#   FOLLOWUP_DIAGNOSES, FOLLOWUP_MIN_WAIT(30분), MAX_ATTEMPT(2), TRACKING_WINDOW(48시간)
 from datetime import timedelta
 
 TICK_INTERVAL_SEC = 300            # tick 주기
@@ -192,7 +197,7 @@ AGENT_RUNS_RETENTION_DAYS = 30
 DECIDED_WINDOW = timedelta(hours=24)   # decided_within_24h의 24시간(12.9). 제안 시각부터 이 안의 확정만 센다
 
 MODEL_TYPES = ("stall", "split")
-CODE_TYPES = ("no_reaction", "category_gap")
+CODE_TYPES = ("no_reaction", "category_gap", "schedule")
 
 # 요약의 키 없는 사유 나누기 (8절). 값은 docs/constraints.md 칩 표를 따른다
 NOT_FILTERED_CHIP_IDS = ("food_expensive", "cafe_expensive", "sight_expensive")   # 가격 키 없음 (#423)
@@ -207,23 +212,23 @@ SAFETY_WORDS = ("알러지", "알레르기")   # 초안. 이 낱말이 든 글�
 
 ## 6. 지도 제안 유형과 탐지 규칙
 
-탐지는 네 유형 모두 `core.py`의 순수 함수가 한다. 입력은 스냅샷과 현재 시각, 출력은 `list[Signal]`이다.
+탐지는 다섯 유형(일정 점검 schedule 포함, #1356) 모두 `core.py`의 순수 함수가 한다. 입력은 스냅샷과 현재 시각, 출력은 `list[Signal]`이다.
 
 | diagnosis | 이름 | 제안 내용 작성 | 허용 행동 |
 | --- | --- | --- | --- |
 | stall | 반대 후 정체 | 모델 진단 | open_recommend, search_place 중 하나 |
 | split | 의견 갈림 | 모델 진단 | open_recommend, search_place 중 하나 |
 | no_reaction | 반응 공백 | 템플릿 | show_pins |
-| category_gap | 카테고리 공백 | 후보 핀이 있으면 모델 진단, 없으면 템플릿(#1356) | open_pin, open_recommend, search_place 중 하나 |
+| category_gap | 카테고리 공백 | 추천 준비가 되고 후보 핀이 있으면 모델 진단, 아니면 템플릿(#1356, #1583) | 준비됨: open_pin, open_recommend, search_place 중 하나. 핀은 있는데 의견 없음: show_pins(의견 남기기), search_place. 핀 없음: search_place(#1583) |
 | schedule | 일정 점검 | 템플릿(#1356, 6.10) | open_course |
 
-「핀 보기」(show_pins, 필터)는 반응 공백에만 쓴다(#1317). 핀 하나를 여는 「이 핀 보기」(open_pin)는 다른 행동이다(6.10). 정체·갈림·카테고리 공백에서 핀을 다시 보게 하는 버튼은 카테고리 필터만 걸 뿐 누른 사람이 할 일이 생기지 않았다. 결정이 막힌 사람에게 필요한 것은 새 후보라 「추천 받기」나 「장소 검색」으로 잇는다. 반응 공백은 아직 보지 않은 핀을 보는 것이 할 일이라 그대로 둔다.
+「핀 보기」(show_pins, 필터)는 반응 공백과, 준비가 안 된 카테고리 공백의 「핀에 의견 남기기」에만 쓴다(#1317, #1583). 핀 하나를 여는 「이 핀 보기」(open_pin)는 다른 행동이다(6.10). 정체·갈림·카테고리 공백에서 핀을 다시 보게 하는 버튼은 카테고리 필터만 걸 뿐 누른 사람이 할 일이 생기지 않았다. 결정이 막힌 사람에게 필요한 것은 새 후보라 「추천 받기」나 「장소 검색」으로 잇는다. 반응 공백은 아직 보지 않은 핀을 보는 것이 할 일이라 그대로 둔다.
 
 ```python
 @dataclass(frozen=True)
 class Signal:
     id: str                          # 관찰 안에서의 식별자: s1, s2 ...
-    diagnosis: Literal["stall", "split", "no_reaction", "category_gap"]
+    diagnosis: Literal["stall", "split", "no_reaction", "category_gap", "schedule"]
     category: str | None
     pin_id: str | None               # split만 사용
     evidence_ids: tuple[str, ...]    # 정렬된 reaction_id 또는 pin_id
@@ -324,7 +329,7 @@ def detect_split(s: Snapshot, now: datetime, th: timedelta) -> list[Signal]:
 
 방향이 없는(wants=null) 줄은 키 있는 사유로 세지만 원함, 피함 어느 쪽에도 넣지 않는다. split 진단 입력의 비교 결과는 모델을 부르기 전에 코드가 계산한다(② 호출 포함, 도구 기록과 상한에 세지 않는다). ②가 실패하면 비교 결과 없이 진단한다.
 
-10/2 판에서는 모델이 방향(Stance)과 충돌 종류를 직접 냈다. ②가 방향을 내게 되면서(#228) 같은 계산을 코드로 할 수 있게 됐고, 루트 원칙("새 기능은 먼저 코드로 되는지 묻는다")에 따라 코드로 옮겼다. 모델은 충돌 종류를 받아 조언 문장과 행동만 고른다. different_axes면 양쪽을 만족하는 조건 조합을 조언에 넣는다. same_axis·unclear면 두 쪽 사유를 나란히 보이고, 남는 곳이 있으면 「두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 N곳 있어요」를 쓴다. 행동은 충돌 종류와 상관없이 같다(#1317): 미리 돌려 본 passed_count가 1곳 이상이면 open_recommend, 0곳이면 search_place, 미리 돌려 보지 못했으면 수를 쓰지 않고 open_recommend다. 전에는 same_axis·unclear가 그 핀을 함께 다시 보는 show_pins였다. 화면에는 이름 대신 "♥ 쪽 / 🚫 쪽"으로 표시한다.
+10/2 판에서는 모델이 방향(Stance)과 충돌 종류를 직접 냈다. ②가 방향을 내게 되면서(#228) 같은 계산을 코드로 할 수 있게 됐고, 루트 원칙("새 기능은 먼저 코드로 되는지 묻는다")에 따라 코드로 옮겼다. 모델은 충돌 종류를 받아 조언 문장과 행동만 고른다. different_axes면 양쪽을 만족하는 조건 조합을 조언에 넣는다. same_axis·unclear면 두 쪽 사유를 나란히 보이고, 남는 곳이 있으면 「두 의견을 다 맞추는 곳은 없지만, 지금 조건으로 추천에 남는 곳이 N곳 있어요」를 쓴다(#1253 뒤 일반 🚫 사유는 거르지 않아 「반대 사유를 지키는」은 사실이 아니다, #1601). 행동은 충돌 종류와 상관없이 같다(#1317): 미리 돌려 본 passed_count가 1곳 이상이면 open_recommend, 0곳이면 search_place, 미리 돌려 보지 못했으면 수를 쓰지 않고 open_recommend다. 전에는 same_axis·unclear가 그 핀을 함께 다시 보는 show_pins였다. 화면에는 이름 대신 "♥ 쪽 / 🚫 쪽"으로 표시한다.
 
 **진단 입력(`core.diagnosis_input`, #533, #534).** 모델이 알려고 도구를 한 번 더 부르지 않게, 공개 데이터 몇 칸을 처음부터 넣는다. 사유 글은 넣지 않고 도구(get_reasons)로만 읽게 한다.
 
@@ -351,7 +356,7 @@ def detect_no_reaction(s: Snapshot, now: datetime, th: timedelta) -> list[Signal
     return [make_signal("no_reaction", category=None, evidence_pin_ids=sorted(unseen_all))]
 ```
 
-템플릿: 제목 "아직 확인되지 않은 핀이 {n}개 있어요", 확인된 것은 핀 이름 목록, 버튼 "미확인 핀 보기"(show_pins). 누가 확인하지 않았는지는 쓰지 않는다. 지도당 하루 1회까지 낸다.
+템플릿: 제목 "아직 확인되지 않은 핀이 {n}개 있어요", 확인된 것은 핀 이름 목록, 버튼 "미확인 핀 보기"(show_pins, params `pin_ids`와 화면이 쓰는 `unseen_only: true` — 「내가 아직 안 남김」 필터, #1583). 누가 확인하지 않았는지는 쓰지 않는다. 지도당 하루 1회까지 낸다.
 
 ### 6.5 카테고리 공백 (category_gap)
 
@@ -369,7 +374,7 @@ def detect_category_gap(s: Snapshot) -> list[Signal]:
     return out
 ```
 
-템플릿: 제목 "확정 리스트에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳". 버튼은 하나다. 추천 대상 카테고리면 "{category} 추천 받기"(open_recommend), 추천 대상이 아니면 "{category} 검색"(search_place)이다. "{category} 핀 보기"는 뺐다(#1317, 6절 표 아래). v1에서는 관찰 대상이 모두 추천 대상이라 뒤의 경우는 숙소가 다시 생길 때 쓴다. 출발일 조건은 두지 않는다.
+템플릿: 제목 "확정 리스트에 {category}가 아직 없어요", 확인된 것 "확정 {n}곳 중 {category} 0곳". 버튼은 하나다. 그 카테고리가 추천 준비(⓪, 의견 핀 1곳 이상)를 통과했으면 "{category} 추천 받기"(open_recommend), 핀은 있는데 의견이 없으면 "{category} 핀에 의견 남기기"(show_pins, params `category`, `unseen_only: true`), 핀이 없거나 추천 대상이 아니면 "{category} 검색"(search_place)이다(#1583). 준비 판정은 recommend의 것을 받는다(`recommend.api.get_readiness`를 스냅샷을 만들 때 부르고, 의견 핀을 다시 세지 않는다). 준비가 안 된 카테고리는 의견이 없어 진단할 재료가 없으므로 후보 핀이 있어도 모델을 부르지 않고 템플릿으로 간다. 다음 방법(6.9)은 이 순서에서 해 본 것을 뺀 나머지다. "{category} 핀 보기"는 뺐다(#1317, 6절 표 아래). v1에서는 관찰 대상이 모두 추천 대상이라 뒤의 경우는 숙소가 다시 생길 때 쓴다. 출발일 조건은 두지 않는다.
 
 ### 6.6 우리 데이터 확인 (#1152)
 
@@ -410,12 +415,15 @@ def detect_category_gap(s: Snapshot) -> list[Signal]:
 **recommend.api 함수(새로 연다, 모듈 경계 변경).**
 
 ```python
-def preview_filter(db, *, map_id, category, text_lines, with_keys=(), place_search=None, place_facts=None) -> dict:
+def preview_filter(db, *, map_id, category, text_lines, with_conditions=(), place_search=None, place_facts=None, center=None) -> dict:
+# center를 주면 run 생성의 center와 같은 원 하나로 센다(#1331). agent는 지금 넘기지 않는다
     """읽기 전용. run을 만들지 않는다. 결과는 수만 — 장소 이름과 id는 돌려주지 않는다.
     text_lines: {reaction_id: [{fact_key, wants, badge}]} — 글 반응의 ② 결과(반응 읽기, 칩 줄, 조립·내리기·쓰임 판정은 recommend가 한다)
-    with_keys: 통과한 곳 중 이 키들의 라벨이 모두 known이고 참인 곳을 따로 센다(절충안). 비면 with_keys_count는 None
-    place_search, place_facts: 생략하면 실행(라우터)과 같은 Gateway
-    → {passed_count, with_keys_count, funnel[{key, removed_count}]}   # funnel은 pool·radius·closed·disqualify만
+    with_conditions: [{fact_key, wants}] — 두 의견의 조건(절충안, #1600). 통과한 곳을 두 번 더 센다
+      both_sides_count: 어느 조건에도 어긋나지 않는 곳(라벨이 known이고 값이 방향과 다르면 뺀다, 모름은 센다 — soft 키 unknown_policy pass와 같다)
+      both_sides_confirmed_count: 그중 조건이 모두 known이고 방향과 같은 곳
+      비면 둘 다 None. 거르기와 passed_count는 조건과 상관없다(실격 규칙을 여기서 다시 정하지 않는다)
+    → {passed_count, both_sides_count, both_sides_confirmed_count, funnel[{key, removed_count}]}   # funnel은 pool·radius·closed·disqualify만
     추천 대상이 아닌 카테고리, ② 결과가 빠진 글 반응은 ValueError(빼고 세면 run과 다른 수가 된다).
     추천 준비(⓪)가 안 됐거나 좌표 있는 핀이 없으면 run처럼 AppError NOT_READY"""
 
@@ -432,18 +440,18 @@ def reason_text_inputs(reactions) -> list[dict]:
 | 신호 | 돌리는 것 | 진단 입력 |
 | --- | --- | --- |
 | stall | 그 카테고리 근거 전부 | `preview: {passed_count}` |
-| split, different_axes | 그 카테고리 근거 전부 + `with_keys` = ♥ 쪽이 원한 키(그 핀의 compare_reasons에서 want에 side=like가 있는 키, `agent.core.compromise_keys`. 🚫 쪽 조건은 근거 줄로 이미 들어간다) | `preview: {passed_count, with_keys_count, with_labels}` (with_labels는 그 키들의 표시 이름) |
-| split, same_axis·unclear | 그 카테고리 근거 전부(with_keys 없음, #1317) | `preview: {passed_count}` — 같은 특징을 반대로 원하면 둘 다 만족하는 곳이 정의상 없다. 그렇다고 밝히고 반대 사유를 지키는 후보 수로 「추천 받기」(0곳이면 「장소 검색」)로 잇는다. 전에는 돌리지 않고 「핀 보기」로 넘겼다 |
+| split, different_axes | 그 카테고리 근거 전부 + `with_conditions` = 두 의견의 조건(그 핀의 compare_reasons에서 방향이 있는 줄을 양쪽 모두, ♥ 원함·♥ 피함·🚫 원함·🚫 피함 순, `agent.core.compromise_conditions`). #1253 뒤 일반 🚫 사유는 거르지 않고 순위만 낮추므로 🚫 쪽 조건도 여기서 센다(#1600) | `preview: {passed_count, both_sides_count, both_sides_confirmed_count, like_labels, against_labels}` (labels는 그쪽 조건의 이름 「<이름> 원함」·「<이름> 제외」 — 조건 요약과 같은 `agent.core.condition_label`, 쪽 나누기는 `preview_labels`) |
+| split, same_axis·unclear | 그 카테고리 근거 전부(조건 없음, #1317) | `preview: {passed_count}` — 같은 특징을 반대로 원하면 둘 다 만족하는 곳이 정의상 없다. 그렇다고 밝히고 추천에 남는 곳의 수로 「추천 받기」(0곳이면 「장소 검색」)로 잇는다. 전에는 돌리지 않고 「핀 보기」로 넘겼다 |
 
 - 결과는 도구 기록에 코드 호출 `p1`(이름 `preview_filter`)로 남긴다(도구 상한에 세지 않는다, 6.3의 비교와 같은 취급). 기록에는 깔때기까지 남기고, 진단 입력에는 수와 조건 이름만 넣는다(`agent.core.PREVIEW_INPUT_KEYS`). 모델은 수를 `ToolClaim(call_id="p1", path="passed_count")`처럼 가리키고, 코드가 11.2 3단계에서 대조한다.
-- **미리 돌려 보지 못하면** preview는 null이고 진단은 지금처럼 간다 — 수만 쓰지 않고 행동은 「추천 받기」다. ②가 실패했을 때(UNAVAILABLE, split은 비교부터 없다), 추천 준비가 안 됐을 때(NOT_READY), 관찰 사이에 새 글 반응이 생겨 ② 결과가 빠졌을 때(ValueError, 다음 관찰에서 다시 본다)다. 이때는 p1을 기록하지 않고 아래 행동 검사도 하지 않는다.
+- **미리 돌려 보지 못하면** preview는 null이고 진단은 지금처럼 간다 — 수만 쓰지 않고 행동은 「추천 받기」다. ②가 실패했을 때(UNAVAILABLE, split은 비교부터 없다), 추천 준비가 안 됐을 때(NOT_READY — 정체·갈림. 카테고리 공백은 준비가 안 되면 처음부터 모델 진단이 아니다, 6.5), 관찰 사이에 새 글 반응이 생겨 ② 결과가 빠졌을 때(ValueError, 다음 관찰에서 다시 본다)다. 이때는 p1을 기록하지 않고 아래 행동 검사도 하지 않는다.
 - 지시문은 null의 원인을 모델에 설명하지 않는다. 처음 지시문에 원인(「split은 different_axes가 아닌 경우」)을 적었더니, different_axes에 null이 오면 모델이 충돌 종류를 의심해 「핀 보기」를 골랐다(21.1, #1198).
 
-**문장(모델, 지시문에 규칙).** 수는 claim 슬롯으로만 쓴다. 약속하지 않는다 — 「지금 조건으로 찾으면 맞는 곳이 {c3.value}곳 있어요」, 갈림은 「두 의견을 다 맞추는 곳이 {c4.value}곳 있어요」. 「이미 보여 준 곳은 빠질 수 있어요」는 필요할 때 덧붙인다. 장소 이름은 쓰지 않는다(입력에도 없다).
+**문장(모델, 지시문에 규칙).** 수는 claim 슬롯으로만 쓴다. 약속하지 않는다 — 「지금 조건으로 추천에 남는 곳이 {c3.value}곳 있어요」(passed_count는 실격 조건을 통과한 수이고 🚫 사유는 순위에 반영될 뿐이라 「반대 사유를 지키는」으로 쓰지 않는다), different_axes 갈림은 「♥ 쪽 조건(○○ 원함), 🚫 쪽 조건(△△ 원함)에 어긋나지 않는 곳이 {c3.value}곳 있어요. 그중 {c4.value}곳은 둘 다 우리 데이터로 확인됐어요」(확인 0곳이면 뒷문장 대신 「가게에 확인이 필요해요」, 어긋나지 않는 곳이 0곳이면 우리 데이터로는 찾지 못했다고만). 모름이 섞인 수를 「다 맞추는 곳」, 「맞는 곳」으로 쓰지 않는다(diagnose-v10, #1601). 「이미 보여 준 곳은 빠질 수 있어요」는 필요할 때 덧붙인다. 장소 이름은 쓰지 않는다(입력에도 없다).
 
 **행동 검사(코드, 11.2 6단계에 더함).** 미리 돌려 본 `passed_count`가 0이면 `open_recommend`를 뺀다 — 0곳인 추천을 권해 크레딧을 쓰게 하지 않는다. 남은 행동이 없고 문장도 없으면 침묵이다(7단계).
 
-**평가.** 평가셋(`llm/tests/eval_agent/cases.json`)에 미리 돌려 본 결과가 있는 케이스 e25~e28(정체 0곳, 정체 몇 곳, 절충 0곳, 절충 몇 곳)을 더하고, 운영 모양에 맞춰 different_axes 갈림 e08·e12·e19·e23에 preview를 붙였다. null 경로는 e29(different_axes, ② 실패)가 지킨다 — 「추천 받기」가 남아야 한다. 프롬프트 버전은 diagnose-v3다. #1319(diagnose-v7)에서 same_axis·unclear 갈림(e09, e10, e11, e13, e24)에도 운영 모양대로 preview를 붙였고, 0곳 갈림은 e20이다. 0곳 케이스에서 「추천 받기」가 남지 않는지(코드), 수가 p1 claim으로만 나오는지 본다. 결과는 21.1.
+**평가.** 평가셋(`llm/tests/eval_agent/cases.json`)에 미리 돌려 본 결과가 있는 케이스 e25~e28(정체 0곳, 정체 몇 곳, 절충 0곳, 절충 몇 곳)을 더하고, 운영 모양에 맞춰 different_axes 갈림 e08·e12·e19·e23에 preview를 붙였다. null 경로는 e29(different_axes, ② 실패)가 지킨다 — 「추천 받기」가 남아야 한다. 프롬프트 버전은 diagnose-v3다. #1319(diagnose-v7)에서 same_axis·unclear 갈림(e09, e10, e11, e13, e24)에도 운영 모양대로 preview를 붙였고, 0곳 갈림은 e20이다. #1601(diagnose-v10)에서 절충 케이스의 preview를 두 수로 바꾸고, 어긋나지 않는 곳은 있지만 둘 다 확인된 곳이 0곳인 갈림(e41)과 🚫 쪽 조건에 어긋나 0곳이 되는 갈림(e42)을 더했다. 0곳 케이스에서 「추천 받기」가 남지 않는지(코드), 수가 p1 claim으로만 나오는지 본다. 결과는 21.1.
 
 ### 6.8 웹 확인 (#1152 ④)
 
@@ -499,7 +507,7 @@ def reason_text_inputs(reactions) -> list[dict]:
 
 **순서와 시간.** 진단 검증(11.2) → 6.6 줄 → 웹 확인 → 저장. 웹 확인은 진단 대화 40초 예산 밖의 따로 30초다(19절). 두 줄은 동시에 불러 30초가 그대로다. 웹 확인 중에는 DB 세션을 열어 두지 않는다(2절 6번).
 
-**개인정보.** OpenAI로 가는 것은 장소 이름, 동네, 특징 이름이다. 공개된 가게 정보이고 구성원에 대한 정보는 없다. 기획안 12절 「사유 글과 모델」 줄에 같이 적는다(국외 이전 고지는 #1120에서 함께 다룬다).
+**개인정보.** OpenAI로 가는 것은 장소 이름, 동네, 특징 이름이다. 공개된 가게 정보이고 구성원에 대한 정보는 없다. 기획안 12절 「사유 글과 모델」 줄에 같이 적는다(국외 이전은 개인정보처리방침 4절에 밝힌다, 본문 `frontend/src/features/legal/docs.ts`).
 
 **평가.** `llm/tests/eval_agent/web_cases.json`을 실제 모델로 케이스마다 3번(`python -m llm.tests.eval_agent.run_web_eval`, 한 번 약 25~30원). 케이스: 웹 글이 많은 실제 가게(주차, 콘센트처럼 적혀 있는 특징), 웹 글이 적은 가게, 없는 가게(not_found가 정답), 같은 이름 다른 동네, 리뷰가 서로 다른 특징. 본다: 출처 대조 통과율, 없는 가게 not_found 비율, 검증으로 빠진 문장 수와 이유, 결론·권유 표현, 다른 동네 가게 글을 쓴 수(사람이 읽고 센다), 검색 횟수, 시간, 비용. 결과는 21.6.
 
@@ -683,7 +691,7 @@ version 1의 principles(프롬프트용 원칙 3개)는 모델 호출이 없어�
 
 `agent_runs.priority`에 final_order, source(single, rules), fingerprints, rule_hits(어느 규칙이 순서를 바꿨는지)를 남긴다.
 
-구현에서 정한 것(#582): rule_hits는 순서를 바꾼 규칙 이름 목록이다(recent_dismissals, affected_members, elapsed_ratio, urgent_dday, always_first, never_first). 적용은 같은 weight 기준 셋(앞 기준이 같을 때만 다음 기준) → urgent_dday → always_first → never_first 차례이고, 맨 앞으로 옮기기는 안정 정렬이라 위 번호 순서와 결과가 같다. urgent_dday는 `dday <= 3`(여행 중 포함)인 category_gap에 걸린다. always_first 유형이 있으면 출발 임박이어도 그 유형이 1순위다.
+구현에서 정한 것(#582): rule_hits는 순서를 바꾼 규칙 이름 목록이다(recent_dismissals, affected_members, elapsed_ratio, urgent_dday, always_first, never_first). 적용은 같은 weight 기준 셋(앞 기준이 같을 때만 다음 기준) → urgent_dday → always_first → never_first 차례이고, 맨 앞으로 옮기기는 안정 정렬이라 위 번호 순서와 결과가 같다. urgent_dday는 `dday <= 3`(여행 중 포함)인 category_gap과 schedule에 걸린다. rule_hits에는 수락한 막힌 곳의 후속 신호를 앞에 둔 followup_first(6.9)도 남는다. always_first 유형이 있으면 출발 임박이어도 그 유형이 1순위다.
 
 ## 8. 우리 조건 요약
 
@@ -732,20 +740,29 @@ not_filtered 칸의 고정 안내는 다음 두 가지다. 알러지 사유가 �
 - ♥ 반응의 글은 배지 preferred, 🚫 반응의 글은 required로 ②에 넣는다. 추천이 근거 줄을 만들 때와 같은 방식이다.
 - 🚫 사유 안의 음식 종류 "원함"을 선호로 내리는 규칙(#422)은 `recommend.api.demote_wanted_place_identity`(#564에서 공개)를 그대로 쓴다. agent에 같은 규칙을 다시 쓰지 않는다.
 - 추천 run의 근거 줄은 run마다 따로 저장되고 반응 id와 연결돼 있지 않아 그대로 가져다 쓸 수 없다. 그래서 에이전트가 ②를 따로 부르고, (reaction_id, updated_at)으로 결과를 캐시한다.
-- ②는 같은 글도 호출마다 결과가 조금 다를 수 있다(이 모델은 temperature=0을 지원하지 않는다). 그래서 추천 run이 읽은 방향과 요약이 읽은 방향이 드물게 다를 수 있다. 캐시를 두면 같은 지도 안에서는 결과가 고정된다.
+- ②는 같은 글도 호출마다 결과가 조금 다를 수 있다(이 모델은 temperature=0을 지원하지 않는다). 그래서 추천 run이 읽은 방향과 요약이 읽은 방향이 드물게 다를 수 있다. 캐시(`agent.tools.STRUCTURE_CACHE`)는 프로세스 메모리라, 같은 프로세스 안(API 서버가 뜬 동안, 또는 관찰 한 번 안)에서만 결과가 고정된다. 관찰(`agent.tick`)은 매번 새 프로세스로 돌아 관찰 사이에는 다시 부른다. 관찰 사이까지 고정하려면 DB에 두어야 한다.
 - 10/2 판의 "② 정확도 20건 확인 후 처리 방식 결정"은 #410, #419 실제 모델 시험으로 대신한다.
 
 ### 8.2 지도 현황 문단 (#1152)
 
-핑고 AI 조언 시트 맨 위에 지도 전체의 지금 상황을 한 문단으로 보인다. 여러 신호를 하나로 묶어 「지금 무엇부터 보면 되는지」를 알려 주는 칸이다. 예: "카페는 거의 정해졌고, 음식점은 갈린 곳 하나만 남았어요. 관광지는 아직 후보가 2곳뿐이에요. 출발이 5일 남았으니 음식점부터 보면 좋겠어요."
+핑고 AI 조언 시트 맨 위에 지도 전체의 지금 상황을 한 문단으로 보인다. 여러 신호를 하나로 묶어 지금 상황을 알려 주고, 제안 카드가 없을 때는 「지금 무엇부터 보면 되는지」도 권하는 칸이다(#1749). 예: "카페는 거의 정해졌고, 음식점은 갈린 곳 하나만 남았어요. 관광지는 아직 후보가 2곳뿐이에요. 출발이 5일 남았으니 음식점부터 보면 좋겠어요."
 
 **칸 계산은 코드, 판단과 문장은 모델, 모순만 코드가 막는다**(2026-11-03 결정, #1152).
 
-**코드가 주는 칸(사실만).** `core.status_cells(snapshot, signals, now)`. 상태 이름은 붙이지 않는다.
+**코드가 주는 칸(사실만).** `core.status_cells`(먼저 볼 신호는 `core.status_first_signal`). 상태 이름은 붙이지 않는다.
 
 - 공통: dday(여행 중이면 0 이하), first_category, first_reason
 - 카테고리(`categories.pinnable()`)마다: confirmed(확정 수), pins(확정이 아닌 핀 수), split_pins(♥와 🚫가 함께 있고 ♥ ≥ 🚫인 핀 수 — 6.3의 시간 조건과 무관), stalled(6.2 신호가 지금 났는가), unreacted_pins(아무도 의견을 안 남긴 핀 수)
-- first_category: 이번 관찰에서 탐지된 신호들을 7절 순위 규칙(`fallback_order`)으로 정렬한 1순위 신호의 카테고리. 신호가 없으면 null. first_reason은 그 신호의 유형에서 나온 고정 문구(정체 「반대 뒤로 새 후보가 없다」, 갈림 「의견이 갈린 핀이 있다」, 반응 공백 「아직 의견을 안 남긴 핀이 많다」, 카테고리 공백 「출발이 가까운데 확정한 곳이 없다」 — 출발이 순위 규칙의 `urgent_dday`(3일) 안일 때만이고, 멀면 「확정한 곳이 아직 없다」. 출발이 멀 때 「가까운데」는 사실이 아니다(#1168). **먼저 볼 카테고리는 코드가 정한다** — #582에서 순위를 코드로 옮긴 것과 같은 판단을 모델이 다시 하지 않는다.
+- first_category, first_reason: 먼저 볼 신호의 카테고리와 이유. **「다음에 무엇을」은 제안 카드 한 곳이 말하고, 문단은 카드가 없을 때만 권한다**(2026-11-10 결정, #1749). 카드는 정책을 통과한 1순위로 지도당 하나이고 최대 24시간 남으며 더 급한 신호가 생겨도 내려가지 않는다(12.9). 그래서 문단이 이번 관찰의 신호를 따로 줄 세우면 카드와 다른 곳을 가리켰다. 문단을 카드에 맞추는 안은 카드가 오래 떠 있을 때 낡은 권유를 보이고 같은 말을 두 번 해서 택하지 않았다 — 틀린 권유보다 권하지 않는 쪽이다.
+
+  | 상황 | first_category, first_reason |
+  |---|---|
+  | 관찰의 저장이 끝난 뒤 사람에게 보이는 활성 제안이 있다(shadow 제외). 방금 넣은 카드도, 방금 내려간 카드도 반영한 뒤다 | 둘 다 null |
+  | 수락한 막힌 곳을 지켜보는 중이고(6.9) 수락 + `FOLLOWUP_MIN_WAIT` 전이다 | 둘 다 null |
+  | 그 밖 | 정책(12.3)에서 duplicate·backoff로 막힌 신호(사람이 닫은 막힌 곳)만 빼고 7절 순위 규칙(`fallback_order`)의 1순위. model_cap·daily_limit로 막힌 신호는 빼지 않는다(비용·빈도 제한이지 덜 급하다는 판단이 아니다) |
+  | 신호가 없다(위에서 빼고 남은 것이 없을 때도) | 둘 다 null |
+
+  first_reason은 그 신호의 유형에서 나온 고정 문구(정체 「반대 뒤로 새 후보가 없다」, 갈림 「의견이 갈린 핀이 있다」, 반응 공백 「아직 의견을 안 남긴 핀이 많다」, 카테고리 공백 「출발이 가까운데 확정한 곳이 없다」 — 출발이 순위 규칙의 `urgent_dday`(3일) 안일 때만이고, 멀면 「확정한 곳이 아직 없다」. 출발이 멀 때 「가까운데」는 사실이 아니다(#1168). **먼저 볼 카테고리는 코드가 정한다** — #582에서 순위를 코드로 옮긴 것과 같은 판단을 모델이 다시 하지 않는다.
 
 **모델이 하는 일.** llm의 `agent_status`(Chat Completions, 구조화 출력, `reasoning_effort=none`, 도구 없음). 입력은 위 칸뿐이다(사유 글, 이름, 장소 이름 없음). 출력은 `{categories: [{category, state}], paragraph}`.
 
@@ -834,7 +851,7 @@ advise-v4 프롬프트의 「종류 고르기」는 순서가 정해진 절차�
 | 도구 | 시그니처와 반환 | 출처 |
 | --- | --- | --- |
 | get_map_overview | `(map_id)` → dday, member_count, 카테고리별 핀 수와 확정 수, last_activity_at | maps.api, pins.api, shortlist.api |
-| get_activity | `(map_id, since)` → 행동 종류별 수, distinct_actors, median_gap_minutes | pins.api, shortlist.api |
+| get_activity | `(map_id, since)` → 행동 종류별 수, distinct_actors, median_gap_minutes. 구현돼 있으나 지금 어느 유형에도 허용하지 않는다(`llm/prompts.py` `DIAGNOSIS_TOOLS`) | pins.api, shortlist.api |
 | get_reaction_matrix | `(map_id, category)` → members[별칭], pins[{pin_id, name, reactions{별칭: like/against/null}}]. null은 미확인 | pins.api (새로 추가) |
 | get_reasons | `(map_id, pin_ids 또는 category, types?)` → [{reaction_id, pin_id, type, text, chips[{chip_id, label, fact_key, wants}], member_alias, updated_at}] | pins.api `list_reasoned_reactions` |
 | structure_reasons | `(reaction_ids)` → [{reaction_id, lines[{fact_key 또는 null, wants 또는 null, badge}]}]. 글은 ②, 칩은 칩 표 그대로 | llm.api ② 재사용, (reaction_id, updated_at) 캐시 |
@@ -845,8 +862,8 @@ advise-v4 프롬프트의 「종류 고르기」는 순서가 정해진 절차�
 | get_run_funnel | `(run_id)` → {result_count, funnel[{label, removed_count}], passed_count} | recommend.api, 추천 막힘 전용 |
 | get_run_evidence | `(run_id)` → [{line_id, text, badge, fact_key 또는 null, wants 또는 null, is_active, author_id}]. 요청자 본인 줄인지는 agent가 run의 requested_by와 비교한다(#585) | recommend.api, 추천 막힘 전용 |
 | simulate_filter | `(run_id, change{radius_factor?, disable_line_ids?})` → {before, after, gained}. before와 after는 {result_count, funnel, passed_count}. passed_count는 필터를 모두 통과한 곳의 수(상위 3곳을 고르기 전), gained는 after − before를 코드가 계산(#587) | recommend.api, 실제 필터 함수 재사용 |
-| get_shortlist | `(map_id)` → [{pin_id, category, visit_order}] | shortlist.api |
-| get_route | `(map_id)` → [{region_label, ordered_pin_ids, total_distance_m}] 또는 null | shortlist.api |
+| get_shortlist | (만들지 않음 — 이후 동선 기반 진단) `(map_id)` → [{pin_id, category, visit_order}] | shortlist.api |
+| get_route | (만들지 않음 — 이후 동선 기반 진단) `(map_id)` → [{region_label, ordered_pin_ids, total_distance_m}] 또는 null | shortlist.api |
 | try_in_schedule | `(pin_ids ≤ 5)` → [{pin_id, day 또는 null, added_minutes 또는 null, nearest_minutes 또는 null, open(open·closed·unknown), fills_gap}] 또는 핀마다 `no_coords`. 장소 이름 없음(6.10, #1356) | agent.course(일정 입력·끼울 자리·이동), places.api `get_week_open_status` |
 
 진단 전에 코드가 부르는 것(모델이 고르지 않고 도구 상한에 세지 않는다): split의 compare_reasons(6.3), 미리 돌려 보기 `recommend.api.preview_filter`(6.7, 도구 기록에 `p1`). 진단 뒤 저장 전에 코드가 부르는 것: 웹 확인 `llm.api.web_check`(6.8, 「모름」 줄마다, 도구 기록에 `w1`, `w2`).
@@ -990,13 +1007,13 @@ M1-2(#533) 구현에서 정한 것:
 | 후속 확인 | 계산 | code | attempt ≥ 1일 때(6.9), 감지 다음. 수락 뒤 지난 시간과 그 카테고리 새 핀 수(f1). 「추천 받기 뒤로 5시간 동안 음식점에 새 핀이 없었어요」 |
 | 순위 | 결정 | code | 정책을 통과한 신호가 2개 이상일 때(`priority.source=rules`). 「살펴볼 곳 3개 중 이것부터 골랐어요」 |
 | 조사 | 지휘 | ai | 모델이 부른 도구(t1, t2 …)마다 한 줄. 도구 이름마다 문구가 하나다. 「반대 사유 2개를 읽었어요」(get_reasons), 「추천 준비를 확인했어요」(get_readiness), 「좋음 쪽과 반대 쪽 조건을 견줘 봤어요」(compare_reasons). 도구 결과가 오류(NOT_FOUND, UNAVAILABLE)면 「…하려다 멈췄어요」. 상한에 걸린 호출(LIMIT_EXCEEDED)은 llm이 도구를 부르지 않고 막아 `tool_calls`에 남지 않으므로 줄도 없다(#1305) |
-| 미리 찾기 | 계산 | code | p1이 있을 때(6.7). 「지금 조건으로 미리 찾아봤어요 · 12곳 남아요」, 절충이면 「두 의견을 다 맞추는 곳 3곳」 |
+| 미리 찾기 | 계산 | code | p1이 있을 때(6.7). 「지금 조건으로 미리 찾아봤어요 · 12곳 남아요」, 절충이면 「두 의견에 어긋나지 않는 곳 3곳(둘 다 확인 1곳)」(#1600) |
 | 우리 데이터 | 검증 | code | 제안에 facts가 있을 때(6.6). 「가게 정보 2개를 우리 데이터에서 확인했어요」 |
 | 웹 확인 | 검증 | ai, by_detail 「모델 → 코드」 | w1, w2가 있을 때(6.8) 줄마다 한 줄. 「웹에서 찾아봤어요 · 출처 2개」, not_found, paused, 다시 씀(24시간 안, by는 code) |
 | 검증 | 검증 | code | 모델 유형일 때(11.2). 「숫자와 인용 4개를 지도와 대조했어요 · 문장 1개는 뺐어요」 |
 | 재확인 | 검증 | code | 늘(12.8). 「저장 직전에 지도가 그대로인지 다시 봤어요」 |
 
-- 순서는 위 표 그대로이고 있는 단계만 낸다. 코드 유형(반응 공백, 카테고리 공백)은 감지, 순위, 재확인뿐이다. 후속 제안은 감지 다음에 후속 확인이 붙고, 충돌 선언은 감지, 후속 확인, 순위, 미리 찾기, 재확인이다(6.9).
+- 순서는 위 표 그대로이고 있는 단계만 낸다. 템플릿으로 만든 제안(반응 공백, 일정 점검, 모델을 부르지 않은 카테고리 공백)은 감지, 순위, 재확인뿐이다. 후보 핀이 있어 모델로 간 카테고리 공백은 정체·갈림처럼 조사, 미리 찾기, 검증 줄이 붙는다. 후속 제안은 감지 다음에 후속 확인이 붙고, 충돌 선언은 감지, 후속 확인, 순위, 미리 찾기, 재확인이다(6.9).
 - **넣지 않는 것.** 사유 글, 핀·장소 이름(실시간 핀 이름은 사용자가 친 글이다, #382), 별칭, URL, 웹 문장. 숫자와 고정 문구만이다(2절 11·13번, #717). 비공개 run 정보는 지금처럼 쓰지 않는다 — 정체 전제의 run 여부(6.2)는 감지 문구에 넣지 않고, 미리 돌려 본 수(p1)만 쓴다(6.7과 같은 범위).
 - run 행이 없으면(30일 정리, 12.9) 빈 목록이다. 탈퇴로 `tool_calls`가 비면(13절) 조사 줄이 빠진다.
 - 모델이 고른 것은 조사(어떤 도구를 부를지)와 웹 확인(무엇을 찾을지)뿐이다. 나머지는 코드다. 이 표가 1.1 「코드와 모델의 분담」을 화면에 그대로 보인다.
@@ -1026,7 +1043,7 @@ def run_tick(now: datetime) -> list[str]:
     처리량 로그 한 줄(#756)
 ```
 
-관찰이 예외로 끝나면 agent_runs에 outcome=error 한 행을 남긴다(#677). `outcome_detail`은 단계와 예외 클래스 이름(`{stage, error}`)뿐이고 예외 메시지는 남기지 않는다. 단계는 expire, snapshot, detect, draft, model, verify, save, summary다. 진단을 부른 뒤의 실패면 used_model=true와 그때까지의 사용량을 남겨 지도 상한에 센다. 커서는 claim 때 본 seq로 올리고, 다음 관찰은 그 지도의 연속 실패 수에 따라 `ERROR_RETRY_DELAYS` 뒤다.
+관찰이 예외로 끝나면 agent_runs에 outcome=error 한 행을 남긴다(#677). `outcome_detail`은 단계와 예외 클래스 이름(`{stage, error}`)뿐이고 예외 메시지는 남기지 않는다. 단계는 expire, snapshot, detect, draft, model, verify, web_check, save, summary, status다. 진단을 부른 뒤의 실패면 used_model=true와 그때까지의 사용량을 남겨 지도 상한에 센다. 커서는 claim 때 본 seq로 올리고, 다음 관찰은 그 지도의 연속 실패 수에 따라 `ERROR_RETRY_DELAYS` 뒤다.
 
 끝날 때 처리량을 숫자로만 한 줄 남긴다(#756): 차례였던 지도 수(`due`), 관찰한 수, `TICK_MAX_MAPS`로 미룬 수, 시간 예산(`TICK_BUDGET_SEC`, #677)으로 미룬 수, 걸린 ms. 지도 id는 넣지 않는다. 시간 예산으로 미룬 지도가 있으면 warning이다. 읽는 법은 `deploy_rules.md`「배포 뒤 볼 지표」.
 
@@ -1090,6 +1107,8 @@ def model_cap_reached(runs_today: int, member_count: int) -> bool:
 ```
 
 ### 12.4 observe_map
+
+아래는 개념 순서다. 정본은 `agent/flows.py`의 `observe_map`이고, 지금 코드에는 이 의사코드에 없는 단계가 더 있다: 3단계 앞의 후속 신호 탐지(`core.detect_followups`, 6.9), 모델 여부를 `core.uses_model`로 정하는 것(후보 핀이 있는 카테고리 공백도 모델), 6단계 안의 비교·미리 돌려 보기(p1)·후속 확인(f1)·우리 데이터 줄·웹 확인(w1, w2), 7단계의 lease token 확인, 끝의 지도 현황 문단(`update_status`, 8.2).
 
 ```python
 def observe_map(map_id: str, now: datetime) -> None:
@@ -1216,7 +1235,7 @@ seq 비교로 하지 않는 이유는 seq에 커밋 순서 구멍이 생길 수 
 
 ## 13. 데이터 모델
 
-agent 모듈이 소유하는 테이블은 7개다. 마이그레이션은 현재 head 다음 리비전으로 추가한다. map_id는 다른 모듈과 같이 String이고 FK는 걸지 않는다(모듈 경계를 넘는 FK는 걸지 않는 관례, #760).
+agent 모듈이 소유하는 지도 테이블은 8개다(`agent_map_status`, #1168 포함). AI 코스 run(`agent_course_runs`)은 `docs/data-model.md`에 있다. 마이그레이션은 현재 head 다음 리비전으로 추가한다. map_id는 다른 모듈과 같이 String이고 FK는 걸지 않는다(모듈 경계를 넘는 FK는 걸지 않는 관례, #760).
 
 ```sql
 -- 지도별 모드. 행이 없으면 on으로 간주한다 (기본값 on)
@@ -1234,7 +1253,8 @@ CREATE TABLE agent_cursors (
   -- gap_seq: 10/2 판의 구멍 추적용. 12.5 개정으로 0030에서 지웠다(#515)
   last_observed_at  timestamptz NULL,
   next_check_at     timestamptz NULL,     -- 시간 기준이 가장 먼저 만료될 시각
-  lease_until       timestamptz NULL
+  lease_until       timestamptz NULL,
+  lease_token       uuid NULL           -- lease 주인(#812). 저장 직전에 이 값으로 lease를 아직 쥐었는지 본다
 );
 
 -- 관찰 한 번의 기록. 침묵으로 끝난 관찰도 남긴다. 30일 보존
@@ -1250,7 +1270,7 @@ CREATE TABLE agent_runs (
   blocked         jsonb NOT NULL DEFAULT '[]',   -- [{signal_id, reason}]
   priority        jsonb NULL,             -- source(single|rules), final_order, fingerprints, rule_hits (#582)
   policy_version  text NULL,
-  prompt_version  text NULL,             -- 진단을 부른 관찰이면 진단 프롬프트 버전(지금 "diagnose-v3", llm.prompts). 호출이 여럿이면 +로 잇는다(core.py). model도 같다(#564)
+  prompt_version  text NULL,             -- 진단을 부른 관찰이면 진단 프롬프트 버전(지금 "diagnose-v10", llm.prompts). 호출이 여럿이면 +로 잇는다(core.py). model도 같다(#564)
   model           text NULL,
   used_model      boolean NOT NULL DEFAULT false,
   tool_calls      jsonb NOT NULL DEFAULT '[]',
@@ -1262,7 +1282,7 @@ CREATE TABLE agent_runs (
 );
 CREATE INDEX ix_agent_runs_map_started ON agent_runs (map_id, started_at);
 -- outcome: no_signal | blocked | silent | unknown | invalid_schema | invalid_claims | model_failed
---          | stale | suggested | summarized | advised | trip_ended | map_deleted | error
+--          | stale | suggested | summarized | status_updated | advised | trip_ended | map_deleted | error
 -- error: 관찰이나 조언이 예외로 끝남. outcome_detail은 단계와 예외 클래스 이름뿐(#677, 12.2)
 -- model_failed: 모델 호출 실패나 타임아웃(AgentCallFailed, #532). 이유는 outcome_detail. 재요청하지 않고 침묵한다
 
@@ -1290,6 +1310,7 @@ CREATE TABLE agent_suggestions (
   resolved_action     jsonb NULL,
   decided_within_24h  boolean NULL,
   attempt             smallint NOT NULL DEFAULT 0,   -- 6.9(#1345). 0 첫 제안, 1 다음 방법, 2 충돌 선언
+  facts               jsonb NOT NULL DEFAULT '[]',  -- [{pin_id, fact_key, web?}] 우리 데이터 줄과 웹 확인(6.6, 6.8)
   followup_of         uuid NULL REFERENCES agent_suggestions(id) ON DELETE SET NULL,   -- 수락한 앞 제안
   followup            jsonb NULL          -- {status: watching|resolved|declared|followed_up, at, reason?}. 관찰이 쓴다
 );
@@ -1419,7 +1440,9 @@ FE는 슬롯을 다루지 않는다. 서버가 렌더한 조각을 차례로 이
 | action.type | FE가 하는 일 | 쓰는 곳 |
 | --- | --- | --- |
 | open_recommend | AI 추천 탭으로 이동해 카테고리를 채우고, 손으로 누를 때와 같은 `POST /maps/{id}/runs` 호출 | 지도 제안, 우리 조건 요약 |
-| show_pins | 지도 탭 필터 적용 (pin_ids, 카테고리, 미확인) | 지도 제안 |
+| show_pins | 지도 탭 필터 적용 (pin_ids, 카테고리, 미확인. `unseen_only`면 내가 아직 의견을 안 남긴 핀) | 지도 제안 |
+| open_pin | 그 핀 하나의 카드를 연다 | 카테고리 공백 진단(6.10) |
+| open_course | AI 코스 짜기로 간다(크레딧 확인 창부터) | 일정 점검(6.10) |
 | search_place | 장소 검색 바텀시트를 카테고리와 함께 연다 | 지도 제안 |
 | open_route | 리스트 탭 동선을 연다 | 지도 제안 |
 | widen_radius | 기존 반경 넓히기 | 추천 막힘 조언 |
@@ -1481,7 +1504,7 @@ AI 담당
 - [x] #511 pins.api에 반응 표 조회 함수 추가 (pins 모듈 규칙을 따른다). 사유 조회는 기존 `list_reasoned_reactions`를 쓴다
 - [x] #512 maps.api에 지도 행 잠금과 삭제 확인 함수(`lock_map_if_alive`) 추가, 지도 정리와 탈퇴에 agent 연결 (maps, auth 담당 리뷰)
 - [x] #522 스냅샷과 커서용 읽기 함수: maps(지도와 구성원), shortlist(확정 항목), recommend(카테고리별 마지막 run 시각), pins(사유 조회에 reaction_id와 updated_at), realtime(`latest_seq_by_map`, 12.5)
-- [x] #514 snapshot.py, core.py의 탐지기 4종, 기준 시간, fingerprint와 evidence_hash, check_policy
+- [x] #514 snapshot.py, core.py의 탐지기 4종(뒤에 schedule이 더해져 지금 5종, #1356), 기준 시간, fingerprint와 evidence_hash, check_policy
 - [x] #515 run_tick, observe_map(모델 단계는 건너뜀), 개발용 반복 작업(`AGENT_LOOP_IN_PROCESS`)
 - [x] 커서, lease, agent_runs 기록, 정리 작업, `purge_map_data`, `delete_by_user`와 각 정리 흐름에 연결
 - [x] 17절 테스트 1, 4, 5, 6, 8, 9, 10, 16
@@ -1574,7 +1597,7 @@ FE 담당
 
 ### 21.1 진단 (정체, 갈림)
 
-평가셋은 `backend/llm/tests/eval_agent/cases.json`의 지어낸 지도 상태 20건이다. 진단 대상은 정체 8건, 갈림 10건이고, 그중 4건은 침묵이 정답이다(알러지 사유뿐인 정체와 갈림, 지시문뿐인 정체와 갈림). 사유 글은 모두 지어낸 예시다. 그 뒤 #717에서 지시문 케이스 e21~e24를 더해 24건(진단 대상 22건, 침묵 기대 4건 e14~e17, 지시문 케이스 6건 e05, e16, e21~e24), #1180에서 미리 돌려 보기 케이스 e25~e29를 더해 지금은 29건이다(진단 대상 27건). 두 가지로 돌린다.
+평가셋은 `backend/llm/tests/eval_agent/cases.json`의 지어낸 지도 상태 20건이다. 진단 대상은 정체 8건, 갈림 10건이고, 그중 4건은 침묵이 정답이다(알러지 사유뿐인 정체와 갈림, 지시문뿐인 정체와 갈림). 사유 글은 모두 지어낸 예시다. 그 뒤 #717에서 지시문 케이스 e21~e24를 더해 24건(진단 대상 22건, 침묵 기대 4건 e14~e17, 지시문 케이스 6건 e05, e16, e21~e24), #1180에서 미리 돌려 보기 케이스 e25~e29를 더해 29건이 됐고, 그 뒤 e30~e42를 더해 지금은 42건이다(diagnose-v10 측정은 진단 대상 40건 × 5회). 두 가지로 돌린다.
 
 - 모델 없이(`test_eval_cases.py`, CI에서 매번): 평가셋의 지도 상태가 지금의 탐지, 정책, 충돌 종류, 진단 입력 규칙과 맞는지 본다. 규칙이 바뀌어 기대값이 낡으면 여기서 먼저 깨진다.
 - 실제 모델로(`python -m llm.tests.eval_agent.run_eval`): 케이스마다 5번 부르고, 운영과 같은 검증(`agent.core.verify_diagnosis`)을 거친 결과를 센다.
@@ -1597,6 +1620,23 @@ FE 담당
 | 「핀 보기」(#1317) | 모델이 show_pins를 고른 수(원문 / 검증 뒤) / same_axis·unclear 갈림(남는 곳 있음)에서 첫 버튼이 추천 받기 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 재지 않음(이 평가셋은 8케이스에서 핀 보기를 첫 버튼으로 기대했다) | 0 / 0 / 25/25 (100%) | 0 / 0 / 29/29 (100%) | 0 / 0 / 34/35 (97%) |
 | 다음 방법(#1347) | 후속 케이스(20회)에서 해 본 행동을 고름(원문 / 검증 뒤) / f1 claim이 남음 / 추천 결과 짐작이나 입력과 다른 말(케이스 문구, 원문 슬롯 밖 / 렌더 text 조각) | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 0 / 0 / 20/20 / 0/20, 0/20 | 0 / 0 / 20/20 / 0/20, 0/20 |
 | 엮기(#1358) | 「이 핀 보기」 기대(15회)에서 검증 뒤 기대 핀 / 맞는 핀 없음(15회)에서 open_pin 원문, 검증 뒤 / 🚫 핀을 try_in_schedule에 넣음 / 끼워 본 결과의 claim이 남음(카테고리 공백 suggest 중) / 갈림에서 try_in_schedule을 부름 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 없던 지표 | 15/15 / 0, 0 / 0/30 / 28/30 / 60/85(그 claim이 남음 16) |
+
+**diagnose-v10 (2026-11-09, #1601, 짝 #1600).** 같은 모델(OpenAI 직접, reasoning none)로 e41·e42를 더한 40건 × 5회 = 200회, 합계 약 112원(진단당 0.560원), 평균 6.9초(p90 10.6초). 표에 열을 늘리지 않고 여기 적는다. 비교 기준은 v9 2차(낸 판) 결과 파일이고, #1601 지표는 그 파일을 같은 잣대로 다시 셌다.
+
+| 지표 | diagnose-v9 2차 | diagnose-v10 |
+| --- | --- | --- |
+| 호출 실패 | 0/190 | 7/200 — 제공자 500 3, 타임아웃 3, 다른 JSON 객체 두 개(json_invalid, #1299와 같은 모양) 1. 지시문과 무관 |
+| 결정 일치 / 첫 버튼 일치 | 190/190 / 179/190(#1380 재검증 190/190) | 193/200 / 193/200 — 놓친 7건이 모두 위 호출 실패다. 응답을 받은 193건은 둘 다 맞았다 |
+| 검증 통과 | 169/170 | 174/174. 버튼 근거를 코드가 채운 호출 6 |
+| 「지키는」·「지킨」이 문장에 나온 호출(원문 / 렌더) | 44 / 43 | 0 / 0 |
+| different_axes에서 절충 수를 p1 claim으로 씀 | 22/25(with_keys_count) | 28/28(both_sides_count) |
+| 확인된 곳이 어긋나지 않는 곳보다 적은데(M < N) 「다 맞추」·「맞는 곳」 | (M 없음) | 0/30 |
+| 미리 돌려 본 수를 p1 claim으로 씀 / 0곳인데 추천 받기(원문) | 68/95 / 0/20 | 80/101 / 0/20 |
+| same_axis·unclear 첫 버튼 추천 받기 | 34/35 | 33/33 |
+
+조건 이름을 조건 요약과 같은 `condition_label`(「<이름> 원함」, 「<이름> 제외」)로 바꾸고 different_axes 문장 예시를 「♥ 쪽 조건(○○ 원함), 🚫 쪽 조건(△△ 원함)에 어긋나지 않는 곳이 N곳」으로 고친 뒤(PR #1604 루트 검수) different_axes 7건(e08, e12, e19, e23, e27, e28, e41)만 × 5회 = 35회를 다시 쟀다: 호출 실패 0, 결정·검증·첫 버튼 35/35, 「지키는」 0, both_sides_count claim 29/30, M < N인데 「다 맞추」·「맞는 곳」 0/30, 평균 5.8초, 진단당 0.663원. 이름의 「원함」·「제외」를 문장에 옮긴 호출은 28/35다.
+
+M = 0인 e41은 「…에 어긋나지 않는 곳이 3곳 있어요. 그중 확인된 곳은 없어 가게에 확인이 필요해요」, 🚫 쪽에 어긋나 0곳인 e42는 「두 의견에 어긋나지 않는 곳은 우리 데이터로 찾지 못했지만, 지금 조건으로 추천에 남는 곳이 4곳 있어요」로 나왔다.
 
 실패 분석과 고친 것은 다음과 같다.
 
@@ -1627,7 +1667,7 @@ FE 담당
 
 남은 한계는 세 가지다.
 
-- 평가셋이 작다(10-16에 18가지, 지금 27가지 상황을 5번씩). 기획안 10절 기준(지표마다 60~100건)으로는 90%를 넘었다고 말하기 어렵다. 운영 기록(agent_runs의 outcome과 verification)으로 보완한다.
+- 평가셋이 작다(10-16에 18가지, 지금 40가지 상황을 5번씩). 기획안 10절 기준(지표마다 60~100건)으로는 90%를 넘었다고 말하기 어렵다. 운영 기록(agent_runs의 outcome과 verification)으로 보완한다.
 - 평가 뒤에 입력이 바뀌었다(우선순위 코드 규칙 #582, 원함 칩의 선호 전환 #617, 조각 렌더 #717). 진단 프롬프트는 그대로다. 2026-11-02에 다시 쟀다(#1072): 결정 일치와 검증 통과는 그대로이고, 10-16에 남았던 e05 탈락은 5번 모두 통과했다. 새 실패 셋은 위 표에 있다. 모델 없는 평가(`test_eval_cases.py`)도 통과했다.
 - 문장의 뜻은 코드로 검증하지 못한다(11절 끝 "한계"). 숫자와 인용은 슬롯으로만 쓰게 하고, 짐작은 is_guess로 표시하게 한다.
 
@@ -1794,4 +1834,4 @@ CI(backend-test)는 실제 모델 테스트를 뺀 전부를 PostgreSQL과 PostG
 
 ### 21.8 동선 에이전트(AI 코스 짜기)
 
-이 문서의 기능은 아니지만 에이전트 품질 기록을 한곳에서 찾도록 위치만 적는다. 평가 지도 24개 비교(초안, 강한 기준선, 기준선 + 정답 목표, 에이전트)와 실패 분석은 `qa/results/2026-10-21-course-eval.md`(PR #624 측정 옮김), 요청 9개의 수동 점검은 `qa/results/2026-11-03-course-agentic.md`다. 실행기는 `backend/agent/course/eval/compare.py`다.
+이 문서의 기능은 아니지만 에이전트 품질 기록을 한곳에서 찾도록 위치만 적는다. 평가 지도 24개 비교는 지금 버전으로 다시 잰 `qa/results/2026-11-10-course-eval.md`(초안, 강한 기준선, 기준선 + 정답 목표, 목표 세우기 + 코드, 에이전트, 3번 평균, #1615)가 최신이고, 10-21 측정과 구조를 바꾼 근거는 `qa/results/2026-10-21-course-eval.md`(PR #624 측정 옮김, course-direct-v5)다. 요청 9개의 수동 점검은 `qa/results/2026-11-03-course-agentic.md`다. 실행기는 `backend/agent/course/eval/compare.py`다. 서비스 경로의 실행 상한과 끊긴 run 정리는 `docs/data-model.md`의 agent_course_runs 절과 `backend/agent/course/constants.py`(`RUN_LIMIT`, `STALE_AFTER`)에 있다(#1609).

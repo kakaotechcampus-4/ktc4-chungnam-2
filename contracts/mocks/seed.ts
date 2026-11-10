@@ -276,9 +276,11 @@ export function buildCandidates(regionLabel: string) {
       member_fulfillment: {
         satisfied: 1,
         total: 2,
+        // 지도 구성원의 id 를 쓴다 — 없는 id 면 화면이 이름 대신 「구성원」을 보여 준다
         by_member: [
+          { user_id: ME_USER_ID, satisfied: true },
           {
-            user_id: "u_demo_1",
+            user_id: "u_2",
             satisfied: false,
             conditions: [
               { fact_key: "spicy_focused", fact_label: "매운맛 전문", evidence_line_id: null, status: "met" as const },
@@ -385,7 +387,7 @@ export function buildAgentState(mapId: string): Pick<StoreState, "agentSettings"
     },
     agentStatus: {
       [mapId]: {
-        paragraph: "음식점은 반대 의견이 하나 있고 아직 확정한 곳이 없어요. 카페는 후보만 있고 정한 곳이 없어요. 출발이 다가오니 카페부터 보면 좋겠어요.",
+        paragraph: "음식점은 반대 의견이 하나 있고 아직 확정한 곳이 없어요. 카페는 후보만 있고 정한 곳이 없어요.", // 제안 카드가 떠 있어 「○○부터」는 붙이지 않는다(#1749)
         updated_at: now.toISOString(),
       },
     },

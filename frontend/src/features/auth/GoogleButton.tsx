@@ -6,7 +6,7 @@ import { googleLoginUrl } from './api'
  */
 export default function GoogleButton({ label }: { label?: string }) {
   return (
-    <a href={googleLoginUrl()} className="btn-lg w-full rounded-xl border border-ink-200 bg-white font-semibold text-ink-900">
+    <a href={googleLoginUrl()} className="btn-lg w-full rounded-xl border border-ink-200 bg-surface font-semibold text-ink-900">
       <GoogleG /> {label ?? 'Google로 시작하기'}
     </a>
   )

@@ -10,7 +10,7 @@
 | 전체(public) | `GET /maps/{mapId}/events` | 지도의 모든 구성원 | 게시된 핀·반응·확정 리스트 변화 |
 | 개인(private) | `GET /maps/{mapId}/events/me` | 요청자 본인만 | 본인의 비공개 AI 후보, run 진행 상태 (5-5-1) |
 
-두 경로 모두 `docs/api-spec.yaml`의 `realtime` 태그에 타입까지 있다 — `PublicEvent`/`PrivateEvent`가 이 문서의 이벤트 11종을 `oneOf`로 판별 유니온화한 것이다. 페이로드를 바꾸면 이 문서와 api-spec.yaml `Evt*` 스키마를 같이 고친다.
+두 경로 모두 `docs/api-spec.yaml`의 `realtime` 태그에 타입까지 있다 — `PublicEvent`/`PrivateEvent`가 이 문서의 이벤트(전체 채널 19종, 개인 채널 3종)를 `oneOf`로 판별 유니온화한 것이다. 페이로드를 바꾸면 이 문서와 api-spec.yaml `Evt*` 스키마를 같이 고친다.
 
 **채널 분리가 5-5-1을 구조적으로 강제한다.** "요청한 사람에게만 보인다"를 애플리케이션 로직의 if문이 아니라 애초에 그 사람만 구독 가능한 채널로 만든다 — 실수로 전체 채널에 흘려보내는 버그 자체가 나지 않는다.
 
@@ -36,7 +36,7 @@
 | `map.deleted` | `{ map_id }` | 방장이 지도를 삭제함(#369). 삭제와 같은 트랜잭션에 기록된다. realtime은 이미 연결된 구독자에게 이 이벤트를 보낸 뒤 연결을 닫는다(삭제된 지도는 새 구독이 404라 이 순서가 아니면 마지막 이벤트가 전달되지 않는다). 받은 FE는 내 지도 목록으로 돌아간다 |
 | `map.updated` | `{ map_id, title, start_date, end_date, region? }` | 방장이 지도 제목·날짜·지역을 고침(#465). 수정과 같은 트랜잭션에 기록된다. 요청자 기준 값(`permissions` 등)은 싣지 않는다. 받은 FE는 지도 상세 캐시를 갱신한다 |
 | `owner.changed` | `{ map_id, from_user_id, to_user_id }` | 방장이 직접 방장을 넘김(#468). 두 사람 모두 지도에 남는다 — **`member.left`를 재사용하지 않는다**(나간 것으로 오해해 SSE를 닫는다). 받은 FE는 지도 상세·구성원 목록(`role`)을 다시 불러온다 |
-| `member.presence` | `{ user_id, online }` | 접속 상태 변화 — **v1 서버는 발행하지 않는다**(아래 「v1에서 발행하지 않는 이벤트」) |
+| `member.presence` | `{ user_id, online }` | 접속 상태가 바뀔 때만 보낸다(#1551). 첫 연결은 `online: true`, 30초 유예가 지나면 `online: false`이고 자기 자신의 이벤트도 온다(화면이 거른다). 무엇을 접속 중으로 보는지는 `api-spec.yaml`의 `Member.online` 한 곳이 정한다. 처음 값은 `GET /maps/{mapId}/members`로 받는다. 아래 「접속 상태의 한계」 |
 | `agent.suggested` | `AgentSuggestion` (api-spec.yaml) | v2 계획 보조 에이전트가 지도 제안을 저장함(docs/agent-v2.md 15절). 지도당 동시에 하나. 코드 유형(반응 공백, 카테고리 공백)은 #531, 모델 유형(정체, 갈림)은 #582부터 발행한다. 작업 기록 `steps`(#1297)도 GET과 같은 렌더로 실린다 |
 | `agent.resolved` | `{ suggestion_id, status, resolved_action_type }` | 제안이 끝남: 수락(accepted), 닫기(dismissed), 만료(expired), 무효화(superseded). 누가 처리했는지는 싣지 않는다 |
 | `agent.summary_updated` | `AgentSummary` | 우리 조건 요약 갱신. 점이나 알림을 켜지 않는다 |
@@ -50,13 +50,18 @@
 | `run.candidates_ready` | `{ run_id, candidates: Candidate[] }` | ④ 반영 — 점선 핀이 본인에게만 뜨는 시점 |
 | `run.failed` | `{ run_id, error: Error }` | 추천 실패 (6절 "추천 실패" 화면) — **v1 서버는 발행하지 않는다** |
 
+### 접속 상태의 한계 (#1551, 2026-11-09)
+
+- **API 프로세스 하나 기준이다.** 접속 상태는 realtime이 그 프로세스 메모리에 든 SSE 연결로 센다. 지금 배포는 환경마다 API 컨테이너 하나, `uvicorn --workers 1`이라 맞다. API를 여러 프로세스·여러 대로 늘리면 연결이 나뉘어 틀린다 — 그때 공유 저장소(DB 표나 Redis)로 옮긴다. 늘리기 전에 이 절을 고친다.
+- **배포·재시작 때 잠깐 모두 접속 아님이 된다.** SSE가 다시 붙으면 돌아온다. 그래서 재시작 직후의 `online: false`는 보내지 않아도 된다(연결이 없으니 받을 사람도 없다).
+- 저장하지 않는다. 접속 기록(언제 들어왔는지)은 남기지 않는다.
+
 ### v1에서 발행하지 않는 이벤트 (2026-10-04)
 
 - **`run.progress`·`run.failed`**: 추천 실행(`POST /runs/{id}/execute`·`/widen`·`/retry`)이 요청 안에서 동기로 끝나고, 이벤트는 요청 하나가 커밋될 때 한꺼번에 나간다 — 단계마다 보내도 끝에 한 번에 도착해 진행 표시가 되지 않고, 실패하면 트랜잭션이 롤백돼 `run.failed`도 저장되지 않는다. 그래서 v1에서는 보내지 않는다.
   - **진행 표시**는 프론트가 실행 요청이 돌아올 때까지(또는 결과 조회가 `done`이 될 때까지) 자체 애니메이션으로 보여 준다.
   - **실패**는 실행 요청의 HTTP 응답(500 `RECOMMEND_FAILED`, 크레딧이 모자라면 402 `CREDIT_INSUFFICIENT` 등)으로 받는다. 이벤트를 기다리지 않는다.
   - 단계별 진행을 실시간으로 보여 주려면 실행을 백그라운드로 옮겨야 한다(v2 검토).
-- **`member.presence`**: 접속 상태 추적이 없다. `Member.online`은 비어 온다 — 접속 점은 그리지 않는다.
 - **`agent.*`**: v2 계획 보조 에이전트(docs/agent-v2.md)의 이벤트다. #531부터 코드 유형 제안(반응 공백, 카테고리 공백)의 `agent.suggested`, `agent.resolved`, `agent.settings_changed`가 발행된다. 모델 유형(정체, 갈림)은 #582부터 발행되고, `agent.summary_updated`는 #586부터 발행된다.
 - **FE는 이 이벤트들을 받아도 되지만 의존하지 않는다.** 결과는 항상 `GET /runs/{id}/result`가 정본이다(`done`이 될 때까지 2초 간격 조회).
 
@@ -68,10 +73,11 @@ FE는 이벤트를 받으면 아래 표대로 화면 데이터를 다시 받는�
 |---|---|
 | `pin.created`, `pin.published` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts` |
 | `pin.updated` | 핀 목록의 그 핀(페이로드로 갱신 — 승격이면 이름·좌표가 새로 생기므로 지도 마커와 상세를 같이 갱신). `GET /maps/{mapId}/shortlist`(`ShortlistItem`이 핀을 담고 있어, 확정된 핀의 메모 수정과 승격(#763)이 확정 탭에도 보여야 한다, #777). 분류가 바뀌었으면 `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness` (#466) |
-| `pin.deleted` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness` |
-| `pin.restored` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness`, `GET /maps/{mapId}/shortlist`(확정이었다면), `GET /maps/{mapId}/trash` |
-| `reaction.changed` | 핀 목록의 그 핀(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /pins/{pinId}/reactions`(열려 있으면), `GET /maps/{mapId}/recommend/readiness` |
+| `pin.deleted` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness`, `GET /maps/{mapId}/members`(구성원 줄의 의견 수는 지운 핀을 세지 않는다, #1562) |
+| `pin.restored` | 핀 목록(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /maps/{mapId}/recommend/readiness`, `GET /maps/{mapId}/members`(의견 수, #1562), `GET /maps/{mapId}/shortlist`(확정이었다면), `GET /maps/{mapId}/trash` |
+| `reaction.changed` | 핀 목록의 그 핀(페이로드로 갱신), `GET /maps/{mapId}/counts`, `GET /pins/{pinId}/reactions`(열려 있으면), `GET /maps/{mapId}/recommend/readiness`, `GET /maps/{mapId}/members`(의견 수, #1562) |
 | `member.joined` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members` |
+| `member.presence` | 구성원 목록의 그 사람 `online`(페이로드로 갱신, #1551). 다시 받지 않는다. 연결이 끊겼다 다시 붙으면 놓친 변화가 있을 수 있어 `GET /maps/{mapId}/members`를 새로 받는다 |
 | `member.left` | `GET /maps/{mapId}/pins`, `GET /maps/{mapId}/counts`, `GET /maps/{mapId}`, `GET /maps/{mapId}/members`, `GET /maps/{mapId}/recommend/readiness` |
 | `owner.changed` | `GET /maps/{mapId}`, `GET /maps/{mapId}/members`(방장 표시, #468) |
 | `map.updated` | 지도 상세(페이로드로 갱신), `GET /maps`(내 지도 목록의 제목과 날짜, #465), `GET /maps/{mapId}/shortlist`(날짜가 바뀌면 서버가 기간 밖 일정을 빼고, 일정 version도 기간을 담아 바뀐다, #1273) |
@@ -145,7 +151,7 @@ SSE 구독 권한(구성원인가)은 **구독을 시작할 때 한 번만** 본
    않는다 — 3번의 멱등 적용 규칙이 이미 이걸 안전하게 만든다.
 8. **연결 점검(ping, #821).** 이벤트가 없는 동안 연결이 조용히 죽으면(노트북 절전, Wi-Fi 전환, 공유기·NAT의 유휴 연결 정리) 브라우저는 끊긴 줄 모르고 「열림」 상태로 계속 기다린다 — 새로고침 말고는 복구할 방법이 없다. 그래서:
    - **서버**는 두 채널 모두 **연결 직후 한 건을 먼저** 보내고(#925, 새 연결은 `Last-Event-ID`가 없어 다시 보낼 이벤트가 없으면 첫 데이터가 20초 뒤 ping이라 화면이 「다시 연결」을 눌러도 최대 20초 열리지 않은 것처럼 보였다) 그 뒤 20초마다 `event: control` / `data: {"type":"ping"}` 한 건을 보낸다. 연결 직후의 건은 `Last-Event-ID` 재전송보다 앞이다. `id:` 줄은 붙이지 않는다(`Last-Event-ID`를 건드리지 않고, `event_log`에도 쓰지 않는다). 주석 줄(`: ping`)은 브라우저 `EventSource` API가 화면에 알려 주지 않아 쓸 수 없다.
-   - **화면**은 이벤트든 ping이든 **60초 넘게 아무것도 못 받으면** 그 연결을 닫고 새로 맺는다. 맺기 전에 핀 목록·집계·확정 리스트를 REST로 다시 받는다(`reconnect()`와 같은 동작 — 끊긴 동안 놓친 변화는 재전송이 안 될 수 있다). 이 사이에는 「연결이 끊겼어요. 다시 연결하는 중…」 띠를 보인다. 탭이 숨겨져 있는 동안은 타이머가 늦게 돌 수 있으니, 탭이 다시 보일 때(`visibilitychange`)에도 같은 점검을 한다.
+   - **화면**은 이벤트든 ping이든 **60초 넘게 아무것도 못 받으면** 그 연결을 닫고 새로 맺는다. 맺기 전에 핀 목록·집계·확정 리스트와 구성원 목록(접속 상태, #1551)을 REST로 다시 받는다(`reconnect()`와 같은 동작 — 끊긴 동안 놓친 변화는 재전송이 안 될 수 있다). 이 사이에는 「연결이 끊겼어요. 다시 연결하는 중…」 띠를 보인다. 탭이 숨겨져 있는 동안은 타이머가 늦게 돌 수 있으니, 탭이 다시 보일 때(`visibilitychange`)에도 같은 점검을 한다.
    - `control`의 `type`은 `replay_truncated`와 `ping` 둘이다. 화면은 모르는 `type`을 무시한다.
 9. **v1 한계.** 폴러는 인스턴스 안 백그라운드 태스크다. 지금 배포는 환경마다 API 컨테이너 1개(uvicorn 워커 1,
    `deploy_rules.md`)다. 인스턴스가 여러 개여도 각자 폴링해 각자 구독자에게 보내므로 정합성은 깨지지 않지만,

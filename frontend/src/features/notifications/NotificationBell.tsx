@@ -20,8 +20,17 @@ import { useMarkReadMutation, useNotificationPrefsQuery, useNotificationsQuery, 
  * 개수는 점에 적지 않고 버튼 이름(「안 읽은 알림 n개」)과 알림함에서 읽는다.
  * `floating`은 지도 위(흰 원 + 그림자), 아니면 입구 화면·넓은 화면 패널 머리의 테두리 원이다.
  * `currentMapId`는 지도 화면에서 지금 보는 지도다. 주면 알림함이 이 지도와 다른 지도의 알림을 나눠 보인다(#1036).
+ * `onOpen`을 주면 알림함 시트를 띄우지 않고 그 함수를 부른다. 휴대폰 프로필 탭은 같은 시트 안 화면으로 연다(#1710).
  */
-export default function NotificationBell({ floating = false, currentMapId }: { floating?: boolean; currentMapId?: string }) {
+export default function NotificationBell({
+  floating = false,
+  currentMapId,
+  onOpen,
+}: {
+  floating?: boolean
+  currentMapId?: string
+  onOpen?: () => void
+}) {
   const [open, setOpen] = useState(false)
   const list = useNotificationsQuery()
   const unread = list.data?.pages[0]?.unread_count ?? 0
@@ -33,11 +42,12 @@ export default function NotificationBell({ floating = false, currentMapId }: { f
         type="button"
         aria-label={badge ? `알림, 안 읽은 알림 ${badge}개` : '알림'}
         onClick={() => {
-          setOpen(true)
+          if (onOpen) onOpen()
+          else setOpen(true)
           // 알림함을 열 때 새로 받는다 — 실시간 푸시가 없다(api-spec GET /me/notifications).
           void list.refetch()
         }}
-        className={`hit-44 relative flex size-8 shrink-0 items-center justify-center rounded-full bg-white text-ink-900 ${
+        className={`hit-44 relative flex size-8 shrink-0 items-center justify-center rounded-full bg-surface text-ink-900 ${
           floating ? 'press pointer-events-auto shadow-float' : 'press border border-ink-200'
         }`}
       >
@@ -55,40 +65,58 @@ function NotificationSheet({ currentMapId, onClose }: { currentMapId?: string; o
   const [settings, setSettings] = useState(false)
   return (
     <ModalSheet label="알림" onClose={onClose}>
-      {settings ? <PrefsView onBack={() => setSettings(false)} /> : <InboxView currentMapId={currentMapId} onClose={onClose} onSettings={() => setSettings(true)} />}
+      {settings ? (
+        <>
+          <PrefsHead onBack={() => setSettings(false)} />
+          <PrefsList />
+        </>
+      ) : (
+        <>
+          <InboxHead onSettings={() => setSettings(true)} />
+          <InboxList currentMapId={currentMapId} onClose={onClose} />
+        </>
+      )}
     </ModalSheet>
   )
 }
 
-function InboxView({ currentMapId, onClose, onSettings }: { currentMapId?: string; onClose: () => void; onSettings: () => void }) {
+/** 알림함 머리: 제목, 모두 읽음, 설정. 알림함 시트와 프로필 탭 시트 머리(#1710)가 같이 쓴다. */
+export function InboxHead({ onSettings }: { onSettings: () => void }) {
+  const list = useNotificationsQuery()
+  const markRead = useMarkReadMutation()
+  const unread = list.data?.pages[0]?.unread_count ?? 0
+  return (
+    <div className="mb-3 flex items-center justify-between gap-2">
+      <SheetTitle>알림</SheetTitle>
+      <div className="flex shrink-0 items-center gap-3">
+        {unread > 0 && (
+          <button type="button" onClick={() => markRead.mutate(undefined)} disabled={markRead.isPending} className="btn-link text-body">
+            모두 읽음
+          </button>
+        )}
+        <button type="button" onClick={onSettings} className="btn-link text-body">
+          설정
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** 알림 목록. 누르면 그 알림이 가리키는 곳으로 간다. 시트에서 열었으면 `onClose`로 시트를 먼저 닫는다. */
+export function InboxList({ currentMapId, onClose }: { currentMapId?: string; onClose?: () => void }) {
   const list = useNotificationsQuery()
   const markRead = useMarkReadMutation()
   const navigate = useNavigate()
   const items = list.data?.pages.flatMap((p) => p.items) ?? []
-  const unread = list.data?.pages[0]?.unread_count ?? 0
 
   function open(n: NotificationDto) {
     if (!n.read) markRead.mutate([n.id])
-    onClose()
+    onClose?.()
     navigate(notificationTarget(n))
   }
 
   return (
     <>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <SheetTitle>알림</SheetTitle>
-        <div className="flex shrink-0 items-center gap-3">
-          {unread > 0 && (
-            <button type="button" onClick={() => markRead.mutate(undefined)} disabled={markRead.isPending} className="btn-link text-body">
-              모두 읽음
-            </button>
-          )}
-          <button type="button" onClick={onSettings} className="btn-link text-body">
-            설정
-          </button>
-        </div>
-      </div>
-
       {list.isPending && <CardSkeleton count={2} />}
       {list.error && <ErrorText message="알림을 불러오지 못했어요" error={list.error} />}
       {list.data && items.length === 0 && <EmptyState title="아직 알림이 없어요">내 핀에 의견이 달리거나 구성원이 들어오면 여기 모여요</EmptyState>}
@@ -142,15 +170,24 @@ function InboxView({ currentMapId, onClose, onSettings }: { currentMapId?: strin
   )
 }
 
-function PrefsView({ onBack }: { onBack: () => void }) {
-  const prefs = useNotificationPrefsQuery()
-  const update = useUpdatePrefMutation()
-
+/** 알림 설정 머리: ‹ 알림, 제목, 한 줄 안내. */
+export function PrefsHead({ onBack }: { onBack: () => void }) {
   return (
     <>
       <BackButton label="알림" onClick={onBack} />
       <SheetTitle>알림 설정</SheetTitle>
       <p className="mb-3 mt-1 text-xs text-ink-500"><Sentences text="끄면 그 알림은 더 이상 오지 않아요." /></p>
+    </>
+  )
+}
+
+/** 알림 종류마다 켜고 끄는 줄. */
+export function PrefsList() {
+  const prefs = useNotificationPrefsQuery()
+  const update = useUpdatePrefMutation()
+
+  return (
+    <>
       {prefs.isPending && <CardSkeleton count={1} />}
       {prefs.error && <ErrorText message="알림 설정을 불러오지 못했어요" error={prefs.error} />}
       <ul className="divide-y divide-ink-100">
@@ -160,8 +197,8 @@ function PrefsView({ onBack }: { onBack: () => void }) {
             <Switch
               checked={p.enabled}
               label={prefLabel(p.type)}
-              disabled={update.isPending}
-              onChange={(enabled) => update.mutate({ type: p.type, enabled })}
+              // 누르는 순간 움직인다(낙관적, #1676). 흐리게 막지 않고, 같은 줄을 보내는 중에 또 누르면 무시한다 — 응답 순서가 엇갈리면 값이 뒤집힌다.
+              onChange={(enabled) => !(update.isPending && update.variables?.type === p.type) && update.mutate({ type: p.type, enabled })}
             />
           </li>
         ))}

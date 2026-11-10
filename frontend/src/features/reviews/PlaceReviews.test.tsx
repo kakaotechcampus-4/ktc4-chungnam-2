@@ -53,7 +53,8 @@ describe('장소 후기(#953)', () => {
     const page = await get<ReviewPageDto>('/pins/pin_1/reviews')
     renderWithClient(<PlaceReviews pin={await pin1()} />)
 
-    expect(await screen.findByText(`${page.summary.average_rating} · 후기 ${page.summary.count}개`)).toBeInTheDocument()
+    expect(await screen.findByText(String(page.summary.average_rating))).toBeInTheDocument()
+    expect(screen.getByText(`후기 ${page.summary.count}개`)).toBeInTheDocument()
     const rows = within(screen.getByRole('list')).getAllByRole('listitem')
     expect(rows.map((r) => within(r).getByText(/국물|줄이/).textContent)).toEqual(page.items.map((i) => i.body))
     for (const row of rows) {

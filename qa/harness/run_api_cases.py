@@ -475,13 +475,20 @@ def r3_widen_retry():
           "A 30회 후 402, B는 자기 크레딧으로 202", f"A {codes_a}, B {r.status_code} {r.text[:100]}")
     rid = r.json()["id"]
     b.post(f"/runs/{rid}/regions/confirm", json={}); b.post(f"/runs/{rid}/execute"); result(b, rid)
+    # 상한은 서버가 readiness로 내리는 값을 읽는다 — 넓히기 횟수나 단계 폭을 여기 적지 않는다(#1528, 반경 단계가 바뀌어 #1385 뒤 깨졌다)
+    center = run_body(mid)["center"]
+    card = b.get(f"/maps/{mid}/recommend/readiness", params={"center_lat": center["lat"], "center_lng": center["lng"]}).json().get("음식점", {})
+    limit_m = card.get("radius_max_m")
     last = None; n = 0
-    for _ in range(6):
+    for _ in range(10):
         last = b.post(f"/runs/{rid}/widen"); n += last.status_code == 202
-        if last.status_code == 202:
-            result(b, rid)   # 넓히기도 백그라운드로 다시 돈다 — 끝난 뒤에 다음을 누른다
-    check("B06", n == 3 and last.status_code == 409 and last.json().get("code") == "WIDEN_LIMIT",
-          f"넓히기 3회(15→30분) 후 409 WIDEN_LIMIT", f"{n}회 성공, 마지막 {last.status_code} {last.text[:120]}")
+        if last.status_code != 202:
+            break
+        result(b, rid)   # 넓히기도 백그라운드로 다시 돈다 — 끝난 뒤에 다음을 누른다
+    body = last.json() if last.headers.get("content-type", "").startswith("application/json") else {}
+    check("B06", n >= 1 and last.status_code == 409 and body.get("code") == "WIDEN_LIMIT"
+          and limit_m is not None and (body.get("detail") or {}).get("default_radius_m") == limit_m,
+          f"상한 {limit_m}m까지 넓힌 뒤 409 WIDEN_LIMIT", f"{n}회 성공, 상한 {limit_m}, 마지막 {last.status_code} {last.text[:120]}")
 
 
 def r3_concurrent_shortlist():
@@ -1032,14 +1039,18 @@ def w10():
     check("W10.engine", r.status_code == 202 and (run.get("status"), run.get("failure_code")) == ("failed", "ENGINE_ERROR")
           and b1 == b0 and led("spend") == 1 and led("refund") == 1,
           "엔진 실패 → failed ENGINE_ERROR, 잔액 그대로, 원장 차감 1·환불 1(GET 두 번 뒤에도)", f"{r.status_code} {run.get('status')} {run.get('failure_code')}, 잔액 {b0} → {b1}, 원장 차감 {led('spend')} 환불 {led('refund')}")
-    # 두 번째 run은 정상으로 끝낸 뒤 「15분 넘게 진행 중」으로 되돌려 INTERRUPTED 환불을 본다 — 환불이 아직 없던 run이라 증거가 된다
+    # 두 번째 run은 정상으로 끝낸 뒤 「끊긴 run 판정(agent/course/constants.py STALE_AFTER)보다 오래 진행 중」으로 되돌려 INTERRUPTED
+    # 환불을 본다 — 환불이 아직 없던 run이라 증거가 된다
     r = c.post(f"/maps/{mid}/courses", json={}); cid2 = r.json().get("course_run_id")
     done = c.get(f"/course-runs/{cid2}").json().get("status") if cid2 else None
     b2 = _credits(c)["balance"]
     import sqlalchemy as sa
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from agent.course.constants import STALE_AFTER
     from common import database
     with database.SessionLocal() as db:
-        db.execute(sa.text("update agent_course_runs set status='running', failure_code=null, finished_at=null, created_at=now()-interval '16 minutes' where id=:i"), {"i": cid2})
+        db.execute(sa.text("update agent_course_runs set status='running', failure_code=null, finished_at=null, created_at=:t where id=:i"),
+                   {"t": _dt.now(_tz.utc) - STALE_AFTER - _td(minutes=1), "i": cid2})
         db.commit()
     got = c.get(f"/course-runs/{cid2}").json(); c.get(f"/course-runs/{cid2}"); b3 = _credits(c)["balance"]
     check("W10.interrupted", done == "done" and (got.get("status"), got.get("failure_code")) == ("failed", "INTERRUPTED")

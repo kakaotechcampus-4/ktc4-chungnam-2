@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 
+import OfflineState from './OfflineState'
 import Pingo, { type PingoMood } from './Pingo'
+import { useOnline } from './useOnline'
 
 /** 이보다 빨리 오는 응답엔 아무것도 띄우지 않는다 — 핑고가 잠깐 번쩍이면 오히려 거슬린다. */
 const SHOW_AFTER_MS = 1000
@@ -12,10 +14,19 @@ const SHOW_AFTER_MS = 1000
  */
 export default function PingoLoading({ label, className = '', mood = 'walk' }: { label: string; className?: string; mood?: Extract<PingoMood, 'walk' | 'space'> }) {
   const [shown, setShown] = useState(false)
+  const online = useOnline()
   useEffect(() => {
     const t = setTimeout(() => setShown(true), SHOW_AFTER_MS)
     return () => clearTimeout(t)
   }, [])
+  // 끊기면 요청이 멈춰 있어 핑고가 끝없이 걷는다(#1722).
+  if (!online) {
+    return (
+      <div className={`flex flex-col ${className}`}>
+        <OfflineState />
+      </div>
+    )
+  }
   return (
     <div role="status" className={`flex flex-col items-center gap-2 py-6 text-center ${className}`}>
       {shown ? (

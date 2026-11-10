@@ -8,7 +8,7 @@ import { elapsedLabel, triedInOrder, type AgentTrackingDto, type AgentTriedDto }
 
 /** 상태마다 아이콘과 색 — 글자(서버 문구)가 뜻을 담고, 아이콘은 한눈에 가르는 보조다. 이름은 스크린리더용. */
 const STATUS: Record<AgentTrackingDto['status'], { icon: typeof Eye; color: string; label: string }> = {
-  watching: { icon: Eye, color: 'text-brand-600', label: '지켜보는 중' },
+  watching: { icon: Eye, color: 'text-link', label: '지켜보는 중' },
   resolved: { icon: CircleCheck, color: 'text-[var(--good-text)]', label: '풀림' },
   declared: { icon: Flag, color: 'text-ink-500', label: '해 본 것을 남김' },
 }

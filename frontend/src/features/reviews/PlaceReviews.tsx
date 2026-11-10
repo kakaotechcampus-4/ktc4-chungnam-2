@@ -7,6 +7,7 @@ import { useCreditsQuery } from '@/features/credits/queries'
 import { timeAgo, type Pin } from '@/features/map/model'
 import { showToast } from '@/features/shell/toast'
 import ConfirmDialog from '@/ui/ConfirmDialog'
+import Skeleton, { Bone } from '@/ui/Skeleton'
 import StarRating from '@/ui/StarRating'
 
 import { authorLabel, flattenPages, summaryText, type ReviewItemDto } from './model'
@@ -28,7 +29,22 @@ export default function PlaceReviews({ pin }: { pin: Pin }) {
   const [asking, setAsking] = useState<{ kind: 'delete' } | { kind: 'report'; item: ReviewItemDto } | null>(null)
   const guest = guestOf(creditBlock(credits.error)) ?? guestOf(creditBlock(report.error))
 
-  if (reviews.isPending) return null
+  // 받는 데 오래 걸리면 머리 줄과 후기 한 줄 자리를 먼저 그린다(#1675). 금방 오면(0.3초 안) 그리지 않는다 —
+  // 핀 상세는 사진·의견 칸도 함께 자리를 잡는 중이라, 뼈대가 번쩍였다 사라지면 위아래가 한 번 더 움직였다(e2e에서 「반대」 누름이 비껴갔다).
+  if (reviews.isPending) {
+    return (
+      <Skeleton label="후기를 불러오는 중…" delayMs={300} className="space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="space-y-1.5">
+            <Bone className="h-4 w-16" />
+            <Bone className="h-6 w-32" />
+          </div>
+          <Bone className="h-8 w-20 rounded-md" />
+        </div>
+        <Bone className="h-16 w-full rounded-xl" />
+      </Skeleton>
+    )
+  }
   // 「더 보기」가 실패해도 받은 쪽은 남긴다 — 처음부터 못 받았을 때만 이 줄 하나다.
   if (!reviews.data) return <ErrorText message="후기를 불러오지 못했어요" error={reviews.error} />
 
@@ -56,10 +72,16 @@ export default function PlaceReviews({ pin }: { pin: Pin }) {
           <h3 id="place-reviews" className="text-sm font-bold text-ink-900">
             장소 후기
           </h3>
-          <p className="mt-0.5 flex items-center gap-1.5 text-body text-ink-700">
-            {summary.average_rating !== null && <StarRating value={summary.average_rating} />}
-            {summaryText(summary)}
-          </p>
+          {/* 평점 요약 — 평균 숫자를 크게, 옆에 별과 후기 수(참고: 평점 요약 UI). */}
+          {summary.average_rating === null ? (
+            <p className="mt-0.5 text-body text-ink-700">{summaryText(summary)}</p>
+          ) : (
+            <p className="mt-0.5 flex items-center gap-1.5 text-body text-ink-700">
+              <span className="text-xl font-bold text-ink-900">{summary.average_rating}</span>
+              <StarRating value={summary.average_rating} size={14} />
+              <span>후기 {summary.count}개</span>
+            </p>
+          )}
         </div>
         {!guest && (
           <button type="button" onClick={() => setWriting(true)} className="btn-outline btn-sm shrink-0">
@@ -117,6 +139,7 @@ export default function PlaceReviews({ pin }: { pin: Pin }) {
           title="이 후기를 신고할까요?"
           body="욕설이나 장소와 상관없는 글이면 알려 주세요. 운영자가 확인해요."
           ok="신고"
+          danger
           pending={report.isPending}
           onCancel={() => setAsking(null)}
           onOk={() => sendReport(asking.item)}

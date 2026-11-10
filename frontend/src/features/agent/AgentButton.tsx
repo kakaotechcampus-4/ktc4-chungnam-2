@@ -23,7 +23,7 @@ function readOpens() {
  * 「핑고 AI 조언」 버튼(agent-v2 16.1). 조언은 지도 단위라 지도가 떠 있는 네 탭 모두의 지도 왼쪽 아래에 있다(#1162) —
  * 오른쪽 지도 버튼 묶음과 같은 높이로 시트 윗변을 따라 오르내린다. 안내자 핑고가 손을 흔들며 말을 거는 모양(말풍선)이다.
  * 새 제안을 아직 안 봤으면 핑고가 손을 흔들고 머리 옆에 3D 「!」 말풍선이 뜬다(새 소식 귤색, #1223 → #1433). 모드가 꺼져 있어도 버튼은 보이고 알림만 숨긴다. 요약 갱신에는 알림을 켜지 않는다.
- * 핑고는 3D 지도 핑고이고(#1433), 지도를 끄는 동안 말풍선만 흐려지고 핑고는 끈 방향을 보며 걷는다.
+ * 핑고는 3D 지도 핑고이고(#1433), 지도를 끄는 동안 말풍선만 흐려지고 핑고는 화면이 가는 쪽(끈 쪽의 반대)을 보며 걷는다(#1746).
  * 말풍선을 숨긴 뒤에는 핑고만 남아 누르는 자리가 된다.
  */
 export default function AgentButton({
@@ -78,12 +78,12 @@ export default function AgentButton({
         </span>
         {bubble && (
           <span
-            className={`relative flex h-9 items-center rounded-xl bg-white px-3 text-sm font-bold text-brand-600 shadow-float transition-opacity ${
+            className={`relative flex h-9 items-center rounded-xl bg-surface px-3 text-sm font-bold text-link shadow-float transition-opacity ${
               fading ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
             }`}
           >
             {/* 말풍선 꼬리 — 핑고 쪽을 가리킨다. */}
-            <span aria-hidden="true" className="absolute -left-1 top-1/2 size-2.5 -translate-y-1/2 rotate-45 bg-white" />
+            <span aria-hidden="true" className="absolute -left-1 top-1/2 size-2.5 -translate-y-1/2 rotate-45 bg-surface" />
             핑고 AI 조언
           </span>
         )}

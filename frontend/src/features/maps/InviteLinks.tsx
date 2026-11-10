@@ -6,7 +6,7 @@ import { showToast } from '@/features/shell/toast'
 import { useInvitesQuery, useRevokeInviteMutation } from './queries'
 
 /**
- * 켜진 초대 링크 관리(방장, #467). 펼쳤을 때만 목록을 받는다. 끈 링크로는 더 들어올 수 없고, 이미 들어온 사람은 그대로다.
+ * 초대 링크 관리(방장, #467). 「켜진」을 붙이면 「꺼진」으로 잘못 읽혀서 뺐다(PM 점검 #1554). 펼쳤을 때만 목록을 받는다. 끈 링크로는 더 들어올 수 없고, 이미 들어온 사람은 그대로다.
  * 끄기는 확인 창 없이 바로 한다 — 새 링크는 언제든 다시 만들 수 있다.
  */
 export default function InviteLinks({ mapId, onRevoked }: { mapId: string; onRevoked: (token: string) => void }) {
@@ -17,7 +17,7 @@ export default function InviteLinks({ mapId, onRevoked }: { mapId: string; onRev
   return (
     <div className="mt-1">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="btn-link text-sm">
-        {open ? '켜진 초대 링크 접기' : '켜진 초대 링크 관리'}
+        {open ? '초대 링크 접기' : '초대 링크 관리'}
       </button>
       {open && (
         <div className="mt-1 space-y-2">

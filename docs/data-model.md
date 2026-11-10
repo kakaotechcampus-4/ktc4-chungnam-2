@@ -72,7 +72,9 @@ memberships(
   id, map_id, user_id, role('member'|'owner'),   -- authz 참고. color는 9/4 결정 #26으로 폐기(구성원 구분에 색 불필요)
                                                  -- #369: role이 방장 판단의 정본이다. 방장이 나가면 joined_at이 가장 빠른
                                                  --   구성원(탈퇴자 제외, 같으면 id 순)에게 위임된다
-  joined_at
+  joined_at,
+  last_seen_at                                   -- #1556(2026-11-09): 이 사람이 이 지도를 마지막으로 본 때(POST /maps/{mapId}/seen). null이면 아직 안 봄.
+                                                 --   GET /maps/{mapId}/news의 기준 시각. 기기와 상관없이 한 사람에 하나다
 )
   unique(map_id, user_id)
   unique(map_id) where role = 'owner'   -- #369: 지도당 방장은 최대 1명. 위임은 한 트랜잭션에서 강등 후 승격
@@ -210,6 +212,9 @@ places(
   kakao_place_id null, kakao_place_url null, kakao_matched_at null,
                                         -- 사용자가 검색해서 고를 때 한 건씩 매칭한 결과. 허용 범위: 카카오 장소 ID·URL·확인 일자.
                                         -- 카카오 응답의 이름·주소·좌표는 저장하지 않는다(#53)
+  name_norm text generated always as (...) stored,
+                                        -- 이름 검색용 정규화(공백·기호 제거, places/models.py의 NAME_NORM_SQL).
+                                        -- index idx_places_name_norm (name_norm text_pattern_ops)
   created_at, updated_at
 )
   unique(source, source_id)
@@ -318,7 +323,25 @@ place_editions(                         -- 적재 기록. 지금 판 = 그 출�
 
 ---
 
-## seeding (신규, architecture.md 3절)
+## sido_boundaries (시·도 경계, #1385, 마이그레이션 0064)
+
+```
+sido_boundaries(
+  code primary key,                     -- 통계청 2018 시·도 코드
+  name,                                 -- 전남(36)·광주(24)는 둘 다 "전남광주"
+  geom geometry(MultiPolygon,4326),     -- 공간 인덱스
+  source_sha256                         -- 적재한 파일의 내용 해시. 화면 정본과 다르면 로더가 하나도 쓰지 않는다
+)
+index (name)
+```
+
+- 지역 판정의 정본이다(`places.api.sido_at`, `circle_outside_region`). `python -m places.load boundaries`가 17개 파일을 넣는다.
+
+---
+
+## seeding (계획만, 미구현 — architecture.md 3절)
+
+> 아래 표는 만들지 않았다. 모델과 마이그레이션이 없고 `backend/seeding`은 자리만 있다. v1은 적재한 라벨 파일만 쓴다.
 
 ```
 seeding_jobs(
@@ -431,7 +454,7 @@ candidates(
   --    스키마에서 반드시 제외한다(클라이언트가 덮어쓸 수 없게).
 
 exclusions(
-  map_id, category, place_id, reason('proposed'|'dismissed'),
+  id uuid, map_id, category, place_id, reason('proposed'|'dismissed'),
   run_id, requested_by, created_at
 )
   unique(map_id, requested_by, place_id)  -- #42 확정: 개인 단위라 (map_id, place_id)만으로는
@@ -557,7 +580,7 @@ agent_run_advice(                     -- 추천 막힘 조언. run당 1행, 지�
 
 ---
 
-## agent_course_runs (AI 코스 짜기, #334 — 팀 결정 #580 전 브랜치 초안, 마이그레이션 0037, 0050)
+## agent_course_runs (AI 코스 짜기, #334, #580, 마이그레이션 0037, 0050)
 
 > 동선 에이전트(`backend/agent/course/`)가 쓰는 테이블 1개. `map_id`, `requested_by`는 문자열이고 FK가 없다. run은 요청자 본인 것이다(가드레일 1).
 > **장소 이름과 좌표는 저장하지 않는다.** 핀은 `pin_id`로만 가리킨다(화면 문장에 들어간 이름은 코드가 렌더한 문장 안에만 있다). 사유 원문도 없다 —
@@ -573,7 +596,6 @@ agent_course_runs(
   input jsonb,                        -- {request_text, member_constraints:[{kind:'daily_walk_max', value, day}]}
   mode('plan'|'fill'|'review'),       -- 요청 때 서버가 확정 리스트의 일정 상태로 정한다(#1237). 진행 중에도 값이 있다
   snapshot_at, snapshot_version text, -- 요청 때 일정 version(shortlist, #1237 — 장소 집합·날짜 배정·순서·여행 기간). 지금과 다르면 응답의 stale=true. 0062 전 run은 'legacy'(→ stale)
-  snapshot_pin_ids jsonb default '[]', -- 지울 칸(deploy_rules.md, #1464). 이전 릴리스가 읽는 옛 stale 기준이다. 새 코드는 쓰지 않는다. 삭제는 #1465
   headline null, fixes jsonb, checked jsonb, -- 결과 머리 문구, 고칠 점 카드 [{id, kind, strength, text, moves:[{pin_id, from_date, to_date}], resolved_text, remaining_text, not_fixed_reason}], 점검 통과 [{kind, text}]. plan은 fixes·checked가 빈 배열
   goals jsonb, unmatched jsonb,       -- [{id, kind, label, met}], 요청 원문 조각
   excluded jsonb,                     -- [{pin_id, reason('NO_COORDINATES'|'OVER_LIMIT'), text}]
@@ -588,8 +610,8 @@ index ix_agent_course_runs_map_user (map_id, requested_by, created_at)
 unique uq_agent_course_runs_active (map_id, requested_by) where status in ('queued','running')   -- 내 진행 중 run은 지도당 하나 → 409 COURSE_IN_PROGRESS
 ```
 
-- 진행 중으로 15분 넘게 남은 run은 `failed(INTERRUPTED)`로 끝낸다. 새 요청과 조회(`GET /course-runs/{runId}`, `GET /maps/{mapId}/courses/latest`)가 같은 판정(`agent.course.service.fail_stale_runs`)을 부른다(#736). 늦게 끝난 계산은 `running`일 때만 저장하므로 끝낸 run을 덮지 않는다. 서버가 시작할 때도 진행 중인 run을 모두 같은 값으로 끝낸다(인스턴스 하나 전제, #168).
-- 영업시간 칸이 places에 아직 없어(#580 6번) 지금은 모든 장소가 「확인 필요」(`checks`)다.
+- 실행은 `created_at`부터 실행 상한(`agent/course/constants.py`의 `RUN_LIMIT`) 안에서 끝난다. 상한이 지나면 모델을 더 부르지 않고 코드가 마무리해 `done`으로 저장한다(#1609). 그래서 상한에 여유를 더한 `STALE_AFTER`(같은 파일)보다 오래 진행 중(queued, running)인 run은 어느 프로세스의 것이든 죽은 것이고 `failed(INTERRUPTED)`로 끝낸다. 판정은 `agent.course.service.fail_stale_runs` 한 곳이고, 새 요청과 조회(`GET /course-runs/{runId}`, `GET /maps/{mapId}/courses/latest`, #736)와 서버 시작이 범위만 달리해 부른다. 서버 시작도 같은 값을 쓰므로 서버가 둘 이상이어도 다른 프로세스가 돌리는 run을 끝내지 않는다. 늦게 끝난 계산은 `running`일 때만 저장하므로 끝낸 run을 덮지 않는다.
+- 영업은 `places.api.get_week_open_status`로 요일 단위로 판정한다(`place_hours`, #690). 영업시간을 모르는 장소만 「확인 필요」(`checks`)다.
 
 ---
 
@@ -610,6 +632,8 @@ llm_calls(
   run_id null,                        -- evidence_add는 recommend_runs.id, course는 agent_course_runs.id. 추천 ②와 진단은 null
   model, prompt_version null,         -- ②는 프롬프트 버전 상수가 없어 null
   input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,   -- 입력은 캐시 몫과 캐시 쓰기 할증 포함, 출력은 추론 토큰 포함
+  batch_size int null,                -- 이 호출이 처리한 입력 수(② 묶음 크기, 다른 호출은 null, #848)
+  discarded bool default false,       -- 성공했지만 결과가 쓰이지 않은 호출(뒤 묶음 실패·시간 상한, run 저장 실패). 버려진 비용(#848)
   web_searches int default 0,         -- 그 호출 안의 웹 검색 횟수(응답의 web_search_call 수, #1216). 웹 확인 밖은 0
   cost_krw numeric(12,4),             -- 기록 시점 단가(common.settings의 LLM_PRICE_*)로 계산. 할증이 input_tokens에 있어 cache_write_tokens는 따로 더하지 않는다. 웹 검색 요금(web_searches × LLM_PRICE_WEB_SEARCH_KRW)을 더한다
   outcome('ok'|'ok_repeated_json'|'refusal'|'empty'|'timeout'|'invalid_schema'|'call_failed'), ok bool,   -- ok_repeated_json: 같은 JSON 객체가 두 번 온 응답의 첫 객체를 받음(ok=true, #767). 토큰은 0으로 남는다(SDK가 검증 실패에 usage를 붙이지 않는다)

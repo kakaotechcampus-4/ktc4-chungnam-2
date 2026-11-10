@@ -217,7 +217,8 @@ describe('지도 현황 문단과 우리 데이터 줄(#1169)', () => {
     const [yes, no] = lineIcons()
     expect(yes).toContain('lucide-database')
     expect(no).toBe(yes)
-    expect(document.querySelector('.lucide-check, .lucide-x')).toBeNull()
+    // 시트의 닫기 ✕(#1690)는 판정이 아니라 데이터 줄 안에서만 본다.
+    expect(screen.getByRole('heading', { name: '우리 데이터' }).parentElement!.querySelector('.lucide-check, .lucide-x')).toBeNull()
   })
 
   it('모름만 물음표 아이콘(#1182)', () => {

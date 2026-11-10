@@ -1,6 +1,5 @@
-import { ChevronDown } from 'lucide-react'
-
 import type { MemberView } from '@/features/maps/model'
+import Select from '@/ui/Select'
 
 import { FILTER_CATEGORIES, KINDS, kindLabel, OPINIONS, SORTS, type Pin, type PinFilters, type PinOpinion, type PinSort } from './model'
 
@@ -43,7 +42,7 @@ export function CategoryChips({
 
 /**
  * 「올린 사람 ▾」「의견 많은 순 ▾」 드롭다운. 구성원을 칩 줄로 만들면 카테고리 칩과 헷갈려서 드롭다운으로 했다.
- * 고르는 창은 브라우저 기본 select 를 쓴다 — 모바일에서 각 OS 의 고르기 화면이 뜬다.
+ * 고르는 목록은 `ui/Select`다 — 브라우저 기본 목록은 글자·색이 서비스와 따로 놀아서 바꿨다(#1695).
  */
 export function PinFilterBar({
   filters,
@@ -59,7 +58,7 @@ export function PinFilterBar({
   const countBy = (userId: string) => pins.filter((p) => p.created_by === userId).length
   return (
     <div className="mt-2 flex flex-wrap gap-2">
-      <FilterSelect
+      <Select
         label="올린 사람"
         value={filters.createdBy ?? ''}
         onChange={(v) => onChange('by', v || null)}
@@ -68,79 +67,24 @@ export function PinFilterBar({
           ...members.map((m) => ({ value: m.userId, label: `${m.name}${m.isMe ? ' (나)' : ''} ${countBy(m.userId)}곳` })),
         ]}
       />
-      <FilterSelect
+      <Select
         label="종류"
         value={filters.kind ?? ''}
         onChange={(v) => onChange('kind', v || null)}
         options={[{ value: '', label: '전체' }, ...KINDS.map((k) => ({ value: k, label: kindLabel(k) }))]}
       />
-      <FilterSelect
+      <Select
         label="의견"
         value={filters.opinion ?? ''}
         onChange={(v) => onChange('opinion', v || null)}
         options={[{ value: '', label: '전체' }, ...(Object.keys(OPINIONS) as PinOpinion[]).map((key) => ({ value: key, label: OPINIONS[key] }))]}
       />
-      <FilterSelect
+      <Select
         ariaLabel="정렬"
         value={filters.sort}
         onChange={(v) => onChange('sort', v === 'most' ? null : v)}
         options={(Object.keys(SORTS) as PinSort[]).map((key) => ({ value: key, label: SORTS[key] }))}
       />
-    </div>
-  )
-}
-
-/**
- * 필터 드롭다운 한 칸. 보이는 건 「라벨 값 ▾」 글자이고, 그 위에 투명한 select 를 칸 전체(위아래로 넓힌 44px 포함)에 겹친다.
- * 칸 어디를 눌러도 select 가 눌린다 — 넓힌 영역(::before)이 select 를 덮으면 label 만 눌려 목록이 안 열리고,
- * 모바일에서는 시트 제목 줄이 그 누름을 끌기·접기로 받아 시트가 접혔다(#600).
- */
-export function FilterSelect({
-  label,
-  ariaLabel = label,
-  value,
-  options,
-  onChange,
-}: {
-  /** 칸 앞에 붙는 회색 글자. 정렬처럼 값만으로 읽히면 없다. */
-  label?: string
-  ariaLabel?: string
-  value: string
-  options: { value: string; label: string }[]
-  onChange: (value: string) => void
-}) {
-  const current = options.find((o) => o.value === value) ?? options[0]
-  return (
-    <div className="relative flex h-8 min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-ink-200 bg-white pl-2.5 pr-6 text-xs has-[select:focus-visible]:outline-2 has-[select:focus-visible]:outline-offset-2 has-[select:focus-visible]:outline-[var(--line-focus)]">
-      {/* 읽어 주는 건 select(이름 + 고른 값)가 맡는다 — 보이는 글자는 스크린리더에서 뺀다. */}
-      {label && (
-        <span aria-hidden="true" className="shrink-0 text-ink-500">
-          {label}
-        </span>
-      )}
-      {/* 선택지 글자를 모두 한 자리에 겹쳐 두고 고른 것만 보인다 — 칸 폭이 가장 긴 선택지로 고정돼서,
-          값을 바꿔도 칸 폭이 그대로고 옆 칸이 다음 줄로 밀리지 않는다(기본 select 와 같은 폭 규칙).
-          다만 줄 폭은 넘지 않는다 — 구성원 이름은 50자까지라, 넘치면 「…」로 줄인다(고르는 창에는 전체가 보인다). */}
-      <span aria-hidden="true" className="grid min-w-0 grid-cols-[minmax(0,1fr)] font-semibold text-ink-900">
-        {options.map((o) => (
-          <span key={o.value} className={`col-start-1 row-start-1 truncate ${o.value === current?.value ? '' : 'invisible'}`}>
-            {o.label}
-          </span>
-        ))}
-      </span>
-      <ChevronDown size={12} className="pointer-events-none absolute right-2 text-ink-500" aria-hidden="true" />
-      <select
-        aria-label={ariaLabel}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="absolute inset-x-0 -inset-y-1.5 cursor-pointer appearance-none opacity-0"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
     </div>
   )
 }

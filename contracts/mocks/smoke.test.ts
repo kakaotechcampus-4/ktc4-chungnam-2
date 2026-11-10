@@ -352,6 +352,25 @@ describe("에러 시나리오", () => {
     expect(res2.status).toBe(409);
   });
 
+  it("#1157 블로그 사진: 자체 DB 핀은 PinPhoto 3장, 실시간 핀은 빈 배열, 없는 핀은 404", async () => {
+    const photos = await fetch(`${BASE}/pins/pin_1/photos`).then((r) => r.json());
+    expect(photos).toHaveLength(3);
+    for (const p of photos) {
+      expect(Object.keys(p).sort()).toEqual(["link_url", "site_name", "thumbnail_url"]);
+    }
+    const live = await fetch(`${BASE}/maps/map_1/pins`, {
+      method: "POST",
+      body: JSON.stringify({ source: "live", category: "음식점", kakao_place_id: "kakao:photo-live", search_query: "곱창" }),
+    }).then((r) => r.json());
+    expect(await fetch(`${BASE}/pins/${live.id}/photos`).then((r) => r.json())).toEqual([]);
+    expect((await fetch(`${BASE}/pins/nope/photos`)).status).toBe(404);
+  });
+
+  it("#1681 검색 결과 사진: 자체 DB에 짝이 있는 결과는 3장, 없는 결과는 빈 배열", async () => {
+    expect(await fetch(`${BASE}/places/kakao:mock-1/photos`).then((r) => r.json())).toHaveLength(3);
+    expect(await fetch(`${BASE}/places/kakao:mock-6/photos`).then((r) => r.json())).toEqual([]);
+  });
+
   it("#382 실시간 핀: 카카오 장소 ID·검색어·메모만 받고 이름·좌표는 없다. 같은 장소는 409", async () => {
     const body = { source: "live", category: "음식점", kakao_place_id: "kakao:live-1", search_query: "성수 곱창", memo: "여기 곱창 맛있대" };
     const res = await fetch(`${BASE}/maps/map_1/pins`, { method: "POST", body: JSON.stringify(body) });
@@ -1474,7 +1493,7 @@ describe("#510 v2 계획 보조 에이전트 — 목 서버 계약", () => {
     expect(state.summaries[0].category).toBe("음식점");
     expect(state.summaries[0].not_filtered.notices[0]).toContain("가게에 직접 확인");
     expect(state.active_suggestion.claims).toBeUndefined(); // 서버 내부 값은 싣지 않는다
-    expect(state.status.paragraph).toContain("부터 보면 좋겠어요"); // 지도 현황 문단(#1152)
+    expect(state.status.paragraph).not.toContain("부터"); // 지도 현황 문단(#1152). 제안 카드가 있으면 먼저 볼 곳은 카드가 말한다(#1749)
     expect(state.active_suggestion.facts).toEqual([]); // 우리 데이터 확인은 사실 다툼에만(#1152)
   });
 

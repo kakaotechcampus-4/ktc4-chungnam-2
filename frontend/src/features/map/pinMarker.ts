@@ -1,62 +1,63 @@
 import type { PlaceSearchResultDto } from '@/features/search/model'
-import { LIKE_PATH } from '@/ui/Mark'
-import { PIN_OUTLINE, PIN_PATH } from '@/ui/pinPath'
-import { PINGO_MARK } from '@/ui/pingoMark'
+import { categoryIconPath } from '@/ui/CategoryIcon'
+import { pinGlyph } from '@/ui/pinGlyph'
 
 import { kindLabel, type Pin } from './model'
 
-type PinKind = Pin['kind']
+
+/** 새 소식 점 — 핀 머리 오른쪽 위(#1454). */
+const FRESH_DOT =
+  '<span data-new-dot aria-hidden="true" style="position:absolute;left:28px;top:3px;width:10px;height:10px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff"></span>'
 
 /**
- * 지도 위 핀은 모양 2가지다 — 색의 진하기는 **참여율**로 나타낸다.
- * - 일반·AI 추천: 진한 빨강 윤곽선(`--pin-outline`, 확정 핀과 같은 굵기 `PIN_OUTLINE`) + 속은 참여율만큼 회색→빨강(oklch 로 섞어야 중간이 탁해지지 않는다).
- *   빨강 테두리였을 땐 참여 100%에서 속과 같은 색이라 테두리가 사라졌다
- *   + 머리 가운데 진한 빨간 점. AI 추천은 「지도에 올리기」로 모두의 핀이 된 뒤라 일반 핀과 같게 그린다.
- *   올리기 전 후보만 핑고 핀으로 따로 그린다(createCandidateMarkerElement).
- * - 확정: 골드 채움 + 갈색 윤곽선 + 갈색 하트(좋음 하트 `LIKE_PATH`를 0.6배로). 참여율과 무관하다. 흰 테두리는 없앴다(#1355) — 골드는 어두운 타일에서도 밝고,
- *   밝은 땅 위는 갈색 윤곽선이 가른다(#299). 하트는 색을 못 가르는 사람에게 확정을 알린다(흑백이면 참여 50% 핀과 밝기가 같다).
- *   그림자는 없다 — 이름표처럼 윤곽선으로 가른다
- * 구성원별 색 구분은 없다(#26).
+ * 지도 위 핀 — 일반(올린 AI 추천 포함)·확정. 핀 그림은 `ui/pinGlyph` 한 곳에서 만든다(색의 진하기는 참여율, 구성원별 색 구분은 없다 #26).
+ * fresh: 마지막으로 본 뒤 새로 생긴 핀·의견이 있는 핀(#1454) — 머리 오른쪽 위에 파란 점을 단다(목록 「새 핀」 태그와 같은 브랜드 파랑).
  */
-function shapeOf(kind: PinKind, ratio: number) {
-  if (kind === '확정') {
-    return { fill: 'var(--pin-confirmed)', stroke: 'var(--pin-confirmed-mark)', heart: true }
-  }
-  const fill = `color-mix(in oklch, var(--pin-fill-full) ${Math.round(ratio * 100)}%, var(--pin-fill-empty))`
-  return { fill, stroke: 'var(--pin-outline)', heart: false }
-}
-
-/** var()·color-mix() 는 SVG 속성보다 style 에서 확실히 해석된다. */
-export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => void): HTMLElement {
-  const shape = shapeOf(pin.kind, ratio)
-
+export function createPinMarkerElement(pin: Pin, ratio: number, onClick: () => void, fresh = false): HTMLElement {
   const el = document.createElement('button')
   el.type = 'button'
   // 장소 이름은 setAttribute 로만 넣는다 — innerHTML 로 들어가면 이름이 마크업으로 해석된다.
-  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'}, ${kindLabel(pin.kind)} 핀`)
+  el.setAttribute('aria-label', `${pin.place_name ?? '이름 없는 핀'}, ${kindLabel(pin.kind)} 핀${fresh ? ', 새 소식 있음' : ''}`)
+  el.dataset.pinTone = pin.kind === '확정' ? 'confirmed' : 'normal'
   el.style.cssText =
-    'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
+    'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `
     <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
-      <path d="${PIN_PATH}" stroke-linejoin="round"
-            style="fill:${shape.fill};stroke:${shape.stroke};stroke-width:${PIN_OUTLINE}" />
-      ${shape.heart ? `<path d="${LIKE_PATH}" transform="translate(7.2 5.7) scale(.6)" style="fill:var(--pin-confirmed-heart)" />` : `<circle cx="12" cy="10" r="3.2" style="fill:var(--pin-dot)" />`}
-    </svg>`
+      ${pinGlyph(pin.kind === '확정' ? { kind: 'confirmed' } : { kind: 'normal', ratio })}
+    </svg>${
+      fresh
+        ? FRESH_DOT
+        : ''
+    }`
+  el.addEventListener('click', onClick)
+  return el
+}
+
+/**
+ * 화면에서 겹친 지도 핀 여러 곳(#1576). 핀 모양 그대로 머리에 곳 수를 적는다(`pinGlyph` count).
+ * 모두 확정이면 확정 핀 색, 하나라도 아니면 일반 핀 색이고 진하기는 묶음 안에서 가장 높은 참여율이다.
+ * 새 소식이 있는 핀이 하나라도 있으면 파란 점을 단다. 누르면 확대해 풀거나, 더 확대해도 겹치면 그 핀들 목록을 연다(MapCanvas).
+ * 이름은 setAttribute 로만 넣는다(마크업으로 해석되지 않게).
+ */
+export function createPinGroupMarkerElement(
+  g: { names: string[]; confirmed: boolean; ratio: number; fresh: boolean },
+  onClick: () => void,
+): HTMLElement {
+  const el = document.createElement('button')
+  el.type = 'button'
+  el.setAttribute('aria-label', `핀 ${g.names.length}곳이 겹쳐 있어요 · ${g.names.join(', ')}${g.fresh ? ', 새 소식 있음' : ''}`)
+  el.style.cssText =
+    'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
+  const count = g.names.length
+  el.innerHTML = `
+    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true">
+      ${pinGlyph(g.confirmed ? { kind: 'confirmed', count } : { kind: 'normal', ratio: g.ratio, count })}
+    </svg>${g.fresh ? FRESH_DOT : ''}`
   el.addEventListener('click', onClick)
   return el
 }
 
 type SearchCategory = NonNullable<PlaceSearchResultDto['category']>
-
-/** 검색 핀 안의 카테고리 아이콘. lucide(ISC) 아이콘의 선 경로를 옮겨 적었다 — 마커는 React 밖이라 컴포넌트를 못 쓴다. */
-const CATEGORY_ICON: Record<SearchCategory, string> = {
-  음식점: '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>',
-  카페: '<path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/><path d="M6 2v2"/>',
-  관광지:
-    '<path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/>',
-  숙소: '<path d="M2 20v-8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8"/><path d="M4 10V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4"/><path d="M12 4v6"/><path d="M2 18h20"/>',
-  기타: '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
-}
 
 /**
  * 장소 검색 결과 — 빨간 원 + 흰 카테고리 아이콘, 아래 짧은 꼬리 끝이 좌표다(네이버 검색 핀처럼).
@@ -71,6 +72,7 @@ export function createSearchMarkerElement(
   const el = document.createElement('button')
   el.type = 'button'
   el.setAttribute('aria-label', [`검색 결과 ${r.n}번`, r.name, r.category].filter(Boolean).join(', '))
+  el.dataset.pinTone = 'search'
   if (r.selected) el.setAttribute('aria-current', 'true')
   el.style.cssText =
     'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
@@ -80,7 +82,7 @@ export function createSearchMarkerElement(
       <path d="M11 26L16 36.5L21 26Z" stroke-linejoin="round" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <circle cx="16" cy="16" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <g transform="translate(9.5 9.5) scale(0.5417)" style="fill:none;stroke:#fff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round">
-        ${CATEGORY_ICON[r.category ?? '기타']}
+        ${categoryIconPath(r.category)}
       </g>
     </svg>`
   el.addEventListener('click', onClick)
@@ -88,8 +90,8 @@ export function createSearchMarkerElement(
 }
 
 /**
- * 화면에서 겹친 검색 결과 여러 곳(#1174). 검색 핀과 같은 빨간 원에 아이콘 대신 곳 수(숫자만, 두 자리까지 원 안에 든다)를 적고,
- * 뒤에 원 하나를 비껴 깔아 여러 곳이 포개진 것으로 읽힌다. 누르면 시트에 그곳들만 보인다.
+ * 화면에서 겹친 검색 결과 여러 곳(#1174). 검색 핀과 같은 빨간 원에 아이콘 대신 곳 수(숫자만, 두 자리까지 원 안에 든다)를 적는다.
+ * 뒤에 원을 비껴 깔던 겹침 표시는 뺐다 — 숫자가 이미 여러 곳이라고 말해서 군더더기였다(#1576). 누르면 시트에 그곳들만 보인다.
  * 카카오맵은 20m 축척보다 더 확대하지 못해서, 같은 건물 가게들은 확대로 떼어 낼 수 없다.
  * 이름은 setAttribute 로만 넣는다(마크업으로 해석되지 않게).
  */
@@ -100,9 +102,8 @@ export function createSearchGroupMarkerElement(names: string[], onClick: () => v
   el.style.cssText =
     'display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   el.innerHTML = `
-    <svg viewBox="0 0 32 38" width="32" height="38" aria-hidden="true" overflow="visible"
+    <svg viewBox="0 0 32 38" width="32" height="38" aria-hidden="true"
          style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))">
-      <circle cx="20" cy="12" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <path d="M11 26L16 36.5L21 26Z" stroke-linejoin="round" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <circle cx="16" cy="16" r="14" style="fill:var(--pin-stroke);stroke:#fff;stroke-width:2" />
       <text x="16" y="16" text-anchor="middle" dominant-baseline="central"
@@ -112,20 +113,18 @@ export function createSearchGroupMarkerElement(names: string[], onClick: () => v
   return el
 }
 
-/** 핑고 얼굴(32×32 로고)을 물방울 머리(가운데 12,10) 안에 넣는 변환. */
-const MARK_IN_HEAD = 'translate(5.3 3.6) scale(0.42)'
-
 /**
  * 올리기 전 AI 후보(#843). 요청한 사람의 AI 추천 탭에서만 화면에 그린다 — 서버의 지도는 바꾸지 않는다(가드레일 1).
- * 핑고 핀: brand-600 물방울 + 흰 테두리 + 머리에 흰 핑고 얼굴(하단 AI 탭 활성 모양과 같은 「파랑 채움 + 흰 얼굴」).
+ * 핑고 핀(그림은 `ui/pinGlyph`의 candidate).
  * 카드와 같은 순위 숫자는 오른쪽 위 배지다. 「지도에 올리기」를 하면 일반 핀 모양의 핀이 된다.
+ * 이름표는 지도 핀처럼 누르지 않아도 보인다 — MapCanvas 가 setPinLabel 로 달고 placeLabels 로 겹침을 정리한다.
  * 고른 후보는 한 번 튀어 커지고(pin-bounce) 핑고가 위에서 머리를 끌어안는다 — 몸은 MapCanvas 가 핀 뒤에, 손은 여기서 앞에 그린다.
  */
 export function createCandidateMarkerElement(c: { rank: number; name: string; selected?: boolean }, onClick: () => void): HTMLElement {
-  const { pin, hole, face, eyes } = PINGO_MARK
   const el = document.createElement('button')
   el.type = 'button'
   el.setAttribute('aria-label', `AI 추천 ${c.rank}위, ${c.name}`)
+  el.dataset.pinTone = 'candidate'
   el.style.cssText =
     'position:relative;display:flex;align-items:flex-end;justify-content:center;width:44px;height:44px;padding:0;border:0;background:none;cursor:pointer;line-height:0;'
   // 손은 머리 원(가운데 12,10 · 반지름 8)의 양 어깨(위에서 ±40°)에 걸친다. 핑고(Pingo.tsx)의 흰 몸 + 외곽선과 같은 색이고,
@@ -138,15 +137,8 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
     : ''
   // 순위 배지는 오른쪽 위다. 고르면 핑고 손이 그 자리라 커진 머리 오른쪽 옆으로 내린다.
   el.innerHTML = `
-    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true" overflow="visible"
-         style="filter:drop-shadow(0 1px 2px rgba(20,22,31,.3))"${c.selected ? ' class="pin-bounce"' : ''}>
-      <path d="${PIN_PATH}" stroke-linejoin="round" style="fill:var(--brand-600);stroke:#fff;stroke-width:2" />
-      <g transform="${MARK_IN_HEAD}">
-        <path d="${pin}" fill="#fff" />
-        <circle cx="${hole.cx}" cy="${hole.cy}" r="${hole.r}" style="fill:var(--brand-600)" />
-        <rect x="${face.x}" y="${face.y}" width="${face.w}" height="${face.h}" rx="${face.rx}" fill="#fff" />
-        ${eyes.map((e) => `<ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" style="fill:var(--ink-900)" />`).join('')}
-      </g>
+    <svg viewBox="0 0 24 32" width="30" height="38" aria-hidden="true" overflow="visible"${c.selected ? ' class="pin-bounce"' : ''}>
+      ${pinGlyph({ kind: 'candidate' })}
       ${hands}
     </svg>
     <span aria-hidden="true" style="position:absolute;left:${c.selected ? 30 : 25}px;top:${c.selected ? 12 : 0}px;min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;border-radius:8px;background:#fff;border:1.5px solid var(--brand-600);color:var(--brand-700);font:700 11px/13px var(--font-sans);text-align:center">${c.rank}</span>`
@@ -155,22 +147,36 @@ export function createCandidateMarkerElement(c: { rank: number; name: string; se
 }
 
 /**
- * 지도 빈 곳을 누른 자리의 「이 근처 장소 찾기」 말풍선(#1028). 누르자마자 검색하지 않고 한 번 더 묻는다 — 어느 탭이든 같다.
- * 아래 작은 점이 누른 자리다(오버레이 yAnchor 1 → 점 가운데가 좌표). 버튼은 btn-outline btn-sm 부품이다.
+ * 지도 자리 메뉴(#1549) — 항목은 「신규 핀 찍기」 하나다. 부르는 법만 넷이다(왼쪽 클릭·짧게 누르기·길게 누르기는 말풍선, PC 우클릭은 메뉴).
+ * 둘 다 brand-600 「누른 자리 점」이 누른 자리를 짚는다(#1613).
+ * - `bubble`: 길게 누른 자리 위 말풍선 — 손가락에 가리지 않게 위로 띄운다. 점은 아래(오버레이 yAnchor 1 → 점 가운데가 좌표).
+ * - `menu`: 우클릭 커서 자리의 작은 메뉴(오버레이 xAnchor·yAnchor 0 → 왼쪽 위가 좌표, 점은 그 모서리). 키보드로 고를 수 있게 열리면 항목에 포커스를 둔다.
+ * 버튼은 btn-outline btn-sm 부품이다.
  */
-export function createTapBubbleElement(onPress: () => void): HTMLElement {
-  const box = document.createElement('div')
-  box.className = 'enter-pop'
-  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
+export function createTapBubbleElement(onPress: () => void, style: 'bubble' | 'menu' = 'bubble'): HTMLElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'btn-outline btn-sm shadow-float'
-  button.textContent = '이 근처 장소 찾기'
+  button.textContent = '신규 핀 찍기'
   button.addEventListener('click', onPress)
+  const box = document.createElement('div')
+  box.className = 'enter-pop'
   const dot = document.createElement('span')
   dot.setAttribute('aria-hidden', 'true')
   dot.style.cssText =
-    'width:12px;height:12px;margin-bottom:-6px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff;box-shadow:0 1px 3px rgba(20,22,31,.3)'
+    'width:12px;height:12px;border-radius:9999px;background:var(--brand-600);border:2px solid #fff;box-shadow:0 1px 3px rgba(20,22,31,.3)'
+  if (style === 'menu') {
+    box.setAttribute('role', 'menu')
+    box.setAttribute('aria-label', '지도 메뉴')
+    // margin 바깥 모서리가 커서 자리다. 점(12px)의 가운데를 그 모서리에 맞춘다(#1613).
+    box.style.cssText = 'position:relative;transform-origin:0 0;margin:8px 0 0 8px'
+    dot.style.cssText += ';position:absolute;left:-14px;top:-14px'
+    button.setAttribute('role', 'menuitem')
+    box.append(dot, button)
+    return box
+  }
+  box.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;transform-origin:50% 100%'
+  dot.style.marginBottom = '-6px'
   box.append(button, dot)
   return box
 }
@@ -186,25 +192,49 @@ export function markSelected(el: HTMLElement, name: string, on: boolean) {
   setPinLabel(el, name, on ? 'selected' : null)
 }
 
+type PinTone = 'normal' | 'confirmed' | 'candidate' | 'search'
+
+/** 이름표 색 — 핀의 윤곽선 색(line)으로 테두리·글자를, 고르면 핀의 채움 색(fill)으로 채우고 그 위 글자(on). */
+const LABEL_TONE: Record<PinTone, { line: string; fill: string; on: string }> = {
+  normal: { line: 'var(--pin-label-normal)', fill: 'var(--pin-outline)', on: '#fff' },
+  confirmed: { line: 'var(--pin-label-confirmed)', fill: 'var(--pin-confirmed)', on: 'var(--pin-confirmed-mark)' },
+  candidate: { line: 'var(--pin-label-candidate)', fill: 'var(--brand-500)', on: '#fff' },
+  search: { line: 'var(--pin-label-search)', fill: 'var(--pin-stroke)', on: '#fff' },
+}
+
+/** 이름표 자리(px) — 핀 끝에서 띄우는 거리(꼬리 높이 포함)와 높이. 겹침 정리(markerLayer)도 이 값으로 잰다. */
+export const PIN_LABEL = { gap: 6, h: 21 }
+
 /**
- * 핀 아래 이름표.
- * - quiet: 지도에 찍힌 핀은 누르지 않아도 이름이 보인다. 작은 흰 알약이고 길면 말줄임한다. 겹치면 markerLayer 가 숨긴다
- * - selected: 고른 핀·후보의 말풍선(#308). 더 굵고 그림자가 진하고, 이름을 다 보인다
- * - null: 떼어 낸다(검색 결과·AI 후보는 고를 때만 이름이 있다)
+ * 핀 아래 이름표 — 핀 색 말풍선(2026-11-09). 흰 바탕 + 핀 윤곽선 색 테두리·글자이고, 위로 난 꼬리가 핀 끝을 가리킨다.
+ * 회색 테두리 흰 알약일 땐 핀과도 바탕 지도와도 이어지지 않아 따로 뜬 상자로 보였다. 색은 핀 종류(`data-pin-tone`)를 따른다.
+ * - quiet: 지도에 찍힌 핀은 누르지 않아도 이름이 보인다. 길면 말줄임한다. 겹치면 markerLayer 가 숨긴다
+ * - selected: 고른 핀·후보·검색 결과(#308). 핀 색으로 채워 어느 것을 골랐는지 보이고, 이름을 다 보인다
+ * - null: 떼어 낸다(검색 결과는 고를 때만 이름이 있다. AI 후보는 지도 핀처럼 quiet 로 늘 단다)
+ * 꼬리는 바깥 틀에, 말줄임은 안쪽 글자에 둔다 — 한 겹이면 말줄임의 overflow:hidden 이 꼬리를 잘랐다.
  * 이름은 textContent 로만 넣는다(마크업으로 해석되지 않게). 읽는 이름은 버튼 aria-label 이 이미 갖고 있어 aria-hidden 이다.
  */
 export function setPinLabel(el: HTMLElement, name: string, mode: 'quiet' | 'selected' | null) {
   el.querySelector('[data-pin-name]')?.remove()
   if (!mode || !name) return
+  const tone = LABEL_TONE[(el.dataset.pinTone as PinTone | undefined) ?? 'normal']
+  const filled = mode === 'selected'
+  const bg = filled ? tone.fill : 'var(--surface-card)' // 다크에서는 카드 면(#1412)
   const label = document.createElement('span')
   label.dataset.pinName = mode
-  label.textContent = name
   label.setAttribute('aria-hidden', 'true')
   label.style.cssText =
-    // 그림자 대신 윤곽선 1px — 옅게 깐 바탕 지도 위에서 경계가 또렷하다. 테두리만큼 안쪽 여백을 줄여 크기는 그대로다.
-    'position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;padding:1px 7px;border-radius:8px;' +
-    'border:1px solid var(--ink-300);background:#fff;color:var(--ink-900);font-size:0.75rem;line-height:1.4;white-space:nowrap;pointer-events:none;' +
-    (mode === 'selected' ? 'font-weight:700' : 'font-weight:600;max-width:8em;overflow:hidden;text-overflow:ellipsis')
+    `position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:${PIN_LABEL.gap}px;padding:1px 7px;border-radius:6px;` +
+    `border:1px solid ${tone.line};background:${bg};color:${filled ? tone.on : tone.line};` +
+    'font-size:0.75rem;font-weight:700;line-height:1.4;white-space:nowrap;pointer-events:none;'
+  const tail = document.createElement('span')
+  tail.style.cssText =
+    `position:absolute;left:50%;top:-4px;width:7px;height:7px;transform:translateX(-50%) rotate(45deg);` +
+    `background:${bg};border-left:1px solid ${tone.line};border-top:1px solid ${tone.line}`
+  const text = document.createElement('span')
+  text.textContent = name
+  text.style.cssText = filled ? 'position:relative;display:block' : 'position:relative;display:block;max-width:8em;overflow:hidden;text-overflow:ellipsis'
+  label.append(tail, text)
   el.style.position = 'relative'
   el.appendChild(label)
 }

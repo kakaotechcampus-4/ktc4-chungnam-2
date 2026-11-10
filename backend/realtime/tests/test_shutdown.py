@@ -13,6 +13,7 @@ from realtime.dispatcher import Dispatcher
 from realtime.router import public_events
 
 
+
 class _AliveRequest:
     async def is_disconnected(self) -> bool:
         return False   # 클라이언트는 계속 붙어 있다 — 종료 신호만이 연결을 끊을 수 있다
@@ -95,7 +96,11 @@ async def test_lifespan_leaves_no_closed_state_behind(monkeypatch):
         pass
     sub = d.subscribe("m-after", channel="public", user_id="u1")
     try:
-        assert sub.queue.empty()
+        from realtime.dispatcher import CLOSED
+
+        items = [sub.queue.get_nowait() for _ in range(sub.queue.qsize())]
+        assert CLOSED not in items   # 닫힌 채로 나오지 않는다(자기 member.presence만 있을 수 있다)
+        assert all(getattr(i, "type", None) == "member.presence" for i in items)
     finally:
         d.unsubscribe("m-after", sub)
 

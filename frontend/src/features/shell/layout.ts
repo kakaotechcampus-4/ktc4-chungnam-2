@@ -1,19 +1,39 @@
 /** 셸 부품들이 서로 맞물리는 치수. 토스트가 지도 버튼과의 겹침을 계산할 때도 쓴다. */
 
-/** 하단 탭 바 높이. 시트는 그 위에서 멈춘다. */
-export const TAB_BAR_H = 74
+/**
+ * 하단 탭 바(모바일). 화면 바닥에서 띄운 알약이라(네이버 지도 시안) 시트는 바닥까지 깔리고 탭 바가 그 위에 뜬다.
+ * 시트 1단계 윗변, 그리고 시트와 추천 근거 화면의 바닥 여백은 탭 바가 차지하는 높이(`TAB_BAR_SPACE`)만큼 비킨다.
+ */
+export const TAB_BAR = { h: 64, gap: 12 }
+
+/** 화면 바닥에서 탭 바 윗변까지 — 탭 바 높이 + 바닥 틈 + 홈 표시줄. */
+export const TAB_BAR_SPACE = `calc(${TAB_BAR.h + TAB_BAR.gap}px + env(safe-area-inset-bottom, 0px))`
+
+/**
+ * 시트 3단계처럼 시트 위에 자리가 없을 때 시트 안에 토스트·휴지통을 띄우는 높이(`bottom`) — 탭 바 윗변 12px 위.
+ * 시트는 화면 바닥까지 깔려서(`fixed bottom-0`) 시트 안 bottom 이 탭 바와 같은 바닥에서 잰 값이다.
+ * 바닥 48px 로 두었을 땐 떠 있는 탭 바 뒤에 깔려 크롬에선 안 보이고 파이어폭스에선 조금 삐져나왔다(#1752).
+ */
+export const INSIDE_SPOT_BOTTOM = `calc(${TAB_BAR_SPACE} + 12px)`
 
 /** 지도 버튼 한 변 44px(터치 최소), 화면 오른쪽 여백 16px, 세 개를 쌓은 높이 + 시트와의 틈. */
 export const CONTROLS = { size: 44, right: 16, stackHeight: 44 * 3 + 12 }
 
 /**
- * 넓은 화면의 왼쪽 전체 폭(#351·#338) = 탭 줄 + 내용 패널. 지도는 그 오른쪽부터다.
- * 태블릿은 내용 패널을 408 → 360(모바일이 맞춰 둔 가장 좁은 폭)으로 줄여 지도 몫을 늘린다(#603).
+ * 넓은 화면의 왼쪽 패널 폭(#351·#338). 패널은 화면 전체에 깔린 지도 위에 뜬 카드다(#1538, 카카오맵처럼).
+ * 탭은 패널 머리 안에 있어서 접으면 지도를 가리는 게 없다.
+ * 태블릿은 408 → 360(모바일이 맞춰 둔 가장 좁은 폭)으로 줄여 지도 몫을 늘린다(#603).
  */
-export const PANEL_W = { pc: 480, tablet: 432 }
+export const PANEL_W = { pc: 408, tablet: 360 }
 
-/** 넓은 화면 왼쪽 끝 세로 탭 줄 폭(네이버 지도처럼). 패널을 접어도 남는다. */
-export const RAIL_W = 72
+/** 떠 있는 패널 카드(왼쪽 패널, 「일정 짜기」)와 화면 가장자리·서로 사이의 틈. */
+export const PANEL_GAP = 12
+
+/** 넓은 화면에서 지도 왼쪽을 가리는 폭 — 열린 카드들의 오른쪽 끝. 지도 위 칩·버튼과 지도 카메라가 이 폭만큼 비킨다. */
+export function panelCover(panelOpen: boolean, panelW: number, sideOpen: boolean) {
+  const left = panelOpen ? PANEL_GAP + panelW : 0
+  return sideOpen ? left + PANEL_GAP + SIDE_PANEL_W : left
+}
 
 /** 내용 패널 옆에 붙는 패널(확정 탭 「일정 짜기」, `SidePanel`) 폭. 열려 있으면 지도 위 토스트·버튼이 그만큼 오른쪽으로 비킨다. */
 export const SIDE_PANEL_W = 360

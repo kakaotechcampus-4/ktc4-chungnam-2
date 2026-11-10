@@ -3,6 +3,13 @@ import { Link } from 'react-router'
 import { Bus, ExternalLink, Map as MapIcon } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
+import { useMeQuery } from '@/features/auth/queries'
+import { toPinCard, type Pin } from '@/features/map/model'
+import { ReactionCounts } from '@/features/map/PinList'
+import PinThumb from '@/features/map/PinThumb'
+import { usePinsQuery } from '@/features/map/queries'
+import { usePinSelection } from '@/features/map/usePinSelection'
+import { useMembersQuery } from '@/features/maps/queries'
 import { AiHeader } from '@/features/recommend/Readiness'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { KAKAO_ROUTE_MAX } from '@/features/shortlist/model'
@@ -128,11 +135,14 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
   const hoursTag = showHoursKnown(run)
   const unchecked = uncheckedPlaceCount(run)
   const mode = modeOf(run)
+  // 머리 둘째 줄 — 할 일과 문제의 수(#1714). 없으면 예전 안내 문구.
+  const fixCount = mode === 'plan' ? 0 : (run.fixes?.length ?? 0)
+  const summary = [fixCount > 0 && `고칠 점 ${fixCount}`, run.violations.length > 0 && `지키지 못한 조건 ${run.violations.length}`].filter(Boolean).join(', ')
 
   return (
     <div className="space-y-4">
       {/* 머리 문구는 서버 headline 그대로(#1237). 없으면(실서버 구현 전) 예전 outcome 문구. */}
-      <AiHeader title={run.headline ?? (run.outcome ? outcomeText(run.outcome) : '코스를 짰어요')} sub={mode === 'review' ? undefined : '날짜별 순서와 이동 시간이에요'} mood="proud" />
+      <AiHeader title={run.headline ?? (run.outcome ? outcomeText(run.outcome) : '코스를 짰어요')} sub={summary || (mode === 'review' ? undefined : '날짜별 순서와 이동 시간이에요')} mood="proud" />
 
       {run.stale && (
         <Notice
@@ -145,6 +155,58 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
           {stalePrompt}
         </Notice>
       )}
+
+      {/* 지키지 못한 조건은 할 일보다 먼저 알린다(#1714, 배너). 예전엔 날짜별 순서 아래 맨 끝이었다. */}
+      {run.violations.length > 0 && (
+        <section aria-labelledby="course-violations" className="space-y-1.5 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-bg)] p-3">
+          <h3 id="course-violations" className="text-sm font-bold text-[var(--warn-text)]">
+            지키지 못한 조건 {run.violations.length}
+          </h3>
+          <ul className="space-y-1">
+            {run.violations.map((v, i) => (
+              <li key={i} className="flex items-start gap-2 text-body text-ink-900">
+                <span className="tag mt-px bg-surface text-[var(--warn-text)]">{VIOLATION_LABEL[v.kind]}</span>
+                <span className="min-w-0 break-keep">{v.text}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {mode !== 'plan' && <FixCards mapId={mapId} run={run} names={names} onRetry={onRetry} />}
+
+      {mode === 'review' && (
+        <Link
+          to={`/maps/${mapId}/shortlist`}
+          // 점검 당시 days 대신 확정 탭의 현재 일정을 본다.
+          onClick={openRoute}
+          className="btn-outline btn-md w-full"
+        >
+          <MapIcon size={16} aria-hidden="true" /> 현재 일정 동선 보기
+        </Link>
+      )}
+
+      {/* review 는 현재 일정 동선으로 연결하고, plan/fill 은 제안한 날짜별 순서를 보인다. */}
+      {mode !== 'review' && (
+        <Section title="날짜별 순서">
+          <div className="space-y-2">
+            {run.days.map((day, i) => (
+              <DayCard key={day.date} mapId={mapId} day={day} index={i} names={names} points={points} hoursTag={hoursTag} />
+            ))}
+          </div>
+          <p className="text-label text-ink-500">
+            <Sentences text="이동 시간은 직선거리로 어림했어요. 자세한 길은 카카오맵에서 볼 수 있어요" />
+          </p>
+          {/* 장소마다 붙이지 않고 한 줄로 — 서버 작업 기록 「가게에 확인해야 하는 곳이 남았어요」와 맞춘다(루트 검수 #1127). */}
+          {unchecked > 0 && <p className="text-label text-ink-500">영업시간 정보가 없는 {unchecked}곳은 방문 전에 확인해 주세요.</p>}
+          {drawings.length > 0 && (
+            <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
+              <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
+            </button>
+          )}
+        </Section>
+      )}
+
 
       {run.goals.length > 0 && (
         <Section title="요청 사항">
@@ -166,53 +228,6 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
         <p className="break-keep text-body text-ink-700">반영하지 못한 요청: {run.unmatched.join(', ')}</p>
       )}
 
-      {mode !== 'plan' && <FixCards mapId={mapId} run={run} names={names} onRetry={onRetry} />}
-
-      {mode === 'review' && (
-        <Link
-          to={`/maps/${mapId}/shortlist`}
-          // 점검 당시 days 대신 확정 탭의 현재 일정을 본다.
-          onClick={openRoute}
-          className="btn-outline btn-md w-full"
-        >
-          <MapIcon size={16} aria-hidden="true" /> 현재 일정 동선 보기
-        </Link>
-      )}
-
-      {/* review 는 현재 일정 동선으로 연결하고, plan/fill 은 제안한 날짜별 순서를 보인다. */}
-      {mode !== 'review' && (
-        <Section title="날짜별 순서">
-          <div className="space-y-2">
-            {run.days.map((day, i) => (
-              <DayCard key={day.date} day={day} index={i} names={names} points={points} hoursTag={hoursTag} />
-            ))}
-          </div>
-          <p className="text-label text-ink-500">
-            <Sentences text="이동 시간은 직선거리로 어림했어요. 자세한 길은 카카오맵에서 볼 수 있어요" />
-          </p>
-          {/* 장소마다 붙이지 않고 한 줄로 — 서버 작업 기록 「가게에 확인해야 하는 곳이 남았어요」와 맞춘다(루트 검수 #1127). */}
-          {unchecked > 0 && <p className="text-label text-ink-500">영업시간 정보가 없는 {unchecked}곳은 방문 전에 확인해 주세요.</p>}
-          {drawings.length > 0 && (
-            <button type="button" onClick={showOnMap} className="btn-outline btn-md w-full">
-              <MapIcon size={16} aria-hidden="true" /> 지도에서 날짜별로 보기
-            </button>
-          )}
-        </Section>
-      )}
-
-      {run.violations.length > 0 && (
-        <Section title="지키지 못한 조건">
-          <ul className="space-y-1.5">
-            {run.violations.map((v, i) => (
-              <li key={i} className="flex items-start gap-2 text-body text-ink-900">
-                <span className="tag tag-bad mt-px">{VIOLATION_LABEL[v.kind]}</span>
-                <span className="min-w-0 break-keep">{v.text}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
-
       {run.excluded.length > 0 && (
         <Section title="코스에서 빠진 장소">
           <ul className="space-y-1 text-body text-ink-700">
@@ -225,27 +240,33 @@ function Result({ mapId, run, names, points, onRetry, onClose }: { mapId: string
         </Section>
       )}
 
-      <div>
-        <button type="button" aria-expanded={showLog} onClick={() => setShowLog(!showLog)} className="btn-link text-sm">
-          {showLog ? '작업 기록 접기' : '작업 기록 보기'}
-        </button>
+      <div className="space-y-2">
+        {/* "닫기"는 탭 안이라 무엇을 닫는지 모호했다 — 하는 일(입력으로 돌아가 새로 짜기)을 이름으로(#1714). */}
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" aria-expanded={showLog} onClick={() => setShowLog(!showLog)} className="btn-link text-sm">
+            {showLog ? '작업 기록 접기' : '작업 기록 보기'}
+          </button>
+          <button type="button" onClick={onClose} className="btn-outline btn-md">
+            새로 짜기
+          </button>
+        </div>
         {showLog && <WorkLog steps={run.steps} running={false} />}
       </div>
-
-      <button type="button" onClick={onClose} className="btn-neutral btn-lg w-full">
-        닫기
-      </button>
     </div>
   )
 }
 
 /** 날짜 하나 — 방문 순서대로 장소, 장소 사이엔 도보·대중교통 분. 시간은 쓰지 않는다. 길찾기는 카카오맵 새 창이다. */
-function DayCard({ day, index, names, points, hoursTag }: { day: CourseRunDto['days'][number]; index: number; names: Map<string, string>; points: Points; hoursTag: boolean }) {
+function DayCard({ mapId, day, index, names, points, hoursTag }: { mapId: string; day: CourseRunDto['days'][number]; index: number; names: Map<string, string>; points: Points; hoursTag: boolean }) {
   const stops = dayStops(day, names, points)
   const summary = daySummary(stops.flatMap((s) => (s.leg ? [s.leg] : [])))
   const links = walkLinks(stops)
+  const pins = usePinsQuery(mapId).data
+  const memberCount = useMembersQuery(mapId).data?.length ?? 0
+  const myId = useMeQuery().data?.id
+  const { selectPin } = usePinSelection()
   return (
-    <article className="rounded-xl bg-white p-3 ring-1 ring-ink-200">
+    <article className="rounded-xl bg-surface p-3 ring-1 ring-ink-200">
       <h4 className="text-base font-bold text-ink-900">{dayTitle(day.date, index)}</h4>
       {summary && <p className="text-xs text-ink-500">{summary}</p>}
       {stops.length === 0 ? (
@@ -260,10 +281,14 @@ function DayCard({ day, index, names, points, hoursTag }: { day: CourseRunDto['d
                   <span aria-hidden="true" className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-ink-100 text-xs font-bold text-ink-700">
                     {i + 1}
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="break-keep text-body font-semibold text-ink-900">{s.name}</p>
-                    {hoursTag && s.hoursKnown && <span className="tag tag-good mt-1">영업시간 확인됨</span>}
-                  </div>
+                  <StopBody
+                    name={s.name}
+                    pin={pins?.find((p) => p.id === s.pinId)}
+                    memberCount={memberCount}
+                    myId={myId}
+                    hoursKnown={hoursTag && s.hoursKnown}
+                    onOpen={() => selectPin(s.pinId)}
+                  />
                 </div>
                 {s.leg && (
                   <div className="my-1 ml-2.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-l-2 border-ink-200 pl-4 text-xs text-ink-500">
@@ -297,5 +322,34 @@ function DayCard({ day, index, names, points, hoursTag }: { day: CourseRunDto['d
         </div>
       )}
     </article>
+  )
+}
+
+/**
+ * 장소 한 줄 — 사진, 이름, 분류와 동네, 메모, 의견 수. 누르면 핀을 골라(?pin=) 지도가 그 핀을 가운데로 옮기고
+ * 이 탭 안에서 핀 상세가 열린다(MapLayout, CourseTab). 핀 목록에 없는 장소(지운 핀)는 이름만 둔다.
+ */
+function StopBody({ name, pin, memberCount, myId, hoursKnown, onOpen }: { name: string; pin?: Pin; memberCount: number; myId?: string; hoursKnown: boolean; onOpen: () => void }) {
+  const hours = hoursKnown && <span className="tag tag-good mt-1">영업시간 확인됨</span>
+  if (!pin) {
+    return (
+      <div className="min-w-0 flex-1">
+        <p className="break-keep text-body font-semibold text-ink-900">{name}</p>
+        {hours}
+      </div>
+    )
+  }
+  const meta = [pin.category, pin.neighborhood].filter(Boolean).join(' · ')
+  return (
+    <button type="button" onClick={onOpen} className="press -my-1 flex min-w-0 flex-1 gap-3 rounded-lg py-1 text-left">
+      <PinThumb pin={pin} />
+      <div className="min-w-0 flex-1">
+        <p className="break-keep text-sm font-bold text-ink-900">{name}</p>
+        <p className="text-xs text-ink-500">{meta}</p>
+        {pin.memo && <p className="truncate text-xs text-ink-700">{pin.memo}</p>}
+        <ReactionCounts card={toPinCard(pin, memberCount, myId)} className="mt-1" />
+        {hours}
+      </div>
+    </button>
   )
 }

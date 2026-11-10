@@ -5,8 +5,6 @@
 @import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 @import "./styles/tokens.css";
 
-@custom-variant dark (&:is(.dark *));
-
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: 'Pretendard Variable', Pretendard, -apple-system, system-ui, sans-serif;
@@ -68,7 +66,12 @@
     --color-ink-900: var(--ink-900);
     --color-danger: var(--action-danger);
     --color-warn-text: var(--warn-text);
+    --color-coin-text: var(--coin-text);
     --color-scrim: var(--scrim);
+    /* 역할 이름(#1412) — 흰 카드 면, 파랑 글자, 고른 칸 글자. 밝은 화면에선 white·brand-600·brand-700 과 같고 다크에서 따로 간다. */
+    --color-surface: var(--surface-card);
+    --color-link: var(--text-link);
+    --color-selected: var(--selected-text);
 }
 
 :root {
@@ -92,40 +95,6 @@
     --input: var(--line-control);
     --ring: var(--line-focus);
     --radius: 12px;
-}
-
-.dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
 }
 
 @layer base {
@@ -261,6 +230,8 @@
     --animate-pingo-flutter: pingo-flutter 700ms ease-in-out infinite;
     --animate-pingo-drift: pingo-drift 4s ease-in-out infinite;
     --animate-pingo-twinkle: pingo-twinkle 2.1s ease-in-out infinite;
+    /* AI 추천 결과가 처음 뜰 때 하트 두 개가 한 번 떠올랐다 사라진다(#1706). 반복하지 않는다. */
+    --animate-pingo-heart-rise: pingo-heart-rise 1s ease-out 1 both;
     /* 지도 위 3D 핑고 걷기(MapPingo, #1433) — 걸음마다 들썩이고, 측면 걷기 그림 1·2·3·2 를 0.15초씩 바꾼다. */
     --animate-pingo-walk: pingo-step 300ms ease-in-out infinite;
     --animate-pingo-frame-a: pingo-frame-a 600ms step-end infinite;
@@ -324,6 +295,11 @@
         0%, 100% { transform: translate(-1px, 1px) rotate(-8deg); }
         50% { transform: translate(1px, -4px) rotate(8deg); }
     }
+    @keyframes pingo-heart-rise {
+        0% { opacity: 0; transform: translateY(4px) scale(0.6); }
+        30% { opacity: 1; transform: translateY(-2px) scale(1); }
+        100% { opacity: 0; transform: translateY(-12px) scale(1.05); }
+    }
     @keyframes pingo-twinkle {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.25; }
@@ -345,23 +321,28 @@
     .btn-primary {
         @apply rounded-xl bg-brand-600 font-bold text-white transition-colors not-disabled:hover:bg-[var(--action-fill-hover)] not-disabled:active:bg-[var(--action-fill-pressed)] disabled:bg-ink-100 disabled:text-ink-400;
     }
+    /* 끝난 표시(#1712, BusyLabel done) — 채움 버튼이 잠깐 좋음 초록이 된다. 그동안 올림, 눌림 색이 덮지 않게 !important 다. */
+    .btn-done {
+        background-color: var(--good-line) !important;
+        color: white !important;
+    }
     .btn-outline {
-        @apply press rounded-xl border border-brand-600 bg-white font-bold text-brand-600 disabled:border-ink-300 disabled:text-ink-400;
+        @apply press rounded-xl border border-brand-600 bg-surface font-bold text-link disabled:border-ink-300 disabled:text-ink-400;
     }
     /* 취소·로그아웃·나가기 같은 중립 동작. */
     .btn-neutral {
-        @apply press rounded-xl border border-ink-300 bg-white font-bold text-ink-900 disabled:text-ink-400;
+        @apply press rounded-xl border border-ink-300 bg-surface font-bold text-ink-900 disabled:text-ink-400;
     }
     /* 「★ 확정 리스트에 넣기」 전용(확정 골드). 상태 표시 「✓ 확정됨」도 같은 모양으로 둬서 바뀔 때 자리가 안 움직인다. */
     .btn-confirm {
-        @apply press rounded-xl border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] font-bold text-[var(--pin-confirmed-mark)] disabled:opacity-50;
+        @apply press rounded-xl border-[1.5px] border-[var(--pin-confirmed)] bg-[var(--confirmed-bg)] font-bold text-[var(--confirmed-text)] disabled:opacity-50;
     }
     /* 되돌릴 수 없는 동작만 빨강이다. 확인 창의 마지막 버튼은 채움, 그 창을 여는 버튼은 외곽선. */
     .btn-danger {
         @apply rounded-xl bg-[var(--action-danger)] font-bold text-white transition-colors not-disabled:hover:bg-[var(--action-danger-hover)] not-disabled:active:bg-[var(--action-danger-hover)] disabled:bg-ink-100 disabled:text-ink-400;
     }
     .btn-danger-outline {
-        @apply press rounded-xl border border-[var(--action-danger)] bg-white font-bold text-[var(--action-danger)];
+        @apply press rounded-xl border border-[var(--action-danger)] bg-surface font-bold text-[var(--action-danger-text)];
     }
 
     /* 크기. lg = 화면·시트 맨 아래 주 버튼 줄(52), md = 확인 창·내용 중간·빈 화면(44), sm = 카드·줄 안(32 + 누르는 영역 44). */
@@ -379,7 +360,7 @@
         @apply hit-44 font-medium text-ink-500 transition-colors not-disabled:hover:text-ink-700 not-disabled:active:text-ink-900 disabled:opacity-50;
     }
     .btn-link {
-        @apply hit-44 inline-flex items-center gap-0.5 font-bold text-brand-600 underline-offset-2 transition-colors not-disabled:hover:text-brand-700 not-disabled:hover:underline not-disabled:active:text-[var(--action-fill-pressed)] disabled:opacity-50;
+        @apply hit-44 inline-flex items-center gap-0.5 font-bold text-link underline-offset-2 transition-colors not-disabled:hover:text-selected not-disabled:hover:underline not-disabled:active:text-[var(--action-fill-pressed)] disabled:opacity-50;
     }
 
     /* 태그 — 누를 수 없는 짧은 표시(방장·지역·AI·준비 완료·조건 체크). 반경 6, 12/600. 색은 tag-* 하나. */
@@ -392,6 +373,10 @@
     .tag-ai {
         @apply bg-brand-600 text-white;
     }
+    /* 마지막으로 본 뒤 새로 생긴 핀(#1454). 새 소식은 브랜드 파랑이고, 채운 파랑(tag-ai)은 AI에만 쓰므로 연한 면이다. */
+    .tag-new {
+        @apply bg-brand-50 text-selected;
+    }
     .tag-good {
         @apply bg-[var(--good-bg)] text-[var(--good-text)];
     }
@@ -401,7 +386,7 @@
     .tag-bad {
         @apply bg-[var(--bad-bg)] text-[var(--bad-text)];
     }
-    /* 확정 골드 — 마킹된 장소 목록의 「✓ 확정됨」(#859). */
+    /* 확정 골드 — 핀 찍기 목록의 「✓ 확정됨」(#859). */
     .tag-confirmed {
         @apply bg-[var(--confirmed-bg)] text-[var(--pin-confirmed-mark)];
     }
@@ -409,9 +394,9 @@
     /* 칩 — 누르는 알약(카테고리·지역·사유·동선 보기). 켜짐은 aria-pressed 로 정하고 채우지 않는다.
        반대 사유는 chip-against 를 더해 켜짐을 반대 세트로 칠한다(#299 — 파랑으로 켜지 않는다). */
     .chip {
-        @apply press hit-y-44 inline-flex shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-body text-ink-700 not-disabled:not-aria-pressed:hover:border-ink-300 disabled:bg-ink-50 disabled:text-ink-500 aria-disabled:bg-ink-50 aria-disabled:text-ink-500;
+        @apply press hit-y-44 inline-flex shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-surface px-3 py-1.5 text-body text-ink-700 not-disabled:not-aria-pressed:hover:border-ink-300 disabled:bg-ink-50 disabled:text-ink-500 aria-disabled:bg-ink-50 aria-disabled:text-ink-500;
         &[aria-pressed='true'] {
-            @apply border-brand-600 bg-brand-100 font-semibold text-brand-700;
+            @apply border-brand-600 bg-brand-100 font-semibold text-selected;
         }
     }
     .chip-against[aria-pressed='true'] {
@@ -438,7 +423,7 @@
 
     /* 입력칸 틀 — 안에 input 하나와 ✕·글자 수·동작 글자를 둔다. 글자는 16px(아이폰이 확대하지 않는 크기). */
     .field {
-        @apply flex min-h-12 items-center gap-2 rounded-xl border border-ink-300 bg-white px-3.5 text-base focus-within:border-[var(--line-focus)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--line-focus)];
+        @apply flex min-h-12 items-center gap-2 rounded-xl border border-ink-300 bg-surface px-3.5 text-base focus-within:border-[var(--line-focus)] has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--line-focus)];
         /* 잘못 넣은 칸 — 테두리 2px(안쪽 그림자로 한 겹 더해 칸 크기는 그대로) + 주의색 바탕(#1447). */
         &[aria-invalid='true'], &:has([aria-invalid='true']) {
             @apply border-[var(--warn-line)] bg-[var(--warn-bg)] shadow-[inset_0_0_0_1px_var(--warn-line)];
@@ -450,7 +435,7 @@
    주소는 바뀌어 왔으니 주소로 고르지 않는다. 우리 핀·이름표·동선은 <img>를 쓰지 않아 지도 틀 안의 <img>는 카카오 것뿐이다. */
 .map-base img {
     /* --map-fade 0 이면 그대로, 1 이면 토큰 값 그대로. 그 사이는 선형으로 섞는다. */
-    filter: saturate(calc(1 - (1 - var(--map-tile-saturate)) * var(--map-fade, 0)))
+    filter: var(--map-tile-night) saturate(calc(1 - (1 - var(--map-tile-saturate)) * var(--map-fade, 0)))
         brightness(calc(1 + (var(--map-tile-brightness) - 1) * var(--map-fade, 0)))
         contrast(calc(1 - (1 - var(--map-tile-contrast)) * var(--map-fade, 0)));
 }
@@ -522,6 +507,92 @@
             transition: none;
             transform: none;
         }
+    }
+}
+/* 빈 지도 길게 누르기(#1549) — 손가락 둘레 원이 누르는 시간(--hold) 동안 차오른다. 동작 줄이기면 다 찬 원이 그대로 서 있다. */
+.press-ring {
+    position: absolute;
+    z-index: 5;
+    width: 48px;
+    height: 48px;
+    margin: -24px 0 0 -24px;
+    pointer-events: none;
+}
+.press-ring circle {
+    fill: none;
+    stroke: var(--brand-600);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+    transform: rotate(-90deg);
+    transform-origin: center;
+    animation: press-fill var(--hold, 500ms) linear forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+    .press-ring circle {
+        animation: none;
+        stroke-dashoffset: 0;
+    }
+}
+/* 방금 넣은 일정 줄 — 파랑 테두리가 번졌다 사라진다. 동작 줄이기면 번지지 않고 같은 시간 동안 서 있다가 꺼진다. */
+.flash-ring {
+    animation: flash-ring 1600ms ease-out;
+}
+@keyframes flash-ring {
+    0%, 45% { box-shadow: 0 0 0 2px var(--action-fill), 0 0 0 6px color-mix(in srgb, var(--action-fill) 18%, transparent); }
+}
+/* 완료 체크(DoneCheck) — 원이 커지며 나타나고 체크가 그려진다. */
+.done-check {
+    animation: done-pop 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.done-check path {
+    stroke-dasharray: 24;
+    animation: done-draw 360ms 200ms ease-out backwards;
+}
+@keyframes done-pop {
+    from { transform: scale(0.4); opacity: 0; }
+}
+@keyframes done-draw {
+    from { stroke-dashoffset: 24; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .done-check,
+    .done-check path {
+        animation: none;
+    }
+    .flash-ring {
+        animation-timing-function: step-end;
+    }
+}
+/* 코치마크(ui/CoachMark) 짚은 자리 — 둘레를 덮개 색으로 크게 덮어 그 자리만 밝게 남기고, 흰 테두리로 한 번 더 짚는다. */
+.coach-spot {
+    box-shadow: 0 0 0 2px var(--surface-card), 0 0 0 9999px var(--scrim);
+    animation: enter-fade 200ms ease-out;
+    transition: left 150ms ease-out, top 150ms ease-out, width 150ms ease-out, height 150ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+    .coach-spot {
+        animation: none;
+        transition: none;
+    }
+}
+@keyframes press-fill {
+    to { stroke-dashoffset: 0; }
+}
+/* 끌려고 집은 핀(#1549) — 살짝 커지며 몇 px 떠오르고 그림자가 진다. 끝을 붙든 채다. */
+.pin-lift {
+    transform-origin: 50% 100%;
+    transform: translateY(-6px) scale(1.08);
+    filter: drop-shadow(0 6px 4px rgba(20, 22, 31, 0.25));
+    animation: pin-lift 150ms cubic-bezier(0, 0, 0.2, 1);
+}
+@keyframes pin-lift {
+    from { transform: none; filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pin-lift {
+        animation: none;
     }
 }
 @keyframes pin-wobble {

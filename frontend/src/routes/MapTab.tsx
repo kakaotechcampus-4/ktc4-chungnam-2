@@ -1,21 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import ErrorText from '@/ErrorText'
+import { useMeQuery } from '@/features/auth/queries'
 import CardSkeleton from '@/ui/CardSkeleton'
+import ProgressBar from '@/ui/ProgressBar'
+import DoneCard from '@/ui/DoneCard'
 import EmptyState from '@/ui/EmptyState'
 import SheetTitle from '@/ui/SheetTitle'
+import TaskProgress from '@/ui/TaskProgress'
+import AloneInvite from '@/features/map/AloneInvite'
 import EmptyMap from '@/features/map/EmptyMap'
 import { OnboardingBody, OnboardingHeader, type OnboardingKind } from '@/features/map/Onboarding'
-import { filterPins } from '@/features/map/model'
+import { filterPins, isTodo, type Pin } from '@/features/map/model'
 import ReactionHelp from '@/features/map/ReactionHelp'
 import { CategoryChips, PinFilterBar } from '@/features/map/PinFilterControls'
-import PinList from '@/features/map/PinList'
+import NewSinceBanner from '@/features/map/NewSinceBanner'
+import { newsLines, opinionCount, useNewSince } from '@/features/map/newSince'
+import PinList, { type CardNews } from '@/features/map/PinList'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import { PinDetailBody, PinDetailHeader } from '@/features/map/PinDetail'
 import PinUnavailable from '@/features/map/PinUnavailable'
 import { ImportButton } from '@/features/kakaoImport/ImportSheet'
-import { usePinSelection } from '@/features/map/usePinSelection'
+import { usePinGroup, usePinSelection } from '@/features/map/usePinSelection'
 import { useCountsQuery, usePinsQuery } from '@/features/map/queries'
 import { useMapQuery, useMembersQuery } from '@/features/maps/queries'
 import { useSourcePlacesQuery } from '@/features/search/queries'
@@ -23,16 +30,18 @@ import { SearchResultsBody, SearchResultsHeader } from '@/features/search/Search
 import { useSearchStore } from '@/features/search/searchStore'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { useShell } from '@/features/shell/shellContext'
+import PanelBackLink from '@/features/shell/PanelBackLink'
 import TabSheet from '@/features/shell/TabSheet'
 import { useIsDesktop } from '@/features/shell/useIsDesktop'
 
 /**
- * 마킹된 장소 탭은 조립만 한다. 실제 내용은 전부 `features/map/` 안에 있다.
+ * 핀 찍기 탭은 조립만 한다. 실제 내용은 전부 `features/map/` 안에 있다.
  * 새 기능은 이 파일을 키우지 말고 `features/map/` 에 파일을 더해서 여기서 끼운다.
  */
 export default function MapTab() {
   const { mapId } = useShell()
-  const { selectedPinId, selectPin } = usePinSelection()
+  const { selectedPinId, startAgainst, selectPin } = usePinSelection()
+  const { groupIds, showGroup } = usePinGroup()
   const { data: pins, isPending, error, refetch } = usePinsQuery(mapId)
   const counts = useCountsQuery(mapId).data
   const setStage = useSheetStore((s) => s.setStage)
@@ -42,16 +51,30 @@ export default function MapTab() {
   const mapTitle = map?.title
   const memberCount = map?.memberCount ?? 0
   const members = useMembersQuery(mapId).data ?? []
+  // 마지막으로 본 뒤 새로 생긴 핀·의견(#1454). 지도 점(MapLayout)과 같은 기준을 본다.
+  const newSince = useNewSince(mapId, pins, useMeQuery().data?.id)
+  const cardNews = new Map<string, CardNews>()
+  for (const [id, n] of newSince.news) {
+    const pin = pins?.find((p) => p.id === id)
+    const nameOf = (r: { user_id: string; display_name?: string }) => members.find((m) => m.userId === r.user_id)?.name ?? r.display_name ?? '구성원'
+    cardNews.set(id, { newPin: n.newPin, lines: pin ? newsLines(n, nameOf, (chip) => newSince.chipLabel(pin.category, chip)) : [] })
+  }
   const { filters, setFilter, clear } = usePinFilters()
   const sorted = pins && filterPins(pins, filters, memberCount)
   // 순서는 필터·정렬을 바꾸거나 핀이 늘고 줄 때만 다시 매긴다. 의견 수만 바뀌었을 땐 그대로 둬서
-  // 방금 의견을 남긴 카드가 맨 위로 튀지 않게 한다(#308).
+  // 방금 의견을 남긴 카드가 맨 위로 튀지 않게 한다(#308). "의견 남길 핀" 묶음(#1696)도 같은 때만 다시 정한다 —
+  // 목록에서 ♥를 누른 카드가 아래 묶음으로 튀지 않는다. 할 일 핀은 묶음 안에서도 원래 순서(정렬)를 지킨다.
   const orderKey = sorted ? `${filters.category}|${filters.createdBy}|${filters.kind}|${filters.opinion}|${filters.sort}|${sorted.map((p) => p.id).sort().join(',')}` : ''
-  const [order, setOrder] = useState<{ key: string; ids: string[] } | null>(null)
-  if (sorted && order?.key !== orderKey) setOrder({ key: orderKey, ids: sorted.map((p) => p.id) })
+  const [order, setOrder] = useState<{ key: string; ids: string[]; todo: Set<string> } | null>(null)
+  if (sorted && order?.key !== orderKey) {
+    const todo = new Set(sorted.filter(isTodo).map((p) => p.id))
+    setOrder({ key: orderKey, ids: [...sorted.filter((p) => todo.has(p.id)), ...sorted.filter((p) => !todo.has(p.id))].map((p) => p.id), todo })
+  }
   const shown = sorted && order?.key === orderKey ? order.ids.map((id) => sorted.find((p) => p.id === id)).filter((p) => p !== undefined) : sorted
   const search = useSearchStore()
-  const found = useSourcePlacesQuery(search.source, search.near).data?.places
+  const sourced = useSourcePlacesQuery(search.source, search.near).data
+  // 지도 자리 메뉴는 카카오 근처 가게(#1549)까지 센다.
+  const found = sourced && [...sourced.places, ...(sourced.nearby ?? [])]
   const filtered = Boolean(filters.category || filters.createdBy || filters.kind || filters.opinion)
   const [params, setParams] = useSearchParams()
   const onboarding = params.get('onboarding') as OnboardingKind | null
@@ -73,10 +96,12 @@ export default function MapTab() {
     prevStage.current = stage
   }, [onboarding, stage, closeOnboarding])
 
-  // 핀을 고르면 상세가 2단계로 올라온다(최종기획안 4절 "핀 상세").
+  // 핀을 고르면 상세가 2단계로 올라온다(최종기획안 4절 "핀 상세"). 겹친 핀 목록도 같다(#1576).
+  const groupKey = groupIds?.join(',')
+  // 목록의 "✕ 반대"로 열면 사유 입력까지 보이게 3단계로 연다(#1696).
   useEffect(() => {
-    if (selectedPinId) setStage('map', 2)
-  }, [selectedPinId, setStage])
+    if (selectedPinId || groupKey) setStage('map', startAgainst ? 3 : 2)
+  }, [selectedPinId, groupKey, startAgainst, setStage])
 
   const selectedPin = pins?.find((pin) => pin.id === selectedPinId)
   // 목록을 다 받은 뒤에도 없으면 볼 수 없는 핀이다. 로딩 중이나 실패 중에는 판단하지 않는다.
@@ -106,7 +131,25 @@ export default function MapTab() {
         expandOnScroll
         header={<PinDetailHeader pin={selectedPin} mapId={mapId} onBack={() => selectPin(null)} />}
       >
-        <PinDetailBody pin={selectedPin} mapId={mapId} members={members} onDone={() => selectPin(null)} />
+        <PinDetailBody pin={selectedPin} mapId={mapId} members={members} startAgainst={startAgainst} onDone={() => selectPin(null)} />
+      </TabSheet>
+    )
+  }
+
+  // 겹친 핀 묶음(#1576) — 지도에서 가장 가까이 확대해도 겹친 핀들만 보인다. 여기서 연 핀을 닫으면 이 목록으로 돌아온다.
+  const groupPins = groupIds && pins ? groupIds.map((id) => pins.find((p) => p.id === id)).filter((p) => p !== undefined) : []
+  if (groupPins.length > 0) {
+    return (
+      <TabSheet
+        tab="map"
+        header={
+          <>
+            <PanelBackLink label="핀 찍기" onBack={() => showGroup(null)} />
+            <SheetTitle>이 자리의 핀 {groupPins.length}곳</SheetTitle>
+          </>
+        }
+      >
+        <PinList mapId={mapId} pins={groupPins} memberCount={memberCount} onSelect={selectPin} news={cardNews} />
       </TabSheet>
     )
   }
@@ -117,22 +160,26 @@ export default function MapTab() {
       header={
         <>
           <div className="flex items-center justify-between gap-2">
-            <SheetTitle>마킹된 장소</SheetTitle>
+            <SheetTitle>핀 찍기</SheetTitle>
             <ImportButton mapId={mapId} />
           </div>
           {/* 넓은 화면은 단계가 없고 칩이 지도 영역 왼쪽 위에 있다(#338). */}
           {stage === 3 && !desktop && <CategoryChips value={filters.category} onChange={(c) => setFilter('category', c)} className="mt-2" />}
           {pins && pins.length > 0 && <PinFilterBar filters={filters} members={members} pins={pins} onChange={setFilter} />}
           <div className="mt-2 flex items-center gap-1">
-            <p className="text-xs text-ink-500">
-              {isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}
-              {counts && counts.members_total > 0 && (
-                <span className="font-bold text-ink-600">, {counts.members_total}명 중 {counts.members_with_opinion}명이 의견을 남겼어요</span>
-              )}
-            </p>
+            <p className="text-xs text-ink-500">{isPending ? '불러오는 중…' : `${shown?.length ?? 0}곳`}</p>
             {/* 목록 줄의 ♥·반대·? 표시가 무엇인지(#1030). */}
             {pins && pins.length > 0 && <ReactionHelp />}
           </div>
+          {/* 지도 전체 참여율 — 글로만 적던 비율을 막대로도 보인다(#1539). */}
+          {counts && counts.members_total > 0 && (
+            <ProgressBar
+              label={`${counts.members_total}명 중 ${counts.members_with_opinion}명이 의견을 남겼어요`}
+              value={counts.members_with_opinion}
+              max={counts.members_total}
+              className="mt-2"
+            />
+          )}
         </>
       }
     >
@@ -150,7 +197,21 @@ export default function MapTab() {
       {pins && pins.length > 0 && shown?.length === 0 && filtered && (
         <FilterEmpty who={members.find((m) => m.userId === filters.createdBy)?.name} category={filters.category} onClear={clear} />
       )}
-      {shown && shown.length > 0 && <PinList pins={shown} memberCount={memberCount} onSelect={selectPin} />}
+      {newSince.since && pins && pins.length > 0 && (
+        <NewSinceBanner
+          since={newSince.since}
+          newPins={[...newSince.news.values()].filter((n) => n.newPin).length}
+          newOpinions={[...newSince.news.values()].reduce((sum, n) => sum + opinionCount(n), 0)}
+          truncated={newSince.truncated}
+          onDismiss={newSince.dismiss}
+        />
+      )}
+      {/* 핀은 있는데 구성원이 나 하나면 초대를 권한다(기획안 6절, #1560). */}
+      {pins && pins.length > 0 && memberCount === 1 && <AloneInvite mapId={mapId} />}
+      {pins && filters.opinion !== 'none' && (
+        <MyOpinionProgress pins={pins} onOpen={selectPin} onShowLeft={() => setFilter('opinion', 'none')} recommendHref={`/maps/${mapId}/recommend`} />
+      )}
+      {shown && shown.length > 0 && <PinList mapId={mapId} pins={shown} memberCount={memberCount} onSelect={selectPin} news={cardNews} todoIds={order?.todo} />}
     </TabSheet>
   )
 }
@@ -169,5 +230,71 @@ function FilterEmpty({ who, category, onClear }: { who?: string; category: strin
     >
       {what} 핀은 아직 없어요
     </EmptyState>
+  )
+}
+
+/** 할 일 카드에 보이는 줄 수. 남은 곳이 더 있으면 「남은 N곳 모두 보기」로 필터를 연다. */
+const TASK_ROWS = 3
+
+/**
+ * 「내가 남긴 의견 2/3곳」 — 확정되지 않은 핀 중 내가 의견을 남긴 수(#1547).
+ * 다 남기면 완료 카드 「모든 핀에 의견을 남겼어요」 + AI 추천으로 가는 버튼이다(#1659, 빈 화면 「모두 완료」). 확정되지 않은 핀이 없으면 그리지 않는다.
+ * 확정된 핀은 의견을 안 남겨도 할 일로 보지 않는다(목록 카드와 같은 기준 `isTodo`).
+ * 줄은 끝낸 곳 하나(있으면)와 남은 곳 — 남은 곳을 누르면 그 핀이 열린다.
+ */
+export function MyOpinionProgress({
+  pins,
+  onOpen,
+  onShowLeft,
+  recommendHref,
+}: {
+  pins: Pin[]
+  onOpen: (pinId: string) => void
+  onShowLeft: () => void
+  /** 다 남겼을 때 다음 할 일(AI 추천) 주소. 없으면 다 남겼을 때 그리지 않는다. */
+  recommendHref?: string
+}) {
+  const open = pins.filter((p) => p.kind !== '확정')
+  const doneList = open.filter((p) => p.my_reaction)
+  const leftList = open.filter(isTodo)
+  if (open.length === 0 || (leftList.length === 0 && !recommendHref)) return null
+  if (leftList.length === 0) {
+    return (
+      <div className="mb-3">
+        <DoneCard
+          title="모든 핀에 의견을 남겼어요"
+          action={
+            <Link to={recommendHref!} className="btn-outline btn-sm">
+              AI 추천 받기
+            </Link>
+          }
+        >
+          모인 의견으로 AI가 대안을 찾아요
+        </DoneCard>
+      </div>
+    )
+  }
+  const name = (p: Pin) => p.place_name ?? '이름 없는 장소'
+  const shownDone = doneList.slice(0, 1).map((p) => ({ key: p.id, label: name(p), done: true }))
+  const shownLeft = leftList.slice(0, TASK_ROWS - shownDone.length).map((p) => ({ key: p.id, label: name(p), done: false, onClick: () => onOpen(p.id) }))
+  const hidden = leftList.length - shownLeft.length
+  return (
+    <div className="mb-3">
+      <TaskProgress
+        title="내가 남긴 의견"
+        done={doneList.length}
+        total={open.length}
+        unit="곳"
+        items={[...shownDone, ...shownLeft]}
+        hint={`남은 ${leftList.length}곳에 의견을 남기면 AI 추천이 더 정확해져요`}
+        more={
+          hidden > 0 && (
+            <button type="button" onClick={onShowLeft} className="btn-link shrink-0 text-sm">
+              남은 {leftList.length}곳 모두 보기
+            </button>
+          )
+        }
+      />
+    </div>
   )
 }

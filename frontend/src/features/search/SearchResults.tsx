@@ -8,6 +8,8 @@ import { useCreatePinMutation } from '@/features/map/queries'
 import { usePinSelection } from '@/features/map/usePinSelection'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
+import BlogPhotos from '@/ui/BlogPhotos'
+import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import { josa } from '@/ui/josa'
@@ -17,7 +19,7 @@ import TextArea from '@/ui/TextArea'
 import Sentences from '@/ui/Sentences'
 
 import { livePinRequest, pinErrorMessage, searchPinRequest, toSearchResult, type SearchResultView } from './model'
-import { searchErrorMessage, useExternalSearchQuery, useSourcePlacesQuery } from './queries'
+import { searchErrorMessage, useExternalSearchQuery, usePlacePhotosQuery, useSourcePlacesQuery } from './queries'
 import { useSearchStore } from './searchStore'
 import { suggestQuery } from './typo'
 
@@ -56,9 +58,11 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   const create = useCreatePinMutation(mapId)
   const { selectPin } = usePinSelection()
   const results = (search.data?.places ?? []).map((r) => toSearchResult(r, near, pins))
+  // 지도 자리 메뉴에서만 온다 — 자체 DB에 없는 근처 가게(카카오), 실시간 핀으로 남긴다(#1549).
+  const nearby = (search.data?.nearby ?? []).map((r) => toSearchResult(r, near, pins))
   const link = search.data?.link
   const query = source?.kind === 'name' ? source.query : null
-  const selected = results.find((r) => r.id === selectedId)
+  const selected = [...results, ...nearby].find((r) => r.id === selectedId)
   // 지도에서 겹쳐 묶인 「N곳」 핀을 눌렀으면 그곳들만 보인다(#1174). 번호는 전체 결과의 번호 그대로다.
   const listed = results.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => !group || group.includes(r.id))
 
@@ -86,7 +90,9 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
    */
   function pinLive(r: SearchResultView, { memo }: LiveInput) {
     const { lat, lng } = r.dto
-    const req = query ? livePinRequest(r.dto, query, memo) : null
+    // 지도 자리 메뉴에서 고른 곳은 친 검색어가 없어 가게 이름을 검색어로 쓴다 — 지도를 열 때 그 이름으로 위치를 다시 찾는다.
+    // 체인점처럼 같은 이름이 많으면 다른 지점이 잡힐 수 있다(#1549 주의).
+    const req = livePinRequest(r.dto, query ?? r.name, memo)
     if (!req) return
     create.mutate(
       req,
@@ -121,7 +127,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
     )
   }
 
-  if (search.isPending) return <p className="text-sm text-ink-500">찾는 중…</p>
+  if (search.isPending) return <CardSkeleton label="찾는 중…" />
   if (search.error) {
     return (
       <div className="space-y-3">
@@ -155,7 +161,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
       </EmptyState>
     )
   }
-  if (source?.kind === 'tap' && results.length === 0) {
+  if (source?.kind === 'tap' && results.length === 0 && nearby.length === 0) {
     // 지어내지 않는다(가드레일 2). 없으면 이름 검색으로 남기게 한다(api-spec GET /places/nearest).
     return (
       <EmptyState mood="sad" title="누른 곳 가까이에 찍을 수 있는 장소가 없어요" action={<SearchAgainButton onClose={close} label="검색으로 남기기" />}>
@@ -163,7 +169,7 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
       </EmptyState>
     )
   }
-  if (results.length === 0) {
+  if (results.length === 0 && nearby.length === 0) {
     // 흔한 말의 오타(「중곡집」)면 고친 말로 다시 찾게 한다. 아니면 검색어를 지우고 바로 다시 입력하게(#351).
     const fixed = query ? suggestQuery(query) : null
     return <NoResults query={query} fixed={fixed} onRetry={() => fixed && submit(fixed, near)} onClose={close} />
@@ -172,7 +178,10 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   if (selected) {
     return (
       <div className="space-y-3">
-        <PanelBackLink label={group ? `이 자리의 장소 ${listed.length}곳` : `검색 결과 ${results.length}곳`} onBack={() => select(null)} />
+        <PanelBackLink
+          label={group ? `이 자리의 장소 ${listed.length}곳` : source?.kind === 'tap' ? '누른 곳 근처 장소' : `검색 결과 ${results.length}곳`}
+          onBack={() => select(null)}
+        />
         <div>
           <SheetTitle as="h3">{selected.name}</SheetTitle>
           <p className="text-body text-ink-600">{selected.meta}</p>
@@ -180,15 +189,24 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
             <Sentences text="현재 보고 있는 지도 중심에서 멀리 있는 장소예요. 다른 지역의 같은 이름 장소일 수 있어요" />
           </p>}
         </div>
-        {/* 카카오 검색은 사진·영업시간을 주지 않는다 — 사진 없이 카카오맵으로 보낸다(Figma 장소 정보 출처). */}
-        {(selected.address || selected.url) && (
+        {/* 핀 상세와 같은 블로그 사진 줄(#1681). 자체 DB에 없는 장소는 사진을 찾을 주소가 없어 그리지 않는다. */}
+        {!selected.unsupported && <ResultPhotos key={selected.id} placeId={selected.id} />}
+        {(selected.address || selected.url || selected.naverUrl) && (
           <div className="space-y-2 rounded-xl bg-ink-50 p-3.5 text-body">
             {selected.address && <p className="text-ink-700">{selected.address}</p>}
-            {selected.url && (
-              <a href={selected.url} target="_blank" rel="noopener noreferrer" className="btn-link">
-                카카오맵에서 자세히 보기 <ExternalLink size={14} aria-hidden="true" />
-              </a>
-            )}
+            {/* 핀 상세와 같은 두 링크 — 찍기 전에도 네이버 지도로 볼 수 있다(#1554). */}
+            <div className="flex flex-wrap gap-x-4">
+              {selected.url && (
+                <a href={selected.url} target="_blank" rel="noopener noreferrer" className="btn-link">
+                  카카오맵에서 자세히 보기 <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              )}
+              {selected.naverUrl && (
+                <a href={selected.naverUrl} target="_blank" rel="noopener noreferrer" className="btn-link">
+                  네이버 지도에서 보기 <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              )}
+            </div>
           </div>
         )}
         {selected.canLeaveLive && !selected.alreadyPinned ? (
@@ -203,13 +221,14 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
   return (
     <div className="space-y-3">
       {group && <PanelBackLink label={`검색 결과 ${results.length}곳`} onBack={() => showGroup(null)} />}
-      <ol className="space-y-2">
+      {/* 자체 DB 결과가 없고 카카오 근처 장소만 있으면(#1549) 빈 목록을 그리지 않는다. */}
+      {listed.length > 0 && <ol className="space-y-2">
         {listed.map(({ r, n }) => (
           <li
             key={r.id}
             className={`flex items-center gap-3 rounded-xl border p-3 ${r.unsupported && !r.canLeaveLive ? 'border-ink-200 opacity-60' : 'border-ink-200'}`}
           >
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-link">
               {n}
             </span>
             <button type="button" onClick={() => select(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
@@ -226,8 +245,43 @@ export function SearchResultsBody({ mapId, pins }: { mapId: string; pins: Pin[] 
             )}
           </li>
         ))}
-      </ol>
+      </ol>}
+      {nearby.length > 0 && !group && <NearbyList list={nearby} onSelect={select} />}
     </div>
+  )
+}
+
+/**
+ * 「카카오에서 찾은 근처 장소」(#1549). 자체 DB에 없는 가게라 장소 정보·AI 추천·동선에는 못 쓰고 핀으로만 남는다(#382).
+ * 카카오 결과는 보이기만 하고 저장하지 않는다(#53). 지도에는 번호 핀을 그리지 않아 번호가 없다.
+ */
+function NearbyList({ list, onSelect }: { list: SearchResultView[]; onSelect: (id: string) => void }) {
+  return (
+    <section aria-labelledby="nearby-kakao" className="space-y-2 pt-2">
+      <div>
+        <h3 id="nearby-kakao" className="text-sm font-bold text-ink-900">
+          카카오에서 찾은 근처 장소
+        </h3>
+        <p className="text-xs text-ink-500">장소 정보 없이 핀만 남아요</p>
+      </div>
+      <ul className="space-y-2">
+        {list.map((r) => (
+          <li key={r.id} className="flex items-center gap-3 rounded-xl border border-ink-200 p-3">
+            <button type="button" onClick={() => onSelect(r.id)} className="press -mx-1.5 min-w-0 flex-1 rounded-md px-1.5 text-left">
+              <p className="truncate font-bold text-ink-900">{r.name}</p>
+              <p className="truncate text-xs text-ink-500">{r.meta}</p>
+            </button>
+            {r.alreadyPinned ? (
+              <span className="shrink-0 text-xs text-ink-500">이미 지도에 있어요</span>
+            ) : (
+              <button type="button" onClick={() => onSelect(r.id)} className="btn-outline btn-sm shrink-0">
+                핀 남기기
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -359,5 +413,15 @@ function PinItButton({ result, filled = false, pending, onPin }: { result: Searc
     >
       {pending ? '찍는 중…' : '핀 찍기'}
     </button>
+  )
+}
+
+/** 검색 결과 상세의 블로그 사진 줄(#1681). 핀 상세의 `PinPhotos`와 같은 모양이다. */
+function ResultPhotos({ placeId }: { placeId: string }) {
+  const photos = usePlacePhotosQuery(placeId)
+  return (
+    <div className="py-1">
+      <BlogPhotos photos={photos.data} loading={photos.isPending} failed={photos.isError} />
+    </div>
   )
 }

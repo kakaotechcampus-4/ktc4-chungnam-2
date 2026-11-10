@@ -526,14 +526,13 @@ ReservationDecision = Literal["conflict", "reuse", "in_progress", "takeover"]
 
 
 def idempotency_request_hash(
-    map_id: str, category: str, execute: bool = False, center: tuple[float, float] | None = None, radius_m: int | None = None,
+    map_id: str, category: str, execute: bool, center: tuple[float, float], radius_m: int | None = None,
 ) -> str:
     """요청 동일성 = (지도, category, execute, center, radius_m — execute 생략은 false, radius_m 생략은 기본 3,000m). 같은 키로 이 값이
-    다르면 IDEMPOTENCY_CONFLICT다. 명시한 3000은 생략과 같은 요청이라 해시에 넣지 않는다(#1416)."""
-    value = f"{map_id}{category}{int(bool(execute))}"   # center 없는 요청은 예전 해시와 같아야 한다 — 배포 직전에 만든 키(24시간 보관)의 재시도가 409가 되지 않게
-    if center is not None:
-        value += f"\x1f{center[0]:.17g}\x1f{center[1]:.17g}"
-    if radius_m is not None and radius_m != DEFAULT_RADIUS_M:   # radius_m 없는 요청의 해시는 예전 값 그대로
+    다르면 IDEMPOTENCY_CONFLICT다. 명시한 3000은 생략과 같은 요청이라 해시에 넣지 않는다(#1416). center는 필수다(#1331, #1354) —
+    center 없는 요청의 옛 해시 호환은 center 필수 배포 뒤 키 보관 기간(24시간)이 지나 지웠다."""
+    value = f"{map_id}{category}{int(bool(execute))}\x1f{center[0]:.17g}\x1f{center[1]:.17g}"
+    if radius_m is not None and radius_m != DEFAULT_RADIUS_M:
         value += f"\x1fr{radius_m}"
     return hashlib.sha256(value.encode()).hexdigest()
 

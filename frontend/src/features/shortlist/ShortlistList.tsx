@@ -1,4 +1,6 @@
 import { GripVertical, Plus } from 'lucide-react'
+import { authorName } from '@/features/map/model'
+import UnknownName from '@/ui/UnknownName'
 
 import DragGhost from './DragGhost'
 import type { ShortlistItemDto } from './model'
@@ -17,6 +19,7 @@ export default function ShortlistList({
   onPut,
   onOpen,
   onDrop,
+  myId,
 }: {
   items: ShortlistItemDto[]
   /** 넣을 날(「첫째 날」). 여행 날짜가 없으면 `onPut`도 없고 「넣기」를 그리지 않는다. */
@@ -24,6 +27,8 @@ export default function ShortlistList({
   onPut?: (item: ShortlistItemDto) => void
   onOpen: (pinId: string) => void
   onDrop?: (item: ShortlistItemDto, spot: DropSpot) => void
+  /** 내 핀을 「내가 찍은 핀」으로 부르려고 받는다. */
+  myId?: string
 }) {
   return (
     <ul className="space-y-2">
@@ -32,6 +37,7 @@ export default function ShortlistList({
           key={item.id}
           item={item}
           dayLabel={dayLabel}
+          myId={myId}
           onPut={onPut && (() => onPut(item))}
           onOpen={() => onOpen(item.pin.id)}
           onDrop={onDrop && ((spot) => onDrop(item, spot))}
@@ -47,24 +53,27 @@ function Row({
   onPut,
   onOpen,
   onDrop,
+  myId,
 }: {
   item: ShortlistItemDto
   dayLabel: string
   onPut?: () => void
   onOpen: () => void
   onDrop?: (spot: DropSpot) => void
+  myId?: string
 }) {
   const name = item.pin.place_name ?? '이 장소'
   const { handlers, dragging, ghost } = useScheduleDrag(item.pin.id, (spot) => onDrop?.(spot))
   return (
-    <li className={`rounded-xl border border-ink-200 bg-white py-1.5 pl-3 pr-1.5 ${dragging ? 'opacity-40' : ''}`}>
+    <li className={`rounded-xl border border-ink-200 bg-surface py-1.5 pl-3 pr-1.5 ${dragging ? 'opacity-40' : ''}`}>
       <div className="flex items-center gap-2">
         {/* 키보드·VoiceOver로도 열리게 버튼이다(검색 결과 줄과 같다, #959). */}
         <button type="button" onClick={onOpen} className="press -mx-1.5 min-w-0 flex-1 select-none rounded-md px-1.5 py-1 text-left">
           <p className="truncate font-bold text-ink-900">{name}</p>
           <p className="truncate text-xs text-ink-500">
             {item.pin.category}
-            {item.pin.created_by_display_name && ` · ${item.pin.created_by_display_name}님이 찍은 핀`}
+            {/* 핀 상세와 같은 말을 쓴다 — 내 핀을 「황경님이 찍은 핀」으로 부르지 않는다. */}
+            {item.pin.created_by === myId ? ' · 내가 찍은 핀' : <UnknownName text={` · ${authorName(item.pin)}님이 찍은 핀`} />}
           </p>
         </button>
         {onPut && (

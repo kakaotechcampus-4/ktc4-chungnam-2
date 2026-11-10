@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Calendar } from 'lucide-react'
+import { Calendar, ChevronRight } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
 
@@ -16,13 +16,18 @@ import { showToast } from '@/features/shell/toast'
 import { routableCount } from '@/features/shortlist/model'
 import { useShortlistQuery } from '@/features/shortlist/queries'
 import ErrorText from '@/ErrorText'
+import CardSkeleton from '@/ui/CardSkeleton'
 import Notice from '@/ui/Notice'
 import EmptyState from '@/ui/EmptyState'
 import TextField from '@/ui/TextField'
+import BusyLabel from '@/ui/BusyLabel'
+import CoachMark from '@/ui/CoachMark'
+import Pingo from '@/ui/Pingo'
+import RouteArt from '@/ui/RouteArt'
 
 import { useCourseViewStore } from './courseMapStore'
 import CourseRun from './CourseRun'
-import { createErrorMessage, pinNames, pinPoints, REQUEST_MAX, WALK_MAX_OPTIONS, walkLabel } from './model'
+import { createErrorMessage, isFinished, latestLine, pinNames, pinPoints, REQUEST_MAX, WALK_MAX_OPTIONS, walkLabel, type CourseRunDto } from './model'
 import { courseKeys, useCreateCourseMutation, useLatestCourseQuery } from './queries'
 
 /**
@@ -57,7 +62,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
       </div>
     )
   }
-  if (shortlist.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  if (shortlist.isPending) return <CardSkeleton count={2} label="불러오는 중…" />
   // 실패를 확정 0곳으로 읽으면 「장소가 2곳 이상 필요해요」 안내가 거짓으로 뜬다.
   if (shortlist.isError) return <LoadFailed error={shortlist.error} onRetry={() => void shortlist.refetch()} />
   return <Entry mapId={mapId} routable={routable} text={text} setText={setText} walkMax={walkMax} setWalkMax={setWalkMax} onRun={(id, fromInProgress = false) => open(mapId, id, fromInProgress)} />
@@ -84,11 +89,11 @@ function NotEnough({ mapId }: { mapId: string }) {
       title={NOT_ENOUGH}
       action={
         <Link to={`/maps/${mapId}/shortlist`} className="btn-outline btn-md">
-          확정된 장소 보기
+          장소 확정 탭 보기
         </Link>
       }
     >
-      마킹된 장소 탭에서 가고 싶은 곳들을 확정 리스트에 먼저 담아 보세요.
+      핀 찍기 탭에서 가고 싶은 곳들을 확정 리스트에 먼저 담아 보세요.
     </EmptyState>
   )
 }
@@ -137,6 +142,8 @@ function Entry({
     onRun(latest.id)
   }
 
+  // 짜는 중인 코스가 있으면 새로 짜지 않는다 — 눌러도 크레딧 확인 창 뒤에 짜는 중인 코스로 넘어갈 뿐이었다(#1713).
+  const running = latest != null && !isFinished(latest)
   // 최근 코스를 받기 전에 안내 화면을 먼저 띄우면 받은 뒤 입력 화면으로 바뀌며 깜빡인다(#1127 리뷰).
   if (routable < 2 && latestQuery.isPending) return <p className="text-sm text-ink-500">불러오는 중…</p>
   if (routable < 2 && !latest && latestQuery.isError) return <LoadFailed error={latestQuery.error} onRetry={() => void latestQuery.refetch()} />
@@ -150,10 +157,17 @@ function Entry({
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (!create.isPending && !guest) setAsking(true)
+        if (!create.isPending && !guest && !running) setAsking(true)
       }}
       className="space-y-4"
     >
+      {/* 최근 코스는 입력 위 카드다(#1713). 버튼 밑 글자 링크일 땐 누르기 어렵고 언제 짠 코스인지 몰랐다. */}
+      {latest && (
+        <>
+          <LatestCourseCard run={latest} onOpen={openLatest} />
+          <h3 className="pt-1 text-sm font-bold text-ink-900">새 코스 짜기</h3>
+        </>
+      )}
       {map && (
         <p className="flex items-center gap-1.5 text-sm text-ink-700">
           <Calendar size={16} aria-hidden="true" />
@@ -172,19 +186,16 @@ function Entry({
       <div className="space-y-1">
         {/* 게스트는 버튼 대신 카카오 안내, 잔액이 모자라면 후기 안내(확정 탭으로 간다). 확정 장소가 모자라면 막는다. */}
         <CreditGate feature="course" mapId={mapId} error={error} onCharged={() => clearFail(mapId)}>
-          <button type="submit" disabled={create.isPending || routable < 2} className="btn-primary btn-lg w-full">
-            {create.isPending ? '요청하는 중…' : '코스 짜기'}
+          <button type="submit" disabled={create.isPending || routable < 2 || running} data-coach="course-run" aria-busy={create.isPending} className="btn-primary btn-lg w-full">
+            <BusyLabel busy={create.isPending} busyText="요청하는 중…">코스 짜기</BusyLabel>
           </button>
         </CreditGate>
+        <CoachMark id="course-run" target="course-run" title="확정한 장소로 날짜별 동선을 짜요">
+          요청을 한 줄 적으면 반영해요. 결과는 나에게만 보이고, 일정에 넣을지는 직접 정해요
+        </CoachMark>
         {/* 최근 코스가 있어 입력 화면이 보이지만 장소가 모자라면, 회색 버튼 아래에 이유를 적는다(#1127 리뷰). */}
         {routable < 2 && <p className="text-center text-xs text-ink-500">{NOT_ENOUGH}</p>}
-        {latest && (
-          <div className="flex justify-center">
-            <button type="button" onClick={openLatest} className="btn-link text-sm">
-              {latest.status === 'queued' || latest.status === 'running' ? '짜는 중인 코스 보기' : '최근 코스 보기'}
-            </button>
-          </div>
-        )}
+        {running && routable >= 2 && <p className="text-center text-xs text-ink-500">짜는 중인 코스가 끝나면 새로 짤 수 있어요</p>}
       </div>
       {asking && (
         <CreditConfirm
@@ -281,5 +292,47 @@ function WalkPicker({ value, onPick }: { value: number | null; onPick: (min: num
         ))}
       </div>
     </div>
+  )
+}
+
+/**
+ * 입력 화면 맨 위 최근 코스 카드(#1713). 카드 전체가 누르는 곳이다(높이 64 이상).
+ * 짜는 중이면 AI 하늘색 면에 걷는 핑고와 "코스를 짜고 있어요", 끝났으면 흰 면에 "최근 코스"와 한 줄 요약이다.
+ * 요청 뒤 일정이 바뀌었으면(stale) "일정이 바뀌었어요" 태그를 단다 — 열면 결과 화면이 다시 짜기를 권한다.
+ */
+function LatestCourseCard({ run, onOpen }: { run: CourseRunDto; onOpen: () => void }) {
+  const running = !isFinished(run)
+  const lineId = useId()
+  return (
+    // 이름은 짧게(예전 링크와 같은 말), 한 줄 요약은 설명으로 읽힌다.
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={running ? '짜는 중인 코스 보기' : '최근 코스 보기'}
+      aria-describedby={lineId}
+      className={`press flex min-h-16 w-full items-center gap-3 rounded-xl p-3 text-left ${
+        running ? 'border-[1.5px] border-brand-300 bg-[var(--pingo-bg)]' : 'border border-ink-200 bg-surface'
+      }`}
+    >
+      {running ? (
+        <Pingo size={36} mood="walk" />
+      ) : (
+        <RouteArt size={40} />
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-1.5 font-bold text-ink-900">
+          {running ? '코스를 짜고 있어요' : '최근 코스'}
+          {!running && run.stale && <span className="tag tag-warn">일정이 바뀌었어요</span>}
+        </span>
+        <span id={lineId} className="mt-0.5 block text-xs text-ink-500">
+          {latestLine(run)}
+          {running && '. 화면을 닫아도 계속 짜요'}
+        </span>
+      </span>
+      <span className="flex shrink-0 items-center text-sm font-bold text-link">
+        보기
+        <ChevronRight size={16} aria-hidden="true" />
+      </span>
+    </button>
   )
 }

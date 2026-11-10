@@ -38,14 +38,14 @@
 | 자리 | 지금 |
 |---|---|
 | run 생성 `flows.create_run`, `_create_run` | `center` 필수 — 없으면 422 `VALIDATION_ERROR` |
-| 요청 모델 `schemas.RunCreateRequest.center` | **선택으로 둔다.** `center`가 필수가 되기 전에 만든 멱등 키(보관 `core.IDEMPOTENCY_RETENTION`)의 재시도가 그 run을 돌려줘야 해서다(`tests/test_idempotency_811.py`). 새 요청은 위 422가 막는다. 운영에 #1331 코드가 올라가고 보관 기간이 지나면 필수로 바꾸고 `flows`의 422 검사와 옛 키 분기를 지운다 |
-| 멱등 동일성 `core.idempotency_request_hash` | `center`, `radius_m`가 들어간다 |
+| 요청 모델 `schemas.RunCreateRequest.center` | **필수다**(#1354). 없으면 요청 모델이 422 `VALIDATION_ERROR`로 막고 `flows.create_run`은 `center`를 필수 인자로 받는다. 운영 배포(2026-11-08, #1528)로부터 키 보관 기간(`core.IDEMPOTENCY_RETENTION` 24시간)이 지나 `center` 없는 옛 키의 재시도 호환(멱등 해시의 center 없음 갈래, 같은 키면 그 run을 돌려주던 분기)을 지웠다. 옛 run(`origin_lat`·`origin_lng` 없음)의 다시 추천·넓히기는 저장된 지역을 쓰므로 그대로 동작한다 |
+| 멱등 동일성 `core.idempotency_request_hash` | `center`(필수)와 `radius_m`(3000이 아닐 때만)이 들어간다. `center`가 있는 요청의 해시 모양은 바꾸지 않는다(`test_idempotency_811.py`가 고정) |
 | readiness 근처 정예 수 `flows._curated_nearby` | `center`가 있으면 `_center_region`, 없으면 핀 앵커(옛 기준) |
 | 미리 돌려 보기 `flows.preview_filter`(agent 진단) | agent는 화면이 없어 보이는 가운데를 모른다 → 핀 앵커(옛 기준, `_default_circle_and_anchors`). 교체 전 로직은 태그 `legacy/recommend-pin-anchor`로 남기고, 이 경로가 옛 기준을 쓰는 동안 코드에서 지우지 않는다 |
 | 여행 지역 밖 판정 `OUTSIDE_TRIP_REGION` | run과 같은 원(`places.api`의 경계 판정) |
 | 화면 | 지도 원과 범위 문구는 readiness `radius_m`, 넓히기 확인 창은 `default_radius_m`·`next_default_radius_m`(#1468) |
 | 계약 | `docs/api-spec.yaml`의 `POST /maps/{mapId}/runs`(`center`, `radius_m`), `Readiness.radius_*`, `docs/CHANGELOG-api.md` |
-| 테스트 대역 | `backend/conftest.py`의 `_run_center_from_pins` — `center` 없이 run을 만드는 옛 테스트에 핀 평균 중심을 채운다 |
+| 테스트 대역 | `backend/conftest.py`의 `_run_center_from_pins` — `center` 없이 run을 만드는 옛 테스트에 핀 평균 중심을 채운다(`flows.create_run` 호출과 `POST /maps/{mapId}/runs` 본문 둘 다). `center` 없는 요청 자체를 보는 시험은 `@pytest.mark.no_center_shim`으로 끈다 |
 
 ## 완료 정의
 

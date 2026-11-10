@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Share } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
@@ -8,8 +8,11 @@ import LogoutConfirm from '@/features/auth/LogoutConfirm'
 import WithdrawConfirm from '@/features/auth/WithdrawConfirm'
 import { useMeQuery } from '@/features/auth/queries'
 import FeedbackSheet from '@/features/feedback/FeedbackSheet'
+import FaqSheet from '@/features/help/FaqSheet'
 import MenuPopover from '@/features/shell/MenuPopover'
 import ModalSheet from '@/features/shell/ModalSheet'
+import { HelpLinks } from '@/features/shell/ProfileModal'
+import ThemeControl from '@/features/shell/ThemeControl'
 import { showToast } from '@/features/shell/toast'
 import Avatar from '@/ui/Avatar'
 import Sentences from '@/ui/Sentences'
@@ -17,7 +20,7 @@ import Sentences from '@/ui/Sentences'
 import type { MapView } from './model'
 import { useCreateInviteMutation } from './queries'
 
-type Confirm = 'logout' | 'withdraw' | 'name' | 'feedback' | null
+type Confirm = 'logout' | 'withdraw' | 'name' | 'feedback' | 'bug' | 'faq' | null
 
 /**
  * 내 지도 목록의 계정 시트(Figma 1절, 모바일). 넓은 화면은 같은 내용을 계정 버튼 아래 메뉴로 연다(AccountMenu).
@@ -28,6 +31,7 @@ export default function AccountSheet({ maps, onClose }: { maps: MapView[]; onClo
   return (
     <ModalSheet label="계정" onClose={onClose} overlay={<AccountConfirm which={confirm} onCancel={() => setConfirm(null)} />}>
       <AccountBody maps={maps} onConfirm={setConfirm} />
+      <AccountSettings onConfirm={setConfirm} />
     </ModalSheet>
   )
 }
@@ -51,20 +55,48 @@ export function AccountMenu({ maps, name }: { maps: MapView[]; name?: string }) 
       }
     >
       <AccountBody maps={maps} onConfirm={setConfirm} />
+      <AccountSettings onConfirm={setConfirm} />
     </MenuPopover>
   )
 }
 
-function AccountConfirm({ which, onCancel }: { which: Confirm; onCancel: () => void }) {
+/**
+ * 지도 화면 프로필 탭(휴대폰)의 계정 칸. 시트, 메뉴 없이 탭 시트 안에 그대로 놓는다.
+ * `links`는 이름 줄 바로 아래 바로 가기 자리, `mapId`는 의견 보내기에 지금 지도를 붙인다.
+ * `settings`면 계정 칸 대신 설정 화면(화면 모드, 도움 줄, 로그아웃, 회원 탈퇴)이다. 탭 머리의 톱니가 같은 시트 안에서 연다(#1710).
+ */
+export function AccountSection({
+  maps,
+  mapId,
+  links,
+  settings = false,
+}: {
+  maps: MapView[]
+  mapId?: string
+  links?: ReactNode
+  settings?: boolean
+}) {
+  const [confirm, setConfirm] = useState<Confirm>(null)
+  return (
+    <>
+      {settings ? <AccountSettings onConfirm={setConfirm} /> : <AccountBody maps={maps} onConfirm={setConfirm} links={links} />}
+      <AccountConfirm which={confirm} mapId={mapId} onCancel={() => setConfirm(null)} />
+    </>
+  )
+}
+
+function AccountConfirm({ which, mapId, onCancel }: { which: Confirm; mapId?: string; onCancel: () => void }) {
   if (which === 'logout') return <LogoutConfirm onCancel={onCancel} />
   if (which === 'withdraw') return <WithdrawConfirm onCancel={onCancel} />
   if (which === 'name') return <EditNameDialog onCancel={onCancel} />
-  if (which === 'feedback') return <FeedbackSheet onClose={onCancel} />
+  if (which === 'feedback') return <FeedbackSheet mapId={mapId} onClose={onCancel} />
+  if (which === 'bug') return <FeedbackSheet mapId={mapId} initialCategory="bug" onClose={onCancel} />
+  if (which === 'faq') return <FaqSheet onClose={onCancel} />
   return null
 }
 
 /** 계정 시트·메뉴 공통 내용. 지도마다 초대 링크가 따로라 줄마다 복사 버튼을 둔다. */
-function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: Confirm) => void }) {
+function AccountBody({ maps, onConfirm, links }: { maps: MapView[]; onConfirm: (which: Confirm) => void; links?: ReactNode }) {
   const me = useMeQuery().data
   const invite = useCreateInviteMutation()
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -108,7 +140,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
         <div className="min-w-0 flex-1">
           <p className="text-xl font-bold text-ink-900">{me?.display_name}</p>
           <p className="text-xs text-ink-500">
-            {me?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '카카오로 로그인됨 · '}
+            {me?.is_guest ? <span className="tag tag-neutral mr-1">게스트</span> : '로그인됨 · '}
             지도 {maps.length}개
           </p>
         </div>
@@ -116,6 +148,7 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
           이름 바꾸기
         </button>
       </div>
+      {links}
       {me?.is_guest && <div className="mb-5 mt-1"><GuestAccountNotice /></div>}
 
       {maps.length > 0 && (
@@ -144,9 +177,19 @@ function AccountBody({ maps, onConfirm }: { maps: MapView[]; onConfirm: (which: 
         </>
       )}
 
-      <button type="button" onClick={() => onConfirm('feedback')} className="btn-text mt-5 w-full text-center text-body">
-        핑고핑고에 의견 보내기
-      </button>
+    </>
+  )
+}
+
+/** 계정 시트, 메뉴의 아래쪽(화면 모드, 도움 줄, 로그아웃, 회원 탈퇴). 프로필 탭에서는 설정 화면으로 따로 연다. */
+function AccountSettings({ onConfirm }: { onConfirm: (which: Confirm) => void }) {
+  return (
+    <>
+      {/* 내 지도 목록에는 ☰ 메뉴가 없어서 화면 모드를 계정에 둔다(#1412). */}
+      <ThemeControl className="mt-5" />
+      <div className="mt-2">
+        <HelpLinks onPick={onConfirm} />
+      </div>
       <button
         type="button"
         onClick={() => onConfirm('logout')}

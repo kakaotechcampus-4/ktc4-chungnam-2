@@ -37,7 +37,7 @@ def test_no_reaction_template_keeps_slots_and_refs_only():
     ]
     assert draft.advice == [{"slot_text": f"{{c{i}}}", "is_guess": False} for i in (2, 3, 4)]
     assert draft.actions == [{"index": 0, "type": "show_pins", "label": "미확인 핀 보기",
-                              "params": {"pin_ids": ["p1", "p2", "p3"]}}]
+                              "params": {"pin_ids": ["p1", "p2", "p3"], "unseen_only": True}}]
 
 
 @pytest.mark.parametrize("category, title", [

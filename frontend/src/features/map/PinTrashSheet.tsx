@@ -3,6 +3,7 @@ import { useState } from 'react'
 import ErrorText from '@/ErrorText'
 import ModalSheet from '@/features/shell/ModalSheet'
 import { showToast } from '@/features/shell/toast'
+import EmptyState from '@/ui/EmptyState'
 import CardSkeleton from '@/ui/CardSkeleton'
 import { josa } from '@/ui/josa'
 import SheetTitle from '@/ui/SheetTitle'
@@ -38,7 +39,7 @@ export default function PinTrashSheet({ mapId, onClose }: { mapId: string; onClo
       </p>
       {trash.isPending && <CardSkeleton />}
       {trash.error && <ErrorText message="삭제한 핀을 불러오지 못했어요" error={trash.error} />}
-      {trash.data?.items.length === 0 && <p className="text-sm text-ink-500">되돌릴 핀이 없어요</p>}
+      {trash.data?.items.length === 0 && <EmptyState title="되돌릴 핀이 없어요" />}
       <ul className="space-y-2">
         {trash.data?.items.map(({ pin, days_left, deleted_by_name, was_confirmed }) => {
           const name = pin.place_name ?? '이름 없는 핀'

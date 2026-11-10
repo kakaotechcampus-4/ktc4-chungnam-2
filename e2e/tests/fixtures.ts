@@ -34,6 +34,16 @@ function isoDate(daysFromToday: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/** 날짜 칸(`ui/DatePicker`)을 열어 그날을 누른다. 고를 날은 오늘 뒤라 달력은 「다음 달」로만 넘긴다. */
+async function pickDate(page: Page, label: string, day: string) {
+  await page.locator('label', { hasText: label }).locator('button[aria-haspopup]').click()
+  const calendar = page.getByRole('dialog', { name: '날짜 고르기' })
+  const [y, m, d] = day.split('-').map(Number)
+  const button = calendar.getByRole('button', { name: new RegExp(`^${y}년 ${m}월 ${d}일 `) })
+  for (let i = 0; i < 12 && !(await button.isVisible()); i++) await calendar.getByRole('button', { name: '다음 달' }).click()
+  await button.click()
+}
+
 export function mapIdOf(page: Page): string {
   return new URL(page.url()).pathname.split('/')[2]
 }
@@ -42,8 +52,8 @@ export function mapIdOf(page: Page): string {
 export async function createMap(page: Page, title: string) {
   await page.goto('/maps/new')
   await page.getByLabel('여행 제목').fill(title)
-  await page.getByLabel('시작일').fill(isoDate(30))
-  await page.getByLabel('종료일').fill(isoDate(31))
+  await pickDate(page, '시작일', isoDate(30))
+  await pickDate(page, '종료일', isoDate(31))
   await page.getByRole('button', { name: '지도 만들기' }).click()
   await page.getByRole('button', { name: '나중에 할게요' }).click()
 }
@@ -67,13 +77,15 @@ export async function pinPlace(page: Page, name: string) {
 export async function opposeWithChip(page: Page, chip: string) {
   await page.getByRole('radio', { name: '반대' }).click()
   await page.getByRole('button', { name: chip, exact: true }).click()
-  await page.getByRole('button', { name: '의견 등록' }).click()
-  await expect(page.getByRole('status').filter({ hasText: '의견을 남겼어요' })).toBeVisible()
+  await page.getByRole('button', { name: '반대 남기기' }).click()
+  // 토스트 글자만 맞춘다. 다 남기면 뜨는 완료 카드("모든 핀에 의견을 남겼어요", #1659)도 status라 함께 걸린다.
+  await expect(page.getByRole('status').filter({ hasText: /^의견을 남겼어요$/ })).toBeVisible()
 }
 
-/** 「마킹된 장소」 목록의 핀 줄. 접근성 이름이 「장소 이름 …」으로 시작한다. */
+/** 「핀 찍기」 목록의 핀 줄. 접근성 이름이 「장소 이름 …」으로 시작한다. */
 export function pinRow(page: Page, name: string) {
-  return page.getByRole('main', { name: '바텀시트' }).getByRole('button', { name: new RegExp(`^${name} `) })
+  // 반응 안 한 핀 줄 옆의 바로 반응 버튼(「○○ 좋음」, 「○○ 반대, 이유 쓰기」, #1696)도 이름이 같은 말로 시작해서 뺀다.
+  return page.getByRole('main', { name: '바텀시트' }).getByRole('button', { name: new RegExp(`^${name} (?!좋음$|반대, 이유 쓰기$)`) })
 }
 
 /** 열린 핀 상세에서 「확정 리스트에 넣기」를 누른다. */

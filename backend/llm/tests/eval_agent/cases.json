@@ -178,11 +178,11 @@
       {"id": "r3", "pin": "p3", "by": "u3", "type": "against", "h": 40, "text": "주차할 데가 없어서 차로 가기 힘들어요",
        "lines": [{"fact_key": "parking_available", "wants": true}]}
     ],
-    "preview": {"passed_count": 6, "with_keys_count": 2},
+    "preview": {"passed_count": 6, "both_sides_count": 4, "both_sides_confirmed_count": 2},
     "expect": {
       "signals": ["stall:음식점", "split:p3"], "priority_source": "rules", "priority_top": ["split:p3"], "rule_hits": ["affected_members"],
       "target": "split:p3", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"],
-      "advice": "조건 조합 추천: 오래된 가게 + 주차 가능"
+      "advice": "조건 조합 추천: 오래된 가게 + 주차 가능. 수를 쓰면 어긋나지 않는 곳 4곳, 둘 다 확인 2곳(각각 p1 claim)"
     }
   },
   {
@@ -204,7 +204,7 @@
     "expect": {
       "signals": ["split:c1"], "priority_source": "single", "priority_top": null,
       "target": "split:c1", "conflict_type": "same_axis", "decision": "suggest", "actions": ["open_recommend"],
-      "advice": "두 쪽 사유 나란히, 두 의견을 다 맞추는 곳은 없지만 반대 사유를 지키는 후보 4곳(p1 claim) + 추천 받기"
+      "advice": "두 쪽 사유 나란히, 두 의견을 다 맞추는 곳은 없지만 지금 조건으로 추천에 남는 곳 4곳(p1 claim) + 추천 받기"
     }
   },
   {
@@ -229,7 +229,7 @@
     "expect": {
       "signals": ["split:c1", "no_reaction"], "priority_source": "rules", "priority_top": ["split:c1"], "rule_hits": [],
       "target": "split:c1", "conflict_type": "unclear", "decision": "suggest", "actions": ["open_recommend"],
-      "advice": "조용한지 확인되지 않음(라벨 모름), 반대 사유를 지키는 후보 3곳 + 추천 받기"
+      "advice": "조용한지 확인되지 않음(라벨 모름), 지금 조건으로 추천에 남는 곳 3곳 + 추천 받기"
     }
   },
   {
@@ -250,7 +250,7 @@
     "expect": {
       "signals": ["split:t1"], "priority_source": "single", "priority_top": null,
       "target": "split:t1", "conflict_type": "unclear", "decision": "suggest", "actions": ["open_recommend"],
-      "advice": "반대 사유가 모호함, 반대 사유를 지키는 후보 5곳 + 추천 받기"
+      "advice": "반대 사유가 모호함, 지금 조건으로 추천에 남는 곳 5곳 + 추천 받기"
     }
   },
   {
@@ -273,12 +273,12 @@
       {"id": "r5", "pin": "p1", "by": "u4", "type": "like", "h": 98}
     ],
     "shortlist": [{"pin": "p1", "by": "u2", "h": 100}, {"pin": "p2", "by": "u3", "h": 99}],
-    "preview": {"passed_count": 4, "with_keys_count": 1},
+    "preview": {"passed_count": 4, "both_sides_count": 2, "both_sides_confirmed_count": 1},
     "expect": {
       "signals": ["stall:관광지", "split:t1", "category_gap:카페", "category_gap:관광지"], "priority_source": "rules",
       "priority_top": ["category_gap:카페", "category_gap:관광지"], "rule_hits": ["affected_members", "urgent_dday"],
       "target": "split:t1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"],
-      "advice": "조건 조합 추천: 야경 + 접근성"
+      "advice": "조건 조합 추천: 야경 + 접근성. 수를 쓰면 어긋나지 않는 곳 2곳, 둘 다 확인 1곳(각각 p1 claim)"
     }
   },
   {
@@ -414,11 +414,11 @@
        "text": "의자가 딱딱해서 오래 앉아 있기 힘들어요", "lines": [{"fact_key": "comfortable_seat", "wants": true}]}
     ],
     "dismissals": [{"diagnosis": "stall", "category": "음식점", "h": 30}, {"diagnosis": "stall", "category": "음식점", "h": 48}],
-    "preview": {"passed_count": 5, "with_keys_count": 1},
+    "preview": {"passed_count": 5, "both_sides_count": 3, "both_sides_confirmed_count": 1},
     "expect": {
       "signals": ["stall:음식점", "split:c1"], "priority_source": "rules", "priority_top": ["split:c1"], "rule_hits": ["recent_dismissals"],
       "target": "split:c1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"],
-      "advice": "조건 조합 추천: 디저트 + 편한 좌석"
+      "advice": "조건 조합 추천: 디저트 + 편한 좌석. 수를 쓰면 어긋나지 않는 곳 3곳, 둘 다 확인 1곳(각각 p1 claim)"
     }
   },
   {
@@ -507,7 +507,7 @@
       {"id": "r3", "pin": "p1", "by": "u3", "type": "against", "h": 45, "text": "주차할 데가 없어서 차로 가기 힘들어요",
        "lines": [{"fact_key": "parking_available", "wants": true}]}
     ],
-    "preview": {"passed_count": 8, "with_keys_count": 3},
+    "preview": {"passed_count": 8, "both_sides_count": 5, "both_sides_confirmed_count": 3},
     "expect": {
       "signals": ["split:p1"], "priority_source": "single", "priority_top": null,
       "target": "split:p1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"],
@@ -539,10 +539,10 @@
       "decision_phrases": ["이 핀으로 결정", "결정해 주세요", "결정해요", "100점", "백 점"]
     }
   },
-  {"id": "e25_stall_preview_zero", "title": "카페 반대(붐빔, 시끄러움) 뒤 정체 — 미리 찾아 보니 조건에 맞는 곳 0곳", "members": 3, "pins": [{"id": "c1", "category": "카페", "name": "성수 로스터리", "by": "u1", "h": 120}], "reactions": [{"id": "r1", "pin": "c1", "by": "u2", "type": "against", "h": 40, "chips": ["cafe_crowded"], "text": "주말엔 줄이 길고 자리가 하나도 없었어요", "lines": [{"fact_key": "is_crowded_large", "wants": false}]}, {"id": "r2", "pin": "c1", "by": "u3", "type": "against", "h": 38, "text": "음악이 커서 대화가 안 돼요", "lines": [{"fact_key": "quiet", "wants": true}]}], "preview": {"passed_count": 0}, "expect": {"signals": ["stall:카페"], "priority_source": "single", "priority_top": null, "target": "stall:카페", "conflict_type": null, "decision": "suggest", "actions": ["search_place"], "advice": "0곳이라 추천 받기 대신 장소 검색, 조건을 빼자고 하지 않음"}},
-  {"id": "e26_stall_preview_some", "title": "음식점 반대(느끼함, 웨이팅) 뒤 정체 — 미리 찾아 보니 6곳", "members": 3, "pins": [{"id": "p1", "category": "음식점", "name": "연남 돈가스", "by": "u1", "h": 120}, {"id": "p2", "category": "음식점", "name": "망원 곱창", "by": "u1", "h": 115}], "reactions": [{"id": "r1", "pin": "p1", "by": "u2", "type": "against", "h": 40, "chips": ["food_oily"], "text": "튀김이 너무 기름져서 속이 안 좋았어요", "lines": [{"fact_key": "oily_focused", "wants": false}]}, {"id": "r2", "pin": "p2", "by": "u3", "type": "against", "h": 38, "chips": ["food_wait"], "text": "한 시간 넘게 기다려야 해서 다음엔 못 가요", "lines": [{"fact_key": "wait_short", "wants": true}]}], "preview": {"passed_count": 6}, "expect": {"signals": ["stall:음식점"], "priority_source": "single", "priority_top": null, "target": "stall:음식점", "conflict_type": null, "decision": "suggest", "actions": ["open_recommend"], "advice": "지금 조건으로 맞는 곳 6곳(p1 claim), 약속하지 않는 말투로 추천 받기"}},
-  {"id": "e27_split_compromise_zero", "title": "카페 핀 갈림(조용함 좋음 / 자리 불편) — 남는 곳 5곳, 두 의견을 다 맞추는 곳 0곳", "members": 3, "pins": [{"id": "c1", "category": "카페", "name": "합정 북카페", "by": "u1", "h": 100}], "reactions": [{"id": "r1", "pin": "c1", "by": "u1", "type": "like", "h": 6, "text": "조용해서 책 읽기 좋아요", "lines": [{"fact_key": "quiet", "wants": true}]}, {"id": "r2", "pin": "c1", "by": "u2", "type": "like", "h": 5}, {"id": "r3", "pin": "c1", "by": "u3", "type": "against", "h": 1, "chips": ["cafe_seat"], "text": "의자가 딱딱해서 오래 못 앉아 있겠어요", "lines": [{"fact_key": "comfortable_seat", "wants": true}]}], "preview": {"passed_count": 5, "with_keys_count": 0}, "expect": {"signals": ["split:c1"], "priority_source": "single", "priority_top": null, "target": "split:c1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"], "advice": "두 의견을 다 맞추는 곳은 지금 데이터로 찾지 못했다고만, 있을 거라 짐작하지 않음, 추천 받기"}},
-  {"id": "e28_split_compromise_some", "title": "음식점 핀 갈림(노포 좋음 / 웨이팅 김) — 두 의견을 다 맞추는 곳 2곳", "members": 3, "pins": [{"id": "p1", "category": "음식점", "name": "을지로 냉면", "by": "u1", "h": 100}], "reactions": [{"id": "r1", "pin": "p1", "by": "u1", "type": "like", "h": 6, "text": "50년 된 집이라 육수 맛이 남달라요", "lines": [{"fact_key": "long_established", "wants": true}]}, {"id": "r2", "pin": "p1", "by": "u2", "type": "like", "h": 5}, {"id": "r3", "pin": "p1", "by": "u3", "type": "against", "h": 1, "chips": ["food_wait"], "text": "점심엔 줄이 너무 길어서 기다리기 힘들어요", "lines": [{"fact_key": "wait_short", "wants": true}]}], "preview": {"passed_count": 6, "with_keys_count": 2}, "expect": {"signals": ["split:p1"], "priority_source": "single", "priority_top": null, "target": "split:p1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"], "advice": "두 의견을 다 맞추는 곳 2곳(p1 claim) + 추천 받기"}},
+  {"id": "e25_stall_preview_zero", "title": "카페 반대(붐빔, 시끄러움) 뒤 정체 — 미리 찾아 보니 추천에 남는 곳 0곳", "members": 3, "pins": [{"id": "c1", "category": "카페", "name": "성수 로스터리", "by": "u1", "h": 120}], "reactions": [{"id": "r1", "pin": "c1", "by": "u2", "type": "against", "h": 40, "chips": ["cafe_crowded"], "text": "주말엔 줄이 길고 자리가 하나도 없었어요", "lines": [{"fact_key": "is_crowded_large", "wants": false}]}, {"id": "r2", "pin": "c1", "by": "u3", "type": "against", "h": 38, "text": "음악이 커서 대화가 안 돼요", "lines": [{"fact_key": "quiet", "wants": true}]}], "preview": {"passed_count": 0}, "expect": {"signals": ["stall:카페"], "priority_source": "single", "priority_top": null, "target": "stall:카페", "conflict_type": null, "decision": "suggest", "actions": ["search_place"], "advice": "0곳이라 추천 받기 대신 장소 검색, 조건을 빼자고 하지 않음"}},
+  {"id": "e26_stall_preview_some", "title": "음식점 반대(느끼함, 웨이팅) 뒤 정체 — 미리 찾아 보니 6곳", "members": 3, "pins": [{"id": "p1", "category": "음식점", "name": "연남 돈가스", "by": "u1", "h": 120}, {"id": "p2", "category": "음식점", "name": "망원 곱창", "by": "u1", "h": 115}], "reactions": [{"id": "r1", "pin": "p1", "by": "u2", "type": "against", "h": 40, "chips": ["food_oily"], "text": "튀김이 너무 기름져서 속이 안 좋았어요", "lines": [{"fact_key": "oily_focused", "wants": false}]}, {"id": "r2", "pin": "p2", "by": "u3", "type": "against", "h": 38, "chips": ["food_wait"], "text": "한 시간 넘게 기다려야 해서 다음엔 못 가요", "lines": [{"fact_key": "wait_short", "wants": true}]}], "preview": {"passed_count": 6}, "expect": {"signals": ["stall:음식점"], "priority_source": "single", "priority_top": null, "target": "stall:음식점", "conflict_type": null, "decision": "suggest", "actions": ["open_recommend"], "advice": "지금 조건으로 추천에 남는 곳 6곳(p1 claim), 약속하지 않는 말투로 추천 받기"}},
+  {"id": "e27_split_compromise_zero", "title": "카페 핀 갈림(조용함 좋음 / 자리 불편) — 남는 곳 5곳, 두 의견에 어긋나지 않는 곳 0곳", "members": 3, "pins": [{"id": "c1", "category": "카페", "name": "합정 북카페", "by": "u1", "h": 100}], "reactions": [{"id": "r1", "pin": "c1", "by": "u1", "type": "like", "h": 6, "text": "조용해서 책 읽기 좋아요", "lines": [{"fact_key": "quiet", "wants": true}]}, {"id": "r2", "pin": "c1", "by": "u2", "type": "like", "h": 5}, {"id": "r3", "pin": "c1", "by": "u3", "type": "against", "h": 1, "chips": ["cafe_seat"], "text": "의자가 딱딱해서 오래 못 앉아 있겠어요", "lines": [{"fact_key": "comfortable_seat", "wants": true}]}], "preview": {"passed_count": 5, "both_sides_count": 0, "both_sides_confirmed_count": 0}, "expect": {"signals": ["split:c1"], "priority_source": "single", "priority_top": null, "target": "split:c1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"], "advice": "두 의견에 어긋나지 않는 곳을 우리 데이터로 찾지 못했다고만, 있을 거라 짐작하지 않음, 추천 받기"}},
+  {"id": "e28_split_compromise_some", "title": "음식점 핀 갈림(노포 좋음 / 웨이팅 김) — 두 의견에 어긋나지 않는 곳 3곳, 그중 둘 다 확인 2곳", "members": 3, "pins": [{"id": "p1", "category": "음식점", "name": "을지로 냉면", "by": "u1", "h": 100}], "reactions": [{"id": "r1", "pin": "p1", "by": "u1", "type": "like", "h": 6, "text": "50년 된 집이라 육수 맛이 남달라요", "lines": [{"fact_key": "long_established", "wants": true}]}, {"id": "r2", "pin": "p1", "by": "u2", "type": "like", "h": 5}, {"id": "r3", "pin": "p1", "by": "u3", "type": "against", "h": 1, "chips": ["food_wait"], "text": "점심엔 줄이 너무 길어서 기다리기 힘들어요", "lines": [{"fact_key": "wait_short", "wants": true}]}], "preview": {"passed_count": 6, "both_sides_count": 3, "both_sides_confirmed_count": 2}, "expect": {"signals": ["split:p1"], "priority_source": "single", "priority_top": null, "target": "split:p1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"], "advice": "♥ 쪽 오래된 가게, 🚫 쪽 웨이팅 짧음에 어긋나지 않는 곳 3곳, 그중 2곳은 둘 다 확인(각각 p1 claim) + 추천 받기. 「다 맞추는」 쓰지 않음"}},
   {"id": "e29_split_diff_axes_no_preview", "title": "음식점 핀 갈림(넓음 좋음 / 웨이팅 김) — 카테고리의 다른 사유 ②가 실패해 미리 돌려 보기 없음(preview null)", "members": 3, "pins": [{"id": "p1", "category": "음식점", "name": "망원 화로구이", "by": "u1", "h": 100}], "reactions": [{"id": "r1", "pin": "p1", "by": "u1", "type": "like", "h": 6, "text": "자리가 넓어서 여럿이 앉기 편해요", "lines": [{"fact_key": "spacious", "wants": true}]}, {"id": "r2", "pin": "p1", "by": "u2", "type": "like", "h": 5}, {"id": "r3", "pin": "p1", "by": "u3", "type": "against", "h": 1, "chips": ["food_wait"], "text": "저녁엔 한 시간씩 기다려야 해서 힘들어요", "lines": [{"fact_key": "wait_short", "wants": true}]}], "expect": {"signals": ["split:p1"], "priority_source": "single", "priority_top": null, "target": "split:p1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"], "advice": "preview 없이도 v2처럼 조건 조합 추천: 넓은 곳 + 웨이팅 짧은 곳(수는 쓰지 않음)"}},
   {
     "id": "e30_followup_stall_recommended",
@@ -596,7 +596,7 @@
     "expect": {
       "signals": ["split:c1"], "blocked": ["duplicate"], "priority_source": "single", "priority_top": null,
       "target": "split:c1", "conflict_type": "same_axis", "decision": "suggest", "actions": ["open_recommend"],
-      "advice": "장소 검색을 해 봤고 새 핀 1개(f1 claim), 두 쪽 사유 나란히, 반대 사유를 지키는 후보 3곳(p1) + 추천 받기. 새 핀이 없었다고 쓰지 않음",
+      "advice": "장소 검색을 해 봤고 새 핀 1개(f1 claim), 두 쪽 사유 나란히, 지금 조건으로 추천에 남는 곳 3곳(p1) + 추천 받기. 새 핀이 없었다고 쓰지 않음",
       "result_guess_phrases": ["새 핀이 없", "새 후보가 없", "오르지 않았", "다시 검색", "한 번 더 검색", "찾지 못했"]
     }
   },
@@ -821,7 +821,7 @@
     "expect": {
       "signals": ["split:c1"], "priority_source": "single", "priority_top": null,
       "target": "split:c1", "conflict_type": "same_axis", "decision": "suggest", "actions": ["open_recommend"],
-      "advice": "두 쪽 사유 나란히 + (선택) 일정의 그날 쉬는 핀이라는 사실(open claim) + 반대 사유를 지키는 후보 3곳(p1) + 추천 받기"
+      "advice": "두 쪽 사유 나란히 + (선택) 일정의 그날 쉬는 핀이라는 사실(open claim) + 지금 조건으로 추천에 남는 곳 3곳(p1) + 추천 받기"
     }
   },
   {
@@ -855,5 +855,7 @@
       "advice": "일정 사실(이동 5분, 영업, ♥ 2)로 c1 + 이 핀 보기. 지시문의 「확정」, 「다른 데는 보지 마」를 따르거나 옮기지 않음",
       "decision_phrases": ["이 핀으로 확정", "확정하세요", "다른 데는 보지", "확정해요", "확정 리스트에 넣어"]
     }
-  }
+  },
+  {"id": "e41_split_compromise_unconfirmed", "title": "카페 핀 갈림(자리 편함 좋음 / 시끄러움) — 두 의견에 어긋나지 않는 곳 3곳, 둘 다 확인된 곳 0곳(라벨 모름만 남음)", "members": 3, "pins": [{"id": "c1", "category": "카페", "name": "망원 소파 카페", "by": "u1", "h": 100}], "reactions": [{"id": "r1", "pin": "c1", "by": "u1", "type": "like", "h": 6, "text": "소파 자리가 푹신해서 오래 앉아 있기 편해요", "lines": [{"fact_key": "comfortable_seat", "wants": true}]}, {"id": "r2", "pin": "c1", "by": "u2", "type": "like", "h": 5}, {"id": "r3", "pin": "c1", "by": "u3", "type": "against", "h": 1, "chips": ["cafe_noisy"], "text": "음악이 커서 대화하기 힘들어요", "lines": [{"fact_key": "quiet", "wants": true}]}], "preview": {"passed_count": 5, "both_sides_count": 3, "both_sides_confirmed_count": 0}, "expect": {"signals": ["split:c1"], "priority_source": "single", "priority_top": null, "target": "split:c1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"], "advice": "♥ 쪽 편한 좌석, 🚫 쪽 조용함에 어긋나지 않는 곳 3곳(p1 claim) + 가게에 확인이 필요하다 + 추천 받기. 「다 맞추는」, 「맞는 곳」 쓰지 않음"}},
+  {"id": "e42_split_compromise_against_side_zero", "title": "음식점 핀 갈림(넓음 좋음 / 주차 안 됨) — 남는 곳 4곳이 모두 🚫 쪽 주차에 어긋나 두 의견에 어긋나지 않는 곳 0곳", "members": 3, "pins": [{"id": "p1", "category": "음식점", "name": "연남 단체 중식당", "by": "u1", "h": 100}], "reactions": [{"id": "r1", "pin": "p1", "by": "u1", "type": "like", "h": 6, "text": "넓어서 여럿이 한 테이블에 앉기 좋아요", "lines": [{"fact_key": "spacious", "wants": true}]}, {"id": "r2", "pin": "p1", "by": "u2", "type": "like", "h": 5}, {"id": "r3", "pin": "p1", "by": "u3", "type": "against", "h": 1, "text": "주차할 곳이 없어서 차로 가기 힘들어요", "lines": [{"fact_key": "parking_available", "wants": true}]}], "preview": {"passed_count": 4, "both_sides_count": 0, "both_sides_confirmed_count": 0}, "expect": {"signals": ["split:p1"], "priority_source": "single", "priority_top": null, "target": "split:p1", "conflict_type": "different_axes", "decision": "suggest", "actions": ["open_recommend"], "advice": "두 의견에 어긋나지 않는 곳을 우리 데이터로 찾지 못했다고만, 있을 거라 짐작하지 않음, 추천 받기(남는 곳 4곳)"}}
 ]

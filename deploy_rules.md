@@ -35,7 +35,7 @@
 | 타협 | 왜 지금은 괜찮나 | 다시 볼 때 |
 |---|---|---|
 | 요청 상한 5곳(`common.ratelimit`)이 메모리에서 센다 | 환경마다 프로세스가 하나다. 배포로 다시 뜨면 셈이 처음부터다 | 워커나 서버를 늘리기 전에 같은 모양(`SlidingWindowLimiter`)으로 Postgres에 옮긴다 |
-| AI 코스 계산이 응답 뒤 `BackgroundTasks`로 돈다 | 서버(VM)는 요청이 끝나도 CPU를 준다. 배포로 다시 뜨면 그 run은 시작 정리(5분 넘은 것)나 조회(15분 넘은 것)가 끝낸다 | 작업 큐로 옮길 때 |
+| AI 코스 계산이 응답 뒤 `BackgroundTasks`로 돈다 | 서버(VM)는 요청이 끝나도 CPU를 준다. 배포로 다시 뜨면 그 run은 실행 상한 + 여유(`agent/course/constants.py`의 `STALE_AFTER`, #1609)가 지난 뒤 시작 정리나 요청·조회가 끝낸다 | 작업 큐로 옮길 때 |
 | DB가 같은 서버에 있고 덤프도 같은 디스크에 있다 | 시연까지의 데이터다 | RDS로 옮기면 풀린다(#873, RDS 자동 백업). 옮긴 뒤에도 `backup.sh` 덤프는 서버 디스크에 쌓인다 |
 | 운영과 스테이징이 RDS 한 대를 나눠 쓴다 | DB와 계정이 나뉘어 서로 열지 못한다. 부하가 작다 | 스테이징 부하(측정, QA)가 운영 응답을 늦추면 |
 
@@ -50,7 +50,7 @@
 | RDS 마스터(`pingo_admin`) | Secrets Manager. 서버에 저장하지 않는다 | 두 환경 DB 전부, 계정 만들기와 지우기 | Secrets Manager가 30일마다 바꾼다. 급하면 콘솔에서 즉시 교체 | 앱은 마스터를 쓰지 않아 영향이 없다 |
 | 카카오 `KAKAO_CLIENT_SECRET`, `KAKAO_REST_API_KEY` | `env/<환경>.env` | 우리 앱 이름으로 로그인 코드 교환, 로컬 API 호출(호출 한도를 쓴다). 두 환경이 같은 카카오 앱이면(「서버 처음 준비」 8번) 한쪽에서 새도 둘 다다 — 같은 앱인지 확인 필요 | 카카오 Developers에서 다시 발급 → 두 환경 env 고치기 → 다시 올리기 | 그 사이 로그인과 장소 검색이 실패한다 |
 | 구글 `GOOGLE_CLIENT_SECRET` | `env/<환경>.env` | 우리 앱 이름으로 구글 로그인 코드 교환(받는 정보는 사용자 번호와 이름뿐) | 구글 클라우드 콘솔에서 비밀 다시 만들기 → 두 환경 env 고치기 → 다시 올리기 | 그 사이 구글 로그인만 실패한다 |
-| 모델 제공자 `ELICE_ML_API_KEY`(2026-11-02부터 OpenAI 프로젝트 키, 이름만 ELICE로 남았다, #1120) | `env/<환경>.env`. 환경마다 OpenAI 프로젝트와 키가 따로다 | 팀 비용으로 모델 호출(그 프로젝트의 월 예산 한도까지 쓴다). 사유 글이 모델로 간다 | OpenAI에서 새 키 발급 → env 고치기 → 다시 올리기. 순서는 아래 「모델 제공자 키 바꾸기」. 옛 키는 OpenAI에서 지운다 | 그 사이 추천의 사유 구조화와 AI 코스가 실패한다 |
+| 모델 제공자 `ELICE_ML_API_KEY`(2026-11-02부터 OpenAI 프로젝트 키, 이름만 ELICE로 남았다, #1120) | `env/<환경>.env`. 환경마다 OpenAI 프로젝트와 키가 따로다 | 팀 비용으로 모델 호출(선불 잔액이 남은 만큼, 프로젝트 월 예산 한도를 걸었으면 그 한도까지). 사유 글이 모델로 간다 | OpenAI에서 새 키 발급 → env 고치기 → 다시 올리기. 순서는 아래 「모델 제공자 키 바꾸기」. 옛 키는 OpenAI에서 지운다 | 그 사이 추천의 사유 구조화와 AI 코스가 실패한다 |
 | `QA_LOGIN_SECRET` | `env/staging.env`만. 운영에 있으면 서버가 뜨지 않는다(#789) | 스테이징에 사용자를 만들 수 있다. 운영에는 경로가 없다 | 새 값으로 바꾸고 스테이징 API 다시 올리기 | 없음(하네스는 서버 안에서 같은 값을 읽는다) |
 | DuckDNS 토큰 | `/srv/pingo/secrets/duckdns_token` | 주소가 가리키는 IP를 바꿔 사용자를 다른 서버로 보낼 수 있다 | DuckDNS에서 토큰 재발급 | 없음(고정 IP라 갱신 작업을 꺼 두었다) |
 | 옛 서버 안 DB 비밀번호 | `env/db.env`, `env/<환경>.env.before-rds` | 멈춘 컨테이너 DB(되돌리기용 볼륨). 외부 포트가 없다 | 11/20에 볼륨과 함께 없앤다 | 없음 |
@@ -97,17 +97,18 @@
 
 - 첫 설정(`rds-setup.sh`) 완료. 스테이징 19:10에 옮김(표 33개 일치, 그 뒤 staging-check PASS 71·FAIL 0, INFO와 SKIP은 옮기기 전과 같음). 운영 19:20에 옮김(표 32개 일치 — 운영은 0043 전 버전이라 하나 적다, 열리지 않은 시간 약 36초).
 - 스테이징 이전은 성공했지만 마지막 기록 줄의 버그로 실패 표시가 났다(#875에서 고침).
-- **운영 배포 예외**: 옮긴 뒤 운영 로그인이 안 됐다. RDS 문제가 아니라 운영 이미지가 #819(카카오 state 쿠키 경로) 수정 전 코드라, 쿠키가 `/auth/kakao`에 붙어 `/api/auth/kakao/callback`으로 돌아올 때 브라우저가 보내지 않았다(옮기기 전부터 같은 상태). `deploy` 워크플로는 운영에 `v` 태그만 받아서, Session Manager에서 `./deploy.sh prod sha-17dd07d`(develop, 스테이징과 같은 이미지)로 직접 올렸다. RDS 앱 계정으로 백업, 마이그레이션(0043)까지 통과했고 로그인과 지도 열기를 확인했다. 다음 정식 릴리스(develop → main → `v` 태그)부터 규칙대로 돌아간다.
+- **운영 배포 예외**: 옮긴 뒤 운영 로그인이 안 됐다. RDS 문제가 아니라 운영 이미지가 #819(카카오 state 쿠키 경로) 수정 전 코드라, 쿠키가 `/auth/kakao`에 붙어 `/api/auth/kakao/callback`으로 돌아올 때 브라우저가 보내지 않았다(옮기기 전부터 같은 상태). `deploy` 워크플로는 운영에 `v` 태그만 받아서, Session Manager에서 `./deploy.sh prod sha-17dd07d`(develop, 스테이징과 같은 이미지)로 직접 올렸다. RDS 앱 계정으로 백업, 마이그레이션(0043)까지 통과했고 로그인과 지도 열기를 확인했다. 다음 정식 릴리스(develop → main → `v` 태그)부터 규칙대로 돌아간다. → 2026-11-08 첫 정식 릴리스 `v0.1.0`(main `c129bcf3`, 마이그레이션 0043 → 0068)을 이 순서로 올렸다(#1528). 롤백 기준도 이제 `v0.1.0`이다.
 - `finish`(19:33) 뒤 서버의 모든 `docker compose` 명령이 `depends on undefined service "db"`로 실패했다. `compose.yml`의 API가 `depends_on: db (required: false)`를 갖고 있었는데, Compose v5는 정의되지 않은 서비스는 required가 false여도 거절한다. 돌던 컨테이너는 영향이 없었다. DB 의존을 `compose.db.yml`로 옮겨 고쳤다(#877). 머지하면 스테이징 배포의 `sync.sh`가 서버 파일을 맞춘다.
 
 ### AWS가 끝나기 전에(2026-11-20)
 
-서버와 RDS가 함께 끝난다. 그 전에 운영 DB 덤프(`backup.sh prod`)를 받아 저장소 밖에 보관한다. 그 전까지 시연은 스테이징에서 한다(최종 정예 데이터, `docs/demo-guide.md` 첫머리). 서버가 끝난 뒤에는 로컬(`docs/demo-guide.md` 2~4절)에서 돈다. RDS는 삭제 방지가 켜져 있어 지우려면 운영진에게 요청한다.
+서버와 RDS가 함께 끝난다. 그 전에 운영 DB 덤프(`backup.sh prod`)를 받아 저장소 밖에 보관한다. 심사에 내는 주소는 운영이고, 시연 지도 스크립트로 띄우는 발표 시연은 스테이징에서 한다(`docs/demo-guide.md` 첫머리). 서버가 끝난 뒤에는 로컬(`docs/demo-guide.md` 2~4절)에서 돈다. RDS는 삭제 방지가 켜져 있어 지우려면 운영진에게 요청한다.
 
 ## 배포할 때마다
 
 - **스테이징**: develop에 머지하면 `images.yml`이 이미지를 만들고 스테이징에 올린다. 따로 할 일이 없다.
   - 배포로 API·화면 컨테이너가 다시 뜨는 10~30초 동안 앞단 프록시(Caddy)는 연결을 최대 30초 다시 시도한다(`deploy/Caddyfile`의 `lb_try_duration 30s`, #1403). 그동안 요청은 느려질 뿐 502로 실패하지 않는다. 연결을 잡고 있던 SSE는 끊기고 FE가 마지막 `id`로 다시 연결한다. Caddy 설정은 `sync.sh`가 배포 때마다 다시 읽는다(`caddy reload`).
+  - 초대 링크 미리보기(#1625): Caddy가 메신저 미리보기 봇(카톡 `kakaotalk-scrap` 등)의 `/invites/{token}`만 API의 `/invites/{token}/preview`로 보낸다. Caddyfile을 바꾼 배포 뒤에는 `curl -A "kakaotalk-scrap/1.0" <주소>/invites/<토큰>`이 og 태그만 담은 짧은 문서를, 봇 이름 없는 `curl <주소>/invites/<토큰>`이 화면(index.html)을 돌려주는지 본다. `caddy reload`가 실패하면 Caddy는 옛 설정으로 계속 돈다 — `sync.sh` 출력에서 reload 오류를 본다.
 - **운영(릴리스)**: 1) develop → main PR(멘토 리뷰)을 머지한다. 2) Actions의 `deploy`를 스테이징, `sha-<main 커밋 7자리>`로 돌린다. 3) Actions의 `staging-check`(QA 하네스를 서버의 스테이징 컨테이너 안에서 공개 주소로 돈다, 비밀은 서버 밖으로 나오지 않는다)를 그 커밋으로 돌린다. 매일 06:00에도 develop으로 돈다. 4) 통과하면 그 main 커밋에 `v0.x.y` 태그를 단다 → `images.yml`이 그 태그로 이미지를 만든다. 5) `deploy`를 운영, `v0.x.y`로 돌린다. 운영은 배포 직전에 DB를 덤프한다(`deploy/backup.sh`). 6) 아래 「지울 칸」 표를 본다. 줄의 칸을 읽던 코드가 방금 올린 태그에 없으면 그 줄의 줄이기 이슈를 진행한다. 이 태그가 이제 이전 릴리스 호환 검사의 기준이라 그 칸을 지우는 PR이 통과한다(#1465).
 - **롤백**: `deploy`를 운영, 이전 `v` 태그로 돌린다. 버그는 그 버전 위에서 고치지 않고 develop에서 고쳐 다음 버전으로 올린다(멘토). 건강 확인에 실패한 배포는 `deploy.sh`가 이전 태그로 되돌린다.
 - **환경 변수를 바꿀 때**: 서버의 `deploy/env/<환경>.env`를 고치고 그 환경을 다시 올린다. 새 키를 더한 PR은 `backend/.env.example`과 `deploy/env/*.env.example`을 같이 고친다. 값은 저장소나 채팅에 남기지 않는다.
@@ -139,7 +140,8 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 | 테이블.칸 | 남긴 이유 | 줄이기 |
 |---|---|---|
-| `agent_course_runs.snapshot_pin_ids` | 일정 version(`snapshot_version`)이 대신한다(#1321). 이전 릴리스가 읽고 쓴다. 새 코드는 쓰지 않아 기본값 `'[]'`가 들어간다 | #1465 — 칸 삭제와 `snapshot_version` 기본값(`'legacy'`) 제거. 운영에 #1321 코드가 올라간 다음 릴리스 |
+
+지금 남은 칸은 없다(`agent_course_runs.snapshot_pin_ids`는 0070에서 지웠다, #1465).
 
 ## 데이터가 바뀔 때
 
@@ -155,13 +157,20 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 
 ### 장소 데이터 적재
 
-지금 데이터는 정예DB 최종본 2026-11-04판이다(`정예DB_final_2026-11-04_서울`·`_타지역` 두 묶음, 한 폴더에 합쳐 쓴다)(서울, 그리고 v2 범위인 대전, 춘천, 광주, 대구, 부산). 폴더는 저장소 밖에 둔다. 명령은 `backend`에서 돌리고, 윈도는 먼저 `PYTHONUTF8=1`을 켠다. 공유본 안의 `README.md`가 명령의 정본이고, 아래는 그 순서를 옮긴 것이다.
+지금 데이터는 정예DB 최종본 2026-11-04판이다(`정예DB_final_2026-11-04_서울`·`_타지역` 두 묶음, 한 폴더에 합쳐 쓴다)(서울, 그리고 v2 범위인 대전, 춘천, 광주, 대구, 부산). 폴더는 저장소 밖에 둔다. 서버에는 `/srv/pingo/data/places_1104`에 있다(그 전 판은 `places`, 그 폴더에는 `시도경계/`가 없다). 명령은 `backend`에서 돌리고, 윈도는 먼저 `PYTHONUTF8=1`을 켠다. 공유본 안의 `README.md`가 명령의 정본이고, 아래는 그 순서를 옮긴 것이다.
 
 1. 새 공유본으로 바꿀 때는 새 DB에서 시작한다. 로더는 파일에서 빠진 장소와 라벨을 지우지 않는다(공유본 `서울/README.md` "적재만으로는 지워지지 않는 것"). 새 DB를 만들고 `python -m alembic upgrade head`를 먼저 한다. **운영 DB는 예외다** — 사용자의 지도와 핀이 장소 id를 가리켜 새 DB로 갈아탈 수 없다. 운영에 새 판을 넣는 절차(제자리 갱신: 장소 id 유지, 출처 기록만 더하고, 빠진 정예는 추천 후보에서만 빠짐)는 #886이 끝나야 생긴다. 그 전에는 운영에 새 판을 넣지 않는다.
+   - **일회성 예외(2026-11-09, #1528)**: 심사 주소를 운영으로 정해서, 운영(10-25판, 정예 13,901곳)을 11-04판에 맞췄다.
+     1. 덤프(`backup.sh prod`)를 받는다.
+     2. 새 DB로 11-04판을 넣은 스테이징에서 정예 `(source, source_id)` 목록을 뽑는다.
+     3. `load-places.sh prod <폴더>`로 기존 운영 DB에 덮어 넣는다. 로더는 `(source, source_id)`로 찾아 그 자리를 고치므로 장소 id는 바뀌지 않는다.
+     4. 2번 목록에 없는 정예의 `curated`를 false로 내린다(77곳). 장소 행은 남겨 핀은 그대로이고, 추천 후보에서만 빠진다.
+
+     결과는 정예 13,855곳으로 분류별 수가 스테이징과 같다. 전체 장소는 199,218곳으로, 옛 판에만 있던 행이 남아 스테이징보다 많다. 남는 차이는 세 가지다. 커버리지 라벨은 `restaurant-labels`가 기본으로 덮어쓰지 않아 이전 값이 남는다. 새 판에서 빠진 라벨 키와 영업시간 행도 남는다. 같은 가게 중복(#880)은 스테이징과 같다. 다음 판도 #886 전이면 이 순서를 쓴다.
 2. 서울 정예: `restaurants`, `cafes`, `tourapi` 순서로 `--authoritative --file <장소> --labels <라벨>`. 관광지 라벨은 JSON이 아니라 CSV다. 음식점 다음에 카페를 넣어 두 파일에 겹치는 6곳을 카페로 둔다(#507).
 3. 서울 커버리지: `permit --encoding cp949`에 인허가 파일 3개를 `--file`로 한 번에 준다. 이어서 `restaurant-labels --file permit_cover_labels.json`.
 4. 지역마다(v2): 2와 3을 `--all-regions`를 붙여 같은 순서로 한다(`restaurant-labels`에는 붙이지 않는다).
-0. 시·도 경계(#1385): 장소보다 먼저 `boundaries --dir <폴더>/시도경계`. 통계청 2018 시·도 경계 17개 파일(`11.json` … `39.json`)이고 정본은 화면의 `frontend/src/features/map/regionBoundaries/`다. 데이터 폴더의 `시도경계/`에 그 파일을 **그대로** 복사해 둔다. 로더가 내용 해시를 `places/boundaries.py`의 기대값과 비교해 정본과 다른 파일이나 빠진 파일은 거절한다(17개를 모두 읽은 뒤에만 쓴다). 멱등이라 다시 돌려도 같은 코드는 덮어쓴다. `load-places.sh`는 데이터 폴더에 `시도경계/`가 없으면 경고만 하고 이 단계를 건너뛰며(장소 적재는 계속, 끝에 「경계 미적재」 안내, `DRY_RUN=1`도 같다), `boundaries`만 요청했는데 폴더가 없으면 중단한다. 이 표가 비어 있으면 `sido_at`은 가장 가까운 장소 주소로 시·도를 읽는 옛 방식으로 돌아가고(표가 있어도 경계에 안 드는 해안·섬·바다 점은 같은 방식으로 한 번 더 본다), `circle_outside_region`은 None(모름)이라 아무것도 막지 않는다. **이미 도는 DB(운영 포함)에는 마이그레이션(0064) 뒤에 `deploy/load-places.sh <환경> <데이터 폴더> boundaries`로 이 단계만 넣을 수 있다**(장소·라벨은 건드리지 않는다). 화면 경계 파일을 바꾸면 `places/boundaries.py`의 기대 해시를 같은 PR에서 고치고(`test_sido_boundaries_1385`가 어긋남을 잡는다), 서버 사본과 표를 다시 넣는다.
+0. 시·도 경계(#1385): 장소보다 먼저 `boundaries --dir <폴더>/시도경계`. 통계청 2018 시·도 경계 17개 파일(`11.json` … `39.json`)이고 정본은 화면의 `frontend/src/features/map/regionBoundaries/`다. 데이터 폴더의 `시도경계/`에 그 파일을 **그대로** 복사해 둔다. 로더가 내용 해시를 `places/boundaries.py`의 기대값과 비교해 정본과 다른 파일이나 빠진 파일은 거절한다(17개를 모두 읽은 뒤에만 쓴다). 멱등이라 다시 돌려도 같은 코드는 덮어쓴다. `load-places.sh`는 데이터 폴더에 `시도경계/`가 없으면 경고만 하고 이 단계를 건너뛰며(장소 적재는 계속, 끝에 「경계 미적재」 안내, `DRY_RUN=1`도 같다), `boundaries`만 요청했는데 폴더가 없으면 중단한다. 이 표가 비어 있으면 `sido_at`은 가장 가까운 장소 주소로 시·도를 읽는 옛 방식으로 돌아가고(표가 있어도 경계에 안 드는 해안·섬·바다 점은 같은 방식으로 한 번 더 본다), `circle_outside_region`은 None(모름)이라 아무것도 막지 않는다. **이미 도는 DB(운영 포함)에는 마이그레이션(0064) 뒤에 `deploy/load-places.sh <환경> <데이터 폴더> boundaries`로 이 단계만 넣을 수 있다**(장소·라벨은 건드리지 않는다). 운영은 2026-11-08 `v0.1.0` 배포 뒤에 넣었다(17행, #1528). 화면 경계 파일을 바꾸면 `places/boundaries.py`의 기대 해시를 같은 PR에서 고치고(`test_sido_boundaries_1385`가 어긋남을 잡는다), 서버 사본과 표를 다시 넣는다.
 5. 영업시간: 장소를 모두 넣은 뒤 `place-hours`. 서울은 음식점 라벨 JSON, 카페 라벨 JSON, 관광지 `tourist_seoul_closed_days.json`. 지역은 음식점, 카페, 관광지 라벨 JSON에 `--all-regions`.
 
 - 모든 명령은 `--dry-run`을 지원한다. 처음 한 명령은 dry-run으로 경로와 건수를 확인한다.
@@ -190,6 +199,8 @@ API 프로세스마다 SQLAlchemy 풀이 연결을 연다(`common/database.py`, 
 | agent 일일 정리 | 없음 | 서버 안에서 돈다 | 따로 예약하지 않는다(`backend/maintenance/CLAUDE.md`) |
 | 헬스 체크 경보: 운영·스테이징의 화면(`/`)과 `/api/health` | `.github/workflows/uptime.yml`. 두 번(30초 간격) 다 실패하면 이슈 「[경보] 운영·스테이징 헬스 체크 실패」를 열고, 회복하면 닫는다(#1280) | 10분 안팎(GitHub 예약 실행) | GitHub Actions — 서버 밖에서 본다 |
 | 장소 후기 신고 확인 | 아래 「후기 신고 확인과 숨김」 | 매일(운영) | **사람이 한다.** 신고가 와도 알림이 없다 — 자동 알림은 아직 없다 |
+
+서버 cron은 배포가 설치하지 않는다. `sync.sh`는 `deploy/crontab` 파일만 서버에 놓으므로, 이 파일이 바뀐 배포 뒤에는 Session Manager에서 `crontab /srv/pingo/deploy/crontab`을 다시 돌리고 `crontab -l`로 확인한다. 2026-11-08 운영 릴리스 때 보니 설치된 crontab에 관찰 tick 줄(#812)이 없어서, 그동안 관찰은 env의 `AGENT_LOOP_IN_PROCESS`로만 돌고 있었다. 다시 설치하고 운영·스테이징 env에서 그 값을 지웠다(#1528).
 
 ### 후기 신고 확인과 숨김
 
@@ -247,7 +258,7 @@ CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어�
 
 모델은 2026-11-02부터 OpenAI API를 직접 부른다(`gpt-6-luna`). 환경 변수 이름은 `ELICE_ML_API_*`로 남아 있다. 키를 새로 넣거나 새서 바꿀 때 이 순서로 한다. 환경마다 OpenAI 프로젝트와 키를 따로 쓴다(로컬, 스테이징, 운영).
 
-1. OpenAI 플랫폼에서 그 환경 프로젝트의 새 키를 만든다. 키는 만들 때 한 번만 보인다. 프로젝트마다 월 예산 한도를 걸어 둔다. 코드의 서비스 일일 예산(`LLM_DAILY_BUDGET_KRW`, 하루 3,000원)은 넘으면 웹 확인만 끄고 진단, 현황 문단, 추천, AI 코스는 그대로 부른다(`docs/agent-v2.md` 19절). 그래서 모든 호출을 막는 지출 방어선은 이 프로젝트 한도뿐이다.
+1. OpenAI 플랫폼에서 그 환경 프로젝트의 새 키를 만든다. 키는 만들 때 한 번만 보인다. 코드의 서비스 일일 예산(`LLM_DAILY_BUDGET_KRW`, 하루 3,000원)은 넘으면 웹 확인만 끄고 진단, 현황 문단, 추천, AI 코스는 그대로 부른다(`docs/agent-v2.md` 19절). 그래서 모든 호출을 막는 지출 방어선은 OpenAI 쪽뿐이다. 지금은 자동 충전을 끈 선불 잔액이 상한이다(아래 「배포 전에 정할 것」). 잔액은 조직 단위라 로컬·스테이징·운영이 함께 쓰므로, 스테이징 QA가 잔액을 다 쓰면 운영 호출도 멈춘다. 환경마다 따로 묶어야 하면 프로젝트 월 예산 한도를 건다.
 2. 서버 Session Manager에서 `bash`로 바꾼 뒤(기본 셸이 sh라 `read -s`가 안 된다) 키가 화면과 기록에 남지 않게 넣는다. `<환경>`은 `staging` 또는 `prod`다.
    ```
    bash
@@ -277,7 +288,7 @@ CSV에는 사유 원문, 구성원 이름, 인용 글, 실시간 핀 검색어�
 
 ## 배포 전에 정할 것
 
-- 모델 제공자를 OpenAI 직접 호출로 바꾼 뒤(#1120) 정하지 않은 것: 사유 글이 미국 OpenAI로 가는 데 따른 개인정보 국외 이전 고지(`최종기획안.md` 12절, 개인정보처리방침), 결제 주체(개인 카드인지 팀 계정인지), 운영 전환 시기. 운영은 아직 엘리스 때의 설정이다.
+- 모델 제공자를 OpenAI 직접 호출로 바꾼 뒤(#1120) 남았던 것은 2026-11-08에 정했다(#1528). 국외 이전은 개인정보처리방침 4절 「개인정보 처리 위탁과 국외 이전」에 밝힌다(본문 `frontend/src/features/legal/docs.ts`). 요금은 표강준 계정과 카드로 선불 충전하고 자동 충전은 끈다. 비용은 팀원이 나눠 낸다. 운영은 `v0.1.0` 배포 때 OpenAI 주소와 운영 프로젝트 키로 바꿨다.
 - auth의 세션·state·선택 대기 쿠키의 `Secure`는 모두 `settings.cookie_secure`를 쓴다(#810). `COOKIE_SECURE` 기본은 staging, prod에서 켬이고 dev, test에서 끔이다. 응답의 `Set-Cookie`는 `auth/tests/test_cookie_secure.py`에서 검증한다. 로컬 http로 staging을 띄워 하네스를 돌릴 때만 `COOKIE_SECURE=0`으로 끈다. 배포 서버에서는 기본값을 유지한다.
 - staging, prod 기동 가드는 CORS, `SESSION_SECRET`, `FRONTEND_BASE_URL`에 더해 실제 어댑터의 키가 비거나 공백뿐이면 `ConfigError`로 막는다(#810). `PLACES_MODE=real`일 때 `PLACES_SOURCES`에 `kakao`가 있으면 `KAKAO_REST_API_KEY`(비면 `KAKAO_CLIENT_ID`로 폴백), `naver`가 있으면 `NAVER_SEARCH_CLIENT_ID`와 `NAVER_SEARCH_CLIENT_SECRET`이 필요하다. 선택하지 않은 소스의 키는 요구하지 않는다. 로그인용 `KAKAO_CLIENT_SECRET`, `KAKAO_REDIRECT_URI`는 장소 어댑터 키가 아니며 로그인 설정은 별도로 채운다. `LLM_MODE=real`이면 `ELICE_ML_API_BASE_URL`, `ELICE_ML_API_KEY`가 필요하다(2026-11-02부터 이 두 값은 OpenAI 주소와 프로젝트 키이고 이름만 ELICE로 남았다, #1120). dev, test에서는 키 없이도 기동한다. 오류에는 누락된 변수 이름만 담고 키 값은 담지 않는다.
 - uvicorn 접근 로그는 모든 경로의 쿼리스트링(code·state·검색어·좌표)을 지우고 초대 토큰 경로는 `/invites/{token}`으로 바꿔 찍는다. DB 오류의 예외 로그는 SQL 매개변수 없이 종류와 호출 위치만 남긴다(`common/logguard.py`, #473, #1201). Dockerfile의 uvicorn 실행 인자는 바꾸지 않았다. 앞단 Caddy는 접근 로그를 켜지 않는다(`deploy/Caddyfile`, #473). 켜야 하면 쿼리스트링을 지우는 형식으로 켠다.

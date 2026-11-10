@@ -15,7 +15,8 @@ export default function EmptyState({
 }: {
   mood?: PingoMood
   title: string
-  children: ReactNode
+  /** 설명. 위에 이미 설명이 있는 자리(휴지통 시트)는 제목만 둔다. */
+  children?: ReactNode
   action?: ReactNode
 }) {
   return (
@@ -24,7 +25,7 @@ export default function EmptyState({
       <p className="mt-3 text-balance break-keep font-bold text-ink-900">
         <Sentences text={title} />
       </p>
-      <p className="mt-1 break-keep text-sm text-ink-500">{typeof children === 'string' ? <Sentences text={children} /> : children}</p>
+      {children && <p className="mt-1 break-keep text-sm text-ink-500">{typeof children === 'string' ? <Sentences text={children} /> : children}</p>}
       {/* flex 로 감싸 링크(<a>)도 버튼처럼 블록으로 선다. */}
       {action && <div className="mt-4 flex">{action}</div>}
     </div>

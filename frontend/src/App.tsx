@@ -10,9 +10,11 @@ import MapCreatePage from '@/routes/MapCreatePage'
 import MapLayout from '@/routes/MapLayout'
 import MapListPage from '@/routes/MapListPage'
 import MapTab from '@/routes/MapTab'
+import NotFoundPage from '@/routes/NotFoundPage'
 import RecommendTab from '@/routes/RecommendTab'
 import ShortlistTab from '@/routes/ShortlistTab'
 import CourseTab from '@/routes/CourseTab'
+import MeTab from '@/routes/MeTab'
 import WelcomePage from '@/routes/WelcomePage'
 import ErrorBoundary from '@/ui/ErrorBoundary'
 
@@ -29,20 +31,24 @@ export default function App() {
           <Route path="/terms" element={<LegalPage doc="terms" />} />
           <Route path="/privacy" element={<LegalPage doc="privacy" />} />
           <Route path="/location-terms" element={<LegalPage doc="location" />} />
+          {/* 서비스 안내(기능 소개). 처음 온 사람은 로그인 전에 이걸 먼저 본다(#1576) — 그래서 비로그인으로 열린다. */}
+          <Route path="/welcome" element={<WelcomePage />} />
 
           <Route element={<RequireLogin />}>
             {/* 로그인 직후 진입점 = 내 지도 목록 (#24) */}
             <Route path="/" element={<MapListPage />} />
-            {/* 첫 로그인 온보딩 — 목록이 처음 열릴 때 한 번 이리 보낸다 */}
-            <Route path="/welcome" element={<WelcomePage />} />
             <Route path="/maps/new" element={<MapCreatePage />} />
             <Route path="/maps/:mapId" element={<MapRoute />}>
               <Route index element={<MapTab />} />
               <Route path="recommend" element={<RecommendTab />} />
               <Route path="shortlist" element={<ShortlistTab />} />
               <Route path="course" element={<CourseTab />} />
+              <Route path="me" element={<MeTab />} />
             </Route>
           </Route>
+
+          {/* 없는 주소. 이게 없으면 빈 화면이었다(#1677). */}
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </AppBoundary>
     </BrowserRouter>

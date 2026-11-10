@@ -1,8 +1,11 @@
 import type { components } from '@pingo/contracts/src/types/api'
 
 import { ApiError } from '@/api'
+import { UNKNOWN_NAME } from '@/ui/UnknownName'
 
 export type PinDto = components['schemas']['Pin']
+/** 핀 상세 블로그 사진 한 장(#1157) — 카카오 미리보기 주소, 원문 글 주소, 출처 사이트 이름. */
+export type PinPhotoDto = components['schemas']['PinPhoto']
 /** 지금은 응답 그대로다. 화면용으로 바꿀 게 생기면(반응 집계 등) 여기서 바꾸고 화면은 그대로 둔다. */
 export type Pin = PinDto
 
@@ -18,6 +21,10 @@ export type PinCategory = Pin['category']
  * AI 추천에서 지도에 올린 핀인지. 서버는 올릴 때 근거(이유·조건 체크·구성원 충족·출처)를 핀에 그대로 옮기고(가드레일 5),
  * 확정되면 kind 는 「확정」이 되지만 근거는 남는다 — 그래서 kind 가 아니라 근거가 있는지로 본다(#1032).
  */
+/** 서버는 작성자가 탈퇴했으면 이름 자리에 '탈퇴한 구성원'을 내린다(api-spec Pin.created_by_display_name). 화면은 이름을 모른다고만 보인다. */
+const WITHDRAWN_NAME = '탈퇴한 구성원'
+export const authorName = (pin: { created_by_display_name?: string | null }) =>
+  !pin.created_by_display_name || pin.created_by_display_name === WITHDRAWN_NAME ? UNKNOWN_NAME : pin.created_by_display_name
 export const hasAiEvidence = (pin: Pin) => Boolean(pin.reason || pin.checks?.length)
 /** ♥ 좋음 / 🚫 반대. △ 조율 필요는 2026-10-07에 없앴다(#360). 서버가 아직 neutral 을 줄 수 있는 동안엔 화면에서 걸러 쓴다. */
 export type ReactionType = 'like' | 'against'
@@ -127,9 +134,13 @@ export function timeAgo(iso: string, now = Date.now()): string {
   return `${Math.floor(min / (60 * 24))}일 전`
 }
 
+/** 할 일 핀 — 확정되지 않았고 내 의견이 없다. 확정 핀은 의견을 안 남겨도 할 일로 보지 않는다(#859). 목록 묶음과 "내가 남긴 의견" 카드가 같이 쓴다(#1696). */
+export const isTodo = (pin: Pin) => pin.kind !== '확정' && !pin.my_reaction
+
 export type PinCardView = {
   id: string
   name: string
+  category: PinCategory
   meta: string
   counts: Record<ReactionType | 'unknown', number>
   mine: ReactionType | null
@@ -144,9 +155,10 @@ export function toPinCard(pin: Pin, memberCount: number, myId?: string): PinCard
   return {
     id: pin.id,
     name: pin.place_name ?? '이름 없는 장소',
+    category: pin.category,
     meta: [
       pin.category,
-      pin.created_by === myId ? '내가 찍음' : pin.created_by_display_name && `${pin.created_by_display_name}님이 찍음`,
+      pin.created_by === myId ? '내가 찍음' : `${authorName(pin)}님이 찍음`,
       timeAgo(pin.created_at),
     ]
       .filter(Boolean)

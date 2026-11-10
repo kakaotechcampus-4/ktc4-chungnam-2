@@ -3,10 +3,12 @@ import { useOutletContext } from 'react-router'
 
 import { useAiStore } from './aiStore'
 import { ApiError } from '@/api'
+import { creditBlock } from '@/features/credits/model'
 import { invalidateCredits } from '@/features/credits/queries'
 import { pinKeys } from '@/features/map/queries'
 import type { Pin } from '@/features/map/model'
 import type { ShellContext } from '@/features/shell/shellContext'
+import { markTabNews } from '@/features/shell/tabNews'
 import { showToast } from '@/features/shell/toast'
 
 import {
@@ -32,6 +34,7 @@ import {
   type RecommendCategory,
   type RecommendResultDto,
   type RecommendRunDto,
+  runNewsText,
 } from './model'
 
 export const recommendKeys = {
@@ -100,8 +103,14 @@ export function useCreateRunMutation(mapId: string) {
       createRun(mapId, category, key, at, radiusM),
     retry: (count, err) => inProgress(err) && count < IN_PROGRESS_TRIES,
     retryDelay: IN_PROGRESS_WAIT_MS,
+    // 실패는 보던 준비 화면에 이유가 뜨지만, 다른 탭에 가 있으면 모른다 — 크레딧 막힘은 누른 자리에서 바로 나서 빼고 단다.
+    onError: (err, { category }) => {
+      if (!creditBlock(err)) markTabNews(mapId, 'recommend', runNewsText(category, false))
+    },
     onSuccess: (run) => {
       setRun(mapId, run)
+      // 다른 탭에 가 있는 동안 끝나면 AI 추천 탭에 점과 말풍선을 단다(#1704).
+      if (run.status === 'done' || run.status === 'failed') markTabNews(mapId, 'recommend', runNewsText(run.category, run.status === 'done'))
       // 「추천받기」 1번에 크레딧을 쓴다(#432). 다시 추천·넓히기·근거 고치기는 쓰지 않아 아래 훅은 다시 받지 않는다.
       void invalidateCredits(queryClient)
     },
@@ -140,7 +149,9 @@ function useRunningMutation(mapId: string, fn: (runId: string) => Promise<Recomm
     onSuccess: (run) => {
       // 실패 뒤 「다시 시도」로 성공하면 같은 run·같은 시도 번호라 예전(실패) 결과가 캐시에 남아 있을 수 있다 — 새로 받는다.
       void queryClient.invalidateQueries({ queryKey: recommendKeys.result(run.id) })
-      if (isShown(mapId, run.id)) setRun(mapId, run)
+      if (!isShown(mapId, run.id)) return
+      setRun(mapId, run)
+      if (run.status === 'done' || run.status === 'failed') markTabNews(mapId, 'recommend', runNewsText(run.category, run.status === 'done'))
     },
     onError: (err, _run, ctx) => {
       if (!ctx) return
@@ -148,6 +159,7 @@ function useRunningMutation(mapId: string, fn: (runId: string) => Promise<Recomm
       if (!isShown(mapId, ctx.before.id)) return
       if (err instanceof ApiError && err.code === 'RECOMMEND_FAILED') {
         setRun(mapId, { ...ctx.before, status: 'failed' })
+        markTabNews(mapId, 'recommend', runNewsText(ctx.before.category, false))
         return
       }
       setRun(mapId, ctx.before)

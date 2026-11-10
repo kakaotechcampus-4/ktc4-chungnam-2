@@ -103,10 +103,25 @@ def pin_body(fake_places):
 
 
 @pytest.fixture()
-def app_client(db_session, fake_places):
+def app_client(db_session, fake_places, monkeypatch):
     from fastapi.testclient import TestClient
 
     from main import app
+    from recommend import flows
+
+    # 시험 DB에는 시·도 경계가 없고 가짜 장소만 있어 「추천 받기」 중심의 시·도를 못 정한다 — run을 만드는 호출 동안만 모르면 통과로 본다.
+    # 요청 본문의 center는 시험이 직접 적는다(#1354). 다른 곳(검색 링크의 동네 등)의 시·도 판정은 그대로다.
+    real_create_run = flows.create_run
+
+    def create_run_with_known_sido(*args, **kwargs):
+        real_sido_at = flows.places_api.sido_at
+        monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: real_sido_at(*a, **kw) or "sido")
+        try:
+            return real_create_run(*args, **kwargs)
+        finally:
+            monkeypatch.setattr(flows.places_api, "sido_at", real_sido_at)
+
+    monkeypatch.setattr(flows, "create_run", create_run_with_known_sido)
 
     def _override_get_db_session():
         with session_scope(db_session) as s:

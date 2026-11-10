@@ -11,7 +11,7 @@ import { josa } from '@/ui/josa'
 import Notice from '@/ui/Notice'
 import Sentences from '@/ui/Sentences'
 
-import { copyMapErrorMessage, deleteMapBody, mapChanges, tripReady, tripTooLongError, type MapHeaderView, type MemberView, type TripDraft } from './model'
+import { copyMapErrorMessage, deleteMapBody, mapChanges, titleServerError, tripReady, tripTooLongError, type MapHeaderView, type MemberView, type TripDraft } from './model'
 import { useCopyMapMutation, useDeleteMapMutation, useLeaveMapMutation, useMapsQuery, useTransferOwnerMutation, useTrashQuery, useUpdateMapMutation } from './queries'
 import TripFields from './TripFields'
 
@@ -48,7 +48,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
       }
     >
       <div className="pt-2">
-        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} maxDays={maxDays} />
+        <TripFields value={draft} onChange={setDraft} regionClearable={!map.region} maxDays={maxDays} serverError={update.error} />
       </div>
       {scheduleQuery.isError && (
         <div className="space-y-2">
@@ -59,7 +59,7 @@ export function EditMapDialog({ map, onCancel }: { map: MapHeaderView; onCancel:
         </div>
       )}
       {dropped > 0 && <Notice>기간이 줄어 빠지는 날에 넣은 {dropped}곳은 확정된 장소로 돌아가요</Notice>}
-      {update.error && <ErrorText message={tripTooLongError(update.error) ?? '지도 정보를 고치지 못했어요'} error={update.error} />}
+      {update.error && !titleServerError(update.error) && <ErrorText message={tripTooLongError(update.error) ?? '지도 정보를 고치지 못했어요'} error={update.error} />}
     </ConfirmDialog>
   )
 }
@@ -87,6 +87,8 @@ export function LeaveMapConfirm({ mapId, nextOwnerName, onCancel }: { mapId: str
         leave.mutate(undefined, {
           onSuccess: () => {
             showToast('지도에서 나왔어요')
+            // 지도 목록(/)에서 열었으면 이동이 없어 창이 남는다 — 다시 누르면 NOT_FOUND. 먼저 닫는다.
+            onCancel()
             navigate('/', { replace: true })
           },
         })
@@ -121,6 +123,8 @@ export function DeleteMapConfirm({ mapId, title, onCancel }: { mapId: string; ti
         del.mutate(undefined, {
           onSuccess: () => {
             showToast('지도를 삭제했어요. 휴지통에서 복구할 수 있어요')
+            // 지도 목록(/)에서 열었으면 이동이 없어 창이 남는다 — 다시 누르면 NOT_FOUND. 먼저 닫는다.
+            onCancel()
             navigate('/', { replace: true })
           },
         })
@@ -172,6 +176,7 @@ export function TransferOwnerConfirm({ mapId, members, onCancel }: { mapId: stri
       title="누구에게 방장을 넘길까요?"
       body="넘기면 나는 구성원으로 지도에 남아요."
       ok={to ? `${to.name}님에게 넘기기` : '넘기기'}
+      danger
       pending={transfer.isPending || !to}
       onCancel={onCancel}
       onOk={() =>

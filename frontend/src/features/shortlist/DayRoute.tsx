@@ -4,6 +4,8 @@ import ErrorText from '@/ErrorText'
 import { dayOrdinal, dayTitle } from '@/features/course/model'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import { isPlaced } from '@/features/map/model'
+import CardSkeleton from '@/ui/CardSkeleton'
+import { Calendar } from '@/ui/DatePicker'
 import Sentences from '@/ui/Sentences'
 
 import { KAKAO_ROUTE_MAX, kakaoWalkUrl } from './model'
@@ -15,7 +17,7 @@ import { useScheduleEdit } from './useTripSchedule'
 
 /**
  * 「동선 보기」를 켰을 때 확정 탭 본문 — 짜 둔 일정을 하루씩 본다(2026-11-03). 지도에는 그날 순서대로 선이 그어진다(MapLayout).
- * 날짜 칩으로 날을 고르고, 그날 장소를 순서대로 보이며 「빼기」와 순서 바꾸기(≡ 끌기·↑↓)를 한다. 휴대폰에서도 된다.
+ * 여행 날짜만 고를 수 있는 달력(#1535, 장소를 넣은 날은 숫자 아래 점)으로 날을 고르고, 그날 장소를 순서대로 보이며 「빼기」와 순서 바꾸기(≡ 끌기·↑↓)를 한다. 휴대폰에서도 된다.
  * 길찾기는 카카오맵 새 창이다(앱 안 WebView 는 카카오 약관상 안 된다). 구간 시간은 서버 규칙이라 여기서 계산하지 않는다.
  */
 export default function DayRoute({ mapId, onOpen }: { mapId: string; onOpen: (pinId: string) => void }) {
@@ -35,7 +37,7 @@ export default function DayRoute({ mapId, onOpen }: { mapId: string; onOpen: (pi
         </button>
       </div>
     )
-  if (!edit.ready) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  if (!edit.ready) return <CardSkeleton count={2} label="불러오는 중…" />
   const day = routeDay(edit.schedule, edit.dates, chosen)
   if (!day) return <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
 
@@ -51,12 +53,26 @@ export default function DayRoute({ mapId, onOpen }: { mapId: string; onOpen: (pi
 
   return (
     <div className="space-y-3 pb-[100px]">
-      <div role="group" aria-label="볼 날짜" className="flex flex-wrap gap-2">
-        {edit.dates.map((d, i) => (
-          <button key={d} type="button" aria-pressed={d === day} onClick={() => setDay(d)} className="chip">
-            {dayOrdinal(i)}
-          </button>
-        ))}
+      {/* 넣을 날짜와 같은 달력이다. 장소를 넣은 날은 숫자 아래 점, 읽는 이름에는 「둘째 날, 2곳」. */}
+      <div role="group" aria-labelledby="route-day-label" className="rounded-xl border border-ink-200 bg-surface p-3">
+        <p id="route-day-label" className="mb-1 flex items-baseline justify-between gap-2 text-sm font-bold text-ink-900">
+          볼 날짜
+          <span className="text-xs font-semibold text-[var(--selected-text)]">{dayOrdinal(index)}</span>
+        </p>
+        <Calendar
+          value={day}
+          min={edit.dates[0]}
+          max={edit.dates[edit.dates.length - 1]}
+          onPick={setDay}
+          marked={(d) => (edit.schedule.days[d]?.length ?? 0) > 0}
+          dayName={(d) => {
+            const i = edit.dates.indexOf(d)
+            if (i < 0) return undefined
+            const n = edit.schedule.days[d]?.length ?? 0
+            return n > 0 ? `${dayOrdinal(i)}, ${n}곳` : dayOrdinal(i)
+          }}
+          className="mx-auto w-full max-w-[19.25rem]"
+        />
       </div>
       <ScheduleDayBox day={day} title={dayTitle(day, index)} count={ids.length}>
         <ScheduleDayList

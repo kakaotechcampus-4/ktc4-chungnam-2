@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { binCenter, usePinDragStore, type PinDrag } from './pinDrag'
 import { useTrashPinMutation } from './queries'
 import { usePinSelection } from './usePinSelection'
+import { INSIDE_SPOT_BOTTOM } from '@/features/shell/layout'
 
 /** 놓은 핀이 통으로 들어가는 시간, 그 뒤 뚜껑이 닫히는 시간(ms). 합쳐 0.5초 이하(DESIGN Motion). */
 const SWALLOW_MS = 250
@@ -13,7 +14,7 @@ const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matc
 
 /**
  * 핀을 끌 때만 나타나는 휴지통(#1012). 자리는 토스트와 같다 — 모바일은 시트 윗변 12px 위 가운데(`above`),
- * 3단계처럼 시트 위에 지도가 없으면 시트 안 아래쪽(`inside`), 넓은 화면은 지도 영역 바닥 16px 위 가운데(`docked`).
+ * 3단계처럼 시트 위에 지도가 없으면 시트 안, 탭 바 윗변 12px 위(`inside`, `INSIDE_SPOT_BOTTOM`), 넓은 화면은 지도 영역 바닥 16px 위 가운데(`docked`).
  * 지도 버튼(오른쪽)과 겹치지 않는다. 위에 핀이 오면 테두리가 brand-600 이 되고 뚜껑이 열린다.
  * 놓으면 바로 지우고(확인 창 없음, 되돌리기 알림은 useTrashPinMutation), 핀이 작아지며 들어간 뒤 뚜껑이 닫힌다.
  * 포인터 전용이다. 키보드·스크린리더는 핀 상세의 「핀 삭제」를 쓴다.
@@ -57,14 +58,16 @@ export default function TrashDropZone({ mapId, placement }: { mapId: string; pla
 
   if (!drag) return null
   const open = drag.over && !closing
-  const bottom = placement === 'docked' ? 16 : placement === 'inside' ? 48 : 'calc(100% + 12px)'
+  // 지도 위에 놓은 뒤(옮기기, #1549)에는 휴지통을 거두고 그림만 남긴다.
+  if (drag.phase !== 'drag' && drag.phase !== 'drop') return createPortal(<Ghost drag={drag} />, document.body)
+  const bottom = placement === 'docked' ? 16 : placement === 'inside' ? INSIDE_SPOT_BOTTOM : 'calc(100% + 12px)'
   return (
     <>
       <div style={{ bottom }} className="pointer-events-none absolute inset-x-4 z-20 flex justify-center" aria-hidden="true">
         <div
           data-trash-bin
           className={`enter-pop flex h-12 items-center gap-2 rounded-full border-2 px-4 text-sm font-bold shadow-float transition-colors duration-200 ${
-            drag.over ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-transparent bg-white text-ink-700'
+            drag.over ? 'border-brand-600 bg-brand-50 text-selected' : 'border-transparent bg-surface text-ink-700'
           }`}
         >
           <TrashCan open={open} />
@@ -76,12 +79,23 @@ export default function TrashDropZone({ mapId, placement }: { mapId: string; pla
   )
 }
 
-/** 손을 따라오는 핀. 끝(아래 가운데)이 손끝에 온다 — 터치는 손가락에 가리지 않게 조금 위다. 놓으면 휴지통 가운데로 작아지며 들어간다. */
+/** 옮길 곳으로 미끄러지는 시간과 원래 자리로 돌아가는 시간(ms). PinMoveHost 의 LAND_MS, BACK_MS 와 맞춘다. */
+const SLIDE_MS = 200
+const BACK_SLIDE_MS = 250
+
+/**
+ * 손을 따라오는 핀. 끝(아래 가운데)이 손끝에 온다 — 터치는 손가락에 가리지 않게 조금 위다.
+ * 집혀 있는 동안 살짝 커져 떠오르고 그림자가 진다(pin-lift). 휴지통에 놓으면 작아지며 들어가고,
+ * 지도에 놓아 옮기면 그 장소로 미끄러져 한 번 튀고(pin-bounce), 옮기지 못하면 집은 자리로 돌아간다(#1549).
+ */
 function Ghost({ drag }: { drag: PinDrag }) {
-  const dropping = drag.phase === 'drop'
-  const to = dropping ? binCenter() : null
+  const { phase } = drag
+  const dropping = phase === 'drop'
+  const lifted = phase === 'drag' || phase === 'move'
+  const to = dropping ? binCenter() : phase === 'land' ? drag.to : phase === 'back' ? drag.from : null
   const x = to?.x ?? drag.x
-  const y = to ? to.y + 22 : drag.y - (drag.touch ? 24 : 0)
+  const y = to ? to.y + (dropping ? 22 : 0) : drag.y - (drag.touch ? 24 : 0)
+  const slide = dropping ? SWALLOW_MS : phase === 'land' ? SLIDE_MS : phase === 'back' ? BACK_SLIDE_MS : 0
   return (
     <div
       aria-hidden="true"
@@ -89,11 +103,17 @@ function Ghost({ drag }: { drag: PinDrag }) {
       style={{
         transform: `translate(${x - 22}px, ${y - 44}px) scale(${dropping ? 0.3 : 1})`,
         opacity: dropping ? 0 : 1,
-        transition: dropping ? `transform ${SWALLOW_MS}ms cubic-bezier(0, 0, 0.2, 1), opacity ${SWALLOW_MS}ms` : undefined,
+        transition: slide ? `transform ${slide}ms cubic-bezier(0, 0, 0.2, 1), opacity ${slide}ms` : undefined,
       }}
     >
-      {/* 마크업은 pinMarker 가 만든 모양·색뿐이다(핀 이름은 넣지 않는다). */}
-      <div className="pin-wobble flex size-full items-end justify-center" dangerouslySetInnerHTML={{ __html: drag.ghost }} />
+      <div className={`flex size-full items-end justify-center ${lifted ? 'pin-lift' : ''}`}>
+        {/* 마크업은 pinMarker 가 만든 모양과 색뿐이다(핀 이름은 넣지 않는다). */}
+        <div
+          className={`flex size-full items-end justify-center ${phase === 'land' ? 'pin-bounce' : lifted ? 'pin-wobble' : ''}`}
+          style={phase === 'land' ? { animationDelay: `${SLIDE_MS}ms`, animationFillMode: 'backwards' } : undefined}
+          dangerouslySetInnerHTML={{ __html: drag.ghost }}
+        />
+      </div>
     </div>
   )
 }

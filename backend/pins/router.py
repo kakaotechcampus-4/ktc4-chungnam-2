@@ -23,7 +23,7 @@ from pins.deps import DbSession
 from pins.loaders import load_pin, load_trashed_pin
 from pins.models import Pin as PinRow
 from pins.schemas import (
-    Category, FilterCounts, Pin, PinCreateRequest, BulkPinRequest, BulkPinResult, LinkPreviewRequest, LinkPreviewResult, PinKind, PinResolveRequest, PinTrash, PinUpdateRequest, Reaction, ReactionRequest, ReasonChip,
+    Category, FilterCounts, Pin, PinCreateRequest, BulkPinRequest, BulkPinResult, LinkPreviewRequest, LinkPreviewResult, PinKind, PinPhoto, PinResolveRequest, PinTrash, PinUpdateRequest, Reaction, ReactionRequest, ReasonChip,
 )
 from shortlist import api as shortlist_api
 
@@ -181,6 +181,16 @@ def get_reactions(
     db: Session = DbSession,
 ):
     return service.list_reactions(db, pin=pin)
+
+
+@router.get("/pins/{pinId}/photos", response_model=list[PinPhoto])
+def get_photos(
+    pin: PinRow = PinToRead,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = DbSession,
+):
+    """핀 상세 블로그 사진(#1157). 구성원 누구나 — 조회 권한은 반응 목록과 같다(PinToRead)."""
+    return service.pin_photos(db, pin=pin, viewer_id=user.user_id)
 
 
 @router.put("/pins/{pinId}/reaction", response_model=Reaction, response_model_exclude_none=True)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 새 DB에 장소 데이터를 넣는다(#168). 순서와 규칙은 deploy_rules.md 「장소 데이터 적재」와 공유본 README 그대로다.
-#   ./load-places.sh staging /srv/pingo/data/places          # 넣기
-#   DRY_RUN=1 ./load-places.sh staging /srv/pingo/data/places # 경로와 건수만 확인
-#   ./load-places.sh prod /srv/pingo/data/places boundaries   # 시·도 경계만(이미 도는 DB에 처음 넣을 때. 멱등, 장소는 건드리지 않는다, #1385)
+#   ./load-places.sh staging /srv/pingo/data/places_1104          # 넣기
+#   DRY_RUN=1 ./load-places.sh staging /srv/pingo/data/places_1104 # 경로와 건수만 확인
+#   ./load-places.sh prod /srv/pingo/data/places_1104 boundaries   # 시·도 경계만(이미 도는 DB에 처음 넣을 때. 멱등, 장소는 건드리지 않는다, #1385)
 # 데이터 폴더(공유본 두 개를 합친 것)는 저장소 밖, 서버의 /srv/pingo/data에 둔다. 구조:
 #   <폴더>/서울/{음식점,카페,관광지,인허가_커버리지}, <폴더>/<지역>/{정예_음식점,정예_카페,정예_관광지,인허가_커버리지}
 #   <폴더>/시도경계/{11,21,…,39}.json — 시·도 경계 17개. 화면 정본(frontend/src/features/map/regionBoundaries/)의 사본을 그대로 둔다.

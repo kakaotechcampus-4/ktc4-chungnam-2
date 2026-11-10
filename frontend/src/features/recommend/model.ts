@@ -97,6 +97,20 @@ export function mergeTags(lines: EvidenceLineDto[]) {
   return [...tags].map(([tag, v]) => ({ tag, ...v }))
 }
 
+/**
+ * 합친 태그 칩의 쓴 사람 — 첫 줄 작성자만 쓰면 남의 이름 옆에 내 × 가 붙는다.
+ * 한 사람이면 그 이름(내 것이면 「(나)」), 여럿이면 「나 외 N명」·「민재 외 N명」.
+ */
+export function tagAuthor(all: EvidenceLineDto[]): Pick<EvidenceLineDto, 'author_display_name' | 'author_id'> {
+  const myLine = all.find((l) => l.permissions.can_disable)
+  const others = [...new Set(all.filter((l) => !l.permissions.can_disable).map((l) => l.author_display_name))].filter(Boolean)
+  if (others.length === 0 && myLine) return { author_display_name: myLine.author_display_name, author_id: myLine.author_id }
+  if (others.length === 1 && !myLine) return { author_display_name: others[0], author_id: '' }
+  const first = myLine ? '나' : others[0]
+  const rest = others.length - (myLine ? 0 : 1)
+  return { author_display_name: rest > 0 ? `${first} 외 ${rest}명` : first, author_id: '' }
+}
+
 /** 화면에 보이는 조건 수 — 꼭은 줄마다, 선호는 같은 태그끼리 합쳐 센다(EvidenceGroups와 같은 묶음, #1143). */
 export function visibleConditionCount(lines: EvidenceLineDto[]): number {
   const g = groupEvidence(lines)
@@ -341,3 +355,6 @@ export function kmInputToM(text: string, min: number, max: number, step: number)
   const m = Math.round((km * 1000) / step) * step
   return m >= min && m <= max ? m : null
 }
+
+/** 다른 탭에 있는 동안 추천이 끝났을 때 AI 추천 탭 위 말풍선 글(#1704). 0곳일 수도 있어 "도착" 대신 "결과가 나왔어요"다. */
+export const runNewsText = (category: string, found: boolean) => (found ? `${category} 추천 결과가 나왔어요` : `${category} 추천을 찾지 못했어요`)

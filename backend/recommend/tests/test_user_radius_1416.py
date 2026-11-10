@@ -3,6 +3,8 @@
 서버는 사용자가 반경을 어떻게 고르는지 모르고 정수 하나만 받는다. 값은 run의 `default_radius_m`으로 저장돼 지역 원, 여행 지역 밖 판정
 (`OUTSIDE_TRIP_REGION`), 넓히기(+1,000m, 상한 5,000m), 응답 칸이 모두 이어서 쓴다. 정책 값은 recommend/core.py 한 곳이다."""
 
+import hashlib
+
 import pytest
 from sqlalchemy import select
 
@@ -14,7 +16,7 @@ from recommend.tests.test_outside_trip_region_1385 import (  # noqa: F401 — �
 )
 from recommend.ports import PlaceStub
 from recommend.tests.test_flows import PLANNER, _CirclePlaceSearch, _RecordingPlaceFacts, _make_members, _make_pin, _react
-from recommend.tests.test_router import _auth, _seed_ready_map, app_client  # noqa: F401
+from recommend.tests.test_router import RUN_CENTER, _auth, _seed_ready_map, app_client  # noqa: F401
 
 
 # ---------------------------------------------------------------- 정책 값과 요청 모델
@@ -37,8 +39,8 @@ def test_hash_ignores_an_explicit_default_and_changes_with_another_radius():
     assert core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), 3000) == omitted   # 명시한 3000은 생략과 같다
     assert core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), 2000) != omitted
     assert core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), 2000) != core.idempotency_request_hash("m", "카페", False, (35.0, 129.0), 2500)
-    # radius_m이 없는 옛 요청의 해시는 이전 값 그대로(옛 키 재시도 호환)
-    assert core.idempotency_request_hash("m", "카페") == core.idempotency_request_hash("m", "카페", False, None, None)
+    # radius_m이 없는 요청의 해시는 이전 값 그대로 — 고정값으로 비교한다(radius_m이 생기기 전에 만든 키의 재시도가 같은 run을 받는다)
+    assert omitted == hashlib.sha256("m카페035129".encode()).hexdigest()
 
 
 # ---------------------------------------------------------------- 요청 본문 검증 (HTTP)
@@ -48,7 +50,7 @@ def test_a_radius_in_range_is_saved_as_the_runs_default_radius_and_continues_int
     monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
     _seed_ready_map(db_session)
 
-    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "radius_m": radius_m}, cookies=_auth("user_1"))
+    created = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER, "radius_m": radius_m}, cookies=_auth("user_1"))
 
     assert created.status_code == 202, created.text
     body = created.json()
@@ -67,7 +69,7 @@ def test_a_radius_out_of_range_or_not_an_integer_is_422_and_makes_nothing(app_cl
     monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
     _seed_ready_map(db_session)
 
-    resp = app_client.post("/maps/map_1/runs", json={"category": "음식점", "radius_m": radius_m}, cookies=_auth("user_1"))
+    resp = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER, "radius_m": radius_m}, cookies=_auth("user_1"))
 
     assert resp.status_code == 422, resp.text
     assert resp.json()["code"] == "VALIDATION_ERROR"
@@ -78,8 +80,8 @@ def test_without_a_radius_the_run_is_exactly_as_before_3000(app_client, db_sessi
     monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
     _seed_ready_map(db_session)
 
-    omitted = app_client.post("/maps/map_1/runs", json={"category": "음식점"}, cookies=_auth("user_1")).json()
-    explicit = app_client.post("/maps/map_1/runs", json={"category": "음식점", "radius_m": 3000}, cookies=_auth("user_1")).json()
+    omitted = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER}, cookies=_auth("user_1")).json()
+    explicit = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER, "radius_m": 3000}, cookies=_auth("user_1")).json()
 
     assert (omitted["default_radius_m"], omitted["next_default_radius_m"]) == (3000, 4000)
     assert (explicit["default_radius_m"], explicit["next_default_radius_m"]) == (3000, 4000)
@@ -90,7 +92,7 @@ def test_without_a_radius_the_run_is_exactly_as_before_3000(app_client, db_sessi
 def test_widen_continues_from_the_chosen_radius_and_stops_at_the_limit(app_client, db_session, monkeypatch):
     monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
     _seed_ready_map(db_session)
-    run_id = app_client.post("/maps/map_1/runs", json={"category": "음식점", "radius_m": 2000}, cookies=_auth("user_1")).json()["id"]
+    run_id = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER, "radius_m": 2000}, cookies=_auth("user_1")).json()["id"]
 
     seen = []
     for _ in range(3):
@@ -104,7 +106,7 @@ def test_widen_continues_from_the_chosen_radius_and_stops_at_the_limit(app_clien
 def test_a_run_started_at_the_limit_cannot_widen(app_client, db_session, monkeypatch):
     monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: "sido")
     _seed_ready_map(db_session)
-    run_id = app_client.post("/maps/map_1/runs", json={"category": "음식점", "radius_m": 5000}, cookies=_auth("user_1")).json()["id"]
+    run_id = app_client.post("/maps/map_1/runs", json={"category": "음식점", "center": RUN_CENTER, "radius_m": 5000}, cookies=_auth("user_1")).json()["id"]
     resp = app_client.post(f"/runs/{run_id}/widen", cookies=_auth("user_1"))
     assert resp.status_code == 409 and resp.json()["code"] == "WIDEN_LIMIT"
 

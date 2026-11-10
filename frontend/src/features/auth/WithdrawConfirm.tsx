@@ -14,7 +14,7 @@ export default function WithdrawConfirm({ onCancel }: { onCancel: () => void }) 
     <ConfirmDialog
       title="정말 탈퇴할까요?"
       body="7일 안에는 같은 카카오 계정으로 복구할 수 있어요. 7일이 지나면 계정 정보가 모두 삭제되고, 남긴 의견은 탈퇴하는 즉시 지워져요."
-      note="내가 찍은 핀은 ‘탈퇴한 구성원’의 이름으로 남아요. 내가 방장인 지도는 다른 구성원에게 넘어가고, 혼자인 지도는 삭제돼요."
+      note="내가 찍은 핀은 지도에 남고, 찍은 사람은 ‘알 수 없음’으로 보여요. 내가 방장인 지도는 다른 구성원에게 넘어가고, 혼자인 지도는 삭제돼요."
       ok="탈퇴"
       danger
       pending={withdraw.isPending}

@@ -4,24 +4,32 @@ import { ChevronLeft, ChevronsLeft, ChevronsRight, FileText, MapPin, Route, Sear
 
 import AgentButton from '@/features/agent/AgentButton'
 import { useMeQuery } from '@/features/auth/queries'
+import CourseRunWatcher from '@/features/course/CourseRunWatcher'
 import { ImportSheetHost } from '@/features/kakaoImport/ImportSheet'
 import { MIN_LEVEL } from '@/features/map/camera'
 import { SchedulePanelHost } from '@/features/shortlist/SchedulePanel'
 import { useScheduleOpen } from '@/features/shortlist/scheduleStore'
 import MapCanvas, { type MapController } from '@/features/map/MapCanvas'
-import { mapTapAction } from '@/features/map/mapTap'
-import { usePinSelection } from '@/features/map/usePinSelection'
-import { byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
+import { mapTapAction, showMapMenuHintOnce } from '@/features/map/mapTap'
+import { PIN_GROUP_PARAM, usePinGroup, usePinSelection } from '@/features/map/usePinSelection'
+import { authorName, byNewest, filterPins, isPlaced, timeAgo } from '@/features/map/model'
+import MapGestureHelp from '@/features/map/MapGestureHelp'
 import { CategoryChips } from '@/features/map/PinFilterControls'
 import { livePlaceAnchor, useLivePinResolver } from '@/features/map/livePlaces'
 import { usePinsQuery, useResolveLivePin } from '@/features/map/queries'
+import { useNewSince, useSaveSeenOnLeave } from '@/features/map/newSince'
 import { useMapEvents } from '@/features/map/realtime'
+import PinMoveHost from '@/features/map/PinMoveHost'
 import TrashDropZone from '@/features/map/TrashDropZone'
 import { usePinFilters } from '@/features/map/usePinFilters'
 import { boundaryCorners, useRegionBoundary } from '@/features/map/regionGeo'
 import MapSwitcher from '@/features/maps/MapSwitcher'
 import NotificationBell from '@/features/notifications/NotificationBell'
-import { useMapQuery } from '@/features/maps/queries'
+import { useNotificationsQuery } from '@/features/notifications/queries'
+import { AccountMenu } from '@/features/maps/AccountSheet'
+import { othersOnline } from '@/features/maps/model'
+import { useMapQuery, useMapsQuery, useMembersQuery } from '@/features/maps/queries'
+import OnlineDot from '@/ui/OnlineDot'
 import { useAiStore } from '@/features/recommend/aiStore'
 import { useRecommendRadiusM, useResultQuery } from '@/features/recommend/queries'
 import { firstMapLink } from '@/features/kakaoImport/share'
@@ -35,7 +43,8 @@ import { useCourseMapStore } from '@/features/course/courseMapStore'
 import { useRecentSearches } from '@/features/search/recentSearchStore'
 import RecentSearches from '@/features/search/RecentSearches'
 import { useSearchStore } from '@/features/search/searchStore'
-import { PANEL_W, RAIL_W, SIDE_PANEL_W, TAB_BAR_H } from '@/features/shell/layout'
+import AppMenu from '@/features/shell/AppMenu'
+import { PANEL_GAP, PANEL_W, panelCover, TAB_BAR } from '@/features/shell/layout'
 import MapControls, { type ControlKey } from '@/features/shell/MapControls'
 import { backAriaLabel, usePanelBackStore } from '@/features/shell/panelBack'
 import ProfileModal, { ProfileMenu } from '@/features/shell/ProfileModal'
@@ -45,18 +54,21 @@ import { ConnectionBanner } from '@/features/shell/TabSheet'
 import { showToast } from '@/features/shell/toast'
 import Toaster from '@/features/shell/Toaster'
 import { useIsDesktop, useIsPc } from '@/features/shell/useIsDesktop'
+import { useTabNews } from '@/features/shell/tabNews'
+import Avatar from '@/ui/Avatar'
 import ErrorBoundary from '@/ui/ErrorBoundary'
 import { PingoMark } from '@/ui/Pingo'
 import { ClearButton } from '@/ui/TextField'
+import Wordmark from '@/ui/Wordmark'
+import TipBubble from '@/ui/TipBubble'
 
 /** 넓은 화면 패널이 미끄러지는 시간. 패널·덧칠의 `duration-300` 과 같은 값이다. */
-const PANEL_SLIDE_MS = 300
 
 /**
  * 지도 하나 안의 화면(최종기획안 4절). 지도는 항상 떠 있고, 하단 탭 4개(마킹·AI 추천·확정·AI 코스)가 그 위 바텀시트 내용을 바꾼다.
  * 지도는 여기 한 번만 만든다 — 탭마다 만들면 탭을 바꿀 때마다 지도가 다시 뜬다.
  *
- * 넓은 화면(768px 이상, #338)은 왼쪽 480px(세로 탭 줄 72 + 높이 전체 내용 패널 408: 헤더·검색·탭 내용) + 오른쪽 지도 영역이다.
+ * 넓은 화면(768px 이상, #338)은 왼쪽 408px 패널(파란 머리: ☰·워드마크·탭 4개, 그 아래 지도 제목·검색·탭 내용, #1538) + 오른쪽 지도 영역이다.
  * 태블릿(768~1023px)은 내용 패널만 360으로 좁다(#603).
  * 칩·연결 띠·지도 버튼·토스트는 지도 영역에 둔다. 패널과 모바일은 같은 트리를 쓰고 틀의 클래스만 바꾼다 —
  * 768px 경계를 넘나들어도 탭 내용(쓰던 의견 등)이 다시 마운트되지 않게.
@@ -66,9 +78,14 @@ export default function MapLayout() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { selectedPinId, selectPin } = usePinSelection()
-  const { data: allPins = [] } = usePinsQuery(mapId)
+  const { showGroup } = usePinGroup()
+  const { data: loadedPins } = usePinsQuery(mapId)
+  const allPins = useMemo(() => loadedPins ?? [], [loadedPins])
   const mapInfo = useMapQuery(mapId).data
   const memberCount = mapInfo?.memberCount ?? 0
+  // 나 말고 지금 이 지도를 열어 둔 사람(#1551) — 구성원 버튼에 접속 점을 단다.
+  const watching = othersOnline(useMembersQuery(mapId).data)
+  const membersLabel = `지도 정보와 구성원 ${memberCount}명${watching > 0 ? `, 지금 ${watching}명이 같이 보는 중` : ''}`
   useLivePinResolver(allPins, mapInfo?.regionCenter, useResolveLivePin(mapId))
   const desktop = useIsDesktop()
   const panelW = useIsPc() ? PANEL_W.pc : PANEL_W.tablet
@@ -101,7 +118,35 @@ export default function MapLayout() {
   const search = useSearchStore()
   const [searchText, setSearchText] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
-  const recent = useRecentSearches(useMeQuery().data?.id)
+  // 최근 검색을 펼칠지. 검색창을 누를 때마다(이미 포커스가 있어도, 검색어가 남아 있어도) 열고,
+  // 글을 치기 시작하면 닫는다(목록은 친 글로 거르지 않는다). 찾기를 시작하거나 Esc를 누르면 닫는다.
+  // 전에는 "포커스 + 빈 칸"일 때만 열어서, 한 번 찾고 나면 검색어가 남아 다시 눌러도 열리지 않았다.
+  const [recentWanted, setRecentWanted] = useState(false)
+  const me = useMeQuery().data
+  const unread = useNotificationsQuery().data?.pages[0]?.unread_count ?? 0
+  const myId = me?.id
+  const myMaps = useMapsQuery().data?.items ?? []
+  const searchBox = useRef<HTMLDivElement>(null)
+  // 최근 검색 목록은 검색창·목록 밖을 누르면 닫는다. 지도는 눌러도 검색창 포커스를 빼앗지 않아(카카오맵이 터치를 먹는다)
+  // blur 만으로는 휴대폰에서 목록이 계속 떠 있었다(PM 점검 #1554).
+  useEffect(() => {
+    if (!searchFocused) return
+    const onDown = (e: PointerEvent) => {
+      if (searchBox.current?.contains(e.target as Node)) return
+      setSearchFocused(false)
+      document.getElementById('place-search')?.blur()
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [searchFocused])
+  const recent = useRecentSearches(myId)
+  const recentOpen = searchFocused && recentWanted && recent.list.length > 0
+  // 마지막으로 본 뒤 새 핀·의견이 있는 핀에 파란 점(#1454). 목록(MapTab)과 같은 기준이고, 지도를 떠날 때 지금 모습을 적는다.
+  // 받기 전(loadedPins 없음)에 떠나면 적지 않는다 — 빈 모습을 적으면 다음에 모든 핀이 새 핀으로 보인다.
+  const { news } = useNewSince(mapId, loadedPins, myId)
+  useSaveSeenOnLeave(mapId, myId)
+  const freshKey = [...news.keys()].sort().join(',')
+  const freshPinIds = useMemo(() => new Set(freshKey ? freshKey.split(',') : []), [freshKey])
   // 결과 시트에서 「닫기」를 눌러도 입력칸에 글자가 남지 않게, 검색이 닫히면 같이 비운다(#351).
   const [lastSource, setLastSource] = useState(search.source)
   if (lastSource !== search.source) {
@@ -131,7 +176,7 @@ export default function MapLayout() {
     [found, search.selectedId],
   )
 
-  // AI 추천 탭에선 올리기 전 후보를 점선 핀으로 그린다(#843). 요청한 사람의 화면에만 있고 지도(핀 목록)는 바꾸지 않는다(가드레일 1).
+  // AI 추천 탭에선 올리기 전 후보를 핑고 핀으로 그린다(#843). 요청한 사람의 화면에만 있고 지도(핀 목록)는 바꾸지 않는다(가드레일 1).
   // 올린 후보는 이미 핀으로 떠 있어서 빼고, 좌표가 없는 후보도 뺀다. 결과는 추천 탭과 같은 캐시를 본다.
   const onRecommendTab = useMatch('/maps/:mapId/recommend') !== null
   // AI 추천은 보이는 지도 가운데 반경 안에서 찾는다(#1385) — 그 탭에서만 여행 지역 경계·그 밖 어둡게·반경 원을 그린다.
@@ -175,6 +220,10 @@ export default function MapLayout() {
 
   function runSearch(q: string) {
     if (!q) return
+    // 찾기 시작하면 최근 검색 목록을 닫고 키보드를 내린다 — 결과 시트가 보이게.
+    setSearchFocused(false)
+    setRecentWanted(false)
+    document.getElementById('place-search')?.blur()
     // 검색은 마킹 탭의 일이다. 다른 탭에서 검색해도 마킹 탭으로 가서 결과를 보여준다.
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
     const center = controller.current?.getCenter() ?? null
@@ -189,9 +238,13 @@ export default function MapLayout() {
     setStage('map', 2)
   }
 
+  // 지우면 바로 다음 검색어를 치게 검색창에 포커스를 두고 최근 검색을 편다.
+  // ✕ 버튼이 사라지며 포커스가 빠지면 목록도 닫혀서, 다른 곳을 눌렀다 와야 다시 열렸다.
   function clearSearch() {
     setSearchText('')
     search.close()
+    setRecentWanted(true)
+    document.getElementById('place-search')?.focus()
   }
   const mapMoving = useSheetStore((s) => s.mapMoving)
   const setMapMoving = useSheetStore((s) => s.setMapMoving)
@@ -241,7 +294,7 @@ export default function MapLayout() {
     if (r) controller.current?.focusPin(r.lat, r.lng)
   }, [found, search.selectedId])
 
-  // AI 후보를 고르면(카드·지도 점선 핀) 그 후보로 간다(#843). 올린 후보는 그 자리의 핀으로 간다.
+  // AI 후보를 고르면(카드·지도 핑고 핀) 그 후보로 간다(#843). 올린 후보는 그 자리의 핀으로 간다.
   // 결과를 다시 받아도 같은 선택이면 다시 옮기지 않는다.
   const focusedCandidate = useRef<typeof candidateFocus>(null)
   useEffect(() => {
@@ -265,10 +318,18 @@ export default function MapLayout() {
     controller.current?.fitPins(points)
   }, [onRecommendTab, mapReady, run, result])
 
+  // 동선(「동선 보기」로 고른 날, AI 코스)이 켜지거나 바뀌면 선 전체가 보이게 맞춘다 — 켰는데 1번 장소가 화면 밖에 있던 것을 고쳤다.
+  // 이미 다 보이면 그대로 두고(force 없음), 같은 동선은 다시 맞추지 않아 사람이 옮겨 둔 지도를 뺏지 않는다.
+  const routeKey = routeDrawings.flatMap((d) => d.stops.map((p) => `${p.lat},${p.lng}`)).join('|')
+  useEffect(() => {
+    if (!mapReady || !routeKey) return
+    controller.current?.fitPins(routeKey.split('|').map((p) => ({ lat: Number(p.split(',')[0]), lng: Number(p.split(',')[1]) })))
+  }, [mapReady, routeKey])
+
   // 지도 빈 곳 누르기는 어느 탭이든 같다(#1028, 멘토 리뷰 #816). 고른 것(핀 상세·검색 결과·AI 후보)이 있으면 풀고,
-  // 없으면 누른 자리에 「이 근처 장소 찾기」 말풍선을 띄운다 — 둘러보다 누른 것이 바로 검색이 되지 않게. 지도는 그대로 둔다.
-  const [tapAt, setTapAt] = useState<{ lat: number; lng: number } | null>(null)
-  // 탭을 바꾸거나 무엇을 고르거나 검색이 열리면 말풍선은 닫는다(렌더 중에 맞춘다 — 위 lastQuery 와 같은 방식).
+  // 없으면 누른 자리를 가운데로 옮긴다(#1613). 「신규 핀 찍기」 메뉴는 우클릭·길게 누르기로만 연다(#1549).
+  const [tapAt, setTapAt] = useState<{ lat: number; lng: number; style: 'bubble' | 'menu' } | null>(null)
+  // 탭을 바꾸거나 무엇을 고르거나 검색이 열리면 메뉴는 닫는다(렌더 중에 맞춘다 — 위 lastQuery 와 같은 방식).
   const tapContext = `${pathname}|${selectedPinId}|${search.source ? 'search' : ''}|${candidateFocus?.id ?? ''}`
   const [lastTapContext, setLastTapContext] = useState(tapContext)
   if (lastTapContext !== tapContext) {
@@ -284,9 +345,25 @@ export default function MapLayout() {
       if (search.selectedId) search.select(null)
       if (ai.focus) ai.blurCandidate()
     }
-    setTapAt(action === 'open' ? at : null)
+    setTapAt(null)
+    if (action === 'center' && at) {
+      controller.current?.panTo(at.lat, at.lng)
+      showMapMenuHintOnce()
+    }
   }
-  /** 말풍선을 누르면 마킹 탭에서 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486). */
+  /** PC 우클릭은 커서 자리 메뉴, 빈 지도 길게 누르기는 말풍선이다(#1549). 고른 것이 있어도 바로 연다 — 일부러 부른 메뉴라서. */
+  function onMapMenu(at: { lat: number; lng: number }, how: 'rightclick' | 'longpress') {
+    setTapAt({ ...at, style: how === 'rightclick' ? 'menu' : 'bubble' })
+  }
+  // 메뉴는 Esc 로도 닫는다(바깥 누르기·지도 끌기는 위 onMapClick·onMovingChange 가 닫는다).
+  const menuOpen = tapAt !== null
+  useEffect(() => {
+    if (!menuOpen) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setTapAt(null)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuOpen])
+  /** 「신규 핀 찍기」를 누르면 마킹 탭에서 누른 자리 근처의 핀으로 만들 수 있는 장소를 찾는다(#486, #1549). */
   function searchNearby(at: { lat: number; lng: number }) {
     setTapAt(null)
     if (!onMarkingTab) navigate(`/maps/${mapId}`)
@@ -344,7 +421,7 @@ export default function MapLayout() {
     if (key === 'recent') {
       const pin = [...placed].sort(byNewest)[0]
       map.panTo(pin.lat!, pin.lng!)
-      const who = [pin.created_by_display_name, timeAgo(pin.created_at)].filter(Boolean).join(' · ')
+      const who = [authorName(pin), timeAgo(pin.created_at)].filter(Boolean).join(' · ')
       showToast(`가장 최근 핀: ${pin.place_name ?? '이름 없는 핀'} (${who})`)
     } else {
       // 누른 사람이 원한 것이라 이미 다 보여도 맞춘다(#1026).
@@ -369,29 +446,16 @@ export default function MapLayout() {
   // 3단계에서는 칩이 시트 제목 아래로 옮겨 간다(MapTab). 넓은 화면엔 단계가 없다. 검색 중에는 숨긴다(Figma 규칙).
   const chipsShown = onMarkingTab && (desktop || markingStage !== 3) && !search.source
   const fade = mapMoving ? 'opacity-0 duration-150' : 'opacity-100 delay-800 duration-300'
-  // 패널이 다 열려 자리 잡았는지. 접기 시작하면 바로 false, 펼치면 미끄러지기가 끝난 뒤 true.
-  // - 지도 틀은 이때만 좁힌다. 그래야 패널이 미끄러지는 동안 그 뒤에 늘 지도가 깔려 있다
-  //   (지도 틀을 같이 움직이면 카카오맵이 프레임마다 다시 재지 못해 회색이 비친다).
-  // - 탭 줄은 이때만 패널 아래로 내린다(TabRail).
-  const [panelSettled, setPanelSettled] = useState(panelOpen)
-  if (!panelOpen && panelSettled) setPanelSettled(false)
-  useEffect(() => {
-    if (!panelOpen) return
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const t = window.setTimeout(() => setPanelSettled(true), reduce ? 0 : PANEL_SLIDE_MS)
-    return () => window.clearTimeout(t)
-  }, [panelOpen])
-  // 넓은 화면의 지도 영역 왼쪽 끝 — 패널을 접어도 탭 줄은 남는다.
-  const mapLeft = desktop ? (panelSettled ? panelW : RAIL_W) : 0
-  // 지도 위 덧칠(칩·« 손잡이)은 패널 가장자리를 따라 같이 미끄러진다.
   // 「일정 짜기」 옆 패널이 열려 있으면 지도 위 토스트·버튼·칩이 그 오른쪽으로 비킨다(패널이 가리지 않게).
   const sideOpen = useScheduleOpen(mapId) && onShortlistTab && desktop
-  const overlayLeft = (panelOpen ? panelW : RAIL_W) + (sideOpen ? SIDE_PANEL_W : 0)
+  // 지도는 늘 화면 전체이고 패널은 그 위에 뜬 카드다(#1538). 지도 위 덧칠(칩·« 손잡이)과 카메라는 카드가 가린 폭만큼 비킨다.
+  const cover = desktop ? panelCover(panelOpen, panelW, sideOpen) : 0
 
   return (
     <>
       <MapCanvas
         pins={pins}
+        freshPinIds={freshPinIds}
         // 핀이 없으면 지도 만들 때 고른 지역에서 시작한다(없으면 서울).
         startCenter={mapInfo?.regionCenter}
         selectedPinId={selectedPinId}
@@ -401,7 +465,7 @@ export default function MapLayout() {
         route={routeDrawings}
         // 원은 준비 화면(run 없음)에만 그린다. 결과의 다시 추천·넓히기는 run을 만들 때의 가운데에서 찾아서, 지도를 따라가는 원은 그 범위와 어긋난다.
         recommendArea={onRecommendTab ? { boundary: regionBoundary, radiusM: run ? null : recommendRadiusM } : null}
-        // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 확정된 장소」로 돌아온다).
+        // 확정 탭에서 누른 핀은 확정 탭 안에서 연다(「‹ 장소 확정」으로 돌아온다).
         onSelect={(pinId) => {
           setPanelOpen(true)
           // 검색 결과를 보다가 핀을 고르면 매달린 핑고는 들어간다.
@@ -411,6 +475,13 @@ export default function MapLayout() {
           if (onMarkingTab || onConfirmedTab) selectPin(pinId)
           else navigate(`/maps/${mapId}?pin=${encodeURIComponent(pinId)}`)
         }}
+        // 가장 가까이 확대해도 겹친 핀 묶음(#1576) — 마킹 탭 목록에 그 핀들만 보인다. 다른 탭에서 눌렀으면 마킹 탭으로 간다.
+        onPinGroup={(ids) => {
+          setPanelOpen(true)
+          useSearchStore.getState().select(null)
+          if (onMarkingTab) showGroup(ids)
+          else navigate(`/maps/${mapId}?${PIN_GROUP_PARAM}=${encodeURIComponent(ids.join(','))}`)
+        }}
         onResultGroup={(ids) => {
           useSearchStore.getState().showGroup(ids)
           // 접힌 패널에선 묶인 곳 목록을 볼 곳이 없다(넓은 화면).
@@ -419,33 +490,47 @@ export default function MapLayout() {
         onReady={onMapReady}
         onMovingChange={onMovingChange}
         onMapClick={onMapClick}
+        onMapMenu={onMapMenu}
         tapBubble={tapAt && { ...tapAt, onPress: () => searchNearby(tapAt) }}
-        leftInset={mapLeft}
+        leftCover={cover}
       />
 
-      {desktop && <TabRail mapId={mapId} raised={!panelSettled} />}
-
-      {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 탭 줄 오른쪽 내용 패널이다. */}
-      {/* 접기는 탭 줄 뒤로 left 를 옮겨 미끄러뜨린다 — transform 이면 안쪽 fixed 확인 창이 패널 기준으로 잡힌다. */}
+      {/* 모바일은 'contents' 라 틀이 없고 안쪽이 각자 화면에 붙는다. 넓은 화면은 이 틀이 지도 위에 뜬 왼쪽 패널 카드다(#1538). */}
+      {/* 접기는 화면 왼쪽 밖으로 left 를 옮겨 미끄러뜨린다 — transform 이면 안쪽 fixed 확인 창이 패널 기준으로 잡힌다. */}
       {/* 다 접히면 invisible + inert 로 보이지도, 포커스가 들어가지도 않는다. */}
       <div
         id="map-panel"
         inert={desktop && !panelOpen}
-        style={desktop ? { left: panelOpen ? RAIL_W : RAIL_W - (panelW - RAIL_W), width: panelW - RAIL_W } : undefined}
+        style={desktop ? { left: panelOpen ? PANEL_GAP : -panelW, width: panelW } : undefined}
         className={
           desktop
-            ? `fixed inset-y-0 z-30 flex flex-col border-r border-ink-200 bg-white transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
+            ? `fixed inset-y-3 z-30 flex flex-col overflow-hidden rounded-2xl bg-[var(--surface-sheet)] shadow-float transition-[left,visibility] duration-300 ease-out motion-reduce:transition-none ${
                 panelOpen ? 'visible' : 'invisible'
               }`
             : 'contents'
         }
       >
+        {/* 패널 바탕은 탭 내용과 같은 시트 면이다 — 머리 아래만 흰 띠면 따로 붙인 판처럼 보였다(#1680). 검색창은 흰 칸이라 필터 칸처럼 떠 보인다. */}
         {/* 넓은 화면 pb-1: 검색창 포커스 테두리(바깥 4px)가 바로 아래 탭 내용(흰 바탕)에 덮이지 않게 자리를 둔다. */}
         <header
           data-map-header
           // 최근 검색 목록이 열리면 바텀시트(z-30) 위쪽에 붙은 지도 버튼보다 위로 올린다.
           className={desktop ? 'shrink-0 space-y-3 px-4 pb-1 pt-3' : `pointer-events-none fixed inset-x-0 top-0 ${searchFocused ? 'z-40' : 'z-20'} space-y-2 px-4 pt-3`}
         >
+          {/* 넓은 화면의 파란 머리(카카오맵 왼쪽 패널 모양, #1538) — ☰ 메뉴 · 워드마크 · 탭 4개. 탭은 패널을 접으면 같이 접힌다. */}
+          {desktop && (
+            <div className="-mx-4 -mt-3 bg-brand-600 px-4 pt-3">
+              <div className="flex h-8 items-center gap-2">
+                <AppMenu mapId={mapId} />
+                <Wordmark onFill className="h-5 w-auto" />
+              </div>
+              <nav aria-label="지도 탭" className="mt-2 flex gap-1 pb-2">
+                {TABS.filter((tab) => !tab.mobileOnly).map((tab) => (
+                  <PanelTab key={tab.path} to={`/maps/${mapId}${tab.path}`} end={tab.end} label={tab.label} mapId={mapId} tab={tab.path.slice(1)} />
+                ))}
+              </nav>
+            </div>
+          )}
           <div className={desktop ? 'flex items-center gap-2' : 'flex items-center justify-between'}>
             {desktop ? (
               // 넓은 화면의 ‹ 는 패널 안 이전 화면(핀 상세 → 목록 등)이다. 돌아갈 곳이 없으면 없다 — 지도 밖으로는 제목 메뉴로 나간다.
@@ -464,7 +549,7 @@ export default function MapLayout() {
               <Link
                 to="/"
                 aria-label="내 지도 목록으로"
-                className="press pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-white text-ink-900 shadow-float"
+                className="press pointer-events-auto hit-44 flex size-8 items-center justify-center rounded-full bg-surface text-ink-900 shadow-float"
               >
                 <ChevronLeft size={20} />
               </Link>
@@ -486,25 +571,27 @@ export default function MapLayout() {
                 trigger={
                   <button
                     type="button"
-                    aria-label={`지도 정보와 구성원 ${memberCount}명`}
-                    className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 text-sm font-bold text-brand-600 press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
+                    aria-label={membersLabel}
+                    className="hit-44 flex h-8 shrink-0 items-center gap-1 rounded-full border border-ink-200 bg-surface px-2.5 text-sm font-bold text-link press data-[state=open]:border-brand-600 data-[state=open]:bg-brand-50"
                   >
                     <Users size={16} aria-hidden="true" />
                     {memberCount > 0 && memberCount}
+                    {watching > 0 && <OnlineDot />}
                   </button>
                 }
               />
             ) : (
+              // 알림은 휴대폰에서 프로필 탭으로 옮겼다 — 오른쪽 위는 손이 닿기 어렵다(#1660). 안 읽은 점은 탭 아이콘에 붙는다.
               <div className="flex items-center gap-3">
-                <NotificationBell floating currentMapId={mapId} />
                 <button
                   type="button"
-                  aria-label={`지도 정보와 구성원 ${memberCount}명`}
+                  aria-label={membersLabel}
                   onClick={() => openProfile(true)}
-                  className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-sm font-bold text-brand-600 shadow-float"
+                  className="press pointer-events-auto hit-44 flex h-8 items-center gap-1 rounded-full bg-surface px-2.5 text-sm font-bold text-link shadow-float"
                 >
                   <Users size={16} aria-hidden="true" />
                   {memberCount > 0 && memberCount}
+                  {watching > 0 && <OnlineDot />}
                 </button>
               </div>
             )}
@@ -512,38 +599,56 @@ export default function MapLayout() {
           {/* 지도 위에는 검색창만 둔다(FE 회의). 지도를 끄는 동안엔 지도에 집중하게 흐려진다. 검색 동작은 #293. */}
           {/* 검색 결과는 화면에 보여 주기만 한다(#53). Enter 나 돋보기를 눌렀을 때만 부른다(호출 상한, api-spec). */}
           {/* 넓은 화면은 패널 안이라 그림자·흐림이 없다(그림자는 지도 위에 떠 있는 것에만). */}
-          {/* 포커스가 검색창이나 최근 검색 목록 안에 있는 동안만 목록을 연다. Esc는 닫는다. */}
+          {/* 포커스가 검색창이나 최근 검색 목록 안에 있고, 검색창을 누른 뒤 아직 글을 치지 않았을 때 목록을 연다. Esc는 닫는다. */}
           <div
+            ref={searchBox}
             className="relative"
             onFocus={() => setSearchFocused(true)}
             onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setSearchFocused(false)}
-            onKeyDown={(e) => e.key === 'Escape' && setSearchFocused(false)}
+            // Esc는 목록만 닫는다. 검색칸(type=search)은 Esc에 글을 지우는 브라우저 기본 동작이 있어, 막지 않으면 빈 칸이 되며 목록이 다시 열린다.
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return
+              e.preventDefault()
+              setRecentWanted(false)
+            }}
           >
             <form
               role="search"
               inert={!desktop && mapMoving}
               onSubmit={submitSearch}
-              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 rounded-xl border bg-white px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
-                search.source ? 'border-brand-600' : 'border-ink-200'
+              // 최근 검색이 열리면 목록과 한 덩어리로 붙인다 — 아래 모서리를 펴고, 둘레는 brand-600(포커스 표시), 이음매는 옅은 선.
+              className={`${desktop ? '' : 'pointer-events-auto '}flex items-center gap-2 border bg-surface px-4 py-3 ${desktop ? '' : 'shadow-float transition-opacity '}${
+                recentOpen
+                  ? 'rounded-t-xl border-brand-600 border-b-ink-100'
+                  : `rounded-xl has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-[var(--line-focus)] ${
+                      search.source ? 'border-brand-600' : 'border-ink-200'
+                    }`
               }${desktop ? '' : ` ${fade}`}`}
             >
               <input
                 id="place-search"
                 type="search"
                 enterKeyHint="search"
+                // 브라우저(크롬·안드로이드 크롬) 입력 기록 목록이 「최근 검색」과 겹쳐 뜨지 않게 끈다.
+                autoComplete="off"
                 value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
+                onFocus={() => setRecentWanted(true)}
+                onClick={() => setRecentWanted(true)}
+                onChange={(e) => {
+                  setSearchText(e.target.value)
+                  setRecentWanted(!e.target.value)
+                }}
                 maxLength={2000}
                 placeholder="장소 이름 또는 지도 링크"
                 aria-label="장소 검색"
                 className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-ink-500 [&::-webkit-search-cancel-button]:hidden"
               />
               {searchText && <ClearButton label="검색어 지우기" onClick={clearSearch} />}
-              <button type="submit" aria-label="검색" className="hit-44 text-brand-600">
+              <button type="submit" aria-label="검색" className="hit-44 text-link">
                 <Search size={20} />
               </button>
             </form>
-            {searchFocused && !searchText && recent.list.length > 0 && (
+            {recentOpen && (
               <RecentSearches
                 list={recent.list}
                 floating={!desktop}
@@ -559,13 +664,19 @@ export default function MapLayout() {
               />
             )}
           </div>
+          {/* 칩 줄 끝 「?」는 지도 쓰는 법(#1613). 칩은 옆으로 밀고 「?」는 오른쪽에 남는다. */}
           {!desktop && chipsShown && (
-            <CategoryChips
-              value={filters.category}
-              onChange={(c) => setFilter('category', c)}
-              floating
-              className={`pointer-events-auto -mx-4 px-4 pb-1 transition-opacity ${fade}`}
-            />
+            <div className={`-ml-4 flex items-center gap-2 transition-opacity ${fade}`}>
+              <CategoryChips
+                value={filters.category}
+                onChange={(c) => setFilter('category', c)}
+                floating
+                className="pointer-events-auto min-w-0 flex-1 pb-1 pl-4"
+              />
+              <span className="-mt-1 shrink-0">
+                <MapGestureHelp />
+              </span>
+            </div>
           )}
         </header>
 
@@ -574,10 +685,12 @@ export default function MapLayout() {
           <Outlet context={context} />
         </ErrorBoundary>
 
+        {/* 바닥에서 띄운 알약(네이버 지도 시안). 시트 내용이 밑으로 비쳐 지나가게 살짝 비치고 흐리게 한다. */}
         {!desktop && (
           <nav
-            style={{ minHeight: `calc(${TAB_BAR_H}px + env(safe-area-inset-bottom, 0px))` }}
-            className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 items-end border-t border-ink-100 bg-white"
+            aria-label="지도 탭"
+            style={{ height: TAB_BAR.h, bottom: `calc(${TAB_BAR.gap}px + env(safe-area-inset-bottom, 0px))` }}
+            className="fixed inset-x-4 z-40 grid grid-cols-5 gap-1 rounded-full bg-surface/90 p-1.5 shadow-float ring-1 ring-ink-200/60 backdrop-blur-md"
           >
             {TABS.map((tab) => (
               <TabLink
@@ -585,7 +698,13 @@ export default function MapLayout() {
                 to={`/maps/${mapId}${tab.path}`}
                 end={tab.end}
                 label={tab.label}
-                icon={tab.Icon ? <tab.Icon size={24} /> : <PingoMark size={28} />}
+                mapId={mapId}
+                tab={tab.path.slice(1)}
+                icon={
+                  tab.path === '/me' ? <MeIcon name={me?.display_name} unread={unread > 0} />
+                  : tab.Icon ? <tab.Icon size={24} />
+                  : <PingoMark size={28} />
+                }
               />
             ))}
           </nav>
@@ -596,21 +715,36 @@ export default function MapLayout() {
       {desktop && (
         <div
           className="pointer-events-none fixed inset-y-0 right-0 z-20 transition-[left] duration-300 ease-out motion-reduce:transition-none"
-          style={{ left: overlayLeft }}
+          style={{ left: cover }}
         >
-          <div className="absolute inset-x-4 top-3 flex flex-col items-start gap-2">
-            {chipsShown && (
-              <CategoryChips
-                value={filters.category}
-                onChange={(c) => setFilter('category', c)}
-                floating
-                // 마우스로는 옆으로 밀기 어렵고 가로 스크롤바가 지도를 가려서, 좁으면 줄을 바꾼다.
-                // 터치(태블릿)는 모바일처럼 옆으로 민다 — 좁은 지도 위에서 칩이 두세 줄로 쌓이지 않게(#603).
-                className={`pointer-events-auto max-w-full pointer-fine:flex-wrap transition-opacity ${fade}`}
-              />
-            )}
-            {connection.state !== 'open' && <ConnectionBanner floating state={connection.state} onReconnect={connection.reconnect} />}
+          {/* 내 계정(카카오맵 오른쪽 위 원, #1538) — 이름 바꾸기·초대 링크·로그아웃. 지도 정보·구성원은 패널의 구성원 버튼이다. */}
+          <div className="pointer-events-auto absolute right-4 top-3 rounded-full bg-surface shadow-float">
+            <AccountMenu maps={myMaps} name={me?.display_name} />
           </div>
+          <div className="absolute left-4 right-20 top-3 flex flex-col items-start gap-2">
+            {chipsShown && (
+              <div className={`flex max-w-full items-start gap-2 transition-opacity ${fade}`}>
+                <CategoryChips
+                  value={filters.category}
+                  onChange={(c) => setFilter('category', c)}
+                  floating
+                  // 마우스로는 옆으로 밀기 어렵고 가로 스크롤바가 지도를 가려서, 좁으면 줄을 바꾼다.
+                  // 터치(태블릿)는 모바일처럼 옆으로 민다 — 좁은 지도 위에서 칩이 두세 줄로 쌓이지 않게(#603).
+                  className="pointer-events-auto min-w-0 pointer-fine:flex-wrap"
+                />
+                {/* 지도 쓰는 법(#1613) — 칩 줄 끝. */}
+                <span className="shrink-0 py-1.5">
+                  <MapGestureHelp />
+                </span>
+              </div>
+            )}
+          </div>
+          {/* 연결 끊김은 지도 위쪽 가운데, 칩 줄 아래(#1575) — 왼쪽 위에 두면 칩과 섞여 안 보였다. 좁은 화면에서도 칩과 겹치지 않게 칩 줄 아래다. */}
+          {connection.state !== 'open' && (
+            <div className="absolute inset-x-4 top-16 flex justify-center">
+              <ConnectionBanner floating state={connection.state} onReconnect={connection.reconnect} />
+            </div>
+          )}
           <PanelToggle open={panelOpen} onToggle={() => setPanelOpen(!panelOpen)} />
           <MapControls docked hidden={modalOpen} fading={mapMoving} active={activeControl} onPress={onControl} />
           {/* 조언은 지도 단위라 네 탭 모두(#1162). */}
@@ -624,6 +758,10 @@ export default function MapLayout() {
       {profileOpen && !desktop && <ProfileModal mapId={mapId} onClose={() => openProfile(false)} />}
       {/* 카톡 가져오기 시트는 탭 화면 밖 한 자리에서 그린다 — 목록 머리가 바뀌어도 함께 사라지지 않게(#1045). */}
       <ImportSheetHost mapId={mapId} />
+      {/* 짜는 중인 AI 코스를 탭 밖에서도 지켜본다(#1719). */}
+      <CourseRunWatcher mapId={mapId} />
+      {/* 핀을 지도 위에 끌어다 놓아 옮기기(#1549). 화면 크기와 상관없이 하나만 둔다. */}
+      <PinMoveHost mapId={mapId} />
       {/* 확정 탭 「일정 짜기」 패널(넓은 화면만) — 탭을 떠나면 닫힌다. */}
       {onShortlistTab && desktop && <SchedulePanelHost mapId={mapId} />}
     </>
@@ -631,94 +769,112 @@ export default function MapLayout() {
 }
 
 /**
- * 최종기획안 4절의 탭 3개에 「AI 코스」(#683, 확정 탭의 시트였던 것)를 더한 4개. 라벨은 고정 용어(9절). 하단 탭과 넓은 화면 탭 줄이 이 표 하나를 쓴다.
+ * 최종기획안 4절의 탭 3개에 「AI 코스」(#683, 확정 탭의 시트였던 것)를 더한 4개. 라벨은 고정 용어(9절). 하단 탭과 넓은 화면 패널 머리의 탭이 이 표 하나를 쓴다.
  * AI 는 선 아이콘 대신 핑고 얼굴(PingoMark)이다(Icon 없음).
  */
-const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null }[] = [
-  { path: '', end: true, label: '마킹된 장소', Icon: MapPin },
+const TABS: { path: string; end?: boolean; label: string; Icon: LucideIcon | null; mobileOnly?: true }[] = [
+  { path: '', end: true, label: '핀 찍기', Icon: MapPin },
   { path: '/recommend', label: 'AI 추천', Icon: null },
-  { path: '/shortlist', label: '확정된 장소', Icon: FileText },
+  { path: '/shortlist', label: '장소 확정', Icon: FileText },
   { path: '/course', label: 'AI 코스', Icon: Route },
+  // 휴대폰만(#1660). 넓은 화면은 오른쪽 위 계정 원이 같은 일을 한다. 아이콘은 내 이니셜 원이다.
+  { path: '/me', label: '프로필', Icon: null, mobileOnly: true },
 ]
+
+/** 프로필 탭 아이콘 — 내 이니셜 원, 안 읽은 알림이 있으면 오른쪽 위 빨간 점(종과 같은 점). */
+function MeIcon({ name, unread }: { name?: string; unread: boolean }) {
+  return (
+    // 지금 탭의 회색 알약 위에서도 원이 보이게 테두리를 두른다.
+    <span className="relative rounded-full ring-1 ring-ink-300">
+      <Avatar name={name} size={24} />
+      {unread && (
+        <>
+          <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />
+          <span className="sr-only">안 읽은 알림 있음,</span>
+        </>
+      )}
+    </span>
+  )
+}
 
 /**
  * 하단 탭 칸 하나 — 아이콘 + 11/500 라벨, 비활성 ink-500(흰 바탕 대비 약 5:1). AI 추천도 같은 모양이다(핑고 얼굴).
- * 3칸일 때 가운데에 두던 AI 원(48px, 떠 있음)은 4칸이 되며 둘째 칸에서 왼쪽으로 치우쳐 보여 뺐다(2026-11-03).
+ * 지금 탭은 칸 전체를 채운 회색 알약(muted) 위 파란 글자다(네이버 지도 시안).
  */
-function TabLink({ to, end, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
+function TabLink({ to, end, label, icon, mapId, tab }: { to: string; end?: boolean; label: string; icon: ReactNode; mapId: string; tab: string }) {
+  const news = useTabNews(mapId, tab)
+  const bubble = useBubble(news)
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
-        `press flex flex-col items-center gap-0.5 rounded-xl pb-2 text-label font-medium ${isActive ? 'text-brand-600' : 'text-ink-500'}`
+        `press relative flex flex-col items-center justify-center gap-0.5 rounded-full text-label font-medium ${isActive ? 'bg-muted text-link' : 'text-ink-500'}`
       }
     >
-      {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 네 칸 높이를 맞춘다(세로 탭 줄과 같다). */}
-      <span className="flex size-7 items-center justify-center">{icon}</span>
+      {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 네 칸 높이를 맞춘다. */}
+      <span className="relative flex size-7 items-center justify-center">
+        {icon}
+        {news && <NewsDot />}
+      </span>
       {label}
+      {news && <span className="sr-only">, {news}</span>}
+      {/* 새 소식이 오면 탭 위에 4초 동안 말풍선(#1704). 점은 그 탭에 들어갈 때까지 남는다. */}
+      {bubble && <TipBubble>{bubble}</TipBubble>}
     </NavLink>
   )
 }
 
-/**
- * 넓은 화면 왼쪽 끝 세로 탭 줄(#338, 네이버 지도처럼). 라벨·아이콘은 하단 탭과 같고 AI 도 다른 탭과 같은 모양이다.
- * 패널을 접어도 남고, 누르면 그 탭으로 가면서 패널을 다시 연다.
- */
-function TabRail({ mapId, raised }: { mapId: string; raised: boolean }) {
-  // 패널이 다 열려 있으면 탭 줄은 패널(z-30)보다 아래 — 패널 안 확인 창의 딤이 DOM 순서와 상관없이 탭 줄까지 덮는다.
-  // 미끄러지는 중이거나 접혀 있으면(raised) 위 — 패널이 탭 줄 밑으로 들어가고 나온다. 확인 창은 다 열린 패널에서만 뜬다.
-  return (
-    <nav
-      aria-label="지도 탭"
-      style={{ width: RAIL_W }}
-      className={`fixed inset-y-0 left-0 ${raised ? 'z-40' : 'z-20'} flex flex-col gap-1 border-r border-ink-200 bg-white px-1 pt-3`}
-    >
-      {TABS.map((tab) => (
-        <RailTab
-          key={tab.path}
-          to={`/maps/${mapId}${tab.path}`}
-          end={tab.end}
-          label={tab.label}
-          icon={tab.Icon ? <tab.Icon size={24} /> : <PingoMark size={28} />}
-        />
-      ))}
-    </nav>
-  )
+/** 새 소식 점 — 프로필 탭의 안 읽은 알림 점과 같은 귤색 점(DESIGN.md 새 소식은 귤색). */
+function NewsDot() {
+  return <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-[var(--notify-dot)] ring-2 ring-white" />
+}
+
+/** 새 소식 글이 생기거나 바뀌면 그 글을 잠깐 보인다. */
+const BUBBLE_MS = 4000
+function useBubble(news: string | undefined) {
+  const [shown, setShown] = useState<string | undefined>()
+  useEffect(() => {
+    if (!news) return setShown(undefined)
+    setShown(news)
+    const t = setTimeout(() => setShown(undefined), BUBBLE_MS)
+    return () => clearTimeout(t)
+  }, [news])
+  return shown
 }
 
 /**
- * 탭 줄의 칸 하나. 아이콘 + 11/500 라벨(하단 탭과 같은 위계), 활성은 brand-50 면 + brand-600.
- * 지금 탭을 다시 누르면 이동하지 않고 패널만 연다 — 이동하면 보던 핀 상세(?pin=)가 사라진다.
+ * 패널 머리의 탭 하나(#1538). 파란 면 위 흰 14/700 글자, 지금 탭은 brand-700 칸으로 한 단계 진하다(카카오맵 탭 모양).
+ * 지금 탭을 다시 누르면 이동하지 않는다 — 이동하면 보던 핀 상세(?pin=)가 사라진다.
  */
-function RailTab({ to, end = false, label, icon }: { to: string; end?: boolean; label: string; icon: ReactNode }) {
+function PanelTab({ to, end = false, label, mapId, tab }: { to: string; end?: boolean; label: string; mapId: string; tab: string }) {
   const active = useMatch({ path: to, end }) !== null
-  const panelOpen = useSheetStore((s) => s.panelOpen)
+  // 넓은 화면은 점만 단다 — 패널 머리 위로 말풍선을 띄울 자리가 없다(#1704).
+  const news = useTabNews(mapId, tab)
   return (
     <NavLink
       to={to}
       end={end}
-      aria-controls="map-panel"
-      aria-expanded={panelOpen}
-      onClick={(e) => {
-        if (active) e.preventDefault()
-        useSheetStore.getState().setPanelOpen(true)
-      }}
+      onClick={(e) => active && e.preventDefault()}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-1 rounded-xl py-2.5 text-label font-medium break-keep ${
-          isActive ? 'press bg-brand-50 text-brand-600' : 'press text-ink-500 hover:text-ink-700'
+        `hit-y-44 relative flex min-h-9 items-center rounded-md px-3 text-sm font-bold break-keep text-white transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-white ${
+          isActive ? 'bg-brand-700' : 'hover:bg-white/15'
         }`
       }
     >
-      {/* 핑고는 선 아이콘보다 커서 같은 칸에 넣어 세 칸 높이를 맞춘다. */}
-      <span className="flex size-7 items-center justify-center">{icon}</span>
       {label}
+      {news && (
+        <>
+          <NewsDot />
+          <span className="sr-only">, {news}</span>
+        </>
+      )}
     </NavLink>
   )
 }
 
 /**
- * 패널 접기·펼치기 손잡이(#338). 지도 영역 왼쪽 끝(펼치면 패널, 접으면 탭 줄 오른쪽) 세로 가운데에 붙는다.
+ * 패널 접기·펼치기 손잡이(#338). 지도 영역 왼쪽 끝(펼치면 패널 오른쪽, 접으면 화면 왼쪽 끝) 세로 가운데에 붙는다.
  * 보이는 건 24×48, 누르는 곳은 44×56.
  */
 function PanelToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
@@ -731,7 +887,7 @@ function PanelToggle({ open, onToggle }: { open: boolean; onToggle: () => void }
       onClick={onToggle}
       className="pointer-events-auto absolute left-0 top-1/2 flex h-14 w-11 -translate-y-1/2 items-center"
     >
-      <span className="press flex h-12 w-6 items-center justify-center rounded-r-lg border border-l-0 border-ink-200 bg-white text-ink-600 shadow-float">
+      <span className="press flex h-12 w-6 items-center justify-center rounded-r-lg border border-l-0 border-ink-200 bg-surface text-ink-600 shadow-float">
         {open ? <ChevronsLeft size={16} aria-hidden="true" /> : <ChevronsRight size={16} aria-hidden="true" />}
       </span>
     </button>

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { PIN_OUTLINE, PIN_PATH } from './pinPath'
+import { pinGlyph } from './pinGlyph'
 
 /**
  * 지도 대표 이미지의 기본 그림(#1445) — 지도 지역의 명소를 핑고와 같은 결(평면 2D, 채운 면, 둥근 끝)로 그린다.
@@ -124,12 +124,9 @@ const Chuncheon = (
 const Fallback = (
   <>
     <path d="M0 112L320 78v14L0 126z" fill="#fff" />
-    <g transform="translate(110 46)">
-      <path d={PIN_PATH} fill="var(--pin-fill-full)" stroke="var(--pin-outline)" strokeWidth={PIN_OUTLINE} />
-    </g>
-    <g transform="translate(196 34)">
-      <path d={PIN_PATH} fill="var(--pin-confirmed)" stroke="var(--pin-confirmed-mark)" strokeWidth={PIN_OUTLINE} />
-    </g>
+    {/* 지도와 같은 핀 그림(`pinGlyph`, 상수로만 만든 마크업) — 일반 · 확정. */}
+    <g transform="translate(110 46)" dangerouslySetInnerHTML={{ __html: pinGlyph({ kind: 'normal', ratio: 1 }) }} />
+    <g transform="translate(196 34)" dangerouslySetInnerHTML={{ __html: pinGlyph({ kind: 'confirmed' }) }} />
   </>
 )
 
@@ -147,10 +144,11 @@ export function hasRegionCover(region?: string) {
   return region != null && region in BY_REGION
 }
 
-export default function RegionCover({ region, color, className = '' }: { region?: string; color?: string | null; className?: string }) {
+/** 하늘은 늘 ink-100 이다 — 지도 색은 카드 바탕에만 쓴다(#1537). */
+export default function RegionCover({ region, className = '' }: { region?: string; className?: string }) {
   return (
-    <svg viewBox="0 0 320 140" preserveAspectRatio="xMidYMid slice" className={className} aria-hidden="true">
-      <rect width="320" height="140" fill={color ?? 'var(--ink-100)'} />
+    <svg viewBox="0 0 320 140" preserveAspectRatio="xMidYMid slice" className={`keep-light ${className}`} aria-hidden="true">
+      <rect width="320" height="140" fill="var(--ink-100)" />
       <Backdrop />
       {(region && BY_REGION[region]) ?? Fallback}
     </svg>

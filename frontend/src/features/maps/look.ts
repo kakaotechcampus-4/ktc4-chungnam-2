@@ -1,7 +1,13 @@
 /**
  * 지도 대표 이미지와 색(#1445). 둘 다 지도 단위이고 방장만 바꾼다(api-spec PATCH /maps/{mapId}, PUT /maps/{mapId}/cover).
- * 색은 카드 바탕과 기본 그림의 하늘이라 글자가 잘 읽히는 밝은 파스텔만 견본으로 둔다. 직접 고른 색은 그대로 쓴다.
+ * 색은 카드 바탕이라(#1537, 기본 그림 하늘은 바꾸지 않는다) 글자가 잘 읽히는 밝은 파스텔만 견본으로 둔다. 직접 고른 색은 그대로 쓴다.
  */
+/**
+ * 카드 바탕에 지도 색을 입힌다. 다크에서는 파스텔을 그대로 깔면 밝은 글자가 묻혀서 카드 면에 조금만 섞는다(`--map-card-tint`, #1412).
+ * 목록 카드와 색상 변경 미리보기가 같이 쓴다.
+ */
+export const cardTint = (color: string) => ({ background: `color-mix(in srgb, ${color} var(--map-card-tint), var(--surface-card))` })
+
 export const MAP_COLORS = [
   { value: '#FDE2E4', name: '벚꽃' },
   { value: '#FCE5D4', name: '살구' },

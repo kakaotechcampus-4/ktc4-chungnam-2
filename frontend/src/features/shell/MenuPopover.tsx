@@ -6,6 +6,8 @@ import { Popover } from 'radix-ui'
  * 딤이 없고, 바깥을 누르거나 Esc 로 닫는다. 토스트는 화면 쪽 토스트 자리에 뜬다.
  * `holdOpen` 이 켜져 있는 동안(확인 창이 떠 있을 때)은 닫지 않는다 — 모바일 시트 위에 확인 창이 뜨는 것과 같게,
  * 취소하면 메뉴로 돌아온다. 확인 창은 `overlay` 로 넘긴다.
+ * 폭은 22rem 이되 화면 폭 - 32px 를 넘지 않는다. 휴대폰 파이어폭스는 기기 글자 크기를 rem 에 그대로 실어
+ * 22rem 이 화면보다 넓어졌고, radix 는 자리만 옮기고 폭은 줄이지 않아 오른쪽이 잘렸다(#1643).
  */
 export default function MenuPopover({
   label,
@@ -35,7 +37,7 @@ export default function MenuPopover({
           collisionPadding={16}
           onInteractOutside={keepOpen}
           onFocusOutside={keepOpen}
-          className="z-50 max-h-[var(--radix-popover-content-available-height)] w-[22rem] overflow-y-auto rounded-2xl border border-ink-200 bg-white p-4 shadow-float outline-none"
+          className="z-50 max-h-[var(--radix-popover-content-available-height)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-ink-200 bg-surface p-4 shadow-float outline-none"
         >
           {children}
         </Popover.Content>

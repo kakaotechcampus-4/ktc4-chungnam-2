@@ -5,7 +5,7 @@ import Mark from '@/ui/Mark'
 import Sentences from '@/ui/Sentences'
 
 const CONFIRMED_MARK = (
-  <span className="text-[var(--pin-confirmed-mark)]">
+  <span className="text-[var(--confirmed-text)]">
     <Mark kind="star" size={14} />
   </span>
 )
@@ -31,10 +31,10 @@ const PIN_TERMS = [
         <Mark kind="unknown" size={14} />
       </span>
     ), term: '미확인', text: '아직 의견을 남기지 않은 사람 수예요' },
-  { mark: CONFIRMED_MARK, term: '확정 리스트', text: '가기로 정한 곳이에요. 확정된 장소 탭에서 들를 순서를 봐요' },
+  { mark: CONFIRMED_MARK, term: '확정 리스트', text: '가기로 정한 곳이에요. 장소 확정 탭에서 들를 순서를 봐요' },
 ]
 
-/** 확정된 장소 탭에서 처음 보는 말(멘토 리뷰 #1401, #1484). */
+/** 장소 확정 탭에서 처음 보는 말(멘토 리뷰 #1401, #1484). */
 const SHORTLIST_TERMS = [
   { mark: CONFIRMED_MARK, term: '확정 리스트', text: '가기로 정한 곳이에요. 아래 목록은 아직 일정에 넣지 않은 곳이에요' },
   // 글 옆 기호에 lucide를 쓰지 않아서(DESIGN.md Don't) 일정·동선 보기는 기호 없이 자리만 맞춘다.
@@ -44,11 +44,11 @@ const SHORTLIST_TERMS = [
 
 const VARIANTS = {
   pins: { terms: PIN_TERMS, label: '의견 표시 설명', button: '좋음, 반대, 미확인 설명 보기' },
-  shortlist: { terms: SHORTLIST_TERMS, label: '확정 리스트와 일정 설명', button: '확정된 장소 탭 용어 설명 보기' },
+  shortlist: { terms: SHORTLIST_TERMS, label: '확정 리스트와 일정 설명', button: '장소 확정 탭 용어 설명 보기' },
 }
 
 /**
- * 용어가 무엇인지 그 말이 나오는 자리에서 연다. `pins`(기본): 핀 상세 집계 줄, 마킹된 장소 목록 머리. `shortlist`: 확정된 장소 탭 머리.
+ * 용어가 무엇인지 그 말이 나오는 자리에서 연다. `pins`(기본): 핀 상세 집계 줄, 핀 찍기 목록 머리. `shortlist`: 장소 확정 탭 머리.
  * 「미확인」은 장소 정보가 확인 안 됐다는 말로 읽히기 쉬워서, 아직 의견을 남기지 않은 사람 수라는 걸 여기서 푼다.
  */
 export default function ReactionHelp({ on = 'pins' }: { on?: keyof typeof VARIANTS }) {

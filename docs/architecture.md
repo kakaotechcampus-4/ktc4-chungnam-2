@@ -22,10 +22,15 @@
 | 모듈 | 책임 | 기획안 근거 | 의존 |
 |---|---|---|---|
 | `common` | 에러 포맷, 설정, DB 세션·트랜잭션 경계, `seq` 채번, 좌표 유틸(PostGIS), `event_log` 발행 계약(`record_event`) | #2 | — |
-| `auth` | 카카오 OAuth 콜백, 세션 쿠키 발급·검증, 로그인/로그아웃/탈퇴 | 13절, 12절 | `common` |
+| `auth` | 카카오·구글 OAuth 콜백(#1514), 게스트, 세션 쿠키 발급·검증, 로그인/로그아웃/탈퇴, 탈퇴·게스트 합치기 목록(`WITHDRAW_STEPS`, `MERGE_STEPS`) | 13절, 12절 | `common`. 탈퇴와 합치기 목록이 기능 모듈 `api.py`를 부른다(아래 알려진 예외) |
 | `authz` | 롤 → 접근범위 + 액션 선언적 권한 판정, 라우터 의존성(`guard`)으로 404/403 분기, 응답에 `permissions` 주입 | 15-1 (재설계) | `common`, `maps` |
 
-`authz`가 `maps`를 의존하는 것은 멤버십 조회(`maps.api.DbMembershipGateway`) 때문이다. 수평 레이어 안에서 유일하게 기능 모듈을 향하는 화살표라, 이 방향이 늘어나면 순환이 생길 수 있어 주의해서 본다.
+수평 레이어가 기능 모듈을 향하는 화살표는 두 군데이고, 둘 다 `backend/pyproject.toml`의 import-linter 계약에 알려진 예외로 적혀 있다(다시 볼 조건도 그 파일에).
+
+- `authz` → `maps`: 멤버십 조회(`maps.api.DbMembershipGateway`).
+- `auth.service` → 기능 모듈의 `api.py`: 탈퇴(`WITHDRAW_STEPS`)와 게스트 합치기(`MERGE_STEPS`)가 모듈마다 `delete_by_user`, `reassign_user`를 부른다.
+
+이 방향이 늘어나면 순환이 생길 수 있어 예외 목록이 비어 가는 것을 목표로 본다.
 
 ### 기능 모듈
 
@@ -33,22 +38,23 @@
 
 | 모듈 | 책임 | 기획안 근거 | 의존 |
 |---|---|---|---|
-| `maps` | 지도 생성, 초대 링크, 구성원 관리, 구성원 수(N) 관리 | 6절 | — |
-| `pins` | 핀 CRUD, 반응(♥/🚫/?), 중복 판정, 분류×종류 이중 필터 집계 | 5-1, 5-2, 4절 | — |
+| `maps` | 지도 생성, 초대 링크, 구성원 관리, 구성원 수(N) 관리, 지도 정리(`maps.purge.PURGE_STEPS`) | 6절 | `pins`, `recommend`, `shortlist`, `realtime`, `notifications`, `agent` (api.py만. 정리와 나가기 흐름이 부른다) |
+| `pins` | 핀 CRUD, 반응(♥/🚫/?), 중복 판정, 분류×종류 이중 필터 집계 | 5-1, 5-2, 4절 | `maps`, `places`, `shortlist`, `notifications` (api.py만) |
 | `places` | 자체 장소 DB(`places`, `place_facts`) 적재·DB 내 검색, 카카오 실시간 검색(표시용 `PlaceSource`) | #14, 멘토 피드백 5, #53 | — (외부 API는 카카오 실시간 표시만, 응답은 저장하지 않음) |
-| `seeding` | 프리시딩 배치 워커, 지도 생성·핀 생성·최초 ♥ 시 큐잉 | 신규(D3), #99 | `places` (예정) |
-| `recommend` | 추천 오케스트레이션(①②③-a-2④), 근거 조립, 검색범위(circles) 계산, 선호 순위 점수(#99), funnel, 제외목록, 재시도 | 3절, 5-5~5-6-1 | `pins` |
+| `seeding` | **미구현(자리만).** 프리시딩 배치 워커로 계획했지만 v1은 적재한 라벨 파일만 쓰고 큐잉하지 않는다(3절) | 신규(D3), #99 | — |
+| `recommend` | 추천 오케스트레이션(①②③-a-2④), 근거 조립, 검색범위(circles) 계산, 선호 순위 점수(#99), funnel, 제외목록, 재시도 | 3절, 5-5~5-6-1 | `pins`, `places`, `llm`, `credits`, `maps` (api.py만) |
 | `llm` | 모델 호출(v1 요청 중에는 ② 사유 구조화 하나, ③-a-1 라벨링은 v1 스텁이라 모델을 부르지 않는다, v2 에이전트·AI 코스 호출은 `llm/models.py`의 `CALLS`) + 프롬프트 + 구조화 출력 스키마 | 8절, #99 | (외부 LLM API) |
-| `shortlist` | 확정 리스트 추가/제외, 동선 계산(모델 미사용) | 5-3, 5-10 | `pins` |
+| `shortlist` | 확정 리스트 추가/제외, 날짜별 일정, 동선 계산(모델 미사용) | 5-3, 5-10 | `pins`, `maps` (api.py만) |
 | `realtime` | SSE 채널(전체/개인), `event_log` 폴링·재동기화 | 5-5-1 | — |
 | `notifications` | 앱 안 알림함과 알림 설정(#470). 다른 모듈은 이벤트를 쓰는 같은 트랜잭션에서 `notifications.api.notify`를 수신자마다 부르고, 문장은 `compose_message`로 만든다 | 신규(v2) | — |
 | `feedback` | 서비스 피드백 저장(#10). 읽는 API는 없다 | 신규(v2) | — |
-| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 지도·알림·게스트·모델 호출·멱등 키·탈퇴 계정·이벤트·핀 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `auth`, `llm`, `recommend`, `realtime`, `pins` (api.py만) |
+| `maintenance` | 정기 정리 CLI `python -m maintenance.run`(#168). 지도·알림·게스트·모델 호출·멱등 키·탈퇴 계정·이벤트·핀 정리 함수를 부르기만 한다 | 신규 | `maps`, `notifications`, `llm`, `recommend`, `realtime`, `pins` (api.py만) |
 | `ads` | 추천 탭 광고: 기간 광고 관리, 선택(코드), 노출과 클릭의 날짜별 집계(docs/ads.md, #642) | 신규 | `places`, `recommend`, `pins` (api.py만. `recommend`는 `ads`를 import하지 않는다) |
 | `credits` | 사람마다 하나인 AI 실행 크레딧: 잔액·원장, 가격표(`credits/constants.py` 한 곳), 확인·차감·환불·후기 보상(docs/credits-reviews.md, #432). 다른 모듈은 `credits.api`만 부른다 | 신규(v2, 구현 #948) | `auth` (api.py만, 게스트 판정) |
-| `reviews` | 자체 DB 장소에 붙는 후기(별점 + 글), 신고, 숨김 스크립트(docs/credits-reviews.md, #432). 핀으로 부르고 장소를 찾는다 | 신규(v2, 구현 #951) | `pins`, `credits` (api.py만) |
+| `reviews` | 자체 DB 장소에 붙는 후기(별점 + 글), 신고, 숨김 스크립트(docs/credits-reviews.md, #432). 핀으로 부르고 장소를 찾는다 | 신규(v2, 구현 #951) | `pins`, `places`, `credits` (api.py만) |
+| `agent` | v2 계획 보조 에이전트(핑고 AI 조언: 관찰, 탐지, 진단, 제안, 후속 관찰, 지도 현황)와 AI 코스 짜기(`agent/course`). 명세는 `docs/agent-v2.md` | 신규(v2, #509, #334) | `maps`, `pins`, `places`, `recommend`, `llm`, `shortlist`, `realtime`, `credits` (api.py만) |
 
-`의존` 열은 실제 import를 기준으로 적는다(2026-09-23 기준, #113). 계획상 필요할 것 같은 의존을 미리 적지 않는다 — 표와 코드가 어긋나면 표를 믿을 수 없게 된다.
+`의존` 열은 실제 import를 기준으로 적는다(2026-11-10 다시 셈, 테스트와 평가 스크립트 제외, #113). 계획상 필요할 것 같은 의존을 미리 적지 않는다 — 표와 코드가 어긋나면 표를 믿을 수 없게 된다.
 
 의존 방향은 위에서 아래로만 흐르게 한다. `pins`가 `recommend`를 참조하지 않는다(추천이 핀을 만들지만 핀이 추천을 알 필요는 없다).
 예외였던 `realtime`의 역방향 의존(전 모듈→realtime)은 이벤트 계약을 `common`으로 내려서
@@ -66,10 +72,12 @@
 별도의 `usecases/` 공유 디렉토리를 만들지 않는다. 6개 세션이 각자 디렉토리에서 병렬로 작업하는
 이 팀의 구조상, 아무도 소유하지 않는 공유 디렉토리는 모든 교차 기능의 병목이 된다.
 
-지금 flow가 필요한 것은 둘뿐이다:
+지금 `flows.py`가 있는 모듈은 넷이다(`recommend`, `shortlist`, `maps`, `agent`). 대표적인 flow는 다음과 같다:
 
 | flow | 엔드포인트 | 위치 |
 |---|---|---|
+| 지도 나가기 | 구성원 나가기 | `backend/maps/flows.py::leave_map` |
+| 에이전트 관찰 | `python -m agent.tick`(cron) | `backend/agent/flows.py::observe_map` |
 | 후보 게시 | `POST /candidates/{candidateId}/publish` | `backend/recommend/flows.py::publish_candidate` |
 | 핀 확정 | `POST /maps/{mapId}/shortlist` | `backend/shortlist/flows.py::confirm_pin` |
 
@@ -168,7 +176,16 @@ core.py로 옮긴다.
 | `core.py` | 판단과 계산. 순수 함수 | 모른다 |
 | `service.py` | 한 모듈 안의 데이터 변경 | 안다 (`db: Session`을 받는다) |
 | `flows.py` | 여러 모듈에 걸친 변경의 순서와 실패 처리 | 안다. 단 판단은 하지 않는다(§1.1) |
-| `common/database.py::session_scope` | 커밋과 롤백 | 여기가 유일한 커밋 지점이다 |
+| `common/database.py::session_scope` | 커밋과 롤백 | 요청 하나의 유일한 커밋 지점이다 |
+
+**요청 밖 세션은 따로 커밋한다.** 요청 트랜잭션과 같이 묶이면 안 되는 쓰기는 자기 세션을 열어 그 자리에서 커밋하고, 이유를 주석으로 남긴다. 지금 있는 곳은 다음과 같다.
+
+- 추천 멱등 예약(`recommend/flows.py`): 모델 호출 전에 예약을 먼저 남겨야 동시 요청이 같은 실행을 두 번 만들지 않는다.
+- 모델 사용량 기록(`llm/usage.py`): 요청이 실패해 롤백돼도 이미 쓴 비용은 남아야 한다.
+- places 공개 함수(`places/api.py` `_session`): 호출한 쪽이 세션을 넘기지 않으면(스크립트, 백그라운드) 짧은 세션을 직접 열고 닫기 전에 커밋한다. 요청 안에서 부를 때는 세션을 넘겨 요청 트랜잭션에 참여한다(카카오 매칭은 핀 생성과 같은 커밋이어야 한다).
+- AI 코스(`agent/course/router.py`, `service.py`): 백그라운드 실행이 읽을 run 행을 응답 전에 저장하고, 백그라운드 실행은 단계마다 짧은 세션으로 저장한다.
+
+이 목록 밖에서 커밋하는 코드는 리뷰에서 의심한다.
 
 **예외: 모델을 부르기 직전에는 읽기 트랜잭션을 롤백한다(#275).** "커밋은 `session_scope` 한 곳에서만"은
 그대로다. 다만 모델 호출은 최대 15초+재시도라, 그 앞에서 읽기만 했어도 열려 있는 트랜잭션이 DB 연결
@@ -198,7 +215,10 @@ core.py로 옮긴다.
 
 | 객체 | 위치 | 들고 있는 것 | 만드는 곳 | 정리하는 곳 |
 |---|---|---|---|---|
-| `engine` | `common/database.py` | DB 연결 풀 | import 시점, 모듈 전역 | 지금은 없음. #130에서 lifespan 종료 때 `engine.dispose()` |
+| `engine` | `common/database.py` | DB 연결 풀 | import 시점, 모듈 전역 | lifespan 종료 때 `engine.dispose()`(`main.py`, #130) |
+| 요청 상한 | `common/ratelimit.py` `SlidingWindowLimiter` | 장소 검색, 링크 해석, 피드백, 게스트 입장 등의 키별 최근 요청 시각 | 각 모듈 import 시점 | 오래된 기록은 호출마다 지운다. 프로세스가 끝나면 사라진다(API 컨테이너 1개 전제) |
+| 접속 상태 | `realtime/presence.py` | 지도별 열린 SSE 연결 수, 끊긴 뒤 30초 유예 | import 시점 | 마지막 연결이 끊기고 유예가 지나면 지운다(#1551) |
+| `agent_loop` | `agent/loop.py` | 개발용 관찰 반복 작업 | lifespan 시작(`AGENT_LOOP_IN_PROCESS=True`일 때만) | lifespan 종료 때 `agent_loop.stop()`(dispatcher보다 먼저) |
 | `dispatcher` | `realtime/dispatcher.py` | 지도별 SSE 구독자 목록, 마지막으로 처리한 `event_log.seq`, 순번 구멍 추적 시각 | import 시점에 생성, lifespan에서 초기화하고 폴링 시작 | 지금은 lifespan 종료 때 폴링 작업 취소만. #130에서 정지 대기와 SSE 정리 |
 
 `SessionLocal`은 `engine`에 묶인 세션 공장이라 따로 상태를 들고 있지 않다.
@@ -260,7 +280,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 - **보존 기간 30일, 그 사이 방장이 복구할 수 있다**(#464 — `GET /maps/trash`, `POST /maps/{mapId}/restore`). 30일은 사용 데이터 없이 정한 출발값이다. 복구는 `deleted_at`만 비우면 되도록 정리 작업이 건드리지 않은 데이터가 모두 그대로 있다.
 - **모듈은 자기 테이블만 지운다.** 각 모듈이 `api.py`에 "이 지도들의 데이터 지우기" 공개 함수를 두고, maps의 정리 작업이 자식 테이블부터 순서대로 부른다. 외래키가 연쇄 삭제가 아니고(`NO ACTION`) `map_id`에 외래키가 아예 없는 테이블도 있어서 순서를 지켜 직접 지운다.
-- 지우는 테이블 12개: maps·memberships·invites(maps), pins·reactions(pins), shortlist_items·routes(shortlist), recommend_runs·candidates·evidence_lines·regions·exclusions(recommend), event_log(realtime). **`places`·`place_facts`는 지도에 속하지 않으므로 지우지 않는다.**
+- 지우는 순서와 범위는 `maps.purge.PURGE_STEPS` 한 곳이다: 에이전트 표와 AI 코스 run(agent) → 확정 리스트·일정(shortlist) → run·후보·근거 줄·지역·제외(recommend) → 핀·반응(pins) → 이벤트(realtime) → 지도·구성원·초대(maps). 모듈이 늘면 그 목록에 더한다. **`places`·`place_facts`는 지도에 속하지 않으므로 지우지 않는다.**
 - 실행은 정기 정리 하나다(`python -m maintenance.run --only maps [--dry-run]`, #168 — 예약 실행은 `deploy_rules.md`). maintenance는 `maps.api.purge_deleted_maps(db, now)`를 부르기만 한다. **기간은 maps가 정한다**(`maps.core.TRASH_RETENTION`, 경계는 `core.purge_cutoff` — 복구 판정, 휴지통 목록, 응답의 `retention_days`가 같은 값을 쓴다). 정리 API는 기간을 인자로 받지 않는다(#1474 — 정리 작업이 30을 따로 적어 넘기던 것을 멘토 리뷰에서 지적받았다). 따로 돌리던 `python -m maps.purge`는 없앴다. `--dry-run`은 같은 삭제를 한 뒤 롤백해 지울 행 수만 보여 준다.
 - 되돌릴 수 없는 작업이라 조건이 엄격하다: `deleted_at`이 있고 기간이 지난 지도만 대상이며, 다른 지도의 데이터에는 손대지 않는다.
 
@@ -308,7 +328,7 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 - **검색으로 핀 찍기(#191 1번, 결정: B)**: 카카오로 검색해 결과를 화면에 보여 주고, 사용자가 하나를 고르면 서버가 **같은 자체 DB 장소**를 찾아 **자체 데이터(장소 ID·이름·좌표)만** 저장한다. 카카오 장소 ID와 `place_url`은 함께 저장해도 된다. 매칭은 사용자가 고를 때 **한 건씩만** 한다. 짝을 못 찾았을 때 무엇을 보여 줄지는 미정(#191).
 - 핀·추천 후보·라벨은 모두 같은 자체 장소 ID를 쓴다. 후보와 라벨은 자체 DB에서 읽고, 카카오 원자료는 `recommend`나 `llm`으로 넘어가지 않는다(#190).
-- 핀 상세의 카카오 정보는 실시간 호출로 화면에만 보여 주고 저장하지 않는다. 이미지는 카카오 로컬 API에 없다.
+- 핀 상세의 카카오 정보는 실시간 호출로 화면에만 보여 주고 저장하지 않는다. 이미지는 카카오 로컬 API에 없어서, 핀 상세의 블로그 사진은 카카오(다음) 이미지 검색을 같은 규칙으로 쓴다: 핀을 열 때마다 서버가 불러 미리보기 주소, 원문 주소, 출처 이름만 넘기고 저장하거나 캐시하지 않는다. 사람 얼굴이 보이는 사진은 서버가 미리보기를 받아 메모리에서 얼굴을 검출하고 뺀다(이미지도 남기지 않는다)(`GET /pins/{pinId}/photos`, `places/photos.py`, #1157).
 - **결정(#191, 2026-10-01)**: `source: search`는 짝이 되는 자체 DB 장소가 없으면 만들지 않는다(`PLACE_NOT_SUPPORTED`). 지도 길게 눌러 찍는 핀은 v1에서 뺀다(카카오 지도에서 지정한 좌표는 저장 불가 — 답변이 허용으로 오면 v2에서 "가장 가까운 자체 DB 장소로 붙이기"를 다시 본다). 자체 DB 핀은 이름을 저장하지 않는다(`places.name`).
 - **실시간 핀(#382, 2026-10-07, #191 대체)**: 자체 DB에 없는 장소도 사람이 `source: live`로 핀을 남길 수 있다. 서버는 **카카오 장소 ID·사용자가 친 검색어·메모·카테고리만** 저장한다(이름·좌표는 저장하지 않는다 — 데브톡 10/1 답변: 실시간 호출 기반 사용은 허용, 장소 ID는 저장 가능). 화면이 지도를 열 때마다 카카오 JS SDK `services.Places.keywordSearch`로 검색어를 다시 찾고 장소 ID가 같은 결과의 이름·좌표로 마커를 그린다. 결과는 메모리에서만 쓰고 서버로 보내지 않는다. 가드레일 2는 "AI가 만드는 핀"에만 적용된다. 이 핀에는 `place_id`·좌표가 없어서 `recommend`(후보·기준 원)와 `shortlist`(동선 계산)는 좌표가 없는 핀을 건너뛴다.
 - **숙소·기타는 v1에서 핀으로 만들 수 없다**: 자체 DB가 음식점·카페·관광지만 담는다(TourAPI 숙박은 받지 않는다). 숙소 핀을 기준점으로 쓰는 동선·반경 사유는 v1에서 동작하지 않는다.
@@ -361,6 +381,8 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 ---
 
 ## 3. 프리시딩(사전 라벨링) — 온디맨드의 대기시간 문제 해소
+
+> **지금 구현 상태(2026-11-10).** 아래 프리시딩, 큐잉, 온디맨드 폴백은 **구현하지 않은 설계**다. v1은 데이터 담당이 만든 라벨 파일을 적재해 읽기만 하고(`deploy_rules.md` 「장소 데이터 적재」), 요청 중에도 백그라운드에서도 라벨을 만들지 않는다. `seeding` 모듈은 자리만 있다. 라벨이 없으면 바로 `docs/constraints.md`의 `unknown_policy`로 간다.
 
 > **2026-10-01 — v1 적용 범위(#53):** v1에서는 **요청 중에 모델로 라벨을 만들지 않고**(검색 기반 보강, 웹 검색 포함), 라벨은 자체 DB `place_facts`에서 읽는다. 라벨은 데이터 담당의 라벨 파일을 적재해 채우고, 비어 있으면 `confidence=unknown`으로 두어 `unknown_policy`를 그대로 적용한다. 아래의 프리시딩 큐·온디맨드 폴백·검색 기반 보강은 **v2(모델 라벨링)** 설계로 남겨 둔다.
 
@@ -432,6 +454,6 @@ DB로 못 하는 경우(SSE 구독자 목록처럼 연결 자체가 프로세스
 
 "6명은 적은 인원이 아니다. PR에서 테스트되는 것 + 병합 시 문제없는지 확인 — 참조 없이 어긋나는 부분이 빌드 깨짐으로 잡힌다. 배포 데모가 커밋마다 올라가면 백엔드가 프론트 환경을 구성하지 않고도 확인할 수 있다."
 
-- PR 파이프라인: 단위 테스트 + `docs/api-spec.yaml` 검증(lint) + 계약 테스트(구현이 스펙과 일치하는지)
+- PR 파이프라인: 단위 테스트 + 계약 테스트(구현이 스펙과 일치하는지: `contracts-test`의 타입 생성 diff, `integration/test_response_contract.py`, `test_spec_route_coverage.py`). 스펙 자체의 lint(`lint:spec`)는 아직 CI 밖이다
 - 배포(2026-10-28 결정, #168): 부트캠프가 준 AWS 서버 1대에 Docker Compose로 운영과 스테이징을 함께 올린다. 이미지는 GitHub Actions가 ECR에 만들고, develop은 스테이징에 자동, 운영은 `main` 커밋의 v 태그를 골라 올린다(OIDC + SSM, 22번 포트 없음). 구성, 이유, 타협과 다시 볼 조건은 `deploy_rules.md` 「배포 구성」. 처음 방향이던 Cloud Run은 서버를 받으면서 접었다
 - 프리뷰: PR마다 임시 환경 또는 최소한 목 서버(`docs/openapi-workflow.md`)로 프론트가 항상 최신 계약을 볼 수 있게 한다

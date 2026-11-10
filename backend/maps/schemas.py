@@ -8,7 +8,7 @@ None으로 둔다. 라우터가 response_model_exclude_none=True를 쓰므로 �
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 from authz.schemas import Permissions
 
@@ -105,6 +105,43 @@ class MapList(BaseModel):
     trip_max_days: int
 
 
+class NewReaction(BaseModel):
+    """새 의견 하나(#1556) — docs/api-spec.yaml NewReaction과 1:1. reason_text가 없으면 필드를 생략한다."""
+
+    pin_id: str
+    user_id: str
+    display_name: str = Field(max_length=50)
+    type: Literal["like", "against"]
+    reason_text: str | None = Field(default=None, max_length=140)
+    reason_chip_ids: list[str] = Field(default_factory=list, max_length=10)
+    updated_at: datetime
+
+    @model_serializer(mode="wrap")
+    def _omit_missing_reason(self, handler):
+        """사유가 없으면 reason_text 칸을 생략한다(스펙: 없으면 필드 생략, null 아님). MapNews는 since=null을 남겨야 해서
+        응답 전체에 exclude_none을 쓰지 못하므로 이 필드만 여기서 뺀다."""
+        data = handler(self)
+        if data.get("reason_text") is None:
+            data.pop("reason_text", None)
+        return data
+
+
+class SeenRequest(BaseModel):
+    """POST /maps/{mapId}/seen 본문(#1672). 비어 있으면 지금 시각으로 적는다."""
+
+    seen_at: datetime | None = None
+
+
+class MapNews(BaseModel):
+    """GET /maps/{mapId}/news(#1556). since는 null일 수 있어 exclude_none을 쓰지 않는다(필수 칸)."""
+
+    since: datetime | None
+    as_of: datetime   # 이 응답을 만든 DB 시각(#1672). 화면이 다 본 뒤 POST /seen 의 seen_at 으로 돌려준다
+    new_pin_ids: list[str] = Field(max_length=100)
+    new_reactions: list[NewReaction] = Field(max_length=100)
+    truncated: bool
+
+
 class TrashedMap(BaseModel):
     """삭제한 지도 한 건(#464) — 복구하면 Map이 된다. docs/api-spec.yaml TrashedMap과 1:1."""
 
@@ -147,6 +184,11 @@ class InviteSummary(BaseModel):
     pin_count: int | None = None
     inviter_display_name: str
     expires_at: datetime
+    # 요청한 사람(로그인 세션, 게스트 포함)이 이미 이 지도 구성원일 때만 그 지도 id(#1563). 그 밖에는 키 자체를 주지 않는다.
+    already_member_map_id: str | None = None
+    # 카드 그림(#1625) — 올린 대표 이미지가 있으면 토큰으로 여는 주소, 없으면 화면이 region으로 지역 그림을 그린다.
+    region: MapRegion | None = None
+    cover_url: str | None = None
 
 
 class Member(BaseModel):
@@ -161,3 +203,6 @@ class Member(BaseModel):
     # 게스트(로그인 수단이 없는 임시 계정, #472) 여부(#955). 판정은 auth.api.guest_user_ids 한 곳이다.
     # 화면이 「게스트」 표시와 방장 넘기기 후보에서 빼는 데 쓴다.
     is_guest: bool
+    # 이 지도의 핀에 지금 남아 있는 ♥·🚫 반응 수(#1562) — 집계는 pins.api.count_reactions_by_user 한 번이다. 반응이 없으면 0.
+    # 이벤트(member.joined) 페이로드처럼 집계를 모르는 자리에서는 비운다.
+    opinion_count: int | None = Field(default=None, ge=0)

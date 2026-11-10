@@ -199,6 +199,14 @@ class PinUpdateRequest(BaseModel):
         return self
 
 
+class PinPhoto(BaseModel):
+    """GET /pins/{pinId}/photos 한 장 — 그 장소를 다룬 블로그 사진의 카카오 미리보기(#1157). 저장하지 않는다."""
+
+    thumbnail_url: str
+    link_url: str
+    site_name: str
+
+
 class Reaction(BaseModel):
     """None인 필드(reason_text·reason_chip_ids·display_name)는 응답에서 생략한다 — 라우터가
     response_model_exclude_none을 쓴다(스펙: 없으면 필드 생략). display_name은 GET /reactions 전용."""
@@ -226,6 +234,7 @@ class Pin(BaseModel):
     place_name: str | None = None
     place_url: str | None = None
     naver_url: str | None = None   # 「네이버 지도에서 보기」 검색 링크(#1513). live 핀은 이름을 저장하지 않아 없다
+    neighborhood: str | None = Field(default=None, max_length=100)   # 장소의 동네(#1564) — 자체 DB 장소 주소에서. live 핀·주소 없음은 없다
     created_by: str
     created_by_display_name: str | None = None
     created_at: datetime | None = None   # 지도에 올라온 시각(AI 추천 핀은 「지도에 올리기」 시각) — 서버가 채우면 항상 있다

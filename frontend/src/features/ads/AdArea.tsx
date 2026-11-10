@@ -1,5 +1,4 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { ExternalLink } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import { useCreatePinMutation } from '@/features/map/queries'
@@ -8,6 +7,8 @@ import { pinErrorMessage } from '@/features/search/model'
 import { showToast } from '@/features/shell/toast'
 import { josa } from '@/ui/josa'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
+import MapAppLinks from '@/ui/MapAppLinks'
 
 import type { AdDto } from './api'
 import { overlapsCandidate } from './model'
@@ -70,7 +71,7 @@ function AdCard({ mapId, category, ad }: { mapId: string; category: RecommendCat
   }
 
   return (
-    <article className="space-y-1 rounded-xl bg-white p-3 ring-1 ring-ink-200">
+    <article className="space-y-1 rounded-xl bg-surface p-3 ring-1 ring-ink-200">
       <header className="flex items-start gap-2">
         <h3 className="min-w-0 flex-1 truncate text-body font-semibold text-ink-900">{place.name}</h3>
         <span className="tag tag-neutral shrink-0">광고</span>
@@ -82,25 +83,11 @@ function AdCard({ mapId, category, ad }: { mapId: string; category: RecommendCat
             이미 지도에 있어요
           </button>
         ) : (
-          <button type="button" disabled={create.isPending} onClick={pinIt} className="btn-outline btn-sm">
-            {create.isPending ? '올리는 중…' : '지도에 올리기'}
+          <button aria-busy={create.isPending} type="button" disabled={create.isPending} onClick={pinIt} className="btn-outline btn-sm">
+            <BusyLabel busy={create.isPending} busyText="올리는 중…">지도에 올리기</BusyLabel>
           </button>
         )}
-        {(place.place_url || place.naver_url) && (
-          <span className="flex flex-wrap justify-end gap-x-3">
-            {place.place_url && (
-              <a href={place.place_url} target="_blank" rel="noopener noreferrer" onClick={click} className="btn-link inline-flex items-center gap-0.5 text-xs">
-                카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
-              </a>
-            )}
-            {/* 네이버 지도 검색 링크(#1513) — 광고 클릭 집계는 같다 */}
-            {place.naver_url && (
-              <a href={place.naver_url} target="_blank" rel="noopener noreferrer" onClick={click} className="btn-link inline-flex items-center gap-0.5 text-xs">
-                네이버 지도에서 보기 <ExternalLink size={12} aria-hidden="true" />
-              </a>
-            )}
-          </span>
-        )}
+        <MapAppLinks kakao={place.place_url} naver={place.naver_url} variant="inline" onOpen={click} />
       </div>
     </article>
   )

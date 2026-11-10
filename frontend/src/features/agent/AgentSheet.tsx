@@ -6,10 +6,10 @@ import { useMembersQuery } from '@/features/maps/queries'
 import { AiHeader } from '@/features/recommend/Readiness'
 import ModalSheet from '@/features/shell/ModalSheet'
 import Mark from '@/ui/Mark'
-import PingoLoading from '@/ui/PingoLoading'
 import SheetTitle from '@/ui/SheetTitle'
 import Switch from '@/ui/Switch'
 import { StepRow, type WorkStepDto } from '@/ui/WorkStep'
+import CardSkeleton from '@/ui/CardSkeleton'
 
 import { useRunAgentAction } from './actions'
 import AdviceText from './AdviceText'
@@ -77,7 +77,8 @@ export default function AgentSheet({ mapId, onClose }: { mapId: string; onClose:
             />
           )}
         </div>
-        {query.isPending && <PingoLoading label="조언을 불러오는 중…" />}
+        {/* 조언 카드 모양을 안다 — 걷는 핑고 대신 카드 자리(#1675). */}
+        {query.isPending && <CardSkeleton count={2} label="조언을 불러오는 중…" />}
         {query.error && (
           <div className="space-y-2">
             <ErrorText message="조언을 불러오지 못했어요" error={query.error} />

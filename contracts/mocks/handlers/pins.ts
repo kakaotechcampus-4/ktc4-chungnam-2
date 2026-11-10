@@ -5,6 +5,16 @@ import { NOT_IN_OWN_DB, SEED_PLACES, isPinnable } from "./places";
 import { CATEGORY_RULES } from "../categories";
 import { chipsFor } from "../chips";
 
+/** 목 블로그 사진(#1157) — 색 면 SVG. 실서버 응답 모양(PinPhoto)만 같다. */
+const photoSvg = (bg: string, fg: string) =>
+  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><rect width="120" height="120" fill="${bg}"/><circle cx="60" cy="52" r="22" fill="${fg}"/><rect x="24" y="84" width="72" height="12" rx="6" fill="${fg}"/></svg>`)}`;
+const MOCK_PHOTOS = [
+  { thumbnail_url: photoSvg("#E8D9C5", "#B8875A"), link_url: "https://blog.naver.com/mock/1", site_name: "네이버블로그" },
+  { thumbnail_url: photoSvg("#D7E4D2", "#6E9A63"), link_url: "https://blog.naver.com/mock/2", site_name: "네이버블로그" },
+  { thumbnail_url: photoSvg("#F1D6CF", "#C46D58"), link_url: "https://brunch.co.kr/mock/3", site_name: "브런치스토리" },
+];
+
+
 /** reaction.changed 에 싣는 "남긴 사람"(docs/events.md). 목 서버는 단일 사용자라 나다. */
 const actor = (mapId: string) => ({
   user_id: ME_USER_ID,
@@ -98,6 +108,7 @@ function createPin(mapId: string, body: CreatePinBody): Response {
       place_name: own.place_name,
       ...(own.place_source?.url ? { place_url: own.place_source.url } : {}),
       naver_url: `https://map.naver.com/p/search/${encodeURIComponent(own.place_name)}`,   // #1513 이름 검색 링크
+      ...(own.address ? { neighborhood: own.address.split(" ").slice(1).join(" ") } : {}),   // #1564 목은 주소 앞 시·도만 뗀다(서버는 places.core.neighborhood)
       created_by: ME_USER_ID,
       created_by_display_name: store.users[ME_USER_ID]?.display_name ?? "나",
       created_at: new Date().toISOString(),
@@ -139,6 +150,22 @@ export const pinsHandlers = [
     return HttpResponse.json(
       list.map((r) => ({ ...r, display_name: store.members[store.pins[pinId].map_id]?.find((m) => m.user_id === r.user_id)?.display_name ?? "구성원" })),
     );
+  }),
+
+  // #1157 블로그 사진 — 실서버는 카카오(다음) 이미지 검색 미리보기. 목은 네트워크 없이 뜨게 SVG 데이터 주소 3장, 실시간 핀은 빈 배열.
+  http.get("*/pins/:pinId/photos", ({ params }) => {
+    const pin = store.pins[params.pinId as string];
+    if (!pin) return apiError(404, "NOT_FOUND", "핀을 찾을 수 없습니다");
+    if (pin.source === "live") return HttpResponse.json([]);
+    return HttpResponse.json(MOCK_PHOTOS.map((p) => ({ ...p, link_url: `${p.link_url}?pin=${pin.id}` })));
+  }),
+
+  // #1681 핀 찍기 전 검색 결과의 블로그 사진. 실서버는 자체 DB 결과(`own:<id>`)만 찾는다. 목의 장소는 모두 `kakao:mock-N`이라
+  // 자체 DB에 짝이 있는 곳(isPinnable)을 자체 DB 결과로 보고 사진을 준다. 없는 장소는 실서버처럼 빈 배열이다.
+  http.get("*/places/:placeId/photos", ({ params }) => {
+    const place = SEED_PLACES.find((p) => p.place_id === params.placeId);
+    if (!place || !isPinnable(place)) return HttpResponse.json([]);
+    return HttpResponse.json(MOCK_PHOTOS.map((p) => ({ ...p, link_url: `${p.link_url}?place=${place.place_id}` })));
   }),
 
   http.post("*/maps/:mapId/pins", async ({ params, request }) => createPin(params.mapId as string, (await request.json()) as CreatePinBody)),
@@ -390,6 +417,7 @@ export const pinsHandlers = [
       type: body.type,
       reason_text: body.reason_text ?? "",
       reason_chip_ids: body.reason_chip_ids ?? [],
+      updated_at: new Date().toISOString(),   // 새 소식(#1556)이 이 시각으로 견준다
     };
     if (idx >= 0) list[idx] = reaction;
     else list.push(reaction);

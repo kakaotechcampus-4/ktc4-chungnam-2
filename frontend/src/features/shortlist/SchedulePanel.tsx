@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
 
 import ErrorText from '@/ErrorText'
-import { dayTitle } from '@/features/course/model'
+import { dayLine, dayTitle } from '@/features/course/model'
 import { useEnrichPin } from '@/features/map/livePlaces'
 import SidePanel from '@/features/shell/SidePanel'
+import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
 import Sentences from '@/ui/Sentences'
 
@@ -49,11 +50,11 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
         </button>
       </div>
     )
-  if (!edit.ready) return <p className="text-sm text-ink-500">불러오는 중…</p>
+  if (!edit.ready) return <CardSkeleton count={2} label="불러오는 중…" />
   if (edit.dates.length === 0) return <p className="text-sm text-ink-500"><Sentences text="여행 날짜를 정하면 일정을 짤 수 있어요" /></p>
   const items = shortlist.data ?? []
   if (items.length === 0) {
-    return <EmptyState title="아직 확정된 장소가 없어요">마킹된 장소에서 확정 리스트에 넣으면 여기서 날짜별로 나눌 수 있어요</EmptyState>
+    return <EmptyState title="아직 확정된 장소가 없어요">핀 찍기 탭에서 확정 리스트에 넣으면 여기서 날짜별로 나눌 수 있어요</EmptyState>
   }
 
   const byId = new Map(items.map((i) => [i.pin.id, enrich(i.pin)]))
@@ -66,9 +67,10 @@ export default function SchedulePanel({ mapId }: { mapId: string }) {
       {edit.dates.map((d, i) => {
         const ids = edit.schedule.days[d] ?? []
         return (
-          <ScheduleDayBox key={d} day={d} title={dayTitle(d, i)} count={ids.length}>
+          <ScheduleDayBox key={d} day={d} title={dayTitle(d, i)} count={ids.length} color={dayLine(i).color}>
             <ScheduleDayList
               day={d}
+              color={dayLine(i).color}
               ids={ids}
               nameOf={name}
               onTakeOut={(id) => edit.takeOut(id, name(id))}

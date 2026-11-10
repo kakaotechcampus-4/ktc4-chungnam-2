@@ -18,7 +18,7 @@ test('확정 장소 하나만 날짜에 넣고 코스를 짜면, 남은 곳을 �
   })
 
   await test.step('확정 탭에서 한 곳만 첫째 날에 넣는다', async () => {
-    await planner.getByRole('link', { name: '확정된 장소' }).click()
+    await planner.getByRole('link', { name: '장소 확정' }).click()
     // 넣을 날짜는 처음에 첫째 날이 골라져 있다(#1455).
     await planner.getByRole('button', { name: `${PLACES[0]} 첫째 날에 넣기` }).click()
     // 머리 글의 「N곳」은 아직 일정에 넣지 않은 곳이다(DESIGN.md 「확정 리스트 = 아직 안 넣은 곳」).
@@ -38,15 +38,17 @@ test('확정 장소 하나만 날짜에 넣고 코스를 짜면, 남은 곳을 �
 
   await test.step('「남은 곳 한 번에 넣기」를 누르면 일정에 저장된다', async () => {
     await planner.getByRole('button', { name: '남은 2곳 한 번에 넣기' }).click()
-    await expect(planner.getByText('반영했어요')).toHaveCount(2)
-    await planner.getByRole('link', { name: '확정된 장소' }).click()
+    // 다 반영하면 뜨는 완료 카드("고칠 점을 다 반영했어요")는 세지 않는다 — 부분 일치를 끈다(#1714).
+    await expect(planner.getByText('반영했어요', { exact: true })).toHaveCount(2)
+    await planner.getByRole('link', { name: '장소 확정' }).click()
     await expect(planner.getByText(/모든 장소를 일정에 넣었어요/)).toBeVisible()
   })
 
   await test.step('크레딧이 코스 한 번 값만큼 줄었다', async () => {
     await planner.getByRole('link', { name: 'AI 코스' }).click()
-    await planner.getByRole('button', { name: '닫기' }).click()
-    await expect(planner.getByText(`${price} 크레딧 사용 · 남은 크레딧 ${before.balance - price}/${before.max_balance}`)).toBeVisible()
+    await planner.getByRole('button', { name: '새로 짜기' }).click()
+    // 크레딧 글은 두 줄(쓸 크레딧 / 남은 크레딧)이고 누르면 설명 풍선이 뜨는 버튼이다(#1571).
+    await expect(planner.getByRole('button', { name: new RegExp(`${price} 크레딧 사용.*남은 크레딧 ${before.balance - price}/${before.max_balance}`) })).toBeVisible()
   })
 })
 
@@ -55,7 +57,7 @@ test('크레딧이 0이면 추천받기를 눌렀을 때 서버의 잔액 부족
   await pinPlace(broke, '성수 매운집')
   await opposeWithChip(broke, '매워요')
 
-  await broke.getByRole('link', { name: 'AI 추천' }).click()
+  await broke.getByRole('link', { name: 'AI 추천', exact: true }).click()
   await broke.getByRole('button', { name: '음식점 추천받기' }).click()
   // 화면은 잔액으로 미리 막지 않는다 — 판정은 서버(402) 한 곳이다(CreditGate)
   await broke.getByRole('alertdialog').getByRole('button', { name: '추천받기' }).click()

@@ -107,6 +107,7 @@ class PlaceSearchResult(BaseModel):
     address: str | None = None
     place_source: PlaceSourceInfo | None = None
     pinnable: bool | None = None   # 자체 DB에 짝이 있어 핀으로 만들 수 있는가(#238). 계산 못 했으면 생략
+    naver_url: str | None = Field(default=None, max_length=2000)   # 핀 찍기 전 「네이버 지도에서 보기」(core.naver_place_link)
 
 
 # ---- POST /places/from-link 응답 (docs/api-spec.yaml LinkParseResult, #474) ----

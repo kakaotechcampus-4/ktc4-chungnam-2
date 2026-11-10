@@ -13,7 +13,7 @@ const BUTTONS: { key: ControlKey; label: string; icon: ReactNode }[] = [
 
 /**
  * 지도 버튼 3개(Figma 참고 '지도 버튼 3개'). 시트 윗변에 붙어서 시트와 같이 오르내린다.
- * 넓은 화면(`docked`)에서는 지도 영역 우하단에 고정한다(#338).
+ * 넓은 화면(`docked`)에서는 지도 영역 우하단에 고정한다(#338). 바닥은 카카오 로고·축척(약 20px)이 있어 40px 띄운다(#1538).
  * 화면에 글자 설명은 붙이지 않는다 — aria-label 과 길게 누르면 뜨는 툴팁만 둔다.
  */
 export default function MapControls({
@@ -66,7 +66,7 @@ export default function MapControls({
       hidden={hidden}
       style={{ right: CONTROLS.right }}
       // 고정일 때 부모(지도 영역 덧칠)는 지도를 끌 수 있게 누름을 통과시킨다. 버튼만 다시 받는다.
-      className={`absolute ${docked ? 'bottom-4' : 'bottom-[calc(100%+12px)]'} flex flex-col rounded-xl bg-white shadow-float transition-opacity ${
+      className={`absolute ${docked ? 'bottom-10' : 'bottom-[calc(100%+12px)]'} flex flex-col rounded-xl bg-surface shadow-float transition-opacity ${
         fading ? 'pointer-events-none opacity-0 duration-150' : `${docked ? 'pointer-events-auto ' : ''}opacity-100 delay-800 duration-300`
       }`}
     >
@@ -132,11 +132,11 @@ function ControlButton({
       style={{ width: CONTROLS.size, height: CONTROLS.size }}
       className={`press relative flex items-center justify-center first:rounded-t-xl last:rounded-b-xl ${
         divider ? 'border-t border-ink-100' : ''
-      } ${active ? 'bg-brand-50 text-brand-600' : 'text-brand-600'}`}
+      } ${active ? 'bg-brand-50 text-link' : 'text-link'}`}
     >
       {children}
       {tip && (
-        <span className="absolute right-full mr-2 whitespace-nowrap rounded-md bg-ink-900 px-2 py-1 text-xs text-white">
+        <span className="absolute right-full mr-2 whitespace-nowrap rounded-md bg-[var(--toast-bg)] px-2 py-1 text-xs text-white">
           {label}
         </span>
       )}

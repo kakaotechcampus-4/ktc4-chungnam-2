@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 
 import type { RecommendCategory } from '@/features/recommend/model'
+import SegmentedControl from '@/ui/SegmentedControl'
 
 import { useRunAgentAction } from './actions'
 import type { AgentSummaryDto } from './model'
@@ -22,13 +23,12 @@ export default function SummarySection({ mapId, summaries, onDone }: { mapId: st
     <section className="space-y-3 border-t border-ink-100 pt-4">
       <h3 className="text-sm font-bold text-ink-900">우리 조건 요약</h3>
       {summaries.length > 1 && (
-        <div role="group" aria-label="카테고리" className="flex flex-wrap gap-2">
-          {summaries.map((s) => (
-            <button key={s.category} type="button" aria-pressed={s.category === summary.category} onClick={() => setPicked(s.category)} className="chip">
-              {s.category}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="카테고리"
+          options={summaries.map((s) => ({ key: s.category, label: s.category }))}
+          value={summary.category}
+          onChange={setPicked}
+        />
       )}
       <Box title="지키려는 조건" items={summary.must_keep.map((i) => `${i.label} (${i.member_count}명)`)} />
       <Box title="겹치는 선호" items={summary.common_prefs.map((i) => `${i.label} (${i.member_count}명)`)} />

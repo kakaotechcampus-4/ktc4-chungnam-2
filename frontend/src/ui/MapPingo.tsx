@@ -6,20 +6,21 @@ import diagUpRight from '@/assets/pingo/diag-up-right.png'
 import drowsy from '@/assets/pingo/drowsy.png'
 import front from '@/assets/pingo/front.png'
 import sleep from '@/assets/pingo/sleep.png'
-import walk1 from '@/assets/pingo/walk-1.png'
-import walk2 from '@/assets/pingo/walk-2.png'
-import walk3 from '@/assets/pingo/walk-3.png'
 import walkLeft1 from '@/assets/pingo/walk-left-1.png'
 import walkLeft2 from '@/assets/pingo/walk-left-2.png'
 import walkLeft3 from '@/assets/pingo/walk-left-3.png'
+import walkRight1 from '@/assets/pingo/walk-right-1.png'
+import walkRight2 from '@/assets/pingo/walk-right-2.png'
+import walkRight3 from '@/assets/pingo/walk-right-3.png'
 import wave from '@/assets/pingo/wave.png'
 import type { IdleStage } from '@/features/agent/useIdleStage'
 import type { MapHeading } from '@/features/shell/sheetStore'
 
 // 처음 끌 때 걷는 그림이 늦게 떠 깜빡이지 않게 미리 받아 둔다.
-for (const src of [back, diagDownLeft, diagDownRight, diagUpLeft, diagUpRight, walk1, walk2, walk3, walkLeft1, walkLeft2, walkLeft3, wave, drowsy, sleep]) new Image().src = src
+for (const src of [back, diagDownLeft, diagDownRight, diagUpLeft, diagUpRight, walkLeft1, walkLeft2, walkLeft3, walkRight1, walkRight2, walkRight3, wave, drowsy, sleep]) new Image().src = src
 
 const IMG = 'absolute inset-0 size-full select-none'
+/** 그림 파일 이름은 핑고가 보는 쪽이다(#1746 — 이름과 보는 쪽이 어긋나 방향이 틀렸다). */
 const DIAGONAL = { 'up-left': diagUpLeft, 'up-right': diagUpRight, 'down-left': diagDownLeft, 'down-right': diagDownRight }
 
 /** 새 조언이 있다는 표시 — 평면 「!」 말풍선(새 소식 귤색 `--advice-alert`, 흰 테두리). 핑고 머리 오른쪽 위에 떠서 천천히 들썩인다. */
@@ -69,9 +70,9 @@ function Snore() {
   )
 }
 
-/** 옆으로 걷는 그림 1·2·3·2 를 0.15초씩. 왼쪽은 원본을 뒤집고 명암을 오른쪽 빛으로 다시 맞춘 그림이다(#1440 리뷰). */
+/** 옆으로 걷는 그림 1·2·3·2 를 0.15초씩. 원본은 왼쪽을 보고, 오른쪽은 원본을 뒤집고 명암을 오른쪽 빛으로 다시 맞춘 그림이다(#1440 리뷰). */
 function SideWalk({ left }: { left: boolean }) {
-  const [w1, w2, w3] = left ? [walkLeft1, walkLeft2, walkLeft3] : [walk1, walk2, walk3]
+  const [w1, w2, w3] = left ? [walkLeft1, walkLeft2, walkLeft3] : [walkRight1, walkRight2, walkRight3]
   return (
     <>
       <img src={w1} alt="" draggable={false} className={`${IMG} motion-safe:animate-pingo-frame-a`} />
@@ -83,12 +84,12 @@ function SideWalk({ left }: { left: boolean }) {
 
 /**
  * 지도 위 핑고(#1433) — 디자이너 3D 렌더(원본 144px). 시트·패널 안은 평면 `Pingo`다(3D가 겉돈다, DESIGN.md 「핑고」).
- * heading 이 있으면 그쪽(8방향)으로 움직인다.
+ * heading 이 있으면 그쪽(8방향)을 보며 걷는다. heading 은 화면이 가는 쪽, 곧 지도를 끈 쪽의 반대다(camera.walkHeading, #1746).
  * - 좌우: 측면 걷기 1·2·3·2, 걸음마다 들썩인다.
  * - 위: 뒤를 돌아 걸음마다 몸이 한 번 오르고 좌우로 살짝 기운다. 원본 뒷모습 한 장만 쓴다 —
  *   뒤집은 뒷모습을 번갈아 쓰면 하이라이트와 가장자리 그늘이 걸음마다 좌우로 바뀌었다.
  * - 아래: 정면으로 걸음마다 한 칸씩 내려온다. 사용자 쪽으로 오는 방향이라 ↙·↘(반측면)처럼 얼굴이 보인다.
- * - 대각선: 반측면 그림이 그쪽을 보고 위·아래처럼 걷는다. 원본 반측면(`01_반측면`)이 오른쪽 아래이고, 왼쪽은 뒤집어 빛을 다시 맞춘 그림,
+ * - 대각선: 반측면 그림이 그쪽을 보고 위·아래처럼 걷는다. 원본 반측면(`01_반측면`)이 왼쪽 아래를 보고, 오른쪽 아래는 뒤집어 빛을 다시 맞춘 그림,
  *   위쪽 둘은 눈을 지운 그림이다 — 몸이 둥글고 좌우가 같아서 반대쪽 아래를 보는 모습을 뒤에서 본 모양이 된다(`~/ktc4-drafts-review/pingo-diagonals.py`).
  * 원본 렌더의 빛은 오른쪽 위다. 서 있으면 정면이고 `wave`·`alert` 면 손을 흔든다. `alert`(새 조언)면 머리 옆에 「!」 말풍선이 뜬다.
  * `idle` 이면 쉰다 — 졸 땐 눈을 반쯤 감고 꾸벅이고, 잘 땐 눈을 감고 이불을 덮은 채 숨 쉬며 「z」가 떠오른다.

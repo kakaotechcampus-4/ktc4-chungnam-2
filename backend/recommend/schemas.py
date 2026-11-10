@@ -46,7 +46,7 @@ class RunCenter(BaseModel):
 
 class RunCreateRequest(BaseModel):
     category: Category
-    center: RunCenter | None = None
+    center: RunCenter   # 지도 가운데 한 점 — 필수(#1331, #1354). 없으면 422
     # 추천 반경(m, #1416). 정수만(소수·문자열·불리언은 422), 2000~5000(core.MIN_RADIUS_M·WIDEN_LIMIT_M와 같은 값 — 순환 import라 적는다). 없으면 3000
     # 생략은 None이지만 명시한 null은 422다(계약) — 타입은 정수이고 기본값 None은 검증하지 않는다.
     radius_m: StrictInt = Field(None, ge=2000, le=5000)

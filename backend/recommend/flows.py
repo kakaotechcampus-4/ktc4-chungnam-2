@@ -390,11 +390,11 @@ def _clustered_regions(circle: Circle, anchors: Sequence[tuple[float, float]]) -
 
 def create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
-    idempotency_key: str | None = None, execute: bool = False, center: tuple[float, float] | None = None,
+    center: tuple[float, float], idempotency_key: str | None = None, execute: bool = False,
     place_search: PlaceSearchGateway | None = None, place_facts: PlaceFactsGateway | None = None,
     radius_m: int | None = None,
 ) -> RecommendRun:
-    """POST /maps/{mapId}/runs. `Idempotency-Key`가 없으면 `_create_run` 그대로(구FE). 있으면 같은 키의 연타·재전송을
+    """POST /maps/{mapId}/runs. `center`(지도 가운데 한 점)는 필수다 — 요청 모델이 막고, 핀으로 지역을 만드는 길은 run 생성에 없다(#1331, #1354). `Idempotency-Key`가 없으면 `_create_run` 그대로(구FE). 있으면 같은 키의 연타·재전송을
     한 번으로 묶는다(#811, docs/data-model.md idempotency_keys):
 
     1) 모델을 부르기 전에 (요청자, 키)를 **독립 트랜잭션**으로 기록하고 커밋한다. 요청 세션에 넣으면 모델 호출 전
@@ -404,11 +404,6 @@ def create_run(
        아직 모델을 기다리는 중이면 409 REQUEST_IN_PROGRESS, 처리 기한(90초)이 지났으면 이어받는다.
     3) run_id 연결은 run을 만든 트랜잭션의 **맨 끝**에서 한다 — 자기 세대일 때만 성공하고(늦게 끝난 쪽은 거절),
        실패 정리가 이 행의 잠금과 부딪치지 않는다. run을 못 만들면 자기 세대의 예약만 지워 재시도를 허용한다."""
-    # center 검사는 키를 예약하기 전에 한다(#1331) — 예약을 만들었다 지우는 사이에 같은 키가 409 REQUEST_IN_PROGRESS를 받지 않게.
-    # 같은 키의 기록이 이미 있으면(center가 없던 때 만든 옛 키) 통과시켜 reuse가 그 run을 돌려준다. 기록이 없을 때만 422다.
-    if center is None and (idempotency_key is None or not service.idempotency_key_exists(
-            db, requested_by=requested_by, key=idempotency_key)):
-        raise AppError("VALIDATION_ERROR", "center가 필요합니다", detail={"field": "center"})
     traces: list[uuid.UUID] = []   # ②를 부른 trace — run이 저장되지 못하면 버려진 비용으로 표시한다(#848)
 
     def create() -> RecommendRun:
@@ -456,7 +451,7 @@ def create_run(
 
 def _create_run(
     db: Session, *, map_id: str, category: str, requested_by: str, evidence_planner: EvidencePlanGateway,
-    traces: list[uuid.UUID] | None = None, center: tuple[float, float] | None = None, radius_m: int = core.DEFAULT_RADIUS_M,
+    center: tuple[float, float], traces: list[uuid.UUID] | None = None, radius_m: int = core.DEFAULT_RADIUS_M,
 ) -> RecommendRun:
     """run 생성 + 근거 조립(①②) + 기본값 지역 계산까지 한 요청
     안에서 동기로 끝낸다. 순서: 1) 준비 판정(409 NOT_READY) 2) 크레딧 확인(읽기, 게스트 403·부족 402, #432)
@@ -465,8 +460,6 @@ def _create_run(
     트랜잭션을 열어두지 않고, 모델이 실패하면 run 행이 남지 않는다. 뒤에서 실패해도 차감이 run과 함께 롤백되므로
     실패에는 환불 경로가 없다. 환불은 한 곳뿐이다 — 그 run의 **첫 실행이 후보 0곳**일 때 `_search_and_store`가 같은 트랜잭션에서
     돌려준다(#1015, docs/credits-reviews.md 3.3). `Idempotency-Key` 재전송은 이 함수를 다시 타지 않는다."""
-    if center is None:   # 지도 중심이 앵커다(#1331) — 핀으로 지역을 만드는 길은 run 생성에 없다(readiness·미리 돌려 보기만 쓴다)
-        raise AppError("VALIDATION_ERROR", "center가 필요합니다", detail={"field": "center"})
     readiness = readiness_for_category(db, map_id=map_id, category=category)
     if not readiness["ready"]:
         raise AppError("NOT_READY", detail=readiness)
@@ -1222,14 +1215,19 @@ def _planned_group(reaction: dict, text_lines: Mapping[str, Sequence[Mapping[str
     ]
 
 
-def _all_labels_true(labels: Sequence, fact_keys: Sequence[str]) -> bool:
-    """라벨이 확실하고(known) 참인 키만 센다(절충안, #1180). 모르는 키가 하나라도 있으면 세지 않는다 — 약속하지 않는 쪽으로."""
-    return all(known and bool(value) for known, value in (core.resolve_label(labels, key) for key in fact_keys))
+def _both_sides(labels: Sequence, conditions: Sequence[tuple[str, bool]]) -> tuple[bool, bool]:
+    """두 의견의 조건(fact_key, 원하는 방향)에 대한 장소 하나의 (어긋나지 않음, 모두 확인됨)(절충안, #1600). 라벨이 known이고 값이
+    방향과 다르면 어긋난다. 모름은 어긋나지 않는다 — soft 키의 unknown_policy(pass)와 같다. 모두 확인됨은 조건 전부가 known이고
+    방향과 같은 것이다."""
+    resolved = [(core.resolve_label(labels, key), wants) for key, wants in conditions]
+    clear = all(not known or bool(value) == wants for (known, value), wants in resolved)
+    confirmed = all(known and bool(value) == wants for (known, value), wants in resolved)
+    return clear, confirmed
 
 
 def preview_filter(
     db: Session, *, map_id: str, category: str, text_lines: Mapping[str, Sequence[Mapping[str, Any]]],
-    with_keys: Sequence[str] = (), place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
+    with_conditions: Sequence[Mapping[str, Any]] = (), place_search: PlaceSearchGateway, place_facts: PlaceFactsGateway,
     center: tuple[float, float] | None = None,
 ) -> dict:
     """미리 돌려 보기(docs/agent-v2.md 6.7, #1180) — 지금 「추천 받기」를 누르면 실격 조건까지 남는 곳의 수. run을 만들 때와
@@ -1243,8 +1241,13 @@ def preview_filter(
     **읽기 전용이다.** run, 후보, 근거 줄, 지역, 제외 목록을 만들지도 읽지도 않는다 — 제외 목록은 사람마다 따로라 비공개다
     (agent-v2 2절 2번). 그래서 실제 추천은 이 수보다 적을 수 있다. 돌려주는 것은 수뿐이다 — 장소 이름과 id는 없다(크레딧 없이
     추천을 받는 길을 막는다, #432):
-    `{passed_count, with_keys_count, funnel[{key, removed_count}]}`. funnel은 pool·radius·closed·disqualify 네 단계(run의 깔때기와
-    같은 값, pool은 run처럼 0). with_keys_count는 통과한 곳 중 with_keys의 라벨이 모두 참(known)인 곳의 수, with_keys가 없으면 None."""
+    `{passed_count, both_sides_count, both_sides_confirmed_count, funnel[{key, removed_count}]}`. funnel은
+    pool·radius·closed·disqualify 네 단계(run의 깔때기와 같은 값, pool은 run처럼 0).
+
+    with_conditions(`[{fact_key, wants}]`, 두 의견의 조건 — 어떤 조건을 셀지는 agent가 정한다)가 있으면 통과한 곳을 두 번 더 센다
+    (#1600, 세는 법은 `_both_sides` 한 곳). both_sides_count는 어느 조건에도 어긋나지 않는 곳(라벨이 known이고 값이 방향과 다르면
+    뺀다, 모름은 센다), both_sides_confirmed_count는 그중 조건이 모두 known이고 방향과 같은 곳. 조건이 없으면 둘 다 None. 거르기는
+    그대로다 — 실격 규칙을 여기서 다시 정하지 않고 passed_count도 조건과 상관없다."""
     if category not in categories.recommendable():
         raise ValueError(f"추천 대상이 아닌 카테고리: {category}")
     readiness = readiness_for_category(db, map_id=map_id, category=category)
@@ -1275,12 +1278,12 @@ def preview_filter(
         db, map_id=map_id, category=category, regions=regions, active_lines=lines,
         place_search=place_search, place_facts=place_facts, off_season=_out_of_season_keys(db, map_id),
     )
-    keys = list(dict.fromkeys(with_keys))
+    conditions = list(dict.fromkeys((c["fact_key"], bool(c["wants"])) for c in with_conditions))
+    both = [_both_sides(filtered.labels_by_place[p.place_id], conditions) for p in filtered.passed] if conditions else None
     return {
         "passed_count": len(filtered.passed),
-        "with_keys_count": sum(
-            _all_labels_true(filtered.labels_by_place[p.place_id], keys) for p in filtered.passed
-        ) if keys else None,
+        "both_sides_count": sum(clear for clear, _ in both) if both is not None else None,
+        "both_sides_confirmed_count": sum(confirmed for _, confirmed in both) if both is not None else None,
         "funnel": [
             {"key": key, "removed_count": filtered.removed[key]} for key, _label in core.FUNNEL_STAGES if key in filtered.removed
         ],

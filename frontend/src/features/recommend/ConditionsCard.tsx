@@ -1,7 +1,7 @@
 import { ChevronDown } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
-import PingoLoading from '@/ui/PingoLoading'
+import Skeleton, { Bone } from '@/ui/Skeleton'
 
 import EvidenceGroups from './EvidenceGroups'
 import { visibleConditionCount, type EvidenceLineDto, type RecommendRunDto } from './model'
@@ -40,7 +40,7 @@ export default function ConditionsCard({
   const count = visibleConditionCount(applied ?? lines) // 쓰인 줄만, 칩과 같은 묶음으로(#742·#1143)
 
   return (
-    <section className="rounded-xl border border-ink-200 bg-white">
+    <section className="rounded-xl border border-ink-200 bg-surface">
       <button
         type="button"
         aria-expanded={open}
@@ -56,6 +56,10 @@ export default function ConditionsCard({
             <span className="mt-1 block text-xs font-bold text-[var(--warn-text)]">고친 조건 {changed}개는 다시 추천할 때 반영돼요</span>
           )}
         </span>
+        {/* 접혀 있으면 여기서 조건을 고칠 수 있다는 걸 글로 보인다(#1706). 화살표만으로는 펼치는 칸인지 몰랐다. */}
+        <span aria-hidden="true" className="shrink-0 text-sm font-bold text-link">
+          {open ? '접기' : '고치기'}
+        </span>
         <ChevronDown
           size={20}
           aria-hidden="true"
@@ -64,7 +68,17 @@ export default function ConditionsCard({
       </button>
       {open && (
         <div className="border-t border-ink-100 p-3">
-          {evidence.isPending && <PingoLoading label="조건을 불러오는 중…" />}
+          {/* 묶음 제목 + 칩 줄 모양(#1675). */}
+          {evidence.isPending && (
+            <Skeleton label="조건을 불러오는 중…" className="space-y-2">
+              <Bone className="h-3 w-16" />
+              <div className="flex flex-wrap gap-1.5">
+                {['w-20', 'w-24', 'w-16', 'w-28'].map((w) => (
+                  <Bone key={w} className={`h-8 rounded-full ${w}`} />
+                ))}
+              </div>
+            </Skeleton>
+          )}
           {evidence.error && <ErrorText message="조건을 불러오지 못했어요" error={evidence.error} />}
           {evidence.data && (
             <EvidenceGroups

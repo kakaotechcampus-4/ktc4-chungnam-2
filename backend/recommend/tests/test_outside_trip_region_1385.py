@@ -108,15 +108,10 @@ def test_the_label_falls_back_to_the_sido_when_the_map_has_no_label(ready_map, m
     assert exc.value.detail == {"region_label": "서울"}
 
 
-@pytest.mark.no_center_shim
 def test_validation_errors_come_before_the_region_check(ready_map, monkeypatch):
-    """center 없음, 시·도를 정할 수 없는 center는 VALIDATION_ERROR가 먼저다 — 경계 판정은 부르지도 않는다."""
+    """시·도를 정할 수 없는 center는 VALIDATION_ERROR가 먼저다 — 경계 판정은 부르지도 않는다. (center가 없는 요청은 요청 모델이 먼저 막는다.)"""
     check = _Calls(True)
     monkeypatch.setattr(flows, "_circle_outside_region", check)
-
-    with pytest.raises(AppError) as no_center:
-        _create(ready_map, center=None)
-    assert no_center.value.code == "VALIDATION_ERROR"
 
     monkeypatch.setattr(flows.places_api, "sido_at", lambda *a, **kw: None)
     with pytest.raises(AppError) as unknown_sido:

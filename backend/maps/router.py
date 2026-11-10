@@ -3,7 +3,7 @@ docs/api-spec.yaml `maps` 태그 엔드포인트. 경로 파라미터는 반드�
 authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩해서, `map_id`로
 쓰면 기동 시점에 바로 실패한다.
 
-`GET /invites/{token}`만 로그인 없이 열려 있다(public_router, #159).
+`GET /invites/{token}`과 그 대표 이미지, 링크 미리보기(#1625)만 로그인 없이 열려 있다(public_router, #159).
 
 `POST /maps`와 `POST /invites/{token}/accept`에는 멤버십 가드가 없다 — 아직 소속될 지도가
 없는(또는 방금 발급된 초대로 처음 들어오는) 요청이라, 이 라우터 전체에 걸린 인증
@@ -14,21 +14,26 @@ authz/guard.py::require_on_map·require_map_member가 이 이름을 하드코딩
 2026-09-28, #24).
 """
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, Path, Request, Response
+from fastapi.responses import HTMLResponse
 
 from auth.deps import get_current_user
 from auth.schemas import CurrentUser
 from authz.core import Principal
 from authz.guard import require_map_member, require_on_map
+from common.errors import AppError
 from common.settings import settings
-from maps import core, flows, service
-from maps.deps import DbSession
+from maps import core, flows, preview, service
+from maps.deps import DbSession, get_optional_user
 from maps.schemas import (
-    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapUpdateRequest, Member, OwnerTransferRequest,
+    Invite, InviteSummary, Map, MapCreateRequest, MapList, MapNews, MapUpdateRequest, Member, OwnerTransferRequest, SeenRequest,
     TrashedMapList,
 )
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["maps"], dependencies=[Depends(get_current_user)])
 # 라우터 단위 의존성은 개별 라우트에서 뺄 수 없다 — 로그인 없이 호출되는 GET /invites/{token}(#23,
@@ -194,6 +199,27 @@ def post_owner(
     return service.hand_over_owner(db, map_id=mapId, from_user_id=principal.user_id, to_user_id=body.user_id)
 
 
+@router.post("/maps/{mapId}/seen", status_code=204)
+def post_seen(
+    body: SeenRequest | None = None,
+    mapId: str = Path(...),
+    principal: Principal = MapForRead,
+    db=DbSession,
+):
+    # 이벤트를 보내지 않는다. 시각은 서버(DB)가 정한다 — 본문의 seen_at 은 서버가 준 as_of 이고 지금보다 뒤로 가지 못한다(#1672).
+    service.mark_seen(db, map_id=mapId, user_id=principal.user_id, seen_at=body.seen_at if body else None)
+
+
+@router.get("/maps/{mapId}/news", response_model=MapNews)
+def get_news(
+    mapId: str = Path(...),
+    principal: Principal = MapForRead,
+    db=DbSession,
+):
+    # last_seen_at을 바꾸지 않는다 — 읽기만. since가 null인 응답도 칸이 있어야 해서 exclude_none을 쓰지 않는다.
+    return service.get_news(db, map_id=mapId, user_id=principal.user_id)
+
+
 @router.delete("/maps/{mapId}/members/me", status_code=204)
 def leave_map(
     mapId: str = Path(...),
@@ -244,9 +270,60 @@ def delete_invite(
     service.revoke_invite(db, token=token, user_id=user.user_id)
 
 
-@public_router.get("/invites/{token}", response_model=InviteSummary)
-def get_invite_summary(token: str = Path(...), db=DbSession):
-    return service.get_invite_summary(db, token=token)
+@public_router.get("/invites/{token}", response_model=InviteSummary, response_model_exclude_none=True)
+def get_invite_summary(
+    token: str = Path(...), user: CurrentUser | None = Depends(get_optional_user), db=DbSession
+):
+    # 로그인 없이도 열린다. 세션이 있고 이미 구성원이면 already_member_map_id를 싣는다(#1563).
+    return service.get_invite_summary(db, token=token, viewer_id=user.user_id if user else None)
+
+
+@public_router.get("/invites/{token}/cover", response_class=Response)
+def get_invite_cover(token: str = Path(...), db=DbSession):
+    # 아직 구성원이 아닌 초대받은 사람의 카드 그림(#1625). 토큰이 곧 권한이라 요약과 같이 끈·만료 링크는 410이다.
+    # 캐시와 nosniff는 GET /maps/{mapId}/cover와 같은 이유다.
+    data, content_type = service.get_invite_cover(db, token=token)
+    return Response(content=data, media_type=content_type,
+                    headers={"Cache-Control": "private, max-age=31536000, immutable",
+                             "X-Content-Type-Options": "nosniff"})
+
+
+@public_router.get("/invites/{token}/preview", response_class=HTMLResponse)
+def get_invite_preview(token: str = Path(...), db=DbSession):
+    # 메신저 미리보기 봇 전용(#1625) — 앞단 Caddy가 봇의 /invites/{token}만 여기로 보낸다(deploy/Caddyfile).
+    # 더 쓸 수 없는 링크도 200으로 기본 미리보기를 준다. 오류 화면이 단톡방에 그대로 박제되지 않게 한다.
+    base = settings.frontend_base_url
+    found = service.get_invite_preview(db, token=token)
+    if found is None:
+        html = preview.preview_html(
+            page_url=f"{base}/invites/{token}", image_url=f"{base}{preview.DEFAULT_IMAGE_PATH}",
+            title=preview.DEFAULT_TITLE, description=preview.DEFAULT_DESCRIPTION, image_size=None,
+        )
+    else:
+        summary, cover = found
+        title, description = preview.invite_preview_text(summary)
+        # 사진의 v를 그대로 붙인다 — 메신저는 그림을 주소로 캐시해서, 사진을 바꾸면 주소도 바뀌어야 새로 가져간다.
+        image_url = (
+            f"{base}{preview.API_PREFIX}/invites/{token}/preview-image?{summary.cover_url.split('?', 1)[1]}"
+            if cover is not None and summary.cover_url else f"{base}{preview.DEFAULT_IMAGE_PATH}"
+        )
+        html = preview.preview_html(page_url=f"{base}/invites/{token}", image_url=image_url, title=title,
+                                    description=description, image_size=preview.PREVIEW_SIZE if cover else None)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@public_router.get("/invites/{token}/preview-image", response_class=Response)
+def get_invite_preview_image(token: str = Path(...), db=DbSession):
+    # 미리보기 그림(#1625) — 대표 사진 1200×630 + 오른쪽 아래 워드마크. 사진이 없으면 404(미리보기 HTML은 기본 그림을 가리킨다).
+    data, _content_type = service.get_invite_cover(db, token=token)
+    try:
+        image = preview.compose_preview_image(data)
+    except Exception as exc:  # Pillow가 못 여는 사진 — 형식 검사는 올릴 때 했지만 내용까지 보지는 않았다.
+        log.warning("invite preview image failed: %s", type(exc).__name__)
+        raise AppError("NOT_FOUND") from None
+    return Response(content=image, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=31536000, immutable",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/invites/{token}/accept", response_model=Map, response_model_exclude_none=True)

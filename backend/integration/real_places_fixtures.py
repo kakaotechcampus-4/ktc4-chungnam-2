@@ -19,6 +19,7 @@ from recommend.deps import (
 )
 
 REGION = {"label": "성수", "lat": 37.5445, "lng": 127.0561}
+RUN_CENTER = {"lat": REGION["lat"], "lng": REGION["lng"]}   # 「추천 받기」가 보내는 지도 가운데 — 성수 일대 시험 장소의 한가운데(#1354, center는 필수)
 NOW = datetime(2026, 10, 2, tzinfo=timezone.utc)
 
 # (source_id, 이름, 위도, 경도, {fact_key: value}) — 전부 성수 중심 700m 안
@@ -153,7 +154,7 @@ def _recommend(a, b, map_id, place_ids, *, executed=True):
     s = _pin(a, map_id, "S", place_ids)
     assert a.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "한식 말고 다른 거"}).status_code == 200
     assert b.put(f"/pins/{s}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     candidates = []
     if executed:

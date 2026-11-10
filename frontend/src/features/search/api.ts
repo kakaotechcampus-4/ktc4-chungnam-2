@@ -1,4 +1,5 @@
 import { api } from '@/api'
+import type { BlogPhoto } from '@/ui/BlogPhotos'
 
 import type { ExternalSearchDto, LatLng, LinkParseResultDto, PlaceSearchResultDto } from './model'
 
@@ -18,6 +19,12 @@ export function searchPlaces(q: string, near: LatLng | null) {
  */
 export const nearestPlaces = (at: LatLng) =>
   api<PlaceSearchResultDto[]>(`/places/nearest?${new URLSearchParams({ lat: String(at.lat), lng: String(at.lng) })}`)
+
+/**
+ * 핀을 찍기 전 검색 결과의 블로그 사진(#1681). place_id 는 해석하지 않고 그대로 보낸다 — 자체 DB 결과만 사진이 오고
+ * 그 밖은 빈 배열이다. 응답은 저장하지 않는다(#53).
+ */
+export const fetchPlacePhotos = (placeId: string) => api<BlogPhoto[]>(`/places/${encodeURIComponent(placeId)}/photos`)
 
 /** 지도 링크 해석(#474). 핀을 만들지 않고 아무것도 저장하지 않는다 — 장소를 찾을 단서만 돌려준다. */
 export const parseLink = (url: string) =>

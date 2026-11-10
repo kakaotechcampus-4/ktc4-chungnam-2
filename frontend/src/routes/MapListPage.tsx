@@ -12,6 +12,7 @@ import { ColorSheet, CoverSheet, MapCover } from '@/features/maps/MapLook'
 import { MAP_LIMIT_HINT, type MapListView, type MapView } from '@/features/maps/model'
 import { useMapsQuery, useTrashQuery } from '@/features/maps/queries'
 import TrashSheet from '@/features/maps/TrashSheet'
+import { cardTint } from '@/features/maps/look'
 import NotificationBell from '@/features/notifications/NotificationBell'
 import { hasSeenWelcome } from '@/features/onboarding/welcomeSeen'
 import ActionMenu, { type ActionMenuItem } from '@/features/shell/ActionMenu'
@@ -20,6 +21,7 @@ import { useIsDesktop } from '@/features/shell/useIsDesktop'
 import Avatar from '@/ui/Avatar'
 import CardSkeleton from '@/ui/CardSkeleton'
 import EmptyState from '@/ui/EmptyState'
+import Wordmark from '@/ui/Wordmark'
 
 /**
  * 로그인 직후 진입점 — 내 지도 목록 (#24, Figma 1절).
@@ -51,30 +53,34 @@ export default function MapListPage() {
   return (
     <div className="min-h-dvh bg-ink-50">
       <div className="mx-auto flex min-h-dvh w-full max-w-[480px] flex-col px-4 pb-6 pt-6 md:max-w-5xl md:px-8 md:pb-16 md:pt-12">
-        <header className="mb-4 flex items-center justify-between gap-4 md:mb-8">
+        {/* 첫 줄은 서비스 표시(워드마크)와 알림, 계정, 둘째 줄은 이 화면 제목이다(앱 첫 화면 머리, 2026-11-10). */}
+        <header className="mb-4 space-y-4 md:mb-8 md:space-y-6">
+          <div className="flex items-center justify-between gap-4">
+            <Wordmark className="h-6 w-auto md:h-8" />
+            {desktop ? (
+              <div className="flex shrink-0 items-center gap-3">
+                {!guest && <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />}
+                <NotificationBell />
+                <AccountMenu maps={maps ?? []} name={me?.display_name} />
+              </div>
+            ) : (
+              <div className="flex shrink-0 items-center gap-3">
+                <NotificationBell />
+                <button
+                  type="button"
+                  aria-label="계정"
+                  onClick={() => setAccountOpen(true)}
+                  className="hit-44 rounded-full"
+                >
+                  <Avatar name={me?.display_name} />
+                </button>
+              </div>
+            )}
+          </div>
           <div className="min-w-0">
             <h1 className="text-2xl font-bold text-ink-900">내 지도</h1>
             <MapCount list={list} hintId={full ? limitHintId : undefined} />
           </div>
-          {desktop ? (
-            <div className="flex shrink-0 items-center gap-3">
-              {!guest && <NewMapLink className="btn-md" blockedBy={full ? limitHintId : undefined} />}
-              <NotificationBell />
-              <AccountMenu maps={maps ?? []} name={me?.display_name} />
-            </div>
-          ) : (
-            <div className="flex shrink-0 items-center gap-3">
-              <NotificationBell />
-              <button
-                type="button"
-                aria-label="계정"
-                onClick={() => setAccountOpen(true)}
-                className="hit-44 rounded-full"
-              >
-                <Avatar name={me?.display_name} />
-              </button>
-            </div>
-          )}
         </header>
 
         {isPending && <CardSkeleton count={2} />}
@@ -171,8 +177,10 @@ function NewMapLink({ className, blockedBy }: { className: string; blockedBy?: s
 }
 
 function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; empty?: string }) {
-  const [open, setOpen] = useState<{ kind: CardAction; map: MapView } | null>(null)
+  const [opened, setOpen] = useState<{ kind: CardAction; map: MapView } | null>(null)
   const close = () => setOpen(null)
+  // 창에는 연 순간의 지도가 아니라 목록의 최신 값을 준다 — 대표 이미지를 바꾼 뒤에도 창이 옛 그림을 보이지 않게(PM 점검 #1554).
+  const open = opened && { ...opened, map: maps.find((m) => m.id === opened.map.id) ?? opened.map }
   return (
     <section className="space-y-3">
       {title && (
@@ -182,7 +190,7 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
           <span className="ml-1 hidden font-normal text-ink-500 md:inline">{maps.length}</span>
         </h2>
       )}
-      {maps.length === 0 && empty && <p className="rounded-xl bg-white p-4 text-sm text-ink-500">{empty}</p>}
+      {maps.length === 0 && empty && <p className="rounded-xl bg-surface p-4 text-sm text-ink-500">{empty}</p>}
       <ul className="space-y-3 md:grid md:grid-cols-2 md:gap-4 md:space-y-0 lg:grid-cols-3">
         {maps.map((map) => (
           // 메뉴 버튼은 링크 안에 넣을 수 없어(버튼 안의 버튼) 카드 오른쪽 위에 겹쳐 둔다.
@@ -190,8 +198,8 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
             <Link
               to={`/maps/${map.id}`}
               // 지도 색은 카드 바탕이다(#1445). 고르지 않았으면 흰 카드다.
-              style={map.color ? { background: map.color } : undefined}
-              className="press block h-full overflow-hidden rounded-xl border border-ink-200 bg-white md:hover:border-brand-300"
+              style={map.color ? cardTint(map.color) : undefined}
+              className="press block h-full overflow-hidden rounded-xl border border-ink-200 bg-surface md:hover:border-brand-300"
             >
               <MapCover map={map} className="block aspect-[16/6] w-full" />
               <div className="p-4 pr-12 md:p-5 md:pr-14">
@@ -208,7 +216,7 @@ function MapSection({ title, maps, empty }: { title?: string; maps: MapView[]; e
               </div>
             </Link>
             {/* 메뉴 버튼은 그림 위라 흰 원 위에 둔다. */}
-            <div className="absolute right-2 top-2 rounded-full bg-white/90 shadow-float md:right-3 md:top-3">
+            <div className="absolute right-2 top-2 rounded-full bg-surface/90 shadow-float md:right-3 md:top-3">
               <ActionMenu label={`${map.title} 메뉴`} items={cardActions(map, (kind) => setOpen({ kind, map }))} />
             </div>
           </li>

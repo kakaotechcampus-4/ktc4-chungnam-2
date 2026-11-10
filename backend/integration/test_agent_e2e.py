@@ -55,6 +55,7 @@ from notifications.models import Notification, NotificationPref
 from recommend import api as recommend_api
 from recommend import core as recommend_core
 from recommend import deps as recommend_deps
+from recommend import flows as recommend_flows
 from recommend.deps import (
     RealPlaceFactsGateway, RealPlaceSearchGateway, get_evidence_plan_gateway, get_place_facts_gateway,
     get_place_search_gateway,
@@ -414,10 +415,11 @@ def test_stall_is_found_diagnosed_with_tools_shown_and_accepted(e2e):
     ]
     steps_text = json.dumps(sug["steps"], ensure_ascii=False)
     assert not any(leak in steps_text for leak in (*names.values(), SPICY, ALLERGY, "m1", "m2", "m3"))
-    # 같은 관찰 끝에서 만든 지도 현황 문단(8.2). 칸에 이름과 사유 글이 없어 문단에도 없다
+    # 같은 관찰 끝에서 만든 지도 현황 문단(8.2). 칸에 이름과 사유 글이 없어 문단에도 없다. 정체 카드가 떠 있어 먼저 볼 곳은
+    # 카드가 말하고 문단은 권하지 않는다(#1749)
     [status_run] = e2e.runs(map_id, trigger="status")
     assert (status_run.outcome, status_run.used_model) == ("status_updated", True)
-    assert body["status"]["paragraph"] == "지도 현황을 정리했어요. 음식점부터 보면 좋겠어요."
+    assert body["status"]["paragraph"] == "지도 현황을 정리했어요."
 
     # 우리 조건 요약도 같은 관찰에서 만들어졌다. 알러지 사유는 개수와 고정 안내만, 원문은 어디에도 없다(2절 11번)
     summary = next(s for s in body["summaries"] if s["category"] == "음식점")
@@ -547,7 +549,7 @@ def split_brain(pin_id):
         ]
         advice = [
             AdviceLine(text="♥ {c1.value}명, 🚫 {c2.value}명으로 갈렸어요", basis=["c1", "c2"], is_guess=False),
-            AdviceLine(text="두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {c3.value}곳 있어요", basis=["c3"],
+            AdviceLine(text="두 의견을 다 맞추는 곳은 없지만, 지금 조건으로 추천에 남는 곳이 {c3.value}곳 있어요", basis=["c3"],
                        is_guess=False),
         ]
         actions = [
@@ -578,13 +580,13 @@ def test_same_axis_split_is_previewed_and_points_to_recommend_not_pins(e2e, monk
     run = e2e.runs(map_id)[-1]
     assert (run.outcome, run.used_model) == ("suggested", True)
     [preview] = [t for t in run.tool_calls if t["call_id"] == "p1"]
-    assert (preview["name"], preview["args"]) == ("preview_filter", {"category": "음식점", "with_keys": []})   # ♥ 쪽 키 없이
+    assert (preview["name"], preview["args"]) == ("preview_filter", {"category": "음식점", "with_conditions": []})   # 두 의견의 조건 없이
     passed = preview["result"]["passed_count"]
     assert run.verification["actions"]["removed"][0] == {"index": 0, "reason": "type"}   # 「핀 보기」는 허용 버튼이 아니다
 
     sug = b.get(f"/maps/{map_id}/agent").json()["active_suggestion"]
     assert (sug["diagnosis"], sug["analysis"]["conflict_type"]) == ("split", "same_axis")
-    assert _text(sug["advice"][1]) == f"두 의견을 다 맞추는 곳은 없지만, 반대 사유를 지키는 후보가 {passed}곳 있어요"
+    assert _text(sug["advice"][1]) == f"두 의견을 다 맞추는 곳은 없지만, 지금 조건으로 추천에 남는 곳이 {passed}곳 있어요"
     expected = ([("open_recommend", "음식점 추천 받기")] if passed else []) + [("search_place", "음식점 검색")]
     assert [(x["type"], x["label"]) for x in sug["actions"]] == expected
     assert [st["text"] for st in sug["steps"] if st["stage"] == "미리 찾기"] == [f"지금 조건으로 미리 찾아봤어요 · {passed}곳 남아요"]
@@ -666,7 +668,10 @@ def _thin_run(e2e):
     map_id = e2e.shared_map(a, b)
     alley = e2e.pin(a, map_id, "seongsu-alley")
     e2e.react(b, alley, "like")
-    r = a.post(f"/maps/{map_id}/runs", json={"category": "관광지"})
+    # 지도 중심은 「성수 골목」 핀이 있는 곳(REGION)이다 — 요청 모델이 center를 필수로 막는다(#1354)
+    with pytest.MonkeyPatch.context() as patch:   # 시험 DB에는 시·도 경계가 없어 중심의 시·도를 못 정한다 — 생성 동안만 통과로 본다(실행의 시·도 제한은 그대로)
+        patch.setattr(recommend_flows.places_api, "sido_at", lambda *args, **kwargs: "서울")
+        r = a.post(f"/maps/{map_id}/runs", json={"category": "관광지", "center": {"lat": REGION["lat"], "lng": REGION["lng"]}})
     assert r.status_code == 202, r.text
     run_id = r.json()["id"]
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200

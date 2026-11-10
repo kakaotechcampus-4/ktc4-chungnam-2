@@ -23,7 +23,7 @@ export function ByChip({ by }: { by: WorkStepDto['by'] }) {
 /** 한 줄 = 단계 + 역할 + 누가 칩 + 문장. 섞인 단계의 원문(by_detail)은 보조 글씨로. 모르는 단계 이름도 글자 그대로 그린다(#1243). */
 export function StepRow({ step }: { step: WorkStepDto }) {
   return (
-    <div className="rounded-xl bg-white px-3 py-2.5 ring-1 ring-ink-200">
+    <div className="rounded-xl bg-surface px-3 py-2.5 ring-1 ring-ink-200">
       <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-600">
         <span className="font-semibold text-ink-900">{step.stage}</span>
         <span aria-hidden="true">·</span>

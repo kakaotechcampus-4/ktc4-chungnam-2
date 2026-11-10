@@ -2,8 +2,8 @@ import { create } from 'zustand'
 
 /** 바텀시트 3단계(최종기획안 4절). 1 = 접힘(손잡이·제목만), 2 = 절반, 3 = 전체. */
 export type SheetStage = 1 | 2 | 3
-export type TabKey = 'map' | 'recommend' | 'shortlist' | 'course'
-/** 지도를 끄는 방향(손가락·마우스가 움직인 쪽, 8방향). 지도 위 핑고가 이쪽을 보며 걷는다(#1433). */
+export type TabKey = 'map' | 'recommend' | 'shortlist' | 'course' | 'me'
+/** 지도 위 핑고가 보며 걷는 쪽(8방향, #1433). 화면이 가는 쪽, 곧 지도를 끈 쪽의 반대다(`camera.walkHeading`, #1746). */
 export type MapHeading = 'left' | 'right' | 'up' | 'down' | 'up-left' | 'up-right' | 'down-left' | 'down-right'
 
 type SheetState = {
@@ -25,7 +25,7 @@ type SheetState = {
 }
 
 export const useSheetStore = create<SheetState>((set) => ({
-  stages: { map: 2, recommend: 2, shortlist: 2, course: 2 },
+  stages: { map: 2, recommend: 2, shortlist: 2, course: 2, me: 2 },
   setStage: (tab, stage) => set((s) => ({ stages: { ...s.stages, [tab]: stage } })),
   mapMoving: false,
   setMapMoving: (mapMoving) => set(mapMoving ? { mapMoving } : { mapMoving, mapHeading: null }),

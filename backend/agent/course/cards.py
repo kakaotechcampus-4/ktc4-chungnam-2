@@ -37,15 +37,15 @@ def checked_items(result: review_mod.ReviewResult) -> list[dict[str, str]]:
 
 def _resolved_text(trip: core.Trip, goals: Sequence[goals_mod.Goal], p: review_mod.Problem) -> str:
     if p.kind == "closed":
-        return f"{trip.place(p.places[0]).name}의 쉬는 날 문제가 풀려요"
+        return f"{trip.place(p.places[0]).name}의 쉬는 날 문제가 해결돼요"
     if p.kind in ("travel", "member"):
-        return f"{core.day_label(trip, p.day)} 이동 문제가 풀려요"
+        return f"{core.day_label(trip, p.day)} 이동 문제가 해결돼요"
     if p.kind in ("condition", "goal"):
         goal = next(g for g in goals if g.id == p.goal_id)
         return f"{goals_mod.label(trip, goal)} 목표를 지켜요"
     if p.kind == "cluster":
         return "같은 동네가 가까운 날로 모여요"
-    return f"{core.day_label(trip, p.day)} 식사 문제가 풀려요"
+    return f"{core.day_label(trip, p.day)} 식사 문제가 해결돼요"
 
 
 def _remaining_text(trip: core.Trip, goals: Sequence[goals_mod.Goal], fix: review_mod.Fix) -> Optional[str]:

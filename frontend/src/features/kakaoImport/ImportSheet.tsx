@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { MessageCircle } from 'lucide-react'
 
 import ErrorText from '@/ErrorText'
 import { usePinsQuery } from '@/features/map/queries'
@@ -8,6 +9,8 @@ import ModalSheet from '@/features/shell/ModalSheet'
 import { useSheetStore } from '@/features/shell/sheetStore'
 import { showToast } from '@/features/shell/toast'
 import Checkbox from '@/ui/Checkbox'
+import DatePicker from '@/ui/DatePicker'
+import { ProgressTrack } from '@/ui/ProgressBar'
 import Radio from '@/ui/Radio'
 import SheetTitle from '@/ui/SheetTitle'
 import Sentences from '@/ui/Sentences'
@@ -26,7 +29,7 @@ type Imp = ReturnType<typeof useLinkImport>
 type Entry = { row: ImportRow; i: number }
 
 /**
- * 카톡 대화에서 핀 가져오기(기획안 5-9, #578, #1046). 「대화 내보내기」 .txt 파일에서 고른 기간의 지도 링크(네이버·카카오·구글)와
+ * 카톡 대화로 핀 찍기(기획안 5-9, #578, #1046). 「대화 내보내기」 .txt 파일에서 고른 기간의 지도 링크(네이버·카카오·구글)와
  * 공유 글의 상호명·주소만 브라우저 안에서 읽고, 대화 원문은 서버로 보내지도 저장하지도 않는다(#1139 — 붙여넣기는 없앴다).
  * 링크마다 4단으로 푼다(#1046): 서버가 찾은 곳 → 같은 주소 후보 확인 → 이름으로 찾은 후보 → 직접 찾기·하나씩 찍기.
  */
@@ -45,8 +48,8 @@ export default function ImportSheet({
   const imp = useLinkImport(mapId, near)
   const hasRows = imp.rows.length > 0
   return (
-    <ModalSheet label="카톡 대화에서 핀 가져오기" onClose={onClose}>
-      <SheetTitle>카톡 대화에서 핀 가져오기</SheetTitle>
+    <ModalSheet label="카톡 대화로 핀 찍기" onClose={onClose}>
+      <SheetTitle>카톡 대화로 핀 찍기</SheetTitle>
       {/* 파일 넣기는 늘 있다 — 다른 대화 파일을 넣으면 아래 목록에 새 링크만 더한다(#1045). */}
       <FileBox onAdd={imp.add} more={hasRows} />
       {hasRows && <ReviewStep imp={imp} onOpenOne={onOpenOne} onSearchName={onSearchName} />}
@@ -111,18 +114,17 @@ function FileBox({ onAdd, more }: { onAdd: (text: string, range: DayRange) => Ad
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className="mb-1 block text-xs text-ink-500">시작일</span>
-            <input type="date" value={range.from} onChange={(e) => setDay({ from: e.target.value })} className="field w-full" />
+            <DatePicker value={range.from} onChange={(from) => setDay({ from })} />
           </label>
           <label className="block">
             <span className="mb-1 block text-xs text-ink-500">종료일 (선택)</span>
-            <input
-              type="date"
+            <DatePicker
               value={range.to}
               min={range.from || undefined}
-              onChange={(e) => setDay({ to: e.target.value })}
+              onChange={(to) => setDay({ to })}
+              clearLabel="종료일 지우기"
               aria-invalid={wrongOrder}
               aria-describedby={hintId}
-              className="field w-full"
             />
           </label>
         </div>
@@ -175,6 +177,7 @@ function LinkRef({ url }: { url: string }) {
 }
 
 function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (url: string) => void; onSearchName: (name: string) => void }) {
+  const countId = useId()
   const all = imp.rows.map((row, i) => ({ row, i, state: rowState(row) }))
   // 찍은 줄은 「찍음」으로 따로 접어 둔다 — 상태별 묶음에는 아직 찍지 않은 줄만.
   const doneRows = all.filter((e) => e.row.outcome)
@@ -205,7 +208,7 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
     <div className="mt-1 space-y-5">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
-          <p className="min-w-0 flex-1 text-sm text-ink-500">
+          <p id={countId} className="min-w-0 flex-1 text-sm text-ink-500">
             {checking > 0 && imp.phase === 'checking'
               ? `지도 링크 ${imp.rows.length}개 중 ${imp.rows.length - checking}개 확인했어요`
               : `지도 링크 ${imp.rows.length}개`}
@@ -219,6 +222,10 @@ function ReviewStep({ imp, onOpenOne, onSearchName }: { imp: Imp; onOpenOne: (ur
             모두 비우기
           </button>
         </div>
+        {/* 링크가 많으면 확인이 몇 초 걸린다 — 글 아래 진행 막대로 얼마나 남았는지 보인다(#1675, 로딩 패턴 「진행 바」). */}
+        {checking > 0 && imp.phase === 'checking' && (
+          <ProgressTrack value={imp.rows.length - checking} max={imp.rows.length} labelledBy={countId} />
+        )}
         {imp.truncated && <p className="text-xs text-warn-text">
           <Sentences text="목록이 가득 차서 일부 링크가 빠졌어요. 찍고 완료된 것을 지운 뒤 나머지 기간을 다시 넣어 주세요" />
         </p>}
@@ -455,11 +462,15 @@ function SearchRow({ e, imp, busy, sameAsAbove, onSearchName }: { e: Entry; imp:
   )
 }
 
-/** 마킹 탭 제목 줄의 「카톡 대화에서 가져오기」. 여는 일만 한다 — 시트는 `ImportSheetHost`가 화면 바뀜과 상관없이 한 자리에서 그린다(#1045). */
+/** 마킹 탭 제목 줄의 「카톡 대화로 핀 찍기」. 여는 일만 한다 — 시트는 `ImportSheetHost`가 화면 바뀜과 상관없이 한 자리에서 그린다(#1045). */
 export function ImportButton({ mapId }: { mapId: string }) {
   return (
-    <button type="button" onClick={() => openImport(mapId)} className="btn-link shrink-0 text-sm">
-      카톡 대화에서 가져오기
+    <button type="button" onClick={() => openImport(mapId)} className="btn-link flex shrink-0 items-center gap-1.5 text-sm">
+      {/* 카톡에서 오는 기능임을 글보다 먼저 알아보게 카카오 노랑 말풍선 원을 앞에 둔다. */}
+      <span aria-hidden="true" className="flex size-5 items-center justify-center rounded-full bg-[var(--kakao-yellow)]">
+        <MessageCircle size={12} fill="currentColor" className="text-black/85" />
+      </span>
+      카톡 대화로 핀 찍기
     </button>
   )
 }

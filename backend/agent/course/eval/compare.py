@@ -4,6 +4,10 @@
 
 세 코스 모두 **진짜 영업시간(지도의 hours 전체)** 으로 채점한다 — 에이전트가 조회로 알아낸 것만 아는 상태에서 짠 코스가
 실제로는 어떤지 본다. 실모델은 `--model`을 주고 지도를 5개 이하로 제한했을 때만 돈다(비용, 사용자 확인 뒤에 쓴다).
+
+요청 목표 비교(`--requests`)의 모델 변형 둘은 서비스 경로(`runner.run_course`)로 돈다(#1615): 목표만(goals_code, 목표 세우기 + 지휘 없이
+코드)과 에이전트(agent, 목표 세우기 + 지휘). 목표 세우기는 지도마다 한 번 부르고 두 변형이 같은 답을 쓴다 — 두 변형의 차이가 지휘
+루프의 몫이다. 여러 번 재려면 `--only`로 나눠 돌며 `--save 파일 --round N`으로 지도별 줄을 쌓고 `--summarize 파일`로 회차 평균과 범위를 본다.
 """
 
 from __future__ import annotations
@@ -11,15 +15,14 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import asdict, dataclass
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from agent.course import baseline, core, direct, goals as goals_mod, loop, worklog
-from agent.course.constants import REQUEST_TEXT_MAX_CHARS
-from agent.course.deps import ModelTurnFailed
+from agent.course import baseline, core, direct, goals as goals_mod, loop, runner, worklog
 from agent.course.core import Course, MemberConstraint, Place, Trip
+from agent.course.intake import TripBuild
 from agent.course.ports import FixtureOpeningHours
 from agent.course.state import initial_state
 
@@ -131,8 +134,9 @@ class RequestScore:
     gold_met: int                       # 정답 목표 중 최종 코스가 지킨 수(판단할 수 없는 목표는 뺀다)
     gold_total: int                     # 정답 목표 수(판단 불가 목표도 분모에 들어가고 못 이룬 것으로 센다)
     gold_undecidable: int = 0           # 그중 라벨을 몰라 판단할 수 없었던 수(따로 보고)
-    goals_exact: Optional[bool] = None  # 에이전트만: 만든 목표가 정답과 종류·매개변수까지 일치
-    goals_trap_ok: Optional[bool] = None  # 에이전트만: 정답이 목표 0개인 지도에서 0개를 냈다
+    goals_exact: Optional[bool] = None  # 모델 변형만: 만든 요청 목표가 정답과 종류·매개변수까지 일치
+    goals_trap_ok: Optional[bool] = None  # 모델 변형만: 정답이 목표 0개인 지도에서 요청 목표 0개를 냈다
+    map_goals: int = 0                  # 모델 변형만: 지도 근거로 세운 목표 수(정답 목표 밖이라 충족률에 들지 않는다, #1131 B안)
     calls: int = 0
     seconds: float = 0.0
     tokens_in: int = 0
@@ -160,41 +164,100 @@ def request_score(sc: Scenario, course: Course, gold: Sequence[goals_mod.Goal], 
     return RequestScore(score(sc, course), met, total, goals_mod.undecidable_count(sc.trip, course, gold), **extra)
 
 
+class _Counted:
+    """모델 자리(planner)를 감싸 실제로 부른 수와 실패 수를 센다. 토큰은 run_course가 센다(Computation)."""
+
+    def __init__(self, planner: Callable) -> None:
+        self._planner = planner
+        self.calls = 0
+        self.failures = 0
+
+    def __call__(self, payload: Mapping[str, Any]) -> Any:
+        self.calls += 1
+        try:
+            return self._planner(payload)
+        except Exception:
+            self.failures += 1
+            raise
+
+
+class _GoalsOnce(_Counted):
+    """목표 세우기를 지도마다 한 번만 부른다. 두 번째 부름(에이전트 변형)에는 첫 답이나 같은 실패를 그대로 돌려준다 — 목표만과 에이전트의
+    목표가 같아 차이가 지휘 루프의 몫만 남는다. 두 변형의 입력이 다르면 멈춘다."""
+
+    def __init__(self, planner: Callable) -> None:
+        super().__init__(planner)
+        self._seen: Optional[Mapping[str, Any]] = None
+        self._reply: Any = None
+        self._error: Optional[Exception] = None
+
+    def __call__(self, payload: Mapping[str, Any]) -> Any:
+        if self._seen is None:
+            self._seen = payload
+            try:
+                self._reply = super().__call__(payload)
+            except Exception as exc:
+                self._error = exc
+                raise
+            return self._reply
+        if payload != self._seen:
+            raise RuntimeError("두 변형의 목표 세우기 입력이 다르다")
+        if self._error is not None:
+            raise self._error
+        return self._reply
+
+
+def _service_variant(
+    sc: Scenario, req: Mapping[str, Any], gold: Sequence[goals_mod.Goal], goals_planner: _GoalsOnce,
+    direct_planner: Optional[_Counted], clock: Callable[[], float], before: Optional[RequestScore] = None,
+) -> RequestScore:
+    """서비스 경로(runner.run_course)로 한 번 돈다 — 지도 목표 후보(장소 라벨), 쉬는 날·이동 풀기, 기준선 대행, 실행 상한이 서비스와 같다.
+    평가 지도에는 우리 조건 요약이 없어 map_items는 비운다. before는 같은 지도에서 먼저 돈 목표만 변형이다: 에이전트는 그 목표 세우기
+    답을 다시 쓰므로 그 호출·시간·토큰·실패를 더하고, 실행 상한도 그만큼 먼저 시작한 것으로 본다."""
+    lines: list[str] = []
+    spent = before.seconds if before else 0.0
+    started = clock()
+    computed = runner.run_course(
+        TripBuild(sc.trip, ()), req["request_text"], goals_planner=goals_planner, direct_planner=direct_planner,
+        gateway=sc.gateway, on_step=lambda rec: lines.append(rec.line()),
+        started_at=direct.utc_now() - timedelta(seconds=spent),
+    )
+    asked = [g for g in computed.goals if g.origin == "request"]
+    calls, failures = (before.calls, before.failures) if before else (goals_planner.calls, goals_planner.failures)
+    tokens = (before.tokens_in, before.tokens_out) if before else (0, 0)
+    if direct_planner is not None:
+        calls, failures = calls + direct_planner.calls, failures + direct_planner.failures
+    return request_score(
+        sc, computed.course, gold,
+        goals_exact={_goal_sig(g) for g in asked} == {_goal_sig(g) for g in gold},
+        goals_trap_ok=(not asked) if not gold else None,
+        map_goals=len(computed.goals) - len(asked),
+        worklog=tuple(lines), calls=calls, seconds=spent + clock() - started,
+        tokens_in=tokens[0] + computed.tokens_in, tokens_out=tokens[1] + computed.tokens_out, failures=failures,
+    )
+
+
 def run_request_variants(
-    sc: Scenario, req: Mapping[str, Any], *, goal_setter: Optional[Callable] = None, decider: Optional[Callable] = None,
+    sc: Scenario, req: Mapping[str, Any], *, goals_planner: Optional[Callable] = None, direct_planner: Optional[Callable] = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, RequestScore]:
-    """초안 / 강한 기준선(요청을 모름) / 강한 기준선 + 정답 목표 / 에이전트(목표 세우기 + 지휘, 모델 자리가 있을 때)."""
+    """초안 / 강한 기준선(요청을 모름) / 강한 기준선 + 정답 목표 / 모델 자리가 있으면 목표만(목표 세우기 + 코드)과 에이전트(목표 세우기 + 지휘).
+    모델 변형 둘은 서비스 경로로 돌고 목표 세우기 답을 함께 쓴다(_GoalsOnce)."""
     gold = gold_goals(sc, req)
     draft = core.draft_course(sc.trip)
     out = {"draft": request_score(sc, draft, gold)}
 
-    def climb_with(goals: tuple[goals_mod.Goal, ...], decide=None, unmatched=0):
-        return direct.run_direct(initial_state(sc.trip, sc.start_hours, draft, goals), decide=decide, hours=sc.gateway,
-                                 unmatched_count=unmatched)
+    def climb_with(goals: tuple[goals_mod.Goal, ...]):
+        return direct.run_direct(initial_state(sc.trip, sc.start_hours, draft, goals), decide=None, hours=sc.gateway)
 
     out["strong"] = request_score(sc, climb_with(()).course, gold)
     gold_run = climb_with(gold)
     out["strong_gold"] = request_score(sc, gold_run.course, gold, worklog=tuple(worklog.render(
         sc.trip, gold, req["gold_unmatched"], gold_run, understood_by="정답 주입")))
-    if goal_setter is not None and decider is not None:
-        started = clock()
-        text = req["request_text"][:REQUEST_TEXT_MAX_CHARS]
-        verified = goals_mod.VerifiedGoals((), (text,), ())
-        try:
-            verified = goals_mod.verify_goal_set(sc.trip, text, goal_setter(goals_mod.goals_input(sc.trip, text)))
-        except ModelTurnFailed:
-            pass                                          # 목표 세우기 실패 → 요청 목표 없이 진행(기본 목표만)
-        result = climb_with(verified.goals, decider, len(verified.unmatched))
-        out["agent"] = request_score(
-            sc, result.course, gold,
-            goals_exact={_goal_sig(g) for g in verified.goals} == {_goal_sig(g) for g in gold},
-            goals_trap_ok=(not verified.goals) if not gold else None,
-            worklog=tuple(worklog.render(sc.trip, verified.goals, verified.unmatched, result)),
-            calls=goal_setter.calls + decider.calls, seconds=clock() - started,
-            tokens_in=goal_setter.tokens[0] + decider.tokens[0], tokens_out=goal_setter.tokens[1] + decider.tokens[1],
-            failures=len(goal_setter.failures) + len(decider.failures),
-        )
+    if goals_planner is not None and direct_planner is not None:
+        once = _GoalsOnce(goals_planner)
+        out["goals_code"] = _service_variant(sc, req, gold, once, None, clock)
+        out["agent"] = _service_variant(sc, req, gold, once, _Counted(direct_planner), clock, before=out["goals_code"])
     return out
 
 
@@ -219,6 +282,7 @@ def aggregate_requests(results: Sequence[Mapping[str, RequestScore]]) -> dict[st
             "travel_total": _mean([r.score.soft["travel_total"] for r in rows]),
             "goals_exact": (sum(exact) / len(exact)) if exact else None,
             "trap_zero": (sum(trap) / len(trap)) if trap else None,
+            "map_goals": _mean([r.map_goals for r in rows]),
             "model_calls": _mean([r.calls for r in rows]),
             "seconds": _mean([r.seconds for r in rows]),
             "tokens_in": _mean([r.tokens_in for r in rows]),
@@ -228,31 +292,62 @@ def aggregate_requests(results: Sequence[Mapping[str, RequestScore]]) -> dict[st
     return table
 
 
+def to_record(map_id: str, round_no: int, result: Mapping[str, RequestScore]) -> dict[str, Any]:
+    """지도 하나의 결과 → 저장 줄(JSON). 작업 기록은 장소 이름이 있어 넣지 않는다 — 숫자와 판정만 남는다."""
+    return {"map_id": map_id, "round": round_no,
+            "variants": {name: {k: v for k, v in asdict(r).items() if k != "worklog"} for name, r in result.items()}}
+
+
+def from_record(rec: Mapping[str, Any]) -> dict[str, RequestScore]:
+    return {name: RequestScore(**{**v, "score": Score(**v["score"])}) for name, v in rec["variants"].items()}
+
+
+def summarize(records: Sequence[Mapping[str, Any]]) -> str:
+    """회차별 표(aggregate_requests)를 만들고 칸마다 회차 평균과 범위(최소-최대)를 낸다. 같은 회차에 같은 지도가 두 번이면 뒤의 것을 쓴다."""
+    rounds: dict[int, dict[str, dict[str, RequestScore]]] = {}
+    for rec in records:
+        rounds.setdefault(rec["round"], {})[rec["map_id"]] = from_record(rec)
+    tables = {n: aggregate_requests([maps[k] for k in sorted(maps)]) for n, maps in sorted(rounds.items())}
+    first = next(iter(tables.values()))
+    cols = list(next(iter(first.values())))
+    lines = ["회차별 지도 수: " + ", ".join(f"{n}회 {len(rounds[n])}개" for n in tables),
+             "변형        " + "  ".join(f"{c:>19}" for c in cols)]
+    for variant in first:
+        cells = []
+        for c in cols:
+            vals = [t[variant][c] for t in tables.values() if variant in t and t[variant][c] is not None]
+            cells.append("-" if not vals else f"{sum(vals) / len(vals):.2f} [{min(vals):.2f}-{max(vals):.2f}]")
+        lines.append(f"{variant:<11} " + "  ".join(f"{x:>19}" for x in cells))
+    return "\n".join(lines)
+
+
 def _main_requests(args: argparse.Namespace) -> None:
     maps = load_maps(args.data)
     requests = {r["map_id"]: r for r in json.loads(args.requests.read_text(encoding="utf-8"))}
     if args.only:
         wanted = args.only.split(",")
         maps = [m for m in maps if m["id"] in wanted]
-    goal_setter = decider = None
+    goals_planner = direct_planner = None
     if args.model:
         limit = min(args.max_maps or MODEL_MAP_CAP, MODEL_MAP_CAP)
         maps = maps[:limit]
-        from agent.course.deps import DirectDecider, GoalSetter     # 실모델 설정(.env)이 필요할 때만 가져온다
-        from llm.api import real_course_direct_planner, real_course_goals_planner
+        from llm.api import real_course_direct_planner, real_course_goals_planner   # 실모델 설정(.env)이 필요할 때만 가져온다
+        goals_planner, direct_planner = real_course_goals_planner, real_course_direct_planner
     elif args.max_maps:
         maps = maps[: args.max_maps]
     results = []
     for m in maps:
-        if args.model:
-            goal_setter, decider = GoalSetter(real_course_goals_planner), DirectDecider(real_course_direct_planner)
-        results.append(run_request_variants(scenario_from_map(m), requests[m["id"]], goal_setter=goal_setter, decider=decider))
+        results.append(run_request_variants(scenario_from_map(m), requests[m["id"]],
+                                            goals_planner=goals_planner, direct_planner=direct_planner))
+        if args.save:
+            with args.save.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(to_record(m["id"], args.round, results[-1]), ensure_ascii=False) + "\n")
     print(format_table(aggregate_requests(results), len(maps)))
     if args.detail:
         for m, r in zip(maps, results):
             req = requests[m["id"]]
             print(f"\n{'=' * 60}\n{m['id']} ({req['kind']}) 요청: {req['request_text']}")
-            for variant in ("strong_gold", "agent"):
+            for variant in ("strong_gold", "goals_code", "agent"):
                 if variant in r and r[variant].worklog:
                     print(f"-- {variant}")
                     print("\n".join(r[variant].worklog))
@@ -267,9 +362,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                     help="요청 문장 세트(requests.json). 주면 강한 기준선 / +정답 목표 / 에이전트(지휘)를 비교한다")
     ap.add_argument("--detail", action="store_true", help="지도별 작업 기록(이해 → 확인 → 짜기 → … → 끝)도 찍는다. --requests에서만")
     ap.add_argument("--only", default=None, help="지도 id를 쉼표로(예: map_04,map_07). --requests에서만")
+    ap.add_argument("--save", type=Path, default=None, help="지도별 결과를 이 파일에 한 줄씩 덧붙인다(JSON). --requests에서만")
+    ap.add_argument("--round", type=int, default=1, help="--save에 적을 회차 번호")
+    ap.add_argument("--summarize", type=Path, default=None, help="--save로 쌓은 파일을 읽어 회차 평균과 범위만 찍는다(돌리지 않는다)")
     ap.add_argument("--unknown-as-violation", action="store_true", help="휴무 모름을 위반으로 센다(기본은 「확인 필요」)")
     args = ap.parse_args(argv)
 
+    if args.summarize:
+        lines = args.summarize.read_text(encoding="utf-8").splitlines()
+        return print(summarize([json.loads(line) for line in lines if line.strip()]))
     if args.requests:
         return _main_requests(args)
     maps = load_maps(args.data)

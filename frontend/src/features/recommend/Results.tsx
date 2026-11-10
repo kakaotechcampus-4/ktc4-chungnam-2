@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { ExternalLink, RotateCw } from 'lucide-react'
+import { RotateCw, TriangleAlert } from 'lucide-react'
 
 import { ApiError } from '@/api'
 import RunAdvice from '@/features/agent/RunAdvice'
+import CreditBox from '@/features/credits/CreditBox'
 import type { MemberView } from '@/features/maps/model'
 import PanelBackLink from '@/features/shell/PanelBackLink'
 import { showToast } from '@/features/shell/toast'
-import { balanceText } from '@/features/credits/model'
+import { goToPlaceSearch } from '@/features/search/goToPlaceSearch'
 import { useCreditsQuery } from '@/features/credits/queries'
 import ConfirmDialog from '@/ui/ConfirmDialog'
 import { josa } from '@/ui/josa'
@@ -14,6 +15,8 @@ import Notice from '@/ui/Notice'
 import SheetTitle from '@/ui/SheetTitle'
 import ExternalSearchLink from '@/ui/ExternalSearchLink'
 import Sentences from '@/ui/Sentences'
+import BusyLabel from '@/ui/BusyLabel'
+import MapAppLinks from '@/ui/MapAppLinks'
 
 import { useAiStore } from './aiStore'
 import { AiChecks, AiFulfillment, AiReason } from './Evidence'
@@ -22,6 +25,7 @@ import {
   missingWants,
   noResultsExternalSearch,
   noResultsFunnel,
+  sourceLabel,
   type CandidateDto,
   type FunnelRow,
   type RecommendResultDto,
@@ -39,38 +43,55 @@ export function BackToReadiness({ mapId }: { mapId: string }) {
   return <PanelBackLink label="AI 추천" onBack={() => setRun(mapId, undefined)} />
 }
 
+/** 다시 추천 설명. 머리와 목록 끝이 같은 글을 쓴다. 작은 회색 글로는 눈에 띄지 않아 13px, 진한 색으로 뒀다(#1729). */
+const RETRY_HINT = '변경된 조건으로, 새롭게 다시 찾아드려요'
+
 /**
- * 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 그 아래 「↻ 다시 추천」과 남은 크레딧. count 는 이번 실행이 새로 찾은 곳(new_count)이다.
- * 다시 추천은 고친 조건으로, 지금 후보를 빼고 찾는다(#845). 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D5) — 그래서 확인 창 없이 바로 간다.
- * 버튼이 작다는 의견으로 핑고 안내 칸 아래 btn-md 로 옮겼다(#1363).
- * 조건을 고치는 요청이 끝나기 전에는 막는다 — 고친 게 빠진 채 찾지 않게. 결과(실패 포함)는 요청 훅이 처리한다(#349).
+ * 결과 머리글 — "관광지 대안 3곳을 찾았어요" + 둘째 줄 "509곳을 거르고 3곳을 골랐어요 어떻게 골랐나요"(#1706, 예전엔 목록 위 따로 한 줄),
+ * 그 아래 "다시 추천"과 오른쪽 크레딧 칸(CreditBox, "크레딧 안 써요"). count 는 이번 실행이 새로 찾은 곳(new_count)이다.
+ * 결과가 처음 뜰 때 핑고의 하트가 한 번 떠오른다(#1706). 목록에서 상세를 보고 돌아올 때는 다시 뜨지 않는다(shownRuns).
  */
-export function ResultsHeader({ mapId, run, count }: { mapId: string; run: RecommendRunDto; count: number }) {
-  const retry = useRetryMutation(mapId)
-  const patching = useEvidencePatching(run.id)
-  const busy = retry.isPending ? '찾는 중…' : patching ? '조건 반영 중…' : null
+export function ResultsHeader({ mapId, run, count, removed, onHow }: { mapId: string; run: RecommendRunDto; count: number; removed?: number; onHow?: () => void }) {
+  const [celebrate] = useState(() => !shownRuns.has(run.id))
   const credits = useCreditsQuery().data
   return (
     <div>
       <BackToReadiness mapId={mapId} />
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <AiHeader
-            title={count ? `${run.category} 대안 ${count}곳을 찾았어요` : '이번엔 새로 찾은 곳이 없어요'}
-            sub="지도에 올린 곳만 구성원 모두에게 보여요"
-            mood={count ? 'heart' : 'sad'}
-          />
-        </div>
-      </div>
-      <div className="mt-2 flex items-center gap-3">
-        <button type="button" disabled={!!busy} onClick={() => retry.mutate(run)} className="btn-outline btn-md flex-1">
-          <RotateCw size={16} aria-hidden="true" /> {busy ?? '다시 추천'}
-        </button>
+      <AiHeader title={count ? `${run.category} 대안 ${count}곳을 찾았어요` : '이번엔 새로 찾은 곳이 없어요'} mood={count ? 'heart' : 'sad'} celebrate={celebrate && count > 0}>
+        {removed !== undefined && onHow && (
+          <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-ink-600">
+            {removed}곳을 거르고 {count}곳을 골랐어요
+            <button type="button" onClick={onHow} className="btn-link text-xs">
+              어떻게 골랐나요
+            </button>
+          </p>
+        )}
+      </AiHeader>
+      <div className="mt-2 flex gap-2">
+        <RetryButton mapId={mapId} run={run} className="btn-outline btn-md flex-1" />
         {/* 숫자는 GET /credits/me 그대로(#733). 못 받으면 비운다 — 다시 추천은 크레딧과 무관하게 된다. */}
-        {credits && <span className="shrink-0 text-label text-ink-500">{balanceText(credits)}</span>}
+        {credits && <CreditBox cost={0} credits={credits} />}
       </div>
-      <p className="mt-1.5 text-label text-ink-500"><Sentences text="고친 조건으로, 지금 후보를 빼고 찾아 드려요 · 크레딧은 쓰지 않아요" /></p>
+      <p className="mt-1.5 text-body font-medium text-ink-700">{RETRY_HINT}</p>
     </div>
+  )
+}
+
+/**
+ * 다시 추천 — 고친 조건으로, 지금 후보를 빼고 찾는다(#845). 크레딧을 쓰지 않고 횟수 상한도 없다(#432 D5) — 그래서 확인 창 없이 바로 간다.
+ * 머리(외곽선)와 목록 끝(채움, #1706) 두 자리에 있다. 카드를 다 보고 마음에 드는 곳이 없을 때가 누르는 때라 목록 끝이 주 자리다.
+ * 조건을 고치는 요청이 끝나기 전에는 막는다 — 고친 게 빠진 채 찾지 않게. 결과(실패 포함)는 요청 훅이 처리한다(#349).
+ */
+function RetryButton({ mapId, run, className, label = '다시 추천' }: { mapId: string; run: RecommendRunDto; className: string; label?: string }) {
+  const retry = useRetryMutation(mapId)
+  const patching = useEvidencePatching(run.id)
+  const busy = retry.isPending ? '찾는 중…' : patching ? '조건 반영 중…' : null
+  return (
+    <button type="button" disabled={!!busy} aria-busy={!!busy} onClick={() => retry.mutate(run)} className={className}>
+      <BusyLabel busy={!!busy} busyText={busy ?? ''}>
+        <RotateCw size={16} aria-hidden="true" /> {label}
+      </BusyLabel>
+    </button>
   )
 }
 
@@ -89,7 +110,6 @@ export function ResultsBody({
   run,
   result,
   members,
-  onHow,
   conditions,
   onOpenConditions,
 }: {
@@ -97,7 +117,6 @@ export function ResultsBody({
   run: RecommendRunDto
   result: RecommendResultDto
   members: MemberView[]
-  onHow: () => void
   conditions?: ReactNode
   onOpenConditions?: () => void
 }) {
@@ -105,7 +124,6 @@ export function ResultsBody({
   const published = result.candidates.filter((c) => c.visibility === 'published')
   // 「이번 검색 0건」과 「찾은 곳을 다 올려서 남은 게 없음」을 가른다 — new_count 는 올려도 줄지 않는다(구버전 서버면 남은 수로).
   const noneFound = (result.new_count ?? fresh.length) === 0
-  const removed = result.funnel.reduce((sum, f) => sum + f.removed_count, 0)
   const missing = missingWants(result.candidates, useEvidenceQuery(run.id).data ?? [])
   const [enter] = useState(() => !shownRuns.has(run.id))
   useEffect(() => {
@@ -114,14 +132,13 @@ export function ResultsBody({
   return (
     <div className={`space-y-3 ${enter ? 'enter-fade' : ''}`}>
       {conditions}
-      <button type="button" onClick={onHow} className="press flex w-full justify-between rounded-xl bg-ink-50 px-3 py-2.5 text-xs text-ink-700">
-        <span>
-          {removed}곳을 거르고 {result.new_count ?? result.candidates.length}곳을 추천했어요
+      {/* 알러지는 거르지 않는다 — 데이터로 보장할 수 없어서 사유와 상관없이 항상 안내한다(#425). 올린 곳만 보인다는 말과 한 줄로 둔다(#1706). */}
+      <p className="flex items-start gap-1 px-0.5 text-xs text-ink-500">
+        <TriangleAlert size={14} className="mt-px shrink-0" aria-hidden="true" />
+        <span className="min-w-0">
+          <Sentences text="알러지가 있다면 가게에 직접 확인해 주세요. 지도에 올린 곳만 모두에게 보여요" />
         </span>
-        <span className="font-bold text-brand-600">어떻게 골랐나요 ›</span>
-      </button>
-      {/* 알러지는 거르지 않는다 — 데이터로 보장할 수 없어서 사유와 상관없이 항상 안내한다(#425) */}
-      <p className="text-xs text-ink-500"><Sentences text="알러지가 있다면 가게에 직접 확인해 주세요" /></p>
+      </p>
       <RunAdvice mapId={mapId} run={run} widen={<WidenButton mapId={mapId} run={run} className="btn-outline btn-sm" />} onOpenEvidence={onOpenConditions} />
       {/* 원한 조건에 맞는 곳이 반경 안에 없으면 다른 곳만 보여 주지 않고 이유를 말한다. 넓히는 건 사람이다(가드레일 4). */}
       {missing.length > 0 && (
@@ -133,7 +150,7 @@ export function ResultsBody({
       )}
       <div className="space-y-3">
         {fresh.length > 0 && (
-          <ol className="space-y-3">
+          <ol className="space-y-4">
             {fresh.map((c) => (
               <li key={c.id}>
                 <CandidateCard mapId={mapId} run={run} c={c} members={members} />
@@ -151,7 +168,7 @@ export function ResultsBody({
         {published.length > 0 && (
           <section className="space-y-3 pt-2">
             <h3 className="text-sm font-bold text-ink-900">이미 지도에 올린 곳</h3>
-            <ol className="space-y-3">
+            <ol className="space-y-4">
               {published.map((c) => (
                 <li key={c.id}>
                   <CandidateCard mapId={mapId} run={run} c={c} members={members} />
@@ -160,6 +177,14 @@ export function ResultsBody({
             </ol>
           </section>
         )}
+        {/* 카드를 다 본 자리 — 마음에 드는 곳이 없을 때 누른다(#1706). 이 화면의 채움 버튼은 이것 하나다. */}
+        <div className="space-y-1.5 pt-2 text-center">
+          <p className="text-body text-ink-600">마음에 드는 곳이 없나요?</p>
+          <RetryButton mapId={mapId} run={run} label="다른 곳 다시 추천" className="btn-primary btn-lg w-full" />
+          <p className="text-body font-medium text-ink-700">
+            <Sentences text={`크레딧을 쓰지 않아요. ${RETRY_HINT}`} />
+          </p>
+        </div>
       </div>
     </div>
   )
@@ -167,7 +192,7 @@ export function ResultsBody({
 
 /**
  * 카드를 누르면 지도가 그 후보로 간다(#843). 안의 버튼·링크는 자기 일만 한다. 키보드로는 제목 버튼으로 간다.
- * 지도에서 후보 점선 핀을 눌러도 같은 후보가 골라지고, 그 카드가 보이게 스크롤한다.
+ * 지도에서 후보 핑고 핀을 눌러도 같은 후보가 골라지고, 그 카드가 보이게 스크롤한다.
  */
 function CandidateCard({ mapId, run, c, members }: { mapId: string; run: RecommendRunDto; c: CandidateDto; members: MemberView[] }) {
   const selected = useAiStore((s) => s.focus?.id === c.id)
@@ -183,10 +208,12 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest('a, button')) focus()
       }}
-      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-[var(--pingo-bg)] p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
+      // 흰 면 + 하늘색 테두리(#1706). AI 하늘색 면은 시트 바탕(라벤더 회색)과 밝기가 거의 같아 카드끼리 구분이 안 됐다.
+      className={`press cursor-pointer space-y-2 rounded-xl border-[1.5px] bg-surface p-3.5 ${selected ? 'border-brand-600' : 'border-brand-300'}`}
     >
       <header className="flex items-center gap-2">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-brand-600 text-xs font-bold text-brand-600">
+        {/* 순위는 채운 원 + 흰 숫자 — 테두리 원은 숫자가 약하게 보였다(#1706). */}
+        <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">
           {c.rank}
         </span>
         <h3 className="min-w-0 flex-1 text-title font-bold text-ink-900">
@@ -200,31 +227,18 @@ function CandidateCard({ mapId, run, c, members }: { mapId: string; run: Recomme
             {c.place_name}
           </button>
         </h3>
-        {c.region_label && <span className="tag border border-brand-300 bg-white text-brand-700">{c.region_label} 기준</span>}
       </header>
-      <p className="text-xs text-ink-600">{run.category}</p>
+      {/* 카테고리는 머리("카페 대안")에 있어 카드마다 적지 않는다. 지역 기준과 출처(가드레일 5)를 이름 아래 한 줄로(#1706). */}
+      <p className="pl-9 text-xs text-ink-500">
+        {[c.region_label && `${c.region_label} 기준`, `출처: ${sourceLabel(c)}`].filter(Boolean).join(', ')}
+      </p>
       <AiReason text={c.reason} />
       <AiChecks evidence={c} />
-      <AiFulfillment evidence={c} members={members} />
+      <AiFulfillment evidence={c} members={members} withSource={false} />
       <div className="flex items-center justify-between">
         <PublishButton mapId={mapId} run={run} c={c} />
-        {/* 사진·주소·영업시간은 카카오맵에서 본다 — 앱 안 WebView 금지(카카오 약관), 새 창으로.
-            장소 페이지가 없으면 서버가 이름+동네 검색 링크를 준다(#798). */}
-        {(c.place_url || c.naver_url) && (
-          <span className="flex flex-wrap justify-end gap-x-3">
-            {c.place_url && (
-              <a href={c.place_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
-                카카오맵에서 보기 <ExternalLink size={12} aria-hidden="true" />
-              </a>
-            )}
-            {/* 네이버 지도 검색 링크(#1513) — 같은 모양으로 바로 뒤에 */}
-            {c.naver_url && (
-              <a href={c.naver_url} target="_blank" rel="noopener noreferrer" className="btn-link inline-flex items-center gap-0.5 text-xs">
-                네이버 지도에서 보기 <ExternalLink size={12} aria-hidden="true" />
-              </a>
-            )}
-          </span>
-        )}
+        {/* 사진, 주소, 영업시간은 원본 장소 페이지에서 본다. 장소 페이지가 없으면 서버가 이름+동네 검색 링크를 준다(#798). */}
+        <MapAppLinks kakao={c.place_url} naver={c.naver_url} variant="inline" />
       </div>
     </article>
   )
@@ -265,7 +279,7 @@ function PublishButton({ mapId, run, c }: { mapId: string; run: RecommendRunDto;
       }
       className="btn-outline btn-sm"
     >
-      {publish.isPending ? '올리는 중…' : '지도에 올리기'}
+      <BusyLabel busy={publish.isPending} busyText="올리는 중…">지도에 올리기</BusyLabel>
     </button>
   )
 }
@@ -281,7 +295,9 @@ export function HowPicked({ funnel, count, onBack }: { funnel: FunnelRow[]; coun
         <h4 className="mb-1 text-sm font-bold text-ink-900">순위는 이렇게 정했어요</h4>
         <ul className="list-inside list-disc space-y-0.5">
           <li><Sentences text="있으면 좋은 조건을 많이 맞출수록 앞에 뒀어요" /></li>
-          <li><Sentences text="지역마다 1위를 먼저 뽑고 남은 자리를 채웠어요" /></li>
+          {/* 규칙의 정본은 docs/constraints.md "상위 3곳 선택"이다. 동네 안배는 동점일 때만 작동한다(#1288). */}
+          <li><Sentences text="순위가 같으면 아직 안 고른 동네를 먼저 골랐어요" /></li>
+          <li><Sentences text="그래도 같으면 기준 장소에서 가까운 곳을 먼저 골랐어요" /></li>
         </ul>
       </section>
     </div>
@@ -299,8 +315,8 @@ function FunnelTable({ funnel, left }: { funnel: FunnelRow[]; left: number }) {
           </tr>
         ))}
         <tr>
-          <td className="px-3 py-1.5 font-bold text-brand-700">남은 곳</td>
-          <td className={`px-3 py-1.5 text-right font-bold ${left ? 'text-brand-700' : 'text-[var(--warn-text)]'}`}>{left}곳</td>
+          <td className="px-3 py-1.5 font-bold text-selected">남은 곳</td>
+          <td className={`px-3 py-1.5 text-right font-bold ${left ? 'text-selected' : 'text-[var(--warn-text)]'}`}>{left}곳</td>
         </tr>
       </tbody>
     </table>
@@ -344,7 +360,7 @@ export function NoResults({
           </div>
         )}
       </div>
-      <button type="button" onClick={() => document.getElementById('place-search')?.focus()} className="btn-link text-sm">
+      <button type="button" onClick={goToPlaceSearch} className="btn-link text-sm">
         검색해서 직접 찍기
       </button>
     </div>
@@ -413,17 +429,18 @@ export function Failed({ mapId, run }: { mapId: string; run: RecommendRunDto }) 
   return (
     <div className="space-y-3">
       <div className="rounded-xl border border-brand-300 bg-[var(--pingo-bg)] p-3 text-sm">
-        <p className="font-bold text-brand-700">남긴 의견과 조건은 그대로 있어요</p>
+        <p className="font-bold text-selected">남긴 의견과 조건은 그대로 있어요</p>
         <p className="text-xs text-ink-600">잠시 후 다시 시도해 주세요</p>
       </div>
       <button
+        aria-busy={execute.isPending}
         type="button"
         disabled={execute.isPending}
         // 다시 '진행 중'으로 간다. 또 실패하면 이 화면으로, 다른 오류는 토스트로(요청 훅, #349).
         onClick={() => execute.mutate(run)}
         className="btn-outline btn-lg w-full"
       >
-        {execute.isPending ? '다시 찾는 중…' : '다시 시도'}
+        <BusyLabel busy={execute.isPending} busyText="다시 찾는 중…">다시 시도</BusyLabel>
       </button>
     </div>
   )

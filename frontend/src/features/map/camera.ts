@@ -22,11 +22,19 @@ export type Size = { w: number; h: number }
 export type Padding = { top: number; right: number; bottom: number; left: number }
 
 /**
- * 점을 맞출 때 비키는 여백. 넓은 화면은 지도 영역에 시트가 없어서 위는 칩, 오른쪽은 지도 버튼만 비킨다(#338).
+ * 넓은 화면에서 지도 왼쪽을 가리는 패널 카드 폭(px, #1538). 지도는 화면 전체이고 패널이 그 위에 떠 있다.
+ * ponytail: 지도(MapCanvas)가 화면에 하나라 모듈 값 하나로 둔다. 지도를 둘 띄우게 되면 지도마다 넘긴다.
+ */
+export const view = { cover: 0 }
+
+/**
+ * 점을 맞출 때 비키는 여백. 넓은 화면은 지도 영역에 시트가 없어서 위는 칩, 오른쪽은 지도 버튼, 왼쪽은 패널 카드를 비킨다(#338, #1538).
  * 휴대폰은 위가 검색창·칩, 아래가 2단계 시트다.
  */
 export function fitPadding(viewportH: number, desktop: boolean): Padding {
-  return desktop ? { top: 64, right: 76, bottom: 32, left: 32 } : { top: 170, right: 64, bottom: Math.round(viewportH * 0.62), left: 32 }
+  return desktop
+    ? { top: 64, right: 76, bottom: 32, left: 32 + view.cover }
+    : { top: 170, right: 64, bottom: Math.round(viewportH * 0.62), left: 32 }
 }
 
 const clamp = (level: number) => Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, level))
@@ -94,19 +102,34 @@ export function groupNear(points: Px[], dist: number): number[][] {
   return groups
 }
 
-/** 대각선으로 보는 기울기 — 작은 쪽이 큰 쪽의 tan 22.5° 이상이면 45°에 더 가깝다(8방향을 45°씩 똑같이 나눈다). */
-const DIAGONAL = Math.tan(Math.PI / 8)
+/** 8방향의 화면 각도(°, 오른쪽 0에서 시계 방향 — 화면 y 는 아래가 +). */
+const HEADING_DEG: Record<MapHeading, number> = {
+  right: 0,
+  'down-right': 45,
+  down: 90,
+  'down-left': 135,
+  left: 180,
+  'up-left': -135,
+  up: -90,
+  'up-right': -45,
+}
+const HEADINGS = Object.keys(HEADING_DEG) as MapHeading[]
+
+/** 이만큼(px) 끌어야 방향을 정한다. 이보다 짧으면 손떨림 1~2px 에도 대각선으로 튄다(#1746). */
+export const WALK_MIN_PX = 12
+/** 지금 방향의 칸(±22.5°)에서 이만큼(°) 더 벗어나야 바꾼다 — 경계에서 두 방향을 오가지 않게. */
+const WALK_KEEP_DEG = 15
 
 /**
- * 사용자가 지도를 끈 방향(#1433) — 화면에서 움직인 만큼(px)을 8방향 중 가장 가까운 쪽으로.
- * min px 보다 덜 움직였으면 손떨림으로 보고 방향을 정하지 않는다(null).
+ * 지도 위 핑고가 걷는 쪽(#1433, #1746) — 화면이 가는 쪽, 곧 지도를 끈 쪽의 반대다.
+ * 땅(지도)이 발밑으로 끈 쪽으로 지나가니, 핑고는 그 반대로 걸어 나가는 것처럼 보인다.
+ * drag 는 끈 만큼(px). min px 보다 덜 움직였으면 정하지 않는다(null).
+ * prev(지금 방향)의 칸에서 WALK_KEEP_DEG 안이면 prev 를 그대로 둔다 — 떨림이나 손 뗄 때의 작은 꺾임에 바뀌지 않는다.
  */
-export function dragHeading(d: Px, min = 4): MapHeading | null {
-  const ax = Math.abs(d.x)
-  const ay = Math.abs(d.y)
-  if (Math.max(ax, ay) < min) return null
-  const h = d.x > 0 ? 'right' : 'left'
-  const v = d.y > 0 ? 'down' : 'up'
-  if (Math.min(ax, ay) >= DIAGONAL * Math.max(ax, ay)) return `${v}-${h}`
-  return ax >= ay ? h : v
+export function walkHeading(drag: Px, prev: MapHeading | null, min = WALK_MIN_PX): MapHeading | null {
+  if (Math.hypot(drag.x, drag.y) < min) return null
+  const deg = (Math.atan2(-drag.y, -drag.x) * 180) / Math.PI
+  const off = (h: MapHeading) => Math.abs(((deg - HEADING_DEG[h] + 540) % 360) - 180)
+  if (prev && off(prev) <= 22.5 + WALK_KEEP_DEG) return prev
+  return HEADINGS.reduce((best, h) => (off(h) < off(best) ? h : best))
 }
