@@ -75,7 +75,7 @@ def _endpoints(w):
         ("DELETE reaction", "DELETE", f"/pins/{pin}/reaction", None),
         ("GET reactions", "GET", f"/pins/{pin}/reactions", None),
         ("GET readiness", "GET", f"/maps/{m}/recommend/readiness", None),
-        ("POST run", "POST", f"/maps/{m}/runs", {"category": "음식점"}),
+        ("POST run", "POST", f"/maps/{m}/runs", {"category": "음식점", "center": {"lat": 37.5445, "lng": 127.0561}}),   # center가 없으면 401·404가 본문 검증(422)과 섞인다(#1354)
         ("GET evidence", "GET", f"/runs/{run}/evidence", None),
         ("PATCH evidence", "PATCH", f"/runs/{run}/evidence", {"toggle": [{"id": w["evidence"], "is_active": True}]}),
         ("POST regions/confirm", "POST", f"/runs/{run}/regions/confirm", {}),

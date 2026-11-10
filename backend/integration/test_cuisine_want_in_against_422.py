@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import update
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     PLACES, _pin, plan_with, members, own_db, place_ids, real_client,
 )
 from places import repository
@@ -51,7 +52,7 @@ def _run_with_reason(a, b, map_id, place_ids):
     """b가 횟집(R)에 🚫 REASON. R은 핀이 있어 후보에서 빠진다."""
     pin = _pin(a, map_id, "R", place_ids)
     assert b.put(f"/pins/{pin}/reaction", json={"type": "against", "reason_text": REASON}).status_code == 200
-    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202, run.text
     run_id = run.json()["id"]
     lines = {line["fact_key"]: line for line in a.get(f"/runs/{run_id}/evidence").json()}

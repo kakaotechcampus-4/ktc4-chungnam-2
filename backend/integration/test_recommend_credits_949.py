@@ -13,6 +13,7 @@ from auth.testing import make_guest
 from credits.constants import INITIAL_CREDITS, PRICES
 from credits.models import CreditAccount, CreditLedger
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     _pin, members, own_db, place_ids, plan_with, real_client,
 )
 from integration.test_llm_usage import EchoClient
@@ -49,7 +50,7 @@ def test_zero_balance_is_402_before_the_model(text_reason_map, db_session, llm_u
     db_session.add(CreditAccount(user_id="user_b", balance=0))
     db_session.commit()
 
-    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert resp.status_code == 402, resp.text
     body = resp.json()
     assert body["code"] == "CREDIT_INSUFFICIENT"
@@ -65,7 +66,7 @@ def test_a_successful_run_spends_one(text_reason_map, db_session, llm_usage_rows
     롤백이 독립 트랜잭션의 예약 행까지 되돌린다."""
     _a, b, map_id = text_reason_map
 
-    created = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    created = b.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert created.status_code == 202, created.text
     run_id = created.json()["id"]
 
@@ -86,7 +87,7 @@ def test_run_without_center_is_422_and_spends_nothing_1331(text_reason_map, db_s
     db_session.commit()
     before = b.get("/credits/me").json()
 
-    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"})   # center가 없다
     assert resp.status_code == 422, resp.text
     assert resp.json()["code"] == "VALIDATION_ERROR"
     assert b.get("/credits/me").json() == before
@@ -114,7 +115,7 @@ def test_eleventh_run_retry_and_evidence_edit_pass_without_429(text_reason_map, 
     a, b, map_id = text_reason_map
     run_ids = []
     for _ in range(11):
-        resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점", "execute": True})
+        resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER, "execute": True})
         assert resp.status_code == 202, resp.text
         run_ids.append(resp.json()["id"])
     assert resp.json()["attempt_no"] == 11
@@ -141,7 +142,7 @@ def test_guest_is_403_and_the_model_is_not_called(text_reason_map, db_session, l
     make_guest(db_session, "user_b")
     db_session.commit()
 
-    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    resp = b.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert resp.status_code == 403, resp.text
     assert resp.json()["code"] == "GUEST_NOT_ALLOWED"
     assert resp.json()["detail"] == {"initial_credits": INITIAL_CREDITS}

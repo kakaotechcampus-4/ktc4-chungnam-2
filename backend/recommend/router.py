@@ -103,7 +103,7 @@ def post_run(body: RunCreateRequest, mapId: str = Path(...), principal: Principa
     run = flows.create_run(
         db, map_id=mapId, category=body.category, requested_by=principal.user_id, evidence_planner=evidence_planner,
         idempotency_key=idempotency_key, execute=body.execute, place_search=place_search, place_facts=place_facts,
-        center=(body.center.lat, body.center.lng) if body.center else None, radius_m=body.radius_m,
+        center=(body.center.lat, body.center.lng), radius_m=body.radius_m,
     )
     return _run_response(run)
 

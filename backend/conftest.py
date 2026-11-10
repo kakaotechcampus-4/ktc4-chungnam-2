@@ -112,10 +112,11 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(autouse=True)
 def _run_center_from_pins(request, monkeypatch):
-    """run 생성은 지도 중심(center)이 필수다(#1331). 중심 없이 run을 만들던 기존 테스트가 center를 따로 만들지 않아도 되게,
-    flows.create_run에 center가 없으면 readiness·미리 돌려 보기가 쓰는 핀 기반 기본 지역(`_default_circle_and_anchors`, 그 카테고리 핀 좌표의
-    평균)의 중심으로 채우고 시·도 판정은 모르면 통과로 본다.
-    center 없는 요청 자체를 보는 테스트는 `@pytest.mark.no_center_shim`으로 끈다. 핀 좌표가 없으면 채우지 않는다(서버가 422)."""
+    """`flows.create_run`을 center 없이 부르는 기존 직접 호출 시험(recommend/tests의 flows 단위 시험)이 center를 따로 만들지 않아도 되게,
+    center가 없으면 readiness·미리 돌려 보기가 쓰는 핀 기반 기본 지역(`_default_circle_and_anchors`, 그 카테고리 핀 좌표의 평균)의 중심으로
+    **그 호출 하나에서만** 채우고, 채운 호출의 시·도 판정은 모르면 통과로 본다. 명시한 center의 호출은 건드리지 않는다.
+    HTTP 요청은 채우지 않는다 — `POST /maps/{mapId}/runs`는 center를 필수로 막고(#1354) 화면이 보내는 요청을 대신하는 시험(integration)과
+    recommend 라우터 시험은 본문에 center를 직접 적는다. center 없는 호출 자체를 보는 시험은 `@pytest.mark.no_center_shim`으로 끈다."""
     if request.node.get_closest_marker("no_center_shim"):
         return
     try:
@@ -126,18 +127,15 @@ def _run_center_from_pins(request, monkeypatch):
     real_create_run = flows.create_run
 
     def create_run(db, *, map_id, category, center=None, **kwargs):
-        injected = False
-        if center is None:
-            default_region = flows._default_circle_and_anchors(db, map_id=map_id, category=category)
-            if default_region is not None:
-                center = (default_region[0].anchor_lat, default_region[0].anchor_lng)
-                injected = True
-        if not injected:
+        if center is not None:
+            return real_create_run(db, map_id=map_id, category=category, center=center, **kwargs)
+        default_region = flows._default_circle_and_anchors(db, map_id=map_id, category=category)
+        if default_region is None:
             return real_create_run(db, map_id=map_id, category=category, center=center, **kwargs)
         real_sido_at = places_api.sido_at
         monkeypatch.setattr(places_api, "sido_at", lambda *a, **kw: real_sido_at(*a, **kw) or "sido")
         try:
-            return real_create_run(db, map_id=map_id, category=category, center=center, **kwargs)
+            return real_create_run(db, map_id=map_id, category=category, center=(default_region[0].anchor_lat, default_region[0].anchor_lng), **kwargs)
         finally:
             monkeypatch.setattr(places_api, "sido_at", real_sido_at)
 

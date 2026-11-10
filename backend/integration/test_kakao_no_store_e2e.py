@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from common.database import Base
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     PLACES, _pin, fake_planner, members, own_db, place_ids, real_client,
 )
 from places import api as places_api
@@ -84,7 +85,7 @@ def test_no_kakao_value_is_stored_logged_or_sent_to_the_model(members, place_ids
 
     # 3) 반응 → run → 실행 → 게시
     assert a.put(f"/pins/{pin.json()['id']}/reaction", json={"type": "against", "reason_text": "한식 말고 다른 거"}).status_code == 200
-    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    run_id = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     a.post(f"/runs/{run_id}/regions/confirm", json={})
     assert a.post(f"/runs/{run_id}/execute").status_code == 202
     candidates = a.get(f"/runs/{run_id}/result").json()["candidates"]

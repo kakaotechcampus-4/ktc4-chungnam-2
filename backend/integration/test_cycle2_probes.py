@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import text, update
 
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
-    PLACES, _pin, fake_planner, members, own_db, place_ids, real_client,
+    PLACES, RUN_CENTER, _pin, fake_planner, members, own_db, place_ids, real_client,
 )
 from places import repository
 from places.models import Place
@@ -30,7 +30,7 @@ def _extra_place(db, sid, name, lat, lng, facts):
 
 def _run(a, map_id, center=None, monkeypatch=None):
     """center를 주면 run 생성 동안만 시·도 판정을 통과로 본다(테스트 DB에는 시·도 경계가 없다). 실행의 시·도 제한은 그대로다."""
-    body = {"category": "음식점", **({"center": {"lat": center[0], "lng": center[1]}} if center else {})}
+    body = {"category": "음식점", "center": {"lat": center[0], "lng": center[1]} if center else RUN_CENTER}   # center는 필수(#1354)
     if monkeypatch is not None:
         from recommend import flows
         with monkeypatch.context() as patch:

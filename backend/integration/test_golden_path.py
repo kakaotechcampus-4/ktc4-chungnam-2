@@ -12,6 +12,7 @@ import pytest
 
 from auth.testing import session_cookie
 from main import app  # noqa: F401  — 라우터 등록을 보장
+from integration.real_places_fixtures import RUN_CENTER
 
 REGION = {"label": "부산", "lat": 35.1796, "lng": 129.0756}
 
@@ -84,7 +85,7 @@ def test_map_invite_pins_reactions_recommend_publish_shortlist_route(clients, pi
 
     # 추천 — 스텁 위에서 끝까지. 결과는 요청자에게만 보인다(가드레일 1)
     assert a.get(f"/maps/{map_id}/recommend/readiness").json()["음식점"]["ready"] is True
-    r = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    r = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert r.status_code == 202, r.text
     run_id = r.json()["id"]
     assert len(a.get(f"/runs/{run_id}/evidence").json()) >= 2
@@ -106,7 +107,7 @@ def test_map_invite_pins_reactions_recommend_publish_shortlist_route(clients, pi
     assert r.json().get("checks"), "게시된 뒤에도 checks가 붙어 있어야 한다"
 
     # 지난 추천 기록(#469) — 내 run만 보인다. 남(b)의 run은 내 목록에 없고, b의 목록에도 내 run이 없다(가드레일 1)
-    b_run_id = b.post(f"/maps/{map_id}/runs", json={"category": "음식점"}).json()["id"]
+    b_run_id = b.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER}).json()["id"]
     history = a.get(f"/maps/{map_id}/runs")
     assert history.status_code == 200, history.text
     assert [h["id"] for h in history.json()] == [run_id]

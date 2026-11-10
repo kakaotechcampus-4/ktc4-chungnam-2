@@ -55,6 +55,7 @@ from notifications.models import Notification, NotificationPref
 from recommend import api as recommend_api
 from recommend import core as recommend_core
 from recommend import deps as recommend_deps
+from recommend import flows as recommend_flows
 from recommend.deps import (
     RealPlaceFactsGateway, RealPlaceSearchGateway, get_evidence_plan_gateway, get_place_facts_gateway,
     get_place_search_gateway,
@@ -667,7 +668,10 @@ def _thin_run(e2e):
     map_id = e2e.shared_map(a, b)
     alley = e2e.pin(a, map_id, "seongsu-alley")
     e2e.react(b, alley, "like")
-    r = a.post(f"/maps/{map_id}/runs", json={"category": "관광지"})
+    # 지도 중심은 「성수 골목」 핀이 있는 곳(REGION)이다 — 요청 모델이 center를 필수로 막는다(#1354)
+    with pytest.MonkeyPatch.context() as patch:   # 시험 DB에는 시·도 경계가 없어 중심의 시·도를 못 정한다 — 생성 동안만 통과로 본다(실행의 시·도 제한은 그대로)
+        patch.setattr(recommend_flows.places_api, "sido_at", lambda *args, **kwargs: "서울")
+        r = a.post(f"/maps/{map_id}/runs", json={"category": "관광지", "center": {"lat": REGION["lat"], "lng": REGION["lng"]}})
     assert r.status_code == 202, r.text
     run_id = r.json()["id"]
     assert a.post(f"/runs/{run_id}/regions/confirm", json={}).status_code == 200

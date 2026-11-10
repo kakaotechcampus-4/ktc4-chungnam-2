@@ -7,6 +7,7 @@
 
 import pytest
 from integration.real_places_fixtures import (  # noqa: F401 — 픽스처는 import로 등록된다
+    RUN_CENTER,
     PLACES, _events, _pin, _recommend, fake_planner, members, own_db, place_ids, real_client,
 )
 
@@ -106,7 +107,7 @@ def test_reason_survives_deleting_its_pin(members, place_ids, fake_planner):
     assert b.put(f"/pins/{k}/reaction", json={"type": "against", "reason_text": "너무 매워요"}).status_code == 200
     assert a.put(f"/pins/{s}/reaction", json={"type": "like"}).status_code == 200      # 준비 판정은 통과시킨다
     assert a.delete(f"/pins/{k}").status_code == 204
-    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점"})
+    run = a.post(f"/maps/{map_id}/runs", json={"category": "음식점", "center": RUN_CENTER})
     assert run.status_code == 202, run.text
     keys = {e["fact_key"] for e in a.get(f"/runs/{run.json()['id']}/evidence").json()}
     assert "spicy_focused" in keys, "삭제된 핀에 남겨 둔 사유가 근거에서 사라졌다"
