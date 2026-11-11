@@ -70,13 +70,13 @@ class TestIndoorBalance:
 class TestMealAlert:
     def test_three_cases(self):
         none = t(A("p1"), A("p2"))
-        assert "확정 리스트에 없어요" in worklog.meal_less_text(none, 1)                       # 식당 0곳
+        assert "확정한 장소에 식당이 없어요" in worklog.meal_less_text(none, 1)                       # 식당 0곳
         short = t(A("p1"), A("p2", cat="음식점"), A("p3"), days=t(A("p1")).days + (date(2026, 10, 21),))
         text = worklog.meal_less_text(short, 2)                                                 # 식당 1곳, 3일
-        assert "모자라 이날은 비었어요" in text and "확정 리스트에 없어요" not in text
+        assert "모자라 이날은 비었어요" in text and "확정한 장소에 식당이 없어요" not in text
         some = t(A("p1"), A("p2", cat="음식점"), A("p3", cat="음식점"))                          # 둘 만큼 있다
         text = worklog.meal_less_text(some, 1)
-        assert "배정되지 않았어요" in text and "확정 리스트에 없어요" not in text and "모자라" not in text
+        assert "배정되지 않았어요" in text and "확정한 장소에 식당이 없어요" not in text and "모자라" not in text
 
 
 class TestNamedPlaceDropped:

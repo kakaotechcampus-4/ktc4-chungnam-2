@@ -28,7 +28,7 @@ describe('course model', () => {
 
   it('에러 코드별 문구와 진행 중 run id', () => {
     // 몇 곳부터인지는 서버 detail.min 으로 — 화면에 숫자를 적지 않는다
-    expect(createErrorMessage(err('COURSE_NOT_ENOUGH_PLACES', { min: 3, count: 1 }))).toBe('확정 리스트에 장소를 3곳 이상 담아 주세요')
+    expect(createErrorMessage(err('COURSE_NOT_ENOUGH_PLACES', { min: 3, count: 1 }))).toBe('장소를 3곳 이상 확정해 주세요')
     expect(createErrorMessage(err('COURSE_NOT_ENOUGH_PLACES'))).not.toMatch(/\d/)
     expect(createErrorMessage(err('SOMETHING_ELSE'))).toBeNull()
     // 크레딧 오류는 버튼 자리(CreditGate)가 말한다 — 여기서 문구를 만들지 않는다

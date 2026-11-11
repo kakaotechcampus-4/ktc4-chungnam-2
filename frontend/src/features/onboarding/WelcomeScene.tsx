@@ -267,7 +267,7 @@ function ShortlistScene() {
       ))}
       <At x={56} y={8} anchor="top-left" className="w-[38%]">
         <div className={`${CARD} space-y-1.5 p-2`}>
-          <p className="text-label font-bold text-ink-900">확정 리스트</p>
+          <p className="text-label font-bold text-ink-900">확정한 장소</p>
           {[0, 1, 2].map((i) => (
             <div key={i} className="flex items-center gap-1.5">
               <span

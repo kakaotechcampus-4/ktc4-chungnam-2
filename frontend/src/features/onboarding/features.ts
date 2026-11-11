@@ -12,5 +12,5 @@ export const FEATURES: { Icon: LucideIcon; text: string; detail: string; scene: 
   { Icon: MapPin, text: '가고 싶은 곳을 핀으로 남겨요', detail: '장소를 검색하고 핀 찍기를 눌러 보세요', scene: 'pin' },
   { Icon: MessageSquareText, text: '좋음과 반대로 솔직한 의견을 나눠요', detail: '반대할 때는 이유를 남겨 다른 대안을 찾을 수 있어요', scene: 'reaction' },
   { Icon: Sparkles, text: '모두의 취향을 모아 AI가 대안을 찾아줘요', detail: '의견이 갈릴 때 AI 추천 탭에서 추천받기를 눌러 보세요', scene: 'ai' },
-  { Icon: Star, text: '마음에 드는 장소는 확정 리스트에 담아요', detail: '날짜에 넣고 동선 보기를 누르면 들를 순서가 보여요', scene: 'shortlist' },
+  { Icon: Star, text: '마음에 드는 장소는 확정해 모아 둬요', detail: '날짜에 넣고 동선 보기를 누르면 들를 순서가 보여요', scene: 'shortlist' },
 ]

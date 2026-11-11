@@ -160,9 +160,9 @@ export default function ShortlistTab() {
         </div>
       }
     >
-      {shortlist.error && <ErrorText message="확정 리스트를 불러오지 못했어요" error={shortlist.error} />}
+      {shortlist.error && <ErrorText message="확정한 장소를 불러오지 못했어요" error={shortlist.error} />}
       {/* 받는 동안 본문이 비어 있었다 — 리스트 줄 모양을 먼저 그린다(#1675). */}
-      {shortlist.isPending && <CardSkeleton count={3} label="확정 리스트를 불러오는 중…" />}
+      {shortlist.isPending && <CardSkeleton count={3} label="확정한 장소를 불러오는 중…" />}
       {shortlist.data?.length === 0 && (
         <EmptyState
           title="아직 확정된 장소가 없어요"
@@ -172,7 +172,7 @@ export default function ShortlistTab() {
             </Link>
           }
         >
-          가기로 결정한 장소들이 이곳에 모여요. 핀 찍기 탭에서 확정 리스트에 넣어 보세요.
+          가기로 결정한 장소들이 이곳에 모여요. 핀 찍기 탭에서 확정해 보세요.
         </EmptyState>
       )}
       {all.length > 0 && routeOn && <DayRoute mapId={mapId} onOpen={setOpenPin} />}

@@ -71,7 +71,7 @@ export default function CourseBody({ mapId }: { mapId: string }) {
 function LoadFailed({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   return (
     <div className="space-y-2">
-      <ErrorText message="확정 리스트를 불러오지 못했어요" error={error} />
+      <ErrorText message="확정한 장소를 불러오지 못했어요" error={error} />
       <button type="button" onClick={onRetry} className="btn-outline btn-sm">
         다시 불러오기
       </button>
@@ -93,7 +93,7 @@ function NotEnough({ mapId }: { mapId: string }) {
         </Link>
       }
     >
-      핀 찍기 탭에서 가고 싶은 곳들을 확정 리스트에 먼저 담아 보세요.
+      핀 찍기 탭에서 가고 싶은 곳들을 먼저 확정해 보세요.
     </EmptyState>
   )
 }

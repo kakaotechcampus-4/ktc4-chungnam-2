@@ -49,7 +49,7 @@ def test_두곳_사흘이면_식당_없는_날이_하루뿐이고_알린다():
     notices = [l for l in lines if "식당이 모자라 이날은 비었어요" in l]
     missing = core.meal_less_days(trip, result.course)
     assert len(notices) == 1 and len(missing) == 1
-    assert notices[0] == f"[확인] 검증(코드) {core.day_label(trip, core.day_alias(missing[0]))}에는 식사할 곳이 없어요. 확정 리스트의 식당이 모자라 이날은 비었어요."
+    assert notices[0] == f"[확인] 검증(코드) {core.day_label(trip, core.day_alias(missing[0]))}에는 식사할 곳이 없어요. 확정한 식당이 모자라 이날은 비었어요."
     assert sorted(p for d in result.course for p in d) == sorted(p.alias for p in trip.places)      # 장소를 더하거나 빼지 않는다
 
 

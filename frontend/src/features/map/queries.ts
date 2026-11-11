@@ -53,7 +53,7 @@ export function useTrashPinMutation(mapId: string) {
       void queryClient.invalidateQueries({ queryKey: pinKeys.trash(mapId) })
       void queryClient.invalidateQueries({ queryKey: ['shortlist', mapId] })
       void queryClient.invalidateQueries({ queryKey: ['recommend', mapId] })
-      showToast(pin.kind === '확정' ? '확정 리스트에서도 빠졌어요' : '삭제했어요', {
+      showToast(pin.kind === '확정' ? '확정한 장소에서도 빠졌어요' : '삭제했어요', {
         label: '되돌리기',
         onClick: () => void restoreInto(queryClient, mapId, pin.id).catch((err: unknown) => showToast(restorePinErrorMessage(err))),
       })

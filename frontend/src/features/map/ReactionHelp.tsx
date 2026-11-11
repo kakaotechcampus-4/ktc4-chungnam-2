@@ -31,12 +31,12 @@ const PIN_TERMS = [
         <Mark kind="unknown" size={14} />
       </span>
     ), term: '미확인', text: '아직 의견을 남기지 않은 사람 수예요' },
-  { mark: CONFIRMED_MARK, term: '확정 리스트', text: '가기로 정한 곳이에요. 장소 확정 탭에서 들를 순서를 봐요' },
+  { mark: CONFIRMED_MARK, term: '확정한 장소', text: '가기로 정한 곳이에요. 장소 확정 탭에서 들를 순서를 봐요' },
 ]
 
 /** 장소 확정 탭에서 처음 보는 말(멘토 리뷰 #1401, #1484). */
 const SHORTLIST_TERMS = [
-  { mark: CONFIRMED_MARK, term: '확정 리스트', text: '가기로 정한 곳이에요. 아래 목록은 아직 일정에 넣지 않은 곳이에요' },
+  { mark: CONFIRMED_MARK, term: '확정한 장소', text: '가기로 정한 곳이에요. 아래 목록은 아직 일정에 넣지 않은 곳이에요' },
   // 글 옆 기호에 lucide를 쓰지 않아서(DESIGN.md Don't) 일정·동선 보기는 기호 없이 자리만 맞춘다.
   { mark: null, term: '일정', text: '날짜마다 들를 곳과 순서예요. 목록의 「넣기」로 고른 날에 넣어요' },
   { mark: null, term: '동선 보기', text: '일정에 넣은 순서대로 그날 길을 지도에 그려요' },
@@ -44,7 +44,7 @@ const SHORTLIST_TERMS = [
 
 const VARIANTS = {
   pins: { terms: PIN_TERMS, label: '의견 표시 설명', button: '좋음, 반대, 미확인 설명 보기' },
-  shortlist: { terms: SHORTLIST_TERMS, label: '확정 리스트와 일정 설명', button: '장소 확정 탭 용어 설명 보기' },
+  shortlist: { terms: SHORTLIST_TERMS, label: '확정한 장소와 일정 설명', button: '장소 확정 탭 용어 설명 보기' },
 }
 
 /**

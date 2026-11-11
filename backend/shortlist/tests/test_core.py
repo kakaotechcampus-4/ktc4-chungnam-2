@@ -197,21 +197,21 @@ def test_render_txt_empty_list_is_one_notice_line():
 
 
 def test_export_basename_uses_title_and_default_when_missing_or_blank():
-    assert core.export_basename("부산 여행") == "부산 여행 확정 리스트"
-    assert core.export_basename(None) == "확정 리스트"
-    assert core.export_basename("   ") == "확정 리스트"
-    assert core.export_basename(" . ") == "확정 리스트"
+    assert core.export_basename("부산 여행") == "부산 여행 확정한 장소"
+    assert core.export_basename(None) == "확정한 장소"
+    assert core.export_basename("   ") == "확정한 장소"
+    assert core.export_basename(" . ") == "확정한 장소"
 
 
 def test_export_basename_strips_path_chars_control_chars_and_edge_dots():
-    assert core.export_basename('a/b\\c:d*e?f"g<h>i|j') == "abcdefghij 확정 리스트"
-    assert core.export_basename("부산\r\n여행\x00‮") == "부산 여행 확정 리스트"
-    assert core.export_basename("..제목..") == "제목 확정 리스트"
-    assert core.export_basename('/\\:*?"<>|') == "확정 리스트"
+    assert core.export_basename('a/b\\c:d*e?f"g<h>i|j') == "abcdefghij 확정한 장소"
+    assert core.export_basename("부산\r\n여행\x00‮") == "부산 여행 확정한 장소"
+    assert core.export_basename("..제목..") == "제목 확정한 장소"
+    assert core.export_basename('/\\:*?"<>|') == "확정한 장소"
 
 
 def test_export_basename_limits_title_length():
-    assert core.export_basename("가" * 200) == "가" * 50 + " 확정 리스트"
+    assert core.export_basename("가" * 200) == "가" * 50 + " 확정한 장소"
 
 
 def test_export_content_disposition_has_rfc5987_name_and_ascii_fallback():
@@ -219,12 +219,12 @@ def test_export_content_disposition_has_rfc5987_name_and_ascii_fallback():
 
     assert out == (
         'attachment; filename="shortlist.csv"; '
-        "filename*=UTF-8''%EB%B6%80%EC%82%B0%20%EC%97%AC%ED%96%89%20%ED%99%95%EC%A0%95%20%EB%A6%AC%EC%8A%A4%ED%8A%B8.csv"
+        "filename*=UTF-8''%EB%B6%80%EC%82%B0%20%EC%97%AC%ED%96%89%20%ED%99%95%EC%A0%95%ED%95%9C%20%EC%9E%A5%EC%86%8C.csv"
     )
 
 
 def test_export_content_disposition_ascii_title_goes_into_fallback_too():
-    assert core.export_content_disposition("Busan", "txt").startswith('attachment; filename="Busan 확정 리스트.txt"'.replace(" 확정 리스트", ""))
+    assert core.export_content_disposition("Busan", "txt").startswith('attachment; filename="Busan 확정한 장소.txt"'.replace(" 확정한 장소", ""))
 
 
 def test_export_content_disposition_cannot_inject_header_lines():
