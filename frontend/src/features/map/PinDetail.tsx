@@ -21,7 +21,7 @@ import SheetTitle from '@/ui/SheetTitle'
 import TextField from '@/ui/TextField'
 import Sentences from '@/ui/Sentences'
 import UnknownName from '@/ui/UnknownName'
-import BusyLabel from '@/ui/BusyLabel'
+import BusyLabel, { DONE_MS } from '@/ui/BusyLabel'
 
 import { isLive, LOCATE_SLOW_MS, locationState, useLivePlaceStore } from './livePlaces'
 import ReactionHelp from './ReactionHelp'
@@ -702,4 +702,3 @@ function MyOpinion({
 }
 
 /** 의견 등록 뒤 초록 체크를 보이는 시간(#1712). 그 뒤 목록으로 돌아간다. */
-const DONE_MS = 900
